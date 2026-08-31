@@ -1,0 +1,74 @@
+# TEST STRATEGY
+
+Status: **M0.** Philosophy and conventions only; the concrete suites arrive with
+their milestones.
+
+---
+
+## Philosophy
+
+- **Real behaviour over superficial mocks.** A test that only asserts a mock was
+  called proves nothing. Mock at true external boundaries (network, hardware,
+  paid APIs); exercise real logic otherwise.
+- **Deterministic unit tests** where the logic is deterministic. No sleeps, no
+  network, no wall-clock dependence, seeded randomness.
+- **Integration tests at subsystem boundaries.** Every conceptual boundary in
+  `docs/architecture/FOUNDATION_ARCHITECTURE.md` gets integration coverage where
+  it meets another boundary.
+- **Hardware tests on actual hardware.** Anything depending on a physical device
+  (mic, camera, motors, displays, accelerators) is tested on real hardware and
+  clearly marked; it must not run or fail in a hardware-less environment.
+- **Conversation quality is benchmarked empirically**, not asserted by hand.
+  Benchmarks produce scores over a fixed set of cases and track them over time.
+- **Failed experiments are recorded**, not deleted — see
+  `docs/troubleshooting/README.md`.
+
+## Test tiers
+
+| Tier | Scope | Runs where | Speed |
+|---|---|---|---|
+| `unit` | one module, no I/O | everywhere, every commit | fast |
+| `integration` | 2+ modules across a boundary | everywhere (external deps faked at the seam) | medium |
+| `hardware` | real devices | tagged; only on the target machine | slow |
+| `benchmark` | quality / latency over a fixed case set | on demand / scheduled | slow |
+
+## Stable test IDs
+
+Where a test represents a *capability contract* (not just an implementation
+detail), give it a stable ID so it can be referenced across reports and ADRs even
+if the code moves.
+
+- Format: `<AREA>-<SUBAREA>-<NNN>`, e.g. `CONV-PL-001`, `CONV-EN-001` for natural
+  conversation quality (Polish / English), `VOICE-STT-001`, `DEV-AWARE-001`.
+- Record the ID in the test's docstring and in the milestone's report.
+- IDs are append-only: never renumber, mark retired ones as such.
+
+### Placeholder benchmark IDs (NOT implemented at M0)
+
+| ID | Intent | Milestone |
+|---|---|---|
+| `CONV-EN-001` | Natural English conversation quality — baseline case set | M1 |
+| `CONV-PL-001` | Natural Polish conversation quality — baseline case set | M1 |
+| `CONV-*-*` | Further conversation cases (context use, refusal, persona) | M1+ |
+| `VOICE-TURN-001` | End-to-end voice turn latency budget | M2 |
+| `CTX-001` | Context coherence across a multi-turn session | M3 |
+| `DEV-AWARE-001` | Correct hardware/body report on a known device | M4 |
+| `MEM-RW-001` | Long-term memory write→retrieve round trip | M5 |
+
+These are documented placeholders only. Do not implement them until their
+milestone, and do not let them exist as skipped tests that imply coverage.
+
+## M0 status
+
+- `tests/test_foundation.py` — tier `unit`. Asserts the package imports, exposes a
+  string `__version__`, and that the foundation doc/convention files exist.
+- Runnable with `python -m unittest discover -s tests` (no third-party dep) and
+  under `pytest` once the `dev` extra is installed.
+- No `hardware` or `benchmark` tests exist yet.
+
+## Tooling direction
+
+- `pytest` as the runner (declared in `pyproject.toml` `dev` extras); config lives
+  in `[tool.pytest.ini_options]` with `pythonpath = ["src"]`.
+- `ruff` for lint/format (`dev` extras).
+- CI is not set up during M0; a milestone that adds real code should add it.
