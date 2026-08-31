@@ -1,0 +1,75 @@
+{
+  "started_utc": "2026-08-31T22:45:40.060749+00:00",
+  "mode": "perf",
+  "backend": "ollama",
+  "model": "SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0",
+  "options": {
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "num_predict": 200,
+    "num_ctx": 4096
+  },
+  "model_info": {
+    "family": "llama",
+    "parameter_size": "4.8B",
+    "quantization_level": "Q8_0",
+    "context_length": 8192
+  },
+  "runs": [
+    {
+      "text": "Sleep plays a critical role in the formation and consolidation of memories, which are essential for learning and retaining information. During sleep, particularly during specific stages such as rapid eye movement (REM) sleep and deep non-REM sleep, the brain actively processes and strengthens new memories. This process involves several mechanisms:\n\n1. **Summarization**: Sleep helps to summarize experiences by integrating different pieces of information into coherent memory structures, making them easier to recall later on. This is particularly important for complex tasks or know",
+      "wall_s": 127.146,
+      "ttft_s": 23.207,
+      "load_s": 12.921,
+      "prompt_eval_count": 102,
+      "prompt_eval_tps": 9.92,
+      "eval_count": 200,
+      "gen_tps": 1.92,
+      "peak_temp_c": 66.7,
+      "run": 1,
+      "mem_available_mb": 8913.7
+    },
+    {
+      "text": "Sleep plays a crucial role in memory consolidation, which is the process of strengthening and organizing newly acquired information into long-term memories. During sleep, particularly during deep stages like REM (Rapid Eye Movement) and non-REM (NREM), the brain actively processes and integrates new experiences into existing memories. This is done through various mechanisms, including synaptic plasticity, where connections between neurons are strengthened or weakened based on the repeated use of those pathways; and the recycling of brain waves that help to transfer information from short-term memory into long-term stora",
+      "wall_s": 102.523,
+      "ttft_s": 0.573,
+      "load_s": 0.059,
+      "prompt_eval_count": 102,
+      "prompt_eval_tps": 202.74,
+      "eval_count": 200,
+      "gen_tps": 1.96,
+      "peak_temp_c": 68.3,
+      "run": 2,
+      "mem_available_mb": 8923.3
+    },
+    {
+      "text": "Sleep is essential for memory because it allows the brain to process, store, and consolidate information acquired during waking hours. While sleep progresses through different stages (like REM and non-REM), the brain actively retrieves memories from short-term to long-term storage, strengthens neural connections associated with learning experiences, and eliminates damaged neurons. This process enhances the efficiency of cognitive functions such as problem-solving, decision-making, and creativity.\r\n\r\nTwo practical tips for optimizing sleep for memory: 1) **Establi",
+      "wall_s": 93.58,
+      "ttft_s": 0.535,
+      "load_s": 0.059,
+      "prompt_eval_count": 102,
+      "prompt_eval_tps": 220.34,
+      "eval_count": 200,
+      "gen_tps": 2.15,
+      "peak_temp_c": 68.3,
+      "run": 3,
+      "mem_available_mb": 8907.6
+    }
+  ],
+  "summary": {
+    "gen_tps_mean": 2.01,
+    "gen_tps_all": [
+      1.92,
+      1.96,
+      2.15
+    ],
+    "ttft_s_all": [
+      23.207,
+      0.573,
+      0.535
+    ],
+    "load_s_first": 12.921,
+    "peak_temp_c": 68.3
+  }
+}

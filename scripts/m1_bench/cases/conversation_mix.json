@@ -1,0 +1,23 @@
+{
+  "id": "CONV-MIX-1",
+  "language": "mix",
+  "description": "Language switching PL -> EN -> PL within one session (CONV-MIX-001) plus cross-language recall (CONV-CTX-001).",
+  "system": "Jesteś NeXa — osobistym asystentem jednej osoby. Rozmawiasz naturalnie i zwięźle. Odpowiadasz w tym samym języku, którego właśnie używa użytkownik. You reply in whatever language the user is currently using.",
+  "options": {
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "repeat_penalty": 1.05,
+    "num_predict": 200,
+    "num_ctx": 8192
+  },
+  "turns": [
+    "Cześć. Planuję w sobotę zrobić pierwszy raz chleb na zakwasie.",
+    "Mam zakwas, mąkę żytnią i pszenną chlebową. Od czego zacząć wieczorem?",
+    "Do you understand me if I switch to English now?",
+    "Okay — roughly how long should the bulk fermentation run at around 22 degrees Celsius?",
+    "Świetnie, wróćmy do polskiego.",
+    "Przypomnij mi, jaką mąkę powiedziałem, że mam?",
+    "I ostatnie pytanie: rano piec od razu z lodówki czy najpierw doprowadzić do temperatury pokojowej?"
+  ]
+}

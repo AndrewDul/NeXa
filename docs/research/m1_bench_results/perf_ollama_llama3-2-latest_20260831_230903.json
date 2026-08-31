@@ -1,0 +1,75 @@
+{
+  "started_utc": "2026-08-31T22:09:03.163829+00:00",
+  "mode": "perf",
+  "backend": "ollama",
+  "model": "llama3.2:latest",
+  "options": {
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "num_predict": 200,
+    "num_ctx": 4096
+  },
+  "model_info": {
+    "family": "llama",
+    "parameter_size": "3.2B",
+    "quantization_level": "Q4_K_M",
+    "context_length": 131072
+  },
+  "runs": [
+    {
+      "text": "Sleep plays a crucial role in memory consolidation, which is the process of transferring short-term memories to long-term ones. During sleep, our brains undergo various stages that help strengthen and refine memories. Research has shown that sleep helps to clear out unnecessary information, eliminate distractions, and enhance pattern recognition - all essential processes for solidifying learning and experiences.\n\nWhen we don't get enough sleep or have poor quality sleep, it can lead to impaired memory function, difficulty concentrating, and reduced ability to learn new information. On the other hand, adequate sleep has been linked to improved memory performance, better recall, and enhanced cognitive flexibility.\n\nHere are two practical tips to improve your sleep for better memory:\n\n1. Establish a consistent sleep schedule: Go to bed and wake up at the same time every day, including weekends.\n2. Create a sleep-conducive environment: Make your bedroom dark, quiet, and cool, and avoid stimulating activities before bedtime to promote relaxation.",
+      "wall_s": 56.101,
+      "ttft_s": 13.065,
+      "load_s": 11.203,
+      "prompt_eval_count": 49,
+      "prompt_eval_tps": 26.36,
+      "eval_count": 191,
+      "gen_tps": 4.44,
+      "peak_temp_c": 66.7,
+      "run": 1,
+      "mem_available_mb": 6146.2
+    },
+    {
+      "text": "Sleep plays a crucial role in the process of memory consolidation, which is the formation and storage of new memories. During sleep, our brains go through different stages that help strengthen and refine neural connections, making it easier to recall information. Research has shown that sleep deprivation can significantly impair memory performance, while adequate sleep can enhance memory retention and retrieval.\n\nWhen we sleep, our brains are able to clear out unnecessary information and consolidate new experiences into long-term memory. This process involves the strengthening of synaptic connections between neurons, which allows us to retrieve memories more efficiently. Furthermore, sleep also helps regulate emotions and reduces stress, both of which can impact memory performance. Overall, getting quality sleep is essential for optimal memory function.\n\nHere are two practical tips:\n\n1. **Get consistent sleep schedules**: Aim for 7-9 hours of sleep each night and establish a consistent bedtime routine to help regulate your body's internal clock.\n2. **Practice relaxation techniques before bed**: Engage in calming activities like reading, meditation,",
+      "wall_s": 46.46,
+      "ttft_s": 0.68,
+      "load_s": 0.46,
+      "prompt_eval_count": 49,
+      "prompt_eval_tps": 238.19,
+      "eval_count": 200,
+      "gen_tps": 4.37,
+      "peak_temp_c": 67.2,
+      "run": 2,
+      "mem_available_mb": 6073.7
+    },
+    {
+      "text": "Sleep plays a vital role in the consolidation of memories and their retrieval. During sleep, the brain processes and strengthens the connections between neurons that were formed during the day. This process is crucial for transferring information from short-term memory to long-term memory. When we're asleep, our brains also undergo various stages of activity, including the clearance of waste products that can interfere with memory formation.\n\nResearch has shown that sleep deprivation can impair memory function, leading to difficulty recalling previously learned material. On the other hand, getting adequate sleep helps to improve memory consolidation and retrieval. By allowing our brains to process and refine memories during sleep, we're better equipped to recall information when we need it.\n\nHere are two practical tips:\n\n1. **Get consistent sleep schedules**: Establish a regular sleep schedule to help regulate your brain's ability to consolidate memories.\n2. **Practice relaxation techniques before bed**: Engage in activities like meditation or deep breathing to calm your mind and promote relaxation, making it easier to fall asleep and process memories",
+      "wall_s": 47.912,
+      "ttft_s": 0.684,
+      "load_s": 0.464,
+      "prompt_eval_count": 49,
+      "prompt_eval_tps": 237.76,
+      "eval_count": 200,
+      "gen_tps": 4.23,
+      "peak_temp_c": 68.3,
+      "run": 3,
+      "mem_available_mb": 7766.0
+    }
+  ],
+  "summary": {
+    "gen_tps_mean": 4.35,
+    "gen_tps_all": [
+      4.44,
+      4.37,
+      4.23
+    ],
+    "ttft_s_all": [
+      13.065,
+      0.68,
+      0.684
+    ],
+    "load_s_first": 11.203,
+    "peak_temp_c": 68.3
+  }
+}

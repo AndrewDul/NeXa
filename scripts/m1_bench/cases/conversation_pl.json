@@ -1,0 +1,27 @@
+{
+  "id": "CONV-PL-S1",
+  "language": "pl",
+  "description": "Natural Polish multi-turn session covering CONV-PL-001..007, CONV-CTX-001, CONV-STYLE-001. Human, everyday register; not a factual quiz.",
+  "system": "Jesteś NeXa — osobistym asystentem jednej osoby. Rozmawiasz naturalnie, po ludzku i zwięźle. Nie zaczynasz każdej odpowiedzi od formułek typu 'Jasne!' albo 'Oczywiście!'. Nie tłumaczysz rzeczy, o które nikt nie pytał. Jeśli czegoś nie wiesz, mówisz wprost. Piszesz w tym samym języku, w którym mówi użytkownik.",
+  "options": {
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "repeat_penalty": 1.05,
+    "num_predict": 200,
+    "num_ctx": 8192
+  },
+  "turns": [
+    "Cześć NeXa.",
+    "Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytłacza.",
+    "Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14:00.",
+    "Co byś zrobiła na moim miejscu?",
+    "Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie o poranek.",
+    "Dobra, to brzmi sensownie. Zmieńmy temat.",
+    "Mój brat gra na basie i myślę o prezencie dla niego na urodziny. Budżet mam jakieś 300 zł.",
+    "Powiedz to prościej, jednym zdaniem.",
+    "Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadzasz się?",
+    "O czym rozmawialiśmy na samym początku, zanim zapytałem o brata?",
+    "Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdaniach otworzyć ją tak, żeby złapać uwagę ludzi?"
+  ]
+}

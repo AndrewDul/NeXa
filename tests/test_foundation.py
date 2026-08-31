@@ -44,9 +44,13 @@ class TestFoundationFiles(unittest.TestCase):
         "docs/decisions/ADR-0001_project_foundation.md",
         "docs/legacy/LEGACY_NEXA_INDEX.md",
         "docs/reports/R0001_project_foundation_20260831.md",
+        "docs/reports/R0002_m1_natural_conversation_research_20260831.md",
         "docs/research/RESEARCH_POLICY.md",
+        "docs/research/M1_NATURAL_CONVERSATION_RESEARCH.md",
         "docs/testing/TEST_STRATEGY.md",
+        "docs/testing/M1_NATURAL_CONVERSATION_BENCHMARK.md",
         "docs/troubleshooting/README.md",
+        "docs/decisions/ADR-0002_text_conversation_foundation.md",
     ]
 
     def test_required_files_exist(self) -> None:

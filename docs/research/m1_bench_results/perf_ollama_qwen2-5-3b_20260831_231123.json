@@ -1,0 +1,75 @@
+{
+  "started_utc": "2026-08-31T22:11:23.204197+00:00",
+  "mode": "perf",
+  "backend": "ollama",
+  "model": "qwen2.5:3b",
+  "options": {
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "num_predict": 200,
+    "num_ctx": 4096
+  },
+  "model_info": {
+    "family": "qwen2",
+    "parameter_size": "3.1B",
+    "quantization_level": "Q4_K_M",
+    "context_length": 32768
+  },
+  "runs": [
+    {
+      "text": "Sleep is crucial for memory because it allows the brain to consolidate memories from our daily experiences into long-term storage. During deep sleep stages (slow-wave sleep), the brain replays and reinforces neural connections that were formed during waking hours. This process strengthens these connections, making them more robust and durable over time. Additionally, during REM sleep, new information is processed and integrated with existing knowledge, which is essential for learning and problem-solving.\n\nHere are two practical tips to improve your sleep and enhance memory:\n\n1. **Maintain a Consistent Sleep Schedule**: Try to go to bed and wake up at the same times every day, even on weekends. This helps regulate your body's internal clock (circadian rhythm) and can improve the quality of your sleep.\n\n2. **Create a Relaxing Bedtime Routine**: Engage in relaxing activities before bedtime such as reading a book or practicing relaxation techniques like deep breathing or meditation. Avoid stimulating activities like intense exercise, using electronic devices, or watching TV right before",
+      "wall_s": 55.187,
+      "ttft_s": 11.833,
+      "load_s": 9.821,
+      "prompt_eval_count": 55,
+      "prompt_eval_tps": 27.39,
+      "eval_count": 200,
+      "gen_tps": 4.61,
+      "peak_temp_c": 67.8,
+      "run": 1,
+      "mem_available_mb": 5584.4
+    },
+    {
+      "text": "Sleep is crucial for memory because during the night, your brain consolidates and processes information from daily experiences. This consolidation process strengthens neural connections that help encode memories. When you're asleep, various regions of your brain work together to transfer temporary memories in short-term storage into long-term memory, where they can be recalled later.\n\nHere are two practical tips for improving sleep quality which directly impacts the effectiveness of memory consolidation:\n\n1. Establish a regular sleep schedule: Try to go to bed and wake up at the same time every day, even on weekends. This helps regulate your body's internal clock, making it easier to fall asleep and wake up naturally.\n\n2. Create an optimal sleeping environment: Make sure your bedroom is conducive to sleep by keeping it cool, quiet, and dark. Invest in a comfortable mattress and pillows, as well as good bedding. Using blackout curtains or earplugs can be helpful if you have light or noise disturbances.\n\nBy prioritizing these tips, you can help support the health of",
+      "wall_s": 44.326,
+      "ttft_s": 0.572,
+      "load_s": 0.366,
+      "prompt_eval_count": 55,
+      "prompt_eval_tps": 276.13,
+      "eval_count": 200,
+      "gen_tps": 4.57,
+      "peak_temp_c": 67.8,
+      "run": 2,
+      "mem_available_mb": 5576.8
+    },
+    {
+      "text": "Sleep is crucial for memory consolidation because it helps integrate new memories into the brain's long-term storage system. During deep sleep phases (especially Rapid Eye Movement or REM sleep), the brain replays and reinforces recent experiences, solidifying information that was learned during the day. This process strengthens neural connections related to these memories, making them more robust over time.\n\nTo improve your memory consolidation through sleep:\n1. Aim for 7-9 hours of quality sleep per night. Stick to a regular sleep schedule by going to bed and waking up at the same times every day.\n2. Create a relaxing bedtime routine that signals your brain it's time to wind down, such as reading or practicing relaxation techniques like deep breathing exercises before sleeping.",
+      "wall_s": 33.263,
+      "ttft_s": 0.597,
+      "load_s": 0.373,
+      "prompt_eval_count": 55,
+      "prompt_eval_tps": 255.54,
+      "eval_count": 146,
+      "gen_tps": 4.47,
+      "peak_temp_c": 67.2,
+      "run": 3,
+      "mem_available_mb": 5573.5
+    }
+  ],
+  "summary": {
+    "gen_tps_mean": 4.55,
+    "gen_tps_all": [
+      4.61,
+      4.57,
+      4.47
+    ],
+    "ttft_s_all": [
+      11.833,
+      0.572,
+      0.597
+    ],
+    "load_s_first": 9.821,
+    "peak_temp_c": 67.8
+  }
+}

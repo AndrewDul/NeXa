@@ -1,0 +1,75 @@
+{
+  "started_utc": "2026-08-31T22:06:25.470338+00:00",
+  "mode": "perf",
+  "backend": "ollama",
+  "model": "qwen3:4b-instruct",
+  "options": {
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "num_predict": 200,
+    "num_ctx": 4096
+  },
+  "model_info": {
+    "family": "qwen3",
+    "parameter_size": "4.0B",
+    "quantization_level": "Q4_K_M",
+    "context_length": 262144
+  },
+  "runs": [
+    {
+      "text": "Sleep matters for memory because during sleep, especially during deep sleep and REM stages, your brain processes and consolidates information from the day. It sorts out what's important, strengthens neural connections, and moves memories from short-term to long-term storage. Without enough sleep, the brain can't properly organize these memories, leading to confusion, poor learning, and forgetfulness.\n\nTwo practical tips:  \n1. Aim for 7–9 hours of sleep each night consistently—this helps your brain get the time it needs to process memories.  \n2. Try to go to bed and wake up at the same time every day to regulate your body's internal clock, which supports better sleep quality and memory function.  \n\nThese habits support a healthy brain and improve how well you remember things over time.",
+      "wall_s": 48.416,
+      "ttft_s": 9.191,
+      "load_s": 7.605,
+      "prompt_eval_count": 34,
+      "prompt_eval_tps": 21.6,
+      "eval_count": 158,
+      "gen_tps": 4.03,
+      "peak_temp_c": 62.8,
+      "run": 1,
+      "mem_available_mb": 9087.5
+    },
+    {
+      "text": "Sleep is essential for memory because during sleep, especially in the REM and deep sleep stages, the brain processes and consolidates information from the day. It moves short-term memories into long-term storage, making them stronger and more accessible. Without enough sleep, the brain can’t properly organize these memories, leading to forgetfulness and poor learning.\n\nTwo practical tips:  \n1. Aim for 7–9 hours of sleep each night consistently—this helps your brain work efficiently.  \n2. Try to go to bed and wake up at the same time every day to regulate your body’s internal clock, which supports better sleep quality and memory formation.  \n\nThese habits support your brain’s ability to retain and recall information, making them vital for daily learning and performance.",
+      "wall_s": 40.19,
+      "ttft_s": 0.618,
+      "load_s": 0.366,
+      "prompt_eval_count": 34,
+      "prompt_eval_tps": 149.72,
+      "eval_count": 152,
+      "gen_tps": 3.84,
+      "peak_temp_c": 65.0,
+      "run": 2,
+      "mem_available_mb": 9067.4
+    },
+    {
+      "text": "Sleep matters for memory because during sleep, especially during deep and REM stages, your brain processes and consolidates information from the day. It sorts out what’s important and stores it long-term, while clearing out unnecessary data. Without enough sleep, the brain can’t properly organize these memories, leading to poor recall and mental fatigue.\n\nTwo practical tips:  \n1. Aim for 7–9 hours of sleep each night consistently—this helps your brain work efficiently.  \n2. Try to go to bed and wake up at the same time every day to regulate your body’s internal clock, which supports better memory function.  \n\nThese habits support your brain’s ability to learn, remember, and stay sharp over time.",
+      "wall_s": 38.408,
+      "ttft_s": 0.631,
+      "load_s": 0.375,
+      "prompt_eval_count": 34,
+      "prompt_eval_tps": 145.66,
+      "eval_count": 143,
+      "gen_tps": 3.79,
+      "peak_temp_c": 66.7,
+      "run": 3,
+      "mem_available_mb": 9006.8
+    }
+  ],
+  "summary": {
+    "gen_tps_mean": 3.89,
+    "gen_tps_all": [
+      4.03,
+      3.84,
+      3.79
+    ],
+    "ttft_s_all": [
+      9.191,
+      0.618,
+      0.631
+    ],
+    "load_s_first": 7.605,
+    "peak_temp_c": 66.7
+  }
+}

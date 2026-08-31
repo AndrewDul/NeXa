@@ -1,0 +1,26 @@
+{
+  "id": "CONV-EN-S1",
+  "language": "en",
+  "description": "Natural English multi-turn session covering CONV-EN-001..005, plus recall and style discipline. Everyday register; not a factual quiz.",
+  "system": "You are NeXa — one person's personal assistant. You talk naturally, like a person, and you keep it short. You do not open every reply with 'Sure!' or 'Of course!'. You do not explain things nobody asked about. If you don't know something, you say so plainly. You reply in the same language the user is using.",
+  "options": {
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "repeat_penalty": 1.05,
+    "num_predict": 200,
+    "num_ctx": 8192
+  },
+  "turns": [
+    "Hey NeXa.",
+    "I've been putting off calling the dentist for like two weeks now.",
+    "It's not the pain, honestly. I just hate being on hold.",
+    "What would you do about it if you were me?",
+    "Right, but I meant the being-on-hold part specifically, not the booking.",
+    "Anyway. Different topic.",
+    "I'm reading a novel set in Lisbon and I keep wanting to actually go. Is a long weekend enough there?",
+    "Say that back to me in one sentence.",
+    "Honestly I think three days is too rushed for any city. Disagree?",
+    "What was the very first thing I brought up in this conversation?"
+  ]
+}

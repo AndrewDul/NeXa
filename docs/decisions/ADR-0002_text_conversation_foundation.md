@@ -1,0 +1,178 @@
+# ADR-0002 — Text conversation foundation (M1)
+
+- **Status:** Accepted (architecture, provider boundary, first runtime);
+  **Baseline — not frozen** (first model)
+- **Date:** 2026-08-31
+- **Deciders:** Andrzej Dul (owner), Claude Code (agent)
+- **Related:** `docs/reports/R0002_m1_natural_conversation_research_20260831.md`,
+  `docs/research/M1_NATURAL_CONVERSATION_RESEARCH.md`,
+  `docs/testing/M1_NATURAL_CONVERSATION_BENCHMARK.md`,
+  `docs/decisions/ADR-0001_project_foundation.md`, `docs/ROADMAP.md`
+
+---
+
+## Context
+
+M1.0 (research + empirical baseline) measured the Raspberry Pi 5, inventoried
+existing local runtimes/models, audited the legacy NeXa conversation stack
+(read-only), did external research, and benchmarked local models. Full evidence:
+the research doc and R0002. The load-bearing facts:
+
+- `VERIFIED FACT` — Ollama 0.30.10 is already installed and running as a service
+  on the Pi (`127.0.0.1:11434`), with `qwen3:4b-instruct` (Qwen3-4B-Instruct-2507,
+  Q4_K_M, **Apache-2.0**, 262k ctx) and five smaller models already local. It
+  exposes both a native and a full OpenAI-compatible streaming chat API.
+- `VERIFIED FACT` — `llama.cpp` builds on this Pi (legacy has a CPU-only build);
+  it is the portable engine (Linux/macOS/Windows **+ iOS/Android**) and ships an
+  OpenAI-compatible `llama-server`.
+- `VERIFIED FACT` — on this Pi, CPU is the only viable LLM path: the V3D GPU
+  (Vulkan) is not production-ready for llama.cpp, and the Hailo-10H GenAI path is
+  capped at ≤1.7B models / 2048 context / a mismatched toolchain.
+- `VERIFIED FACT` — measured generation speed (Ollama, CPU): `qwen3:4b` Q4_K_M
+  **3.9 tok/s**, `llama3.2:3b` Q4_K_M 4.35, `qwen2.5:3b` Q4_K_M 4.55,
+  `qwen2.5:1.5b` Q4_K_M 9.35, **Bielik-4.5B Q8_0 2.0**. Warm TTFT ~0.5–0.7 s
+  (Bielik cold TTFT 33–37 s). No thermal throttling (≤ 68.8 °C). **3B is not
+  meaningfully faster than 4B; Q8_0 halves throughput vs Q4_K_M.**
+- `INFERENCE` (strong; legacy Report 176, 124 live typed turns, 2026-08-24) —
+  legacy conversation naturalness suffered primarily from **pipeline complexity,
+  late/missing grounding with deterministic pre-model interceptors, and latency**,
+  not from model quality. The legacy report's own words: the model, *when
+  actually reached*, "correctly, honestly answered." Legacy carried a 2573-line
+  single "brain", ~50 agent packages, a cascading total-outage bug on any
+  generation timeout, and canned/false pre-model replies to short inputs and
+  capability paraphrases.
+- `VERIFIED FACT` — legacy already discovered the right *principles* (one
+  canonical entry, no second answer path, fail-closed on model unavailability,
+  chat-history separate from long-term memory, an injected provider that never
+  guesses a model) but implemented them inside an over-large, entangled stack.
+
+## Decision
+
+### D1 — One minimal canonical text-conversation path (Accepted)
+
+M1.1 implements exactly one turn path and nothing more:
+
+```
+text UI / (later) STT → ConversationSession → ConversationContext (in-session
+messages, bounded by turns + chars) → ModelProvider.generate(...) → streamed
+tokens → append assistant message
+```
+
+Concretely, M1.1 builds only: `ModelProvider` (interface), `LocalModelProvider`
+(Ollama impl), `ConversationContext`, `ConversationSession`, `ConversationTurn`
+(value object), `StreamingResponse`, and one versioned system persona in
+`configs/`. Nothing else.
+
+**Not in M1.1:** model router / multi-model fallback, MAS or any
+Meaning/Reasoning/Verifier agent, capability detection, tools, long-term memory,
+disk persistence, voice, UI, device awareness. Each is a later milestone with its
+own ADR.
+
+**Carried constraints (from legacy failure evidence):**
+1. No pre-model layer may emit a user-visible answer (no deterministic
+   interceptors returning canned text).
+2. Cancellation must actually stop generation and must never leave shared mutable
+   state broken; per-request state only (legacy blocker B1).
+3. `num_ctx` / context window is always set explicitly.
+4. On provider failure, fail closed with an honest message — never a silent
+   downgrade to a different model (legacy Report 173).
+
+### D2 — Model access is a provider abstraction shaped like the OpenAI chat API (Accepted)
+
+NeXa core talks only to a `ModelProvider` interface: `generate(messages,
+options, *, cancel_token) -> async token stream`, plus `describe()` capabilities
+and a typed "model unavailable" error. The interface is deliberately minimal
+(messages, sampling options, context window, stop, streaming, cancellation) —
+**no** tools/images/embeddings/batching in M1. The wire shape targeted is the
+OpenAI-compatible `/v1/chat/completions` streaming contract so one adapter can
+drive Ollama, `llama-server`, a trusted-PC node, or an online provider by
+configuration. No provider name appears in core control flow (`AGENTS.md` §3.4,
+ADR-0001 D4).
+
+### D3 — Ollama is the first `LocalModelProvider` implementation (Accepted)
+
+Because it is already installed, running, model-managed, and API-served on the
+target hardware. `llama.cpp` (`llama-server`, and later an in-process binding for
+mobile) is the designated **second** implementation and the portability path, to
+be added in M1.1/M2. NeXa depends on **neither** — both are implementations of
+D2's interface.
+
+### D4 — `qwen3:4b-instruct` is the first conversation baseline model — baseline, NOT frozen
+
+It is the strongest realistic already-local model for natural bilingual
+conversation (newest architecture, Apache-2.0, genuine multilingual, 262k
+context, non-thinking instruct) and it is what legacy production used, giving
+continuity of evidence.
+
+**Confirmed by measurement (M1.0 §12A head-to-head vs Bielik-4.5B-v3 Q8_0):**
+
+| | `qwen3:4b` Q4_K_M | Bielik-4.5B Q8_0 |
+|---|---|---|
+| Polish quality (agent-assisted) | 2/5 — weak grammar, hallucination | **3/5** — native grammar, but truncates answers |
+| English quality (agent-assisted) | **4/5** | 2.5/5 — hedgy, T1 non-sequitur |
+| Speed (Pi, conversation) | **~3.2–3.8 tok/s** | ~2.1–2.2 tok/s |
+| Context | **262k** | 8k |
+| RAM resident | **~4.0 GB** | ~5.4 GB |
+| Official Q4_K_M | **yes** | no (Q8_0/FP16 only) |
+
+Bielik wins Polish *language fidelity* only; `qwen3:4b` wins speed, English,
+context, footprint, and quant availability — the dimensions that decide on-Pi
+viability. **D4 stands**, with a recorded caveat: `qwen3:4b`'s Polish is **not
+good enough as-is**, so M1.1 must (a) improve the Polish system persona /
+few-shot and (b) re-test Bielik at its recommended sampling and with a Q4_K_M
+GGUF before the baseline is treated as settled. The model is a **configuration
+choice**, swappable at any time on evidence; this ADR does **not** bind NeXa to
+Qwen or any vendor, and the M1.1 re-test could still flip it.
+
+## Options considered
+
+- **Reuse the legacy MAS brain / port it** — rejected: 2573-line entry +
+  ~50 agent packages, measured latency and the B1 outage bug, and it contradicts
+  `AGENTS.md` §3 and ADR-0001. Its *principles* are reused; its code is not.
+- **Skip the provider interface, call Ollama directly for M1** — rejected:
+  recreates the vendor coupling ADR-0001 D4 exists to prevent; the interface is
+  cheap.
+- **llama.cpp direct as the first runtime** — deferred: no daemon here, legacy's
+  build is stale/CPU-only, and Ollama already provides managed serving. llama.cpp
+  is the second impl / portability path, not the first.
+- **Hailo-10H as the LLM runtime** — rejected: ≤1.7B models, 2048 context,
+  ~5–10 tok/s, HailoRT 5.2.0-vs-5.3.0 mismatch; worse conversation quality than a
+  CPU 3–4B. Revisit later (notably Hailo Whisper offload for M2).
+- **Drop to a 3B for speed** — rejected as a lever: measured 3B is only ~10–17 %
+  faster than 4B on this Pi. The real trade is 4B-class quality vs 1.5B-class
+  speed.
+- **Freeze a specific model** — rejected: violates provider/model independence;
+  D4 is explicitly a non-frozen baseline.
+
+## Consequences
+
+**Positive**
+- A tiny, auditable conversation core that cannot regress into a legacy-style
+  mega-pipeline without a superseding ADR.
+- Provider independence is structural from the first line of M1 code.
+- The first runtime and model are the lowest-friction possible (already on the
+  box), so M1.1 can focus on the turn path and its tests.
+
+**Negative / costs**
+- ~3.9 tok/s on a 4B is marginal for fast chat rhythm; M1.1 must lean on
+  streaming + a brevity-enforcing persona, and keep the provider swappable.
+- Ollama-first means the OpenAI-shape adapter and the llama.cpp second impl are
+  owed in M1.1/M2 to prove independence in practice.
+- Polish quality of the baseline model is not yet human-scored (benchmark
+  transcripts captured in M1.0; scoring feeds the M1.1 model choice).
+
+**Follow-up work**
+- M1.1: implement D1's types + D3 provider + tests; add the `llama-server`
+  adapter; create the repo-local `./.venv` and first real dependency.
+- Score the M1.0 benchmark transcripts (PL/EN/MIX) and confirm or change D4.
+- Later ADRs: realtime voice transport boundary (M2), context vs history vs
+  memory split (M3), model router if/when >1 model is justified.
+
+## Compliance / review
+
+- Code review for M1.1 checks: exactly one turn path; no pre-model canned
+  answers; no provider name in core; cancellation stops generation; explicit
+  `num_ctx`; fail-closed on provider error.
+- Revisit D3/D4 whenever benchmark evidence favours another runtime/model, or if
+  Pi latency proves unacceptable in real M1.1 use — via a new ADR with evidence,
+  not silently.
