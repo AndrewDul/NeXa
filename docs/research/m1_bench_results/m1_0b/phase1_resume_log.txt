@@ -1,0 +1,103 @@
+=== PHASE1 RESUME (gemma4:e4b only, alone, post-reboot) 2026-09-02T17:36:23+01:00 ===
+[probe before-gemma4:e4b] 2026-09-02T17:36:23+01:00 temp=49600 throttled=throttled=0x0 MemAvailable:   15014016 kB swap_used=0MB
+  perf run 1/3
+  perf run 2/3
+  perf run 3/3
+wrote docs/research/m1_bench_results/m1_0b/perf_ollama_gemma4-e4b_20260902_173953.json and docs/research/m1_bench_results/m1_0b/perf_ollama_gemma4-e4b_20260902_173953.md
+[probe after-perf-gemma4:e4b] 2026-09-02T17:39:53+01:00 temp=65000 throttled=throttled=0x0 MemAvailable:    4766736 kB swap_used=0MB
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e4b_20260902_174512.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e4b_20260902_174512.md
+[probe after-PL-gemma4:e4b] 2026-09-02T17:45:12+01:00 temp=65550 throttled=throttled=0x0 MemAvailable:    4585008 kB swap_used=0MB
+  turn 1/10: 'Hey NeXa.'
+  turn 2/10: "I've been putting off calling the dentist for like two weeks"
+  turn 3/10: "It's not the pain, honestly. I just hate being on hold."
+  turn 4/10: 'What would you do about it if you were me?'
+  turn 5/10: 'Right, but I meant the being-on-hold part specifically, not '
+  turn 6/10: 'Anyway. Different topic.'
+  turn 7/10: "I'm reading a novel set in Lisbon and I keep wanting to actu"
+  turn 8/10: 'Say that back to me in one sentence.'
+  turn 9/10: 'Honestly I think three days is too rushed for any city. Disa'
+  turn 10/10: 'What was the very first thing I brought up in this conversat'
+wrote docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_gemma4-e4b_20260902_174748.json and docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_gemma4-e4b_20260902_174748.md
+[probe after-EN-gemma4:e4b] 2026-09-02T17:47:48+01:00 temp=66100 throttled=throttled=0x0 MemAvailable:    4544768 kB swap_used=0MB
+=== gemma4:e4b RESUME DONE 2026-09-02T17:47:48+01:00 ===
+=== MODEL SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 (recommended sampling, temp 0.1 baked) 2026-09-02T17:48:12+01:00 ===
+[probe before-bielik-Q8_0] 2026-09-02T17:48:12+01:00 temp=57300 throttled=throttled=0x0 MemAvailable:   14978608 kB swap_used=0MB
+  perf run 1/3
+  perf run 2/3
+  perf run 3/3
+wrote docs/research/m1_bench_results/m1_0b/perf_ollama_SpeakLeash-bielik-4-5b-v3-0-instruct-Q8_0_20260902_175341.json and docs/research/m1_bench_results/m1_0b/perf_ollama_SpeakLeash-bielik-4-5b-v3-0-instruct-Q8_0_20260902_175341.md
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_SpeakLeash-bielik-4-5b-v3-0-instruct-Q8_0_20260902_180105.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_SpeakLeash-bielik-4-5b-v3-0-instruct-Q8_0_20260902_180105.md
+[probe after-PL-bielik-Q8_0] 2026-09-02T18:01:10+01:00 temp=61700 throttled=throttled=0x0 MemAvailable:    9441280 kB swap_used=0MB
+  turn 1/10: 'Hey NeXa.'
+  turn 2/10: "I've been putting off calling the dentist for like two weeks"
+  turn 3/10: "It's not the pain, honestly. I just hate being on hold."
+  turn 4/10: 'What would you do about it if you were me?'
+  turn 5/10: 'Right, but I meant the being-on-hold part specifically, not '
+  turn 6/10: 'Anyway. Different topic.'
+  turn 7/10: "I'm reading a novel set in Lisbon and I keep wanting to actu"
+  turn 8/10: 'Say that back to me in one sentence.'
+  turn 9/10: 'Honestly I think three days is too rushed for any city. Disa'
+  turn 10/10: 'What was the very first thing I brought up in this conversat'
+wrote docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_SpeakLeash-bielik-4-5b-v3-0-instruct-Q8_0_20260902_180507.json and docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_SpeakLeash-bielik-4-5b-v3-0-instruct-Q8_0_20260902_180507.md
+[probe after-EN-bielik-Q8_0-DONE] 2026-09-02T18:05:13+01:00 temp=60050 throttled=throttled=0x0 MemAvailable:    9355568 kB swap_used=0MB
+=== Bielik Q8_0 RESUME DONE 2026-09-02T18:05:13+01:00 ===
+=== MODEL bielik-4.5b-v3-q4km-thirdparty (recommended sampling, same template, temp 0.1 baked) 2026-09-02T18:05:15+01:00 ===
+[probe before-bielik-Q4_K_M] 2026-09-02T18:05:15+01:00 temp=60050 throttled=throttled=0x0 MemAvailable:   14945792 kB swap_used=0MB
+  perf run 1/3
+  perf run 2/3
+  perf run 3/3
+wrote docs/research/m1_bench_results/m1_0b/perf_ollama_bielik-4-5b-v3-q4km-thirdparty_20260902_180820.json and docs/research/m1_bench_results/m1_0b/perf_ollama_bielik-4-5b-v3-q4km-thirdparty_20260902_180820.md
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_bielik-4-5b-v3-q4km-thirdparty_20260902_181050.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_bielik-4-5b-v3-q4km-thirdparty_20260902_181050.md
+  turn 1/10: 'Hey NeXa.'
+  turn 2/10: "I've been putting off calling the dentist for like two weeks"
+  turn 3/10: "It's not the pain, honestly. I just hate being on hold."
+  turn 4/10: 'What would you do about it if you were me?'
+  turn 5/10: 'Right, but I meant the being-on-hold part specifically, not '
+  turn 6/10: 'Anyway. Different topic.'
+  turn 7/10: "I'm reading a novel set in Lisbon and I keep wanting to actu"
+  turn 8/10: 'Say that back to me in one sentence.'
+  turn 9/10: 'Honestly I think three days is too rushed for any city. Disa'
+  turn 10/10: 'What was the very first thing I brought up in this conversat'
+wrote docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_bielik-4-5b-v3-q4km-thirdparty_20260902_181248.json and docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_bielik-4-5b-v3-q4km-thirdparty_20260902_181248.md
+[probe after-bielik-Q4_K_M-DONE] 2026-09-02T18:12:55+01:00 temp=62800 throttled=throttled=0x0 MemAvailable:   11582000 kB swap_used=0MB
+=== PHASE1 RESUME (all missing candidates) DONE 2026-09-02T18:12:55+01:00 ===

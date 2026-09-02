@@ -1,0 +1,139 @@
+{
+  "started_utc": "2026-09-02T17:15:53.385726+00:00",
+  "backend": "ollama",
+  "model": "gemma4:e4b",
+  "case_file": "scripts/m1_bench/cases/conversation_mix.json",
+  "case_id": "CONV-MIX-1",
+  "language": "mix",
+  "options": {
+    "num_ctx": 8192,
+    "num_predict": 200
+  },
+  "system_prompt": "Jesteś NeXa — osobistym asystentem jednej osoby. Rozmawiasz naturalnie i zwięźle. Odpowiadasz w tym samym języku, którego właśnie używa użytkownik. You reply in whatever language the user is currently using.",
+  "env": {
+    "mem_available_mb_start": 14517.3,
+    "cpu_temp_c_start": 55.65,
+    "throttled_start": "0x0",
+    "loadavg_start": "0.23",
+    "mem_available_mb_before_load": 14519.0,
+    "mem_available_mb_end": 4587.3,
+    "cpu_temp_c_end": 67.2,
+    "throttled_end": "0x0"
+  },
+  "turns": [
+    {
+      "text": "Cześć! To świetny plan! Pieczenie chleba na zakwasie to satysfakcjonujące przeżycie. 😊\n\nCzy masz już zakwas, czy dopiero się z nim zapoznajesz? Chętnie pomogę Ci z jakąś wskazówką na początek!",
+      "wall_s": 57.551,
+      "ttft_s": 36.662,
+      "load_s": 31.897,
+      "prompt_eval_count": 90,
+      "prompt_eval_tps": 18.94,
+      "eval_count": 66,
+      "gen_tps": 3.16,
+      "peak_temp_c": 65.5,
+      "turn": 1,
+      "user": "Cześć. Planuję w sobotę zrobić pierwszy raz chleb na zakwasie.",
+      "mem_available_mb": 4640.3
+    },
+    {
+      "text": "Idealnie! Skoro masz gotowy zakwas, to najlepszą rzeczą na wieczór będzie **przygotowanie i wstępne „rozwianie” zakwasu**.\n\nOto prosty plan działania na dziś:\n\n1.  **Odśwież zakwas (Feed):** Porządnie nakarm swój zakwas zgodnie z instrukcjami (np. proporcja mąka:zakwas). To sprawi, że będzie w najlepszej kondycji do użycia jutro rano.\n2.  **Przygotowanie składników:** Przygotuj wszystkie suche składniki (mąkę, sól).\n3.  **Odpoczynek:** Po nakarmieniu zakwasu, zostaw go w temperaturze pokojowej i po prostu odpocznij z nim.\n\n**Wskazówka na jutro:** Aby dzisiejszy wieczór był spokojny, możesz dziś wieczorem zapoznać się z",
+      "wall_s": 72.916,
+      "ttft_s": 5.96,
+      "load_s": 0.002,
+      "prompt_eval_count": 193,
+      "prompt_eval_tps": 32.44,
+      "eval_count": 200,
+      "gen_tps": 2.99,
+      "peak_temp_c": 67.2,
+      "turn": 2,
+      "user": "Mam zakwas, mąkę żytnią i pszenną chlebową. Od czego zacząć wieczorem?",
+      "mem_available_mb": 4599.9
+    },
+    {
+      "text": "Yes, I understand you perfectly. Please feel free to switch to English. I can continue assisting you in English!",
+      "wall_s": 18.473,
+      "ttft_s": 11.351,
+      "load_s": 0.002,
+      "prompt_eval_count": 414,
+      "prompt_eval_tps": 36.53,
+      "eval_count": 24,
+      "gen_tps": 3.37,
+      "peak_temp_c": 68.8,
+      "turn": 3,
+      "user": "Do you understand me if I switch to English now?",
+      "mem_available_mb": 4563.8
+    },
+    {
+      "text": "That's a great question, as fermentation timing is key!\n\nFor a first-time bake using a recipe designed for a cooler, slightly slower rise (like 22°C/72°F), the **bulk fermentation** usually takes anywhere from **4 to 6 hours**.\n\nHowever, time is less important than **visual cues**! Don't rely strictly on the clock.\n\n**Here’s what you're looking for:**\n\n1.  **Volume Increase:** The dough should noticeably increase in volume—it should look puffier than when you mixed it, perhaps by 30–50%.\n2.  **Jiggle Test:** When you gently shake the container (if using one), the dough should have a little \"jiggle\" to it, indicating that the gas production is active.\n3.  **Surface:** The surface should look somewhat rounded and pillowy, rather than dense or deflated.\n\n**Pro Tip:**",
+      "wall_s": 65.53,
+      "ttft_s": 3.149,
+      "load_s": 0.001,
+      "prompt_eval_count": 465,
+      "prompt_eval_tps": 148.11,
+      "eval_count": 200,
+      "gen_tps": 3.21,
+      "peak_temp_c": 68.8,
+      "turn": 4,
+      "user": "Okay — roughly how long should the bulk fermentation run at around 22 degrees Celsius?",
+      "mem_available_mb": 4545.1
+    },
+    {
+      "text": "Dobrze, wracamy do polskiego! 😊\n\nJak wspomniałem, kluczem do sukcesu w pieczeniu na zakwasie jest zapamiętanie, że **czas jest tylko przybliżeniem, a stan ciasta mówi więcej.**\n\nPodsumowując na wieczór:\n\n1.  **Nakarmi zakwas:** To najważniejsze na ten wieczór.\n2.  **Nie stresuj się czasem:** Zaufaj swoim oczom i węchowi jutro rano.\n\nCzy masz teraz jakieś pytania dotyczące etapu **wyrabiania** czy może o tym, co zrobić z **pierwszym pieczeniem**?",
+      "wall_s": 46.049,
+      "ttft_s": 1.899,
+      "load_s": 0.001,
+      "prompt_eval_count": 687,
+      "prompt_eval_tps": 364.49,
+      "eval_count": 140,
+      "gen_tps": 3.17,
+      "peak_temp_c": 68.3,
+      "turn": 5,
+      "user": "Świetnie, wróćmy do polskiego.",
+      "mem_available_mb": 4552.7
+    },
+    {
+      "text": "Miałeś następujące mąki:\n\n1. **Mąka żytnia**\n2. **Mąka pszenna chlebowa**\n\nCzy to dobrze zapamiętałem? 😊",
+      "wall_s": 15.672,
+      "ttft_s": 1.849,
+      "load_s": 0.002,
+      "prompt_eval_count": 851,
+      "prompt_eval_tps": 463.74,
+      "eval_count": 44,
+      "gen_tps": 3.18,
+      "peak_temp_c": 68.8,
+      "turn": 6,
+      "user": "Przypomnij mi, jaką mąkę powiedziałem, że mam?",
+      "mem_available_mb": 4579.9
+    },
+    {
+      "text": "To bardzo ważne pytanie, bo temperatura ma kluczowe znaczenie dla struktury chleba!\n\n**Idealnie byłoby to zrobić w temperaturze pokojowej, ale jeśli nie da się, to... nie panikuj!**\n\nJeśli ciasto jest w lodówce (czyli jest bardzo zimne):\n\n1.  **Zawsze daj mu się ogrzać:** Wyjmij ciasto z lodówki na **co najmniej 1,5 do 2 godziny** przed planowanym pieczeniem.\n2.  **Dlaczego?** Zimne ciasto będzie miało tendencję do zbyt wolnego i nierównomiernego rozwijania się w piekarniku, co może spowodować, że spód będzie zbyt twardy, a ciasto nie „wypiecze się” równomiernie.\n\n**Podsumowując:** Ogrzanie ciasta jest lepsze niż pieczenie go prosto z lodówki",
+      "wall_s": 67.337,
+      "ttft_s": 2.684,
+      "load_s": 0.002,
+      "prompt_eval_count": 932,
+      "prompt_eval_tps": 349.05,
+      "eval_count": 200,
+      "gen_tps": 3.09,
+      "peak_temp_c": 69.4,
+      "turn": 7,
+      "user": "I ostatnie pytanie: rano piec od razu z lodówki czy najpierw doprowadzić do temperatury pokojowej?",
+      "mem_available_mb": 4587.3
+    }
+  ],
+  "model_info": {
+    "family": "gemma4",
+    "parameter_size": "8.0B",
+    "quantization_level": "Q4_K_M",
+    "context_length": 131072
+  },
+  "summary": {
+    "turns": 7,
+    "gen_tps_mean": 3.17,
+    "gen_tps_min": 2.99,
+    "gen_tps_max": 3.37,
+    "ttft_s_mean": 9.079,
+    "load_s_first": 31.897,
+    "peak_temp_c": 69.4,
+    "ram_used_by_model_mb": 9973.9
+  }
+}

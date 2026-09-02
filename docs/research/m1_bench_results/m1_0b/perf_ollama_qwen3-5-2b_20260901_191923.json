@@ -1,0 +1,72 @@
+{
+  "started_utc": "2026-09-01T18:19:23.684622+00:00",
+  "mode": "perf",
+  "backend": "ollama",
+  "model": "qwen3.5:2b",
+  "options": {
+    "num_predict": 200,
+    "num_ctx": 4096
+  },
+  "model_info": {
+    "family": "qwen35",
+    "parameter_size": "2.3B",
+    "quantization_level": "Q8_0",
+    "context_length": 262144
+  },
+  "runs": [
+    {
+      "text": "Sleep is essential for memory because it acts as a cleanup crew for the brain. During sleep, particularly deep stages, your brain clears out toxins like beta-amyloid from the mind's waste product; without this, these clumps can accumulate and damage neural connections involved in learning and retrieval. Additionally, during REM sleep, the brain reorganizes itself by consolidating short-term information into long-term memories and fine-tuning neural pathways. Skipping sleep means leaving this maintenance work undone, leading to forgetfulness, reduced problem-solving abilities, and a higher risk of cognitive decline as you age.\n\nHere are two practical tips:\n1. **Prioritize 7-9 hours of quality rest:** Avoid screens one hour before bed; try reading or listening to calm music instead.\n2. **Create a consistent sleep routine:** Wake up at the same time every day, even on weekends, and stick to a dark, cool room environment to maximize sleep efficiency.",
+      "wall_s": 56.548,
+      "ttft_s": 14.117,
+      "load_s": 12.734,
+      "prompt_eval_count": 38,
+      "prompt_eval_tps": 27.53,
+      "eval_count": 193,
+      "gen_tps": 4.55,
+      "peak_temp_c": 67.2,
+      "run": 1,
+      "mem_available_mb": 6396.0
+    },
+    {
+      "text": "Sleep is the foundation of long-term memory formation and cleanup. During deep sleep, the brain performs a crucial process called \"memory consolidation,\" where it moves information from short-term to permanent storage. Without adequate rest, this transfer is incomplete, leading to gaps in our knowledge and forgetting skills overnight. Additionally, while sleeping, the brain clears out metabolic waste products, like beta-amyloid, which can accumulate with age and damage neural connections; insufficient sleep impairs these repair mechanisms, increasing the risk of cognitive decline over time.\n\nTo support this process effectively:\n\n1.  **Prioritize consistent sleep schedules**: Go to bed and wake up at the same time every day, even on weekends, to stabilize your internal biological clock and boost production of sleep hormones.\n2.  **Create a cool, dark, quiet environment**: Try lowering your bedroom temperature to around 65°F (18°C) and ensuring darkness helps trigger rapid eye movement sleep, where the majority of memory consolidation occurs.",
+      "wall_s": 44.449,
+      "ttft_s": 0.273,
+      "load_s": 0.001,
+      "prompt_eval_count": 38,
+      "prompt_eval_tps": 154.69,
+      "eval_count": 200,
+      "gen_tps": 4.53,
+      "peak_temp_c": 68.3,
+      "run": 2,
+      "mem_available_mb": 6361.5
+    },
+    {
+      "text": "Sleep is essential for memory because it acts as the cleanup crew for your brain. During deep and REM sleep, a specialized protein called beta-amyloid begins to form in your brain's white matter. Without enough sleep, this protein accumulates like trash, eventually causing neuronal damage that disrupts information processing. Conversely, when you rest, this toxic protein gets cleared from cells, allowing them to function efficiently again and solidify memories formed during the day. Essentially, sleep transforms fleeting ideas into lasting knowledge by optimizing brain structure.\n\nHere are two practical tips to improve sleep quality:\n1. **Stick to a consistent schedule**: Try to go to bed and wake up at the same time every day, including weekends, to regulate your body's internal clock.\n2. **Avoid screens before bed**: Put away smartphones, tablets, and TVs for at least an hour before sleep, as these emit blue light that tricks your brain into thinking it is daytime.",
+      "wall_s": 42.619,
+      "ttft_s": 0.275,
+      "load_s": 0.001,
+      "prompt_eval_count": 38,
+      "prompt_eval_tps": 155.09,
+      "eval_count": 192,
+      "gen_tps": 4.53,
+      "peak_temp_c": 68.3,
+      "run": 3,
+      "mem_available_mb": 6309.9
+    }
+  ],
+  "summary": {
+    "gen_tps_mean": 4.54,
+    "gen_tps_all": [
+      4.55,
+      4.53,
+      4.53
+    ],
+    "ttft_s_all": [
+      14.117,
+      0.273,
+      0.275
+    ],
+    "load_s_first": 12.734,
+    "peak_temp_c": 68.3
+  }
+}

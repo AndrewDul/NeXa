@@ -1,0 +1,72 @@
+{
+  "started_utc": "2026-09-02T16:53:41.081331+00:00",
+  "mode": "perf",
+  "backend": "ollama",
+  "model": "SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0",
+  "options": {
+    "num_predict": 200,
+    "num_ctx": 4096
+  },
+  "model_info": {
+    "family": "llama",
+    "parameter_size": "4.8B",
+    "quantization_level": "Q8_0",
+    "context_length": 8192
+  },
+  "runs": [
+    {
+      "text": "Sleep is crucial for memory because it allows the brain to process and consolidate information acquired during the day. When you sleep, your brain activates the neural pathways that store memories, strengthening them and making them more resistant to forgetting. This process, known as consolidation, is essential for the formation of long-term memories. During sleep, the brain also eliminates waste products and repairs damage, which further supports memory retention.\r\n\r\nTwo practical tips for improving sleep and memory are:\r\n1. **Establish a consistent sleep schedule**: Going",
+      "wall_s": 129.582,
+      "ttft_s": 31.276,
+      "load_s": 21.141,
+      "prompt_eval_count": 102,
+      "prompt_eval_tps": 10.07,
+      "eval_count": 200,
+      "gen_tps": 2.03,
+      "peak_temp_c": 67.8,
+      "run": 1,
+      "mem_available_mb": 9542.0
+    },
+    {
+      "text": "Sleep is crucial for memory consolidation, which is the process of strengthening and organizing memories. During sleep, the brain actively processes and integrates new information, reinforcing connections between neurons and creating long-term memories. This is particularly important for consolidating newly acquired information, such as learning a new skill or memorizing facts.\r\n\r\nTwo practical tips for improving sleep quality and memory consolidation include:\r\n1. **Establishing a consistent sleep schedule**: Going to bed and waking up at the same time every day helps regulate your body's internal clock",
+      "wall_s": 98.257,
+      "ttft_s": 0.563,
+      "load_s": 0.001,
+      "prompt_eval_count": 102,
+      "prompt_eval_tps": 187.57,
+      "eval_count": 200,
+      "gen_tps": 2.05,
+      "peak_temp_c": 67.8,
+      "run": 2,
+      "mem_available_mb": 9520.7
+    },
+    {
+      "text": "Sleep is crucial for memory because it allows the brain to process and consolidate information acquired during the day. When you sleep, your brain activates the neural pathways that store memories, strengthening them and making them more resistant to forgetting. This process, known as consolidation, is essential for learning and retaining new information. During sleep, the brain also eliminates waste products and repairs damaged neurons, which further supports memory formation.\r\n\r\nTwo practical tips for improving sleep and memory:\r\n1. **Establish a consistent sleep schedule**: Go",
+      "wall_s": 98.22,
+      "ttft_s": 0.52,
+      "load_s": 0.003,
+      "prompt_eval_count": 102,
+      "prompt_eval_tps": 204.97,
+      "eval_count": 200,
+      "gen_tps": 2.05,
+      "peak_temp_c": 67.2,
+      "run": 3,
+      "mem_available_mb": 9506.4
+    }
+  ],
+  "summary": {
+    "gen_tps_mean": 2.04,
+    "gen_tps_all": [
+      2.03,
+      2.05,
+      2.05
+    ],
+    "ttft_s_all": [
+      31.276,
+      0.563,
+      0.52
+    ],
+    "load_s_first": 21.141,
+    "peak_temp_c": 67.8
+  }
+}

@@ -1,0 +1,154 @@
+=== PHASE1 START 2026-09-01T18:46:50+01:00 ===
+=== 2026-09-01T18:46:50+01:00 :: MODEL qwen3:4b-instruct (auto-flags: --no-think) ===
+[probe before-qwen3:4b-instruct] 2026-09-01T18:46:50+01:00 temp=55650 throttled=throttled=0x0 MemAvailable:   11442928 kB
+  perf run 1/3
+  perf run 2/3
+  perf run 3/3
+wrote docs/research/m1_bench_results/m1_0b/perf_ollama_qwen3-4b-instruct_20260901_184937.json and docs/research/m1_bench_results/m1_0b/perf_ollama_qwen3-4b-instruct_20260901_184937.md
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-4b-instruct_20260901_185817.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-4b-instruct_20260901_185817.md
+  turn 1/10: 'Hey NeXa.'
+  turn 2/10: "I've been putting off calling the dentist for like two weeks"
+  turn 3/10: "It's not the pain, honestly. I just hate being on hold."
+  turn 4/10: 'What would you do about it if you were me?'
+  turn 5/10: 'Right, but I meant the being-on-hold part specifically, not '
+  turn 6/10: 'Anyway. Different topic.'
+  turn 7/10: "I'm reading a novel set in Lisbon and I keep wanting to actu"
+  turn 8/10: 'Say that back to me in one sentence.'
+  turn 9/10: 'Honestly I think three days is too rushed for any city. Disa'
+  turn 10/10: 'What was the very first thing I brought up in this conversat'
+wrote docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_qwen3-4b-instruct_20260901_190241.json and docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_qwen3-4b-instruct_20260901_190241.md
+[probe after-qwen3:4b-instruct] 2026-09-01T19:02:41+01:00 temp=66100 throttled=throttled=0x0 MemAvailable:   10424720 kB
+=== 2026-09-01T19:02:46+01:00 :: MODEL qwen3.5:4b (auto-flags: --no-think) ===
+[probe before-qwen3.5:4b] 2026-09-01T19:02:46+01:00 temp=60050 throttled=throttled=0x0 MemAvailable:   10365104 kB
+  perf run 1/3
+  perf run 2/3
+  perf run 3/3
+wrote docs/research/m1_bench_results/m1_0b/perf_ollama_qwen3-5-4b_20260901_190603.json and docs/research/m1_bench_results/m1_0b/perf_ollama_qwen3-5-4b_20260901_190603.md
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-5-4b_20260901_191315.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-5-4b_20260901_191315.md
+  turn 1/10: 'Hey NeXa.'
+  turn 2/10: "I've been putting off calling the dentist for like two weeks"
+  turn 3/10: "It's not the pain, honestly. I just hate being on hold."
+  turn 4/10: 'What would you do about it if you were me?'
+  turn 5/10: 'Right, but I meant the being-on-hold part specifically, not '
+  turn 6/10: 'Anyway. Different topic.'
+  turn 7/10: "I'm reading a novel set in Lisbon and I keep wanting to actu"
+  turn 8/10: 'Say that back to me in one sentence.'
+  turn 9/10: 'Honestly I think three days is too rushed for any city. Disa'
+  turn 10/10: 'What was the very first thing I brought up in this conversat'
+wrote docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_qwen3-5-4b_20260901_191652.json and docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_qwen3-5-4b_20260901_191652.md
+[probe after-qwen3.5:4b] 2026-09-01T19:16:52+01:00 temp=68300 throttled=throttled=0x0 MemAvailable:   10016752 kB
+=== 2026-09-01T19:16:57+01:00 :: MODEL qwen3.5:2b (auto-flags: --no-think) ===
+[probe before-qwen3.5:2b] 2026-09-01T19:16:57+01:00 temp=62250 throttled=throttled=0x0 MemAvailable:   10000560 kB
+  perf run 1/3
+  perf run 2/3
+  perf run 3/3
+wrote docs/research/m1_bench_results/m1_0b/perf_ollama_qwen3-5-2b_20260901_191923.json and docs/research/m1_bench_results/m1_0b/perf_ollama_qwen3-5-2b_20260901_191923.md
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-5-2b_20260901_192439.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-5-2b_20260901_192439.md
+  turn 1/10: 'Hey NeXa.'
+  turn 2/10: "I've been putting off calling the dentist for like two weeks"
+  turn 3/10: "It's not the pain, honestly. I just hate being on hold."
+  turn 4/10: 'What would you do about it if you were me?'
+  turn 5/10: 'Right, but I meant the being-on-hold part specifically, not '
+  turn 6/10: 'Anyway. Different topic.'
+  turn 7/10: "I'm reading a novel set in Lisbon and I keep wanting to actu"
+  turn 8/10: 'Say that back to me in one sentence.'
+  turn 9/10: 'Honestly I think three days is too rushed for any city. Disa'
+  turn 10/10: 'What was the very first thing I brought up in this conversat'
+wrote docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_qwen3-5-2b_20260901_192629.json and docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_qwen3-5-2b_20260901_192629.md
+[probe after-qwen3.5:2b] 2026-09-01T19:26:29+01:00 temp=66100 throttled=throttled=0x0 MemAvailable:   10982368 kB
+=== 2026-09-01T19:26:34+01:00 :: MODEL phi4-mini:3.8b (auto-flags: ) ===
+[probe before-phi4-mini:3.8b] 2026-09-01T19:26:34+01:00 temp=61150 throttled=throttled=0x0 MemAvailable:   10968720 kB
+  perf run 1/3
+  perf run 2/3
+  perf run 3/3
+wrote docs/research/m1_bench_results/m1_0b/perf_ollama_phi4-mini-3-8b_20260901_192852.json and docs/research/m1_bench_results/m1_0b/perf_ollama_phi4-mini-3-8b_20260901_192852.md
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_phi4-mini-3-8b_20260901_193541.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_phi4-mini-3-8b_20260901_193541.md
+  turn 1/10: 'Hey NeXa.'
+  turn 2/10: "I've been putting off calling the dentist for like two weeks"
+  turn 3/10: "It's not the pain, honestly. I just hate being on hold."
+  turn 4/10: 'What would you do about it if you were me?'
+  turn 5/10: 'Right, but I meant the being-on-hold part specifically, not '
+  turn 6/10: 'Anyway. Different topic.'
+  turn 7/10: "I'm reading a novel set in Lisbon and I keep wanting to actu"
+  turn 8/10: 'Say that back to me in one sentence.'
+  turn 9/10: 'Honestly I think three days is too rushed for any city. Disa'
+  turn 10/10: 'What was the very first thing I brought up in this conversat'
+wrote docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_phi4-mini-3-8b_20260901_193825.json and docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_phi4-mini-3-8b_20260901_193825.md
+[probe after-phi4-mini:3.8b] 2026-09-01T19:38:25+01:00 temp=67750 throttled=throttled=0x0 MemAvailable:   10494976 kB
+=== 2026-09-01T19:38:31+01:00 :: MODEL gemma4:e2b (auto-flags: --no-think) ===
+[probe before-gemma4:e2b] 2026-09-01T19:38:31+01:00 temp=60600 throttled=throttled=0x0 MemAvailable:   10485904 kB
+  perf run 1/3
+  perf run 2/3
+  perf run 3/3
+wrote docs/research/m1_bench_results/m1_0b/perf_ollama_gemma4-e2b_20260901_194030.json and docs/research/m1_bench_results/m1_0b/perf_ollama_gemma4-e2b_20260901_194030.md
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e2b_20260901_194210.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e2b_20260901_194210.md
+  turn 1/10: 'Hey NeXa.'
+  turn 2/10: "I've been putting off calling the dentist for like two weeks"
+  turn 3/10: "It's not the pain, honestly. I just hate being on hold."
+  turn 4/10: 'What would you do about it if you were me?'
+  turn 5/10: 'Right, but I meant the being-on-hold part specifically, not '
+  turn 6/10: 'Anyway. Different topic.'
+  turn 7/10: "I'm reading a novel set in Lisbon and I keep wanting to actu"
+  turn 8/10: 'Say that back to me in one sentence.'
+  turn 9/10: 'Honestly I think three days is too rushed for any city. Disa'
+  turn 10/10: 'What was the very first thing I brought up in this conversat'
+wrote docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_gemma4-e2b_20260901_194310.json and docs/research/m1_bench_results/m1_0b/CONV-EN-S1_ollama_gemma4-e2b_20260901_194310.md
+[probe after-gemma4:e2b] 2026-09-01T19:43:10+01:00 temp=66650 throttled=throttled=0x0 MemAvailable:    3074832 kB
+=== 2026-09-01T19:43:15+01:00 :: MODEL gemma4:e4b (auto-flags: --no-think) ===
+[probe before-gemma4:e4b] 2026-09-01T19:43:15+01:00 temp=61700 throttled=throttled=0x0 MemAvailable:    3048352 kB
+  perf run 1/3

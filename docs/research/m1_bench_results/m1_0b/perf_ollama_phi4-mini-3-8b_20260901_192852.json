@@ -1,0 +1,72 @@
+{
+  "started_utc": "2026-09-01T18:28:52.368856+00:00",
+  "mode": "perf",
+  "backend": "ollama",
+  "model": "phi4-mini:3.8b",
+  "options": {
+    "num_predict": 200,
+    "num_ctx": 4096
+  },
+  "model_info": {
+    "family": "phi3",
+    "parameter_size": "3.8B",
+    "quantization_level": "Q4_K_M",
+    "context_length": 131072
+  },
+  "runs": [
+    {
+      "text": "Sleep plays a crucial role in memory consolidation, which is the process of stabilizing and storing memories. During sleep, particularly during the deep stages of non-REM (Rapid Eye Movement) sleep, the brain replays and organizes information acquired during the day, helping to transfer it from short-term to long-term storage. This process strengthens neural connections and enhances memory retention. Lack of sleep disrupts this delicate balance, leading to difficulties in learning and memory retention.\n\nPractical Tips:\n1. Establish a regular sleep routine by going to bed and waking up at the same time every day, even on weekends, to improve the quality and duration of sleep.\n2. Create a sleep-conducive environment by keeping your bedroom cool, dark, and quiet, and limit exposure to screens before bedtime to enhance sleep quality and promote better memory consolidation.",
+      "wall_s": 54.706,
+      "ttft_s": 13.961,
+      "load_s": 12.679,
+      "prompt_eval_count": 26,
+      "prompt_eval_tps": 20.34,
+      "eval_count": 167,
+      "gen_tps": 4.1,
+      "peak_temp_c": 68.3,
+      "run": 1,
+      "mem_available_mb": 7235.5
+    },
+    {
+      "text": "Sleep plays a crucial role in memory consolidation, a process that stabilizes and stores information acquired during waking hours. During sleep, especially deep REM (Rapid Eye Movement) sleep, the brain processes and organizes memories, making them easier to retrieve later. This period is vital for learning and overall cognitive function. Lack of sleep impairs these processes, leading to difficulties in remembering newly learned information.\n\nTwo practical tips to improve memory through sleep:\n1. Maintain a consistent sleep schedule by going to bed and waking up at the same time every day, even on weekends. This helps regulate your body's internal clock, enhancing the quality and quantity of sleep.\n2. Create a restful environment by ensuring your bedroom is cool, dark, and quiet. Avoid screens and stimulating activities before bedtime to promote better sleep quality.",
+      "wall_s": 38.915,
+      "ttft_s": 0.274,
+      "load_s": 0.005,
+      "prompt_eval_count": 26,
+      "prompt_eval_tps": 105.7,
+      "eval_count": 159,
+      "gen_tps": 4.11,
+      "peak_temp_c": 69.4,
+      "run": 2,
+      "mem_available_mb": 7227.0
+    },
+    {
+      "text": "Sleep is crucial for memory because it helps consolidate and process the information we gather during the day. During sleep, particularly during deep sleep stages, the brain moves through a series of cycles, gradually transferring new memories to long-term storage. This process strengthens neural connections and aids in memory retention. Without adequate sleep, the brain struggles to properly encode and recall information, leading to impaired memory and learning.\n\nTwo practical tips to improve sleep for better memory are:\n\n1. Establish a consistent sleep schedule: Go to bed and wake up at the same time every day, even on weekends, to regulate your body's internal clock and ensure you get sufficient rest.\n2. Create a restful environment: Make your bedroom conducive to sleep by keeping it cool, dark, and quiet. Invest in a comfortable mattress and pillows, and avoid screens and caffeine before bedtime to promote better sleep quality.",
+      "wall_s": 41.839,
+      "ttft_s": 0.263,
+      "load_s": 0.002,
+      "prompt_eval_count": 26,
+      "prompt_eval_tps": 105.08,
+      "eval_count": 172,
+      "gen_tps": 4.14,
+      "peak_temp_c": 68.8,
+      "run": 3,
+      "mem_available_mb": 7219.2
+    }
+  ],
+  "summary": {
+    "gen_tps_mean": 4.12,
+    "gen_tps_all": [
+      4.1,
+      4.11,
+      4.14
+    ],
+    "ttft_s_all": [
+      13.961,
+      0.274,
+      0.263
+    ],
+    "load_s_first": 12.679,
+    "peak_temp_c": 69.4
+  }
+}

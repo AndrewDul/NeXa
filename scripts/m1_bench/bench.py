@@ -70,11 +70,14 @@ def loadavg() -> str:
 
 # ----------------------------- ollama backend -----------------------------
 
-def ollama_chat_stream(model: str, messages: list[dict], options: dict) -> dict:
+def ollama_chat_stream(
+    model: str, messages: list[dict], options: dict, think: "bool | None" = None
+) -> dict:
     """One streamed /api/chat call. Returns dict with timing + text + peak_temp."""
-    body = json.dumps(
-        {"model": model, "messages": messages, "stream": True, "options": options}
-    ).encode()
+    body_dict = {"model": model, "messages": messages, "stream": True, "options": options}
+    if think is not None:
+        body_dict["think"] = think
+    body = json.dumps(body_dict).encode()
     req = urllib.request.Request(
         f"{OLLAMA_HOST}/api/chat", data=body, headers={"Content-Type": "application/json"}
     )
@@ -199,9 +202,17 @@ def llamacpp_chat(llama_bin: str, gguf: str, messages: list[dict], options: dict
 def run_cases(args) -> dict:
     cases = json.loads(Path(args.cases).read_text())
     system_prompt = cases.get("system", "")
-    options = dict(cases.get("options", {}))
+    if args.system_file:
+        system_prompt = Path(args.system_file).read_text().strip()
+    options = {} if args.bare_options else dict(cases.get("options", {}))
     if args.num_ctx:
         options["num_ctx"] = args.num_ctx
+    for key, val in (
+        ("temperature", args.temperature), ("top_p", args.top_p), ("top_k", args.top_k),
+        ("repeat_penalty", args.repeat_penalty), ("num_predict", args.num_predict),
+    ):
+        if val is not None:
+            options[key] = val
 
     result = {
         "started_utc": datetime.now(timezone.utc).isoformat(),
@@ -234,7 +245,7 @@ def run_cases(args) -> dict:
         messages.append({"role": "user", "content": user_msg})
         print(f"  turn {i}/{len(cases['turns'])}: {user_msg[:60]!r}", file=sys.stderr)
         if args.backend == "ollama":
-            r = ollama_chat_stream(args.model, messages, options)
+            r = ollama_chat_stream(args.model, messages, options, think=args.think)
         else:
             r = llamacpp_chat(args.llama_bin, args.gguf, messages, options)
         messages.append({"role": "assistant", "content": r["text"]})
@@ -274,10 +285,23 @@ def run_perf(args) -> dict:
         "Explain in about 150 words, in natural English, why sleep matters for "
         "memory. Then give two practical tips."
     )
-    options = {
-        "temperature": 0.7, "top_p": 0.8, "top_k": 20,
-        "num_predict": args.perf_tokens, "num_ctx": args.num_ctx or 4096,
-    }
+    if args.bare_options:
+        options = {"num_predict": args.perf_tokens, "num_ctx": args.num_ctx or 4096}
+        for key, val in (
+            ("temperature", args.temperature), ("top_p", args.top_p), ("top_k", args.top_k),
+            ("repeat_penalty", args.repeat_penalty),
+        ):
+            if val is not None:
+                options[key] = val
+    else:
+        options = {
+            "temperature": args.temperature if args.temperature is not None else 0.7,
+            "top_p": args.top_p if args.top_p is not None else 0.8,
+            "top_k": args.top_k if args.top_k is not None else 20,
+            "num_predict": args.perf_tokens, "num_ctx": args.num_ctx or 4096,
+        }
+        if args.repeat_penalty is not None:
+            options["repeat_penalty"] = args.repeat_penalty
     runs = []
     if args.backend == "ollama" and not args.keep_loaded:
         ollama_unload(args.model)
@@ -285,7 +309,7 @@ def run_perf(args) -> dict:
         print(f"  perf run {n}/{args.perf_runs}", file=sys.stderr)
         msgs = [{"role": "user", "content": prompt}]
         if args.backend == "ollama":
-            r = ollama_chat_stream(args.model, msgs, options)
+            r = ollama_chat_stream(args.model, msgs, options, think=args.think)
         else:
             r = llamacpp_chat(args.llama_bin, args.gguf, msgs, options)
         r["run"] = n
@@ -365,6 +389,20 @@ def main() -> int:
     ap.add_argument("--num-ctx", type=int, default=0)
     ap.add_argument("--keep-loaded", action="store_true")
     ap.add_argument("--out", default="docs/research/m1_bench_results")
+    ap.add_argument("--temperature", type=float, default=None, help="override cases-file sampling")
+    ap.add_argument("--top-p", type=float, default=None)
+    ap.add_argument("--top-k", type=int, default=None)
+    ap.add_argument("--repeat-penalty", type=float, default=None)
+    ap.add_argument("--num-predict", type=int, default=None)
+    ap.add_argument("--system-file", default=None, help="override cases-file system prompt")
+    ap.add_argument("--bare-options", action="store_true",
+                     help="ignore cases-file 'options'; use only --num-ctx + explicit overrides "
+                          "(model's own Modelfile/runtime defaults apply otherwise)")
+    think_grp = ap.add_mutually_exclusive_group()
+    think_grp.add_argument("--think", dest="think", action="store_true", default=None,
+                            help="force Ollama 'think: true' (reasoning models)")
+    think_grp.add_argument("--no-think", dest="think", action="store_false",
+                            help="force Ollama 'think: false' (non-thinking mode)")
     args = ap.parse_args()
 
     if args.perf:

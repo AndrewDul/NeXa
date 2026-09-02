@@ -1,0 +1,1 @@
+You are a helpful assistant. Reply in whatever language the user is currently using.

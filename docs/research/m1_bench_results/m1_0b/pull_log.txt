@@ -1,0 +1,37 @@
+=== pulls start 2026-09-01T18:40:55+01:00 ===
+--- pulling qwen3.5:4b 2026-09-01T18:40:55+01:00 ---
+verifying sha256 digest ⠦ [K[?25h[?2026l[?2026h[?25l[A[A[1Gpulling manifest [K
+pulling 81fb60c7daa8: 100% ▕██████████████████▏ 3.4 GB                         [K
+verifying sha256 digest [K
+writing manifest [K
+success [K[?25h[?2026l
+--- done qwen3.5:4b 2026-09-01T18:44:35+01:00 ---
+--- pulling qwen3.5:2b 2026-09-01T18:44:35+01:00 ---
+pulling b709d81508a0: 100% ▕█████████████████ ▏ 2.7 GB/2.7 GB   26 MB/s      0s[K
+pulling 9371364b27a5: 100% ▕██████████████████▏   65 B                         [K
+verifying sha256 digest [K
+writing manifest [K
+success [K[?25h[?2026l
+--- done qwen3.5:2b 2026-09-01T18:46:34+01:00 ---
+--- pulling phi4-mini:3.8b 2026-09-01T18:46:34+01:00 ---
+verifying sha256 digest ⠸ [K[?25h[?2026l[?2026h[?25l[A[A[1Gpulling manifest [K
+pulling 3c168af1dea0: 100% ▕█████████████████ ▏ 2.5 GB/2.5 GB   20 MB/s      0s[K
+verifying sha256 digest [K
+writing manifest [K
+success [K[?25h[?2026l
+--- done phi4-mini:3.8b 2026-09-01T18:48:38+01:00 ---
+--- pulling gemma4:e2b 2026-09-01T18:48:38+01:00 ---
+pulling 4e30e2665218: 100% ▕█████████████████ ▏ 7.2 GB/7.2 GB   22 MB/s      0s[K
+pulling 7339fa418c9a: 100% ▕██████████████████▏  11 KB                         [K
+verifying sha256 digest [K
+writing manifest [K
+success [K[?25h[?2026l
+--- done gemma4:e2b 2026-09-01T18:54:34+01:00 ---
+--- pulling gemma4:e4b 2026-09-01T18:54:34+01:00 ---
+pulling 7339fa418c9a: 100% ▕██████████████████▏  11 KB                         [K
+pulling 56380ca2ab89: 100% ▕██████████████████▏   42 B                         [K
+verifying sha256 digest [K
+writing manifest [K
+success [K[?25h[?2026l
+--- done gemma4:e4b 2026-09-01T19:02:23+01:00 ---
+=== ALL PULLS DONE 2026-09-01T19:02:23+01:00 ===

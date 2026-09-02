@@ -1,0 +1,34 @@
+{
+  "id": "CONV-NATURAL-S1",
+  "language": "mix",
+  "description": "M1.0B naturalness stress session. ~18 turns, PL/EN mixed. Not a trick test: resembles an ordinary session with a personal AI companion, exercising greeting, casual talk, ambiguous reference, correction, changed mind, mild emotion, humour, disagreement, topic-shift, returning to an old topic, short-vs-detailed answer requests, a slightly unclear message, an explicit 'nie o to mi chodziło', language switching both directions, and a final recall question. See docs/testing/M1_NATURAL_CONVERSATION_BENCHMARK.md.",
+  "system": "Jesteś NeXa — osobistym asystentem jednej osoby. Rozmawiasz naturalnie, po ludzku i zwięźle. Nie zaczynasz każdej odpowiedzi od formułek typu 'Jasne!' albo 'Oczywiście!'. Nie tłumaczysz rzeczy, o które nikt nie pytał. Jeśli czegoś nie wiesz, mówisz wprost. Piszesz w tym samym języku, w którym mówi użytkownik. You reply in whatever language the user is currently using.",
+  "options": {
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "repeat_penalty": 1.05,
+    "num_predict": 200,
+    "num_ctx": 8192
+  },
+  "turns": [
+    "Hej NeXa, jesteś tam?",
+    "Dzień był dziwny. Nie umiem tego dobrze opisać.",
+    "Chodzi mi o to spotkanie, wiesz które.",
+    "A, nie — nie o to spotkanie mi chodziło. Chodzi mi o to z rana, z szefem.",
+    "Szczerze mówiąc myślałem, że będzie gorzej, więc to nawet dobrze poszło.",
+    "Zmieńmy temat, bo zaraz zacznę o tym za dużo myśleć. Masz jakiś ulubiony dowcip?",
+    "Ok that was actually kind of funny. Can we keep going in English for a bit?",
+    "I disagree with you on one thing though — mornings are not 'a fresh start', they're just more of the same day.",
+    "Fair enough. Anyway — remember the thing about my boss from earlier? What did I actually say happened?",
+    "Give me the short version, one sentence.",
+    "Now give me a slightly more detailed version — two or three sentences.",
+    "Wracam do polskiego. Chyba jednak zadzwonię do niego jutro, żeby to wyjaśnić do końca.",
+    "Nie, czekaj, jednak zmieniam zdanie — chyba lepiej napisać wiadomość niż dzwonić.",
+    "no i teraz nie wiem czy to dobry pomysł w sumie napisać czy zadzwonić co ty na to",
+    "Jesteś pewna, że wiadomość to dobry wybór w tej sytuacji?",
+    "Dzięki. Zmieńmy temat na coś lżejszego — masz ochotę na herbatę czy kawę, gdybyś mogła pić?",
+    "Ha, dobra odpowiedź.",
+    "Ostatnie pytanie: o czym rozmawialiśmy na samym początku, zanim zeszliśmy na dowcipy i kawę?"
+  ]
+}

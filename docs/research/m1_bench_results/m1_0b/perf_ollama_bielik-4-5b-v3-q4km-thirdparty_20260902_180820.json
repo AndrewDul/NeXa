@@ -1,0 +1,72 @@
+{
+  "started_utc": "2026-09-02T17:08:20.816880+00:00",
+  "mode": "perf",
+  "backend": "ollama",
+  "model": "bielik-4.5b-v3-q4km-thirdparty",
+  "options": {
+    "num_predict": 200,
+    "num_ctx": 4096
+  },
+  "model_info": {
+    "family": "llama",
+    "parameter_size": "4.8B",
+    "quantization_level": "Q4_K_M",
+    "context_length": 8192
+  },
+  "runs": [
+    {
+      "text": "Sleep is crucial for memory because it allows the brain to process and consolidate new information acquired during the day. While we sleep, the brain activates neural pathways and strengthens connections between neurons, which helps to create long-lasting memories. This process, known as consolidation, is essential for retaining information and retrieving it later.\n\nTwo practical tips for improving sleep and memory:\n\n1. **Establish a Regular Sleep Routine**: Going to bed and waking up at the same time every day helps regulate your body's internal clock, promoting better sleep quality",
+      "wall_s": 70.351,
+      "ttft_s": 17.183,
+      "load_s": 12.091,
+      "prompt_eval_count": 98,
+      "prompt_eval_tps": 19.27,
+      "eval_count": 200,
+      "gen_tps": 3.76,
+      "peak_temp_c": 68.3,
+      "run": 1,
+      "mem_available_mb": 11634.4
+    },
+    {
+      "text": "Sleep is crucial for memory because it allows the brain to process and consolidate information acquired during the day. When we sleep, the brain activates the retrieval of memories, strengthening the connections between neurons and enhancing the storage of information. This process is essential for consolidating new memories and retaining them over time.\n\nTwo practical tips for improving sleep for better memory:\n\n1. **Establish a Regular Sleep Routine**: Going to bed and waking up at the same time every day helps regulate your body's internal clock, promoting better sleep quality and depth.\n",
+      "wall_s": 53.472,
+      "ttft_s": 0.284,
+      "load_s": 0.001,
+      "prompt_eval_count": 98,
+      "prompt_eval_tps": 359.86,
+      "eval_count": 200,
+      "gen_tps": 3.76,
+      "peak_temp_c": 68.3,
+      "run": 2,
+      "mem_available_mb": 11615.6
+    },
+    {
+      "text": "Sleep is crucial for memory because it allows the brain to process and consolidate new information, strengthen memory connections, and eliminate any errors or redundant information. During sleep, the brain activates the recall of memories, which helps in the formation of long-term memories.\n\nTwo practical tips for improving sleep for better memory:\n\n1. **Establish a Regular Sleep Schedule**: Going to bed and waking up at the same time every day helps regulate your body's internal clock and improves the quality of your sleep.\n2. **Create a Sleep-Friendly Environment**",
+      "wall_s": 53.251,
+      "ttft_s": 0.283,
+      "load_s": 0.002,
+      "prompt_eval_count": 98,
+      "prompt_eval_tps": 367.04,
+      "eval_count": 200,
+      "gen_tps": 3.78,
+      "peak_temp_c": 68.3,
+      "run": 3,
+      "mem_available_mb": 11603.0
+    }
+  ],
+  "summary": {
+    "gen_tps_mean": 3.77,
+    "gen_tps_all": [
+      3.76,
+      3.76,
+      3.78
+    ],
+    "ttft_s_all": [
+      17.183,
+      0.284,
+      0.283
+    ],
+    "load_s_first": 12.091,
+    "peak_temp_c": 68.3
+  }
+}

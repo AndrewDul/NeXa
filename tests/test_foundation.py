@@ -45,10 +45,13 @@ class TestFoundationFiles(unittest.TestCase):
         "docs/legacy/LEGACY_NEXA_INDEX.md",
         "docs/reports/R0001_project_foundation_20260831.md",
         "docs/reports/R0002_m1_natural_conversation_research_20260831.md",
+        "docs/reports/R0003_m1_0b_current_small_model_sweep_20260901.md",
         "docs/research/RESEARCH_POLICY.md",
         "docs/research/M1_NATURAL_CONVERSATION_RESEARCH.md",
+        "docs/research/M1_0B_CURRENT_SMALL_MODEL_SWEEP.md",
         "docs/testing/TEST_STRATEGY.md",
         "docs/testing/M1_NATURAL_CONVERSATION_BENCHMARK.md",
+        "docs/testing/M1_OPERATOR_BLIND_CONVERSATION_TEST.md",
         "docs/troubleshooting/README.md",
         "docs/decisions/ADR-0002_text_conversation_foundation.md",
     ]

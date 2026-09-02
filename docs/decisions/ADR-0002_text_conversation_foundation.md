@@ -176,3 +176,58 @@ Qwen or any vendor, and the M1.1 re-test could still flip it.
 - Revisit D3/D4 whenever benchmark evidence favours another runtime/model, or if
   Pi latency proves unacceptable in real M1.1 use — via a new ADR with evidence,
   not silently.
+
+---
+
+## Amendment — M1.0B Current Small-Model Sweep (2026-09-02)
+
+- **Status of this amendment:** informational. **D1–D4 are unchanged**; D4's
+  "baseline — not frozen" status line stands. This records fresh evidence and
+  resolves two open caveats. It does **not** rewrite M1.0 history.
+- **Evidence:** `docs/research/M1_0B_CURRENT_SMALL_MODEL_SWEEP.md`,
+  `docs/reports/R0003_m1_0b_current_small_model_sweep_20260901.md`. Raw data:
+  `docs/research/m1_bench_results/m1_0b/`. All quality scores are
+  `AGENT-ASSISTED` (not operator-confirmed).
+
+### What M1.0B changes about D4
+
+D3 (Ollama first) and D1/D2 (the minimal turn path + provider boundary) are
+**unaffected** — M1.0B is a model question only. For D4 (the first baseline
+*model*):
+
+1. **Caveat (b) — "re-test Bielik at recommended sampling + a Q4_K_M GGUF" —
+   RESOLVED.** M1.0B re-tested `SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0` at
+   its baked `temperature 0.1` and a third-party (Second State) Q4_K_M GGUF with
+   the identical template. Result: **the baseline does not flip.** Q8_0 still
+   opens English with a non-sequitur, overclaims capabilities, never warms its
+   TTFT, and gives shallow/repetitive Polish; the 3rd-party Q4_K_M is a
+   reliability failure (empty completions + a stuck template loop). This
+   *confirms* D4's original head-to-head rather than overturning it.
+2. **Caveat (a) — "improve the Polish system persona" — PARTIALLY ADDRESSED.** A
+   better Polish persona lifted `qwen3:4b-instruct`'s Polish from `2/5` (M1.0)
+   to `3/5` (M1.0B) — better, not yet "good". M1.0B also measured that a compact
+   native-Polish persona materially improves brevity and instruction-following
+   for the Gemma 4 models (persona A/B, sweep doc §15).
+3. **New evidence D4 did not have:** two model families that did not exist at
+   M1.0 — **Gemma 4** (`gemma4:e4b`, `gemma4:e2b`) and **Qwen3.5** — were
+   benchmarked on the same cases. `gemma4:e4b` (PL 4/5, EN 4/5) and `gemma4:e2b`
+   (PL 3.5/5, EN 4/5, ~2× the incumbent's tok/s, flattest long-context decay in
+   either milestone) **out-converse `qwen3:4b-instruct` in both languages**.
+   `qwen3:4b-instruct` remains reliable, Apache-2.0, and has by far the largest
+   context window (262k), but is no longer the quality leader and has the worst
+   long-context speed decay of the four head-to-head models.
+
+### Recommendation carried forward (not yet a decision)
+
+M1.0B's `PROPOSAL` is that the M1.1 baseline model should be **`gemma4:e2b`**
+(best weighted NeXa score, best Pi balance, Apache-2.0), with **`gemma4:e4b`** as
+the quality-mode alternative and `qwen3:4b-instruct` retained as the swappable
+safe fallback. `qwen3.5:2b` is an English-primary / low-RAM option only (broken
+Polish, one honesty-probe hallucination).
+
+**This is not applied here.** D4 stays as written until:
+(1) the operator blind test (`docs/testing/M1_OPERATOR_BLIND_CONVERSATION_TEST.md`)
+is run and scored, and (2) the RAM/latency trade for a Gemma 4 model
+(~7.5–10 GB resident, ~3–7 tok/s) is accepted by the owner. A change to the
+baseline model is then made in a **new ADR** (or a superseding revision of this
+one) with that combined evidence — per the "Compliance / review" rule above.

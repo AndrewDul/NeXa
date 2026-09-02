@@ -1,0 +1,72 @@
+{
+  "started_utc": "2026-09-01T18:06:03.373212+00:00",
+  "mode": "perf",
+  "backend": "ollama",
+  "model": "qwen3.5:4b",
+  "options": {
+    "num_predict": 200,
+    "num_ctx": 4096
+  },
+  "model_info": {
+    "family": "qwen35",
+    "parameter_size": "4.7B",
+    "quantization_level": "Q4_K_M",
+    "context_length": 262144
+  },
+  "runs": [
+    {
+      "text": "Sleep is arguably the most powerful tool your brain has for processing and solidifying what you learned during the day. While you focus on new information while awake, deep sleep activates specific brain networks that reorganize and consolidate these memories. This process moves data from short-term storage into long-term storage, making it stable and accessible for future recall. Without adequate rest, your brain struggles to distinguish between new facts and existing knowledge, leading to poor retention and an inability to form clear mental images. Think of sleep not just as rest, but as the active laboratory where memories are edited, strengthened, and filed away for later use.\n\nTo maximize this benefit, try to get at least seven hours of uninterrupted rest every night. Additionally, engage in moderate physical exercise during the day, which has been shown to enhance both sleep quality and memory performance.",
+      "wall_s": 71.138,
+      "ttft_s": 17.82,
+      "load_s": 15.788,
+      "prompt_eval_count": 38,
+      "prompt_eval_tps": 18.77,
+      "eval_count": 168,
+      "gen_tps": 3.15,
+      "peak_temp_c": 67.8,
+      "run": 1,
+      "mem_available_mb": 6138.4
+    },
+    {
+      "text": "Sleep is the brain's primary cleanup crew and organizer. While you are awake, your brain constantly processes information, but it struggles to store long-term memories without rest. During deep sleep, specifically slow-wave sleep, your brain replays daily experiences and consolidates short-term memories into stable long-term ones. Simultaneously, it clears out metabolic waste products that build up during alertness. Without adequate sleep, this crucial processing stalls, leading to confusion, poor focus, and an inability to retain new knowledge. Essentially, trying to study or learn while exhausted is like trying to file documents in a messy room with your eyes closed; the work gets forgotten rather than stored.\n\nHere are two practical tips to protect your memory:\n1. **Prioritize consistent timing**: Aim for 7–9 hours of sleep each night by going to bed and waking up at the same time daily, even on weekends, to regulate your brain's biological clock.\n2. **Limit screens before bed**: Avoid blue",
+      "wall_s": 72.298,
+      "ttft_s": 0.442,
+      "load_s": 0.001,
+      "prompt_eval_count": 38,
+      "prompt_eval_tps": 96.6,
+      "eval_count": 200,
+      "gen_tps": 2.78,
+      "peak_temp_c": 67.2,
+      "run": 2,
+      "mem_available_mb": 5951.8
+    },
+    {
+      "text": "Sleep acts as the brain's nightly workshop, crucial for moving information from short-term to long-term storage. During deep sleep, the brain consolidates memories by replaying neural connections formed during the day. This process not only strengthens existing facts but also prunes unused pathways, improving cognitive efficiency. Without sufficient rest, this critical cleanup fails, leading to fragmented recall and slower thinking. Essentially, while you learn new things while awake, sleep is what ensures those lessons stick. Ignoring this phase leaves your mind in a state of constant fatigue, making it impossible to focus or retain details properly.\n\nTo optimize this process, prioritize two simple habits: maintain a consistent sleep schedule by going to bed and waking up at the same time daily, and create a dark, quiet environment to encourage deep restorative cycles.",
+      "wall_s": 51.503,
+      "ttft_s": 0.464,
+      "load_s": 0.002,
+      "prompt_eval_count": 38,
+      "prompt_eval_tps": 95.91,
+      "eval_count": 161,
+      "gen_tps": 3.15,
+      "peak_temp_c": 67.2,
+      "run": 3,
+      "mem_available_mb": 5822.4
+    }
+  ],
+  "summary": {
+    "gen_tps_mean": 3.03,
+    "gen_tps_all": [
+      3.15,
+      2.78,
+      3.15
+    ],
+    "ttft_s_all": [
+      17.82,
+      0.442,
+      0.464
+    ],
+    "load_s_first": 15.788,
+    "peak_temp_c": 67.8
+  }
+}

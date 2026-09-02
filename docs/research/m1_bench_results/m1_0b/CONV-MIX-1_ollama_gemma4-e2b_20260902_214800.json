@@ -1,0 +1,139 @@
+{
+  "started_utc": "2026-09-02T20:46:44.047765+00:00",
+  "backend": "ollama",
+  "model": "gemma4:e2b",
+  "case_file": "scripts/m1_bench/cases/conversation_mix.json",
+  "case_id": "CONV-MIX-1",
+  "language": "mix",
+  "options": {
+    "num_ctx": 8192,
+    "num_predict": 200
+  },
+  "system_prompt": "Jesteś NeXa — osobistym asystentem jednej osoby. Rozmawiasz naturalnie i zwięźle. Odpowiadasz w tym samym języku, którego właśnie używa użytkownik. You reply in whatever language the user is currently using.",
+  "env": {
+    "mem_available_mb_start": 14716.8,
+    "cpu_temp_c_start": 49.05,
+    "throttled_start": "0x0",
+    "loadavg_start": "0.04",
+    "mem_available_mb_before_load": 14705.6,
+    "mem_available_mb_end": 7221.7,
+    "cpu_temp_c_end": 62.8,
+    "throttled_end": "0x0"
+  },
+  "turns": [
+    {
+      "text": "Cześć! Świetny pomysł. Jak masz już zakwas?",
+      "wall_s": 28.68,
+      "ttft_s": 26.331,
+      "load_s": 24.087,
+      "prompt_eval_count": 90,
+      "prompt_eval_tps": 40.16,
+      "eval_count": 17,
+      "gen_tps": 7.24,
+      "peak_temp_c": 57.3,
+      "turn": 1,
+      "user": "Cześć. Planuję w sobotę zrobić pierwszy raz chleb na zakwasie.",
+      "mem_available_mb": 7149.8
+    },
+    {
+      "text": "Na początek polecam od aktywacji zakwasu i przygotowania ciasta. Wystarczy dodać mąkę i wodę, a potem dać mu czas na wyrośnięcie.",
+      "wall_s": 7.743,
+      "ttft_s": 1.539,
+      "load_s": 0.004,
+      "prompt_eval_count": 144,
+      "prompt_eval_tps": 94.49,
+      "eval_count": 44,
+      "gen_tps": 7.09,
+      "peak_temp_c": 60.0,
+      "turn": 2,
+      "user": "Mam zakwas, mąkę żytnią i pszenną chlebową. Od czego zacząć wieczorem?",
+      "mem_available_mb": 7199.2
+    },
+    {
+      "text": "Yes, I understand you perfectly. Feel free to switch to English!",
+      "wall_s": 3.959,
+      "ttft_s": 1.924,
+      "load_s": 0.002,
+      "prompt_eval_count": 208,
+      "prompt_eval_tps": 108.4,
+      "eval_count": 15,
+      "gen_tps": 7.38,
+      "peak_temp_c": 61.7,
+      "turn": 3,
+      "user": "Do you understand me if I switch to English now?",
+      "mem_available_mb": 7234.8
+    },
+    {
+      "text": "For the bulk fermentation at 22°C, you should aim for about 3-5 hours, depending on how active your starter is. Watch for a noticeable increase in volume and a bubbly texture.",
+      "wall_s": 7.789,
+      "ttft_s": 1.281,
+      "load_s": 0.001,
+      "prompt_eval_count": 250,
+      "prompt_eval_tps": 196.26,
+      "eval_count": 43,
+      "gen_tps": 6.61,
+      "peak_temp_c": 61.1,
+      "turn": 4,
+      "user": "Okay — roughly how long should the bulk fermentation run at around 22 degrees Celsius?",
+      "mem_available_mb": 7248.8
+    },
+    {
+      "text": "Jasne, wracamy do polskiego. Skoro masz już zakwas, mąkę i pszenną chlebową, zacznij od wymieszania ich z wodą i pozwolenia ciastu na wyrośnięcie. Potem możesz zrobić pierwsze wyrastanie.",
+      "wall_s": 11.544,
+      "ttft_s": 1.994,
+      "load_s": 0.001,
+      "prompt_eval_count": 314,
+      "prompt_eval_tps": 157.95,
+      "eval_count": 63,
+      "gen_tps": 6.6,
+      "peak_temp_c": 62.2,
+      "turn": 5,
+      "user": "Świetnie, wróćmy do polskiego.",
+      "mem_available_mb": 7208.0
+    },
+    {
+      "text": "Powiedziałeś, że masz mąkę żytnią i pszenną chlebową.",
+      "wall_s": 6.685,
+      "ttft_s": 2.641,
+      "load_s": 0.001,
+      "prompt_eval_count": 402,
+      "prompt_eval_tps": 152.67,
+      "eval_count": 25,
+      "gen_tps": 6.18,
+      "peak_temp_c": 63.4,
+      "turn": 6,
+      "user": "Przypomnij mi, jaką mąkę powiedziałem, że mam?",
+      "mem_available_mb": 7226.4
+    },
+    {
+      "text": "Zdecydowanie najpierw doprowadź ciasto do temperatury pokojowej. Dzięki temu drożdże będą działać szybciej i proces wyrastania będzie bardziej przewidywalny.",
+      "wall_s": 8.093,
+      "ttft_s": 2.08,
+      "load_s": 0.001,
+      "prompt_eval_count": 464,
+      "prompt_eval_tps": 224.04,
+      "eval_count": 41,
+      "gen_tps": 6.82,
+      "peak_temp_c": 63.4,
+      "turn": 7,
+      "user": "I ostatnie pytanie: rano piec od razu z lodówki czy najpierw doprowadzić do temperatury pokojowej?",
+      "mem_available_mb": 7221.7
+    }
+  ],
+  "model_info": {
+    "family": "gemma4",
+    "parameter_size": "5.1B",
+    "quantization_level": "Q4_K_M",
+    "context_length": 131072
+  },
+  "summary": {
+    "turns": 7,
+    "gen_tps_mean": 6.85,
+    "gen_tps_min": 6.18,
+    "gen_tps_max": 7.38,
+    "ttft_s_mean": 5.399,
+    "load_s_first": 24.087,
+    "peak_temp_c": 63.4,
+    "ram_used_by_model_mb": 7555.8
+  }
+}

@@ -1,0 +1,139 @@
+{
+  "started_utc": "2026-09-02T20:59:03.328549+00:00",
+  "backend": "ollama",
+  "model": "qwen3.5:2b",
+  "case_file": "scripts/m1_bench/cases/conversation_mix.json",
+  "case_id": "CONV-MIX-1",
+  "language": "mix",
+  "options": {
+    "num_ctx": 8192,
+    "num_predict": 200
+  },
+  "system_prompt": "Jesteś NeXa — osobistym asystentem jednej osoby. Rozmawiasz naturalnie i zwięźle. Odpowiadasz w tym samym języku, którego właśnie używa użytkownik. You reply in whatever language the user is currently using.",
+  "env": {
+    "mem_available_mb_start": 14731.3,
+    "cpu_temp_c_start": 59.5,
+    "throttled_start": "0x0",
+    "loadavg_start": "3.40",
+    "mem_available_mb_before_load": 14706.8,
+    "mem_available_mb_end": 11211.2,
+    "cpu_temp_c_end": 65.55,
+    "throttled_end": "0x0"
+  },
+  "turns": [
+    {
+      "text": "Cześć! To świetne podejście – chleb z zakwasem to jeden z najlepszych pomogąciom przy budowaniu smaku domowego, bo jego smak jest głębszy i bardziej trwały niż zwykłe krochmalne chleby.\n\nZaraz przygotuję Ci podstawowy gotowanie:\n*   **Masa:** 500 g żyta (lub innych mąk o wysokiej zawartości białka, np. pszenicy) + 280-310 ml zimnej wody plus dodatkowa woda po zaparowaniu.\n*   **Termin:** Nie trzeba od razu fermentować. Mieszanie jest krótkie – około 10 minut pod koniec gotowania, a cały proces leży dookoła godzin lub nawet kilka dni, aż zacznie się tworzyć właściwy składnik (jakimś „zakwasem\").\n\nCzy chcesz spróbować",
+      "wall_s": 55.414,
+      "ttft_s": 15.421,
+      "load_s": 12.786,
+      "prompt_eval_count": 94,
+      "prompt_eval_tps": 35.72,
+      "eval_count": 200,
+      "gen_tps": 5.0,
+      "peak_temp_c": 67.2,
+      "turn": 1,
+      "user": "Cześć. Planuję w sobotę zrobić pierwszy raz chleb na zakwasie.",
+      "mem_available_mb": 11263.1
+    },
+    {
+      "text": "Świetne! Masz już wszystkie kluczowe składniki – to jest moment \"początek\". Najlepszym pomysłem jest **podzielenie pracy na dwie czasy**.\n\n**Zacznij w sobotę rano, a cały proces zajmie od 24h do kilku dni.**\n\nOto jak to idealnie działa, gdy masz już zakwas:\n\n1.  **Rano (ok. 7–8:00):** Rozgrzej duszpasterską wodę do ok. 90°C (zamiast zwykłej zimnej wody).\n2.  **Miechanizacja:** Dodaj mąkę żytnią i pszenną chlebową, woda i zakwas. Mieszaj energicznie przez **10–15 minut**. Powinieneś zobaczyć, jak cała mąka rozpuszcza się po wodzie.\n    *   *",
+      "wall_s": 47.069,
+      "ttft_s": 6.839,
+      "load_s": 0.001,
+      "prompt_eval_count": 331,
+      "prompt_eval_tps": 48.59,
+      "eval_count": 200,
+      "gen_tps": 4.97,
+      "peak_temp_c": 67.2,
+      "turn": 2,
+      "user": "Mam zakwas, mąkę żytnią i pszenną chlebową. Od czego zacząć wieczorem?",
+      "mem_available_mb": 11166.8
+    },
+    {
+      "text": "Yes! I understand perfectly fine in English right now. Feel free to continue your conversation or ask any questions you have—I'll respond in natural, clear English as needed.",
+      "wall_s": 13.239,
+      "ttft_s": 6.353,
+      "load_s": 0.002,
+      "prompt_eval_count": 551,
+      "prompt_eval_tps": 86.84,
+      "eval_count": 35,
+      "gen_tps": 5.08,
+      "peak_temp_c": 67.2,
+      "turn": 3,
+      "user": "Do you understand me if I switch to English now?",
+      "mem_available_mb": 11168.3
+    },
+    {
+      "text": "At about **22°C** (71°F), which is a comfortable room temperature for yeast activity without being too hot, you typically want your bulk fermentation to finish in **roughly 6 to 7 hours**.\n\nHere's how that translates to timing:\n*   **Duration:** Start checking the dough when the center of the ball feels warm and \"tender\" (around hour 5–6). Let it rest until it's completely ready.\n*   **Total Time:** This means you're adding water, flour, and starter to the bowl about an hour before dinner, so by 7:00 PM you'll have a fully mixed dough at room temperature (roughly 23°C).\n*   **Crucial Detail:** Once everything is mixed into one big ball, let it sit undisturbed for another **1 to 2 hours** at that same temperature. This long \"rest\" lets the flour hydrate and relax so you can",
+      "wall_s": 42.213,
+      "ttft_s": 2.042,
+      "load_s": 0.001,
+      "prompt_eval_count": 613,
+      "prompt_eval_tps": 301.55,
+      "eval_count": 200,
+      "gen_tps": 4.98,
+      "peak_temp_c": 67.2,
+      "turn": 4,
+      "user": "Okay — roughly how long should the bulk fermentation run at around 22 degrees Celsius?",
+      "mem_available_mb": 11188.9
+    },
+    {
+      "text": "Wielkie dzięki! Przywracam rozmowę na języku polskim. 😊\n\nPlanujesz w sobotę robić pierwszy chleb z zakwasem – to znakomity początek i bardzo interesujące wyzwanie, ponieważ proces ten wymaga cierpliwości. Ponieważ masz już przygotowane wszystkie składniki: mąkę żytnią i pszenną chlebową oraz sam zakwas, teraz czas na pierwszą etap fermentacji (bulk).\n\nOto szybkie podsumowanie kroków, które warto zrobić wieczorem w tym tygodniu:\n1.  **Rozgrzej wodę:** Dobrej temperaturze około 90°C (zamiast zwykłej zimnej wody, żeby zapobiec przyklejeniu się do ścian miski).\n2.  **Podgląd masy:** Dodaj mieszankę mąki i zakwasu, woda oraz ewentualną dodatkową wod",
+      "wall_s": 47.329,
+      "ttft_s": 6.601,
+      "load_s": 0.001,
+      "prompt_eval_count": 835,
+      "prompt_eval_tps": 126.83,
+      "eval_count": 200,
+      "gen_tps": 4.91,
+      "peak_temp_c": 67.8,
+      "turn": 5,
+      "user": "Świetnie, wróćmy do polskiego.",
+      "mem_available_mb": 11192.3
+    },
+    {
+      "text": "Zrozumiałem! To bardzo rozsądne. Zastanów się jednak przed rozpoczęciem procesów, ponieważ **mąka żytnia i pszeniczna chlebową są bardzo różne** w składzie:\n\n*   **Mąka żytnia:** Ma dużo glukozy (glukoza to energia dla mikroorganizmów). To świetna baza do tworzenia tzw. „żyta\", ale jeśli nie odpowiednio jej przygotujesz, może stać się ona zbyt szybko czynnikiem utleniowym (kwasu), co pogorszy smak i zapach wchłoniętych w niej witamin.\n*   **Mąka pszenna chlebowa:** Jest często bardziej zrównoważona lub jest przygotowana w taki sposób, aby mniej „gwałtowala\" przy fermentacji, ale nadal może wymagać uwagi co do stężenia białka i błon fosfolipidowych",
+      "wall_s": 48.055,
+      "ttft_s": 7.01,
+      "load_s": 0.001,
+      "prompt_eval_count": 1062,
+      "prompt_eval_tps": 151.75,
+      "eval_count": 200,
+      "gen_tps": 4.87,
+      "peak_temp_c": 67.8,
+      "turn": 6,
+      "user": "Przypomnij mi, jaką mąkę powiedziałem, że mam?",
+      "mem_available_mb": 11203.3
+    },
+    {
+      "text": "Dobre pytanie! To kluczowa decyzja, która wpływa na smak i teksturę Twojego chleba.\n\nOdpowiedź brzmi: **Najlepiej doprowadzić mące (zakwas) do temperatury pokojowej – czyli około 20–24°C przed pieczeniem.**\n\nOto dlaczego warto tego zrobić wcześniej:\n1.  **Unikasz „sztywnego\" chleba:** Jeśli masz mące w lodówce, a ona będzie przykładać się do dna miseczki na początku fermentacji (bulk), proces może być bardzo wolny i czasochłonny. Pojemna masa szybko ulegnie przypalenie lub utleniowi przez brak wystarczającej wilgoci i ciepła mikroorganizmów w środku.\n2.  **Maksymalizacja aktywności:** Przy temperaturze pokojowej zakwas działa bardziej efektywnie, rozpraszając mące",
+      "wall_s": 48.759,
+      "ttft_s": 7.146,
+      "load_s": 0.003,
+      "prompt_eval_count": 1297,
+      "prompt_eval_tps": 181.9,
+      "eval_count": 200,
+      "gen_tps": 4.81,
+      "peak_temp_c": 67.2,
+      "turn": 7,
+      "user": "I ostatnie pytanie: rano piec od razu z lodówki czy najpierw doprowadzić do temperatury pokojowej?",
+      "mem_available_mb": 11211.2
+    }
+  ],
+  "model_info": {
+    "family": "qwen35",
+    "parameter_size": "2.3B",
+    "quantization_level": "Q8_0",
+    "context_length": 262144
+  },
+  "summary": {
+    "turns": 7,
+    "gen_tps_mean": 4.95,
+    "gen_tps_min": 4.81,
+    "gen_tps_max": 5.08,
+    "ttft_s_mean": 7.345,
+    "load_s_first": 12.786,
+    "peak_temp_c": 67.8,
+    "ram_used_by_model_mb": 3540.0
+  }
+}

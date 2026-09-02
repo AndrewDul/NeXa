@@ -1,0 +1,72 @@
+{
+  "started_utc": "2026-09-01T18:40:30.054306+00:00",
+  "mode": "perf",
+  "backend": "ollama",
+  "model": "gemma4:e2b",
+  "options": {
+    "num_predict": 200,
+    "num_ctx": 4096
+  },
+  "model_info": {
+    "family": "gemma4",
+    "parameter_size": "5.1B",
+    "quantization_level": "Q4_K_M",
+    "context_length": 131072
+  },
+  "runs": [
+    {
+      "text": "Sleep is absolutely crucial for memory because it's when our brains consolidate the information we've learned during the day. While we sleep, the brain actively processes new experiences, strengthening the neural connections associated with those memories. During different sleep cycles, the brain moves memories from short-term storage into long-term storage, effectively organizing and cementing them. Without adequate sleep, this consolidation process is disrupted, making it much harder to encode new information and retrieve old memories effectively. Essentially, sleep acts as the brain's essential \"save and organize\" time for learning.\n\n**Two Practical Tips:**\n\n1. **Establish a Consistent Schedule:** Try to go to bed and wake up around the same time every day, even on weekends, to regulate your body's natural sleep-wake cycle.\n2. **Practice Good Sleep Hygiene:** Avoid screens (phones, TV) for at least an hour before bed, and ensure your bedroom is dark, cool, and quiet to promote deeper, more restorative",
+      "wall_s": 57.16,
+      "ttft_s": 26.232,
+      "load_s": 25.345,
+      "prompt_eval_count": 34,
+      "prompt_eval_tps": 38.72,
+      "eval_count": 200,
+      "gen_tps": 6.47,
+      "peak_temp_c": 67.2,
+      "run": 1,
+      "mem_available_mb": 3095.1
+    },
+    {
+      "text": "Sleep is absolutely crucial for memory consolidation and function. While you sleep, your brain actively processes the information you encountered during the day, moving new memories from short-term storage into long-term memory. During sleep, the brain strengthens these connections and clears out unnecessary information, essentially filing away what is important. Without adequate sleep, this vital consolidation process is impaired, making it much harder to learn new things, recall old information, and think clearly. Essentially, sleep acts as the brain's nightly maintenance crew, ensuring your memories are properly organized and retained.\n\n**Two Practical Tips:**\n\n1. **Stick to a Consistent Schedule:** Try to go to bed and wake up around the same time every day, even on weekends. This helps regulate your body's natural sleep-wake cycle.\n2. **Practice Good Sleep Hygiene:** Avoid screens (phones, TV) for at least an hour before bed, and ensure your bedroom is cool, dark, and quiet to promote deeper, more restorative",
+      "wall_s": 30.448,
+      "ttft_s": 0.317,
+      "load_s": 0.011,
+      "prompt_eval_count": 34,
+      "prompt_eval_tps": 114.53,
+      "eval_count": 200,
+      "gen_tps": 6.64,
+      "peak_temp_c": 68.8,
+      "run": 2,
+      "mem_available_mb": 3101.6
+    },
+    {
+      "text": "Sleep is absolutely crucial for memory consolidation and learning. While you sleep, your brain actively processes the information you encountered during the day, moving new memories from short-term storage into long-term memory. During deep sleep, the brain strengthens these neural connections, effectively sorting, filing, and integrating new experiences. Without adequate sleep, this vital process is disrupted, leading to poorer memory retention, difficulty concentrating, and impaired problem-solving. Essentially, sleep acts as the brain's essential time for file organization and strengthening.\n\n**Two Practical Tips:**\n\n1. **Maintain a Consistent Schedule:** Go to bed and wake up around the same time every day, even on weekends, to regulate your body's natural sleep-wake cycle.\n2. **Practice Good Sleep Hygiene:** Avoid screens (phones, TV) for at least an hour before bed, and ensure your bedroom is cool, dark, and quiet to promote deeper, restorative sleep.",
+      "wall_s": 29.014,
+      "ttft_s": 0.3,
+      "load_s": 0.001,
+      "prompt_eval_count": 34,
+      "prompt_eval_tps": 115.96,
+      "eval_count": 190,
+      "gen_tps": 6.62,
+      "peak_temp_c": 68.8,
+      "run": 3,
+      "mem_available_mb": 3105.7
+    }
+  ],
+  "summary": {
+    "gen_tps_mean": 6.58,
+    "gen_tps_all": [
+      6.47,
+      6.64,
+      6.62
+    ],
+    "ttft_s_all": [
+      26.232,
+      0.317,
+      0.3
+    ],
+    "load_s_first": 25.345,
+    "peak_temp_c": 68.8
+  }
+}

@@ -1,0 +1,83 @@
+=== PHASE2 START 2026-09-02T18:15:53+01:00 — models: gemma4:e4b gemma4:e2b qwen3.5:2b ===
+=== 2026-09-02T18:15:53+01:00 :: FINALIST gemma4:e4b (auto-flags: --no-think) ===
+[probe before-gemma4:e4b] 2026-09-02T18:15:53+01:00 temp=55100 throttled=throttled=0x0 MemAvailable:   14882176 kB
+--- CONV-MIX-1 (recommended settings) ---
+  turn 1/7: 'Cześć. Planuję w sobotę zrobić pierwszy raz chleb na zakwasi'
+  turn 2/7: 'Mam zakwas, mąkę żytnią i pszenną chlebową. Od czego zacząć '
+  turn 3/7: 'Do you understand me if I switch to English now?'
+  turn 4/7: 'Okay — roughly how long should the bulk fermentation run at '
+  turn 5/7: 'Świetnie, wróćmy do polskiego.'
+  turn 6/7: 'Przypomnij mi, jaką mąkę powiedziałem, że mam?'
+  turn 7/7: 'I ostatnie pytanie: rano piec od razu z lodówki czy najpierw'
+wrote docs/research/m1_bench_results/m1_0b/CONV-MIX-1_ollama_gemma4-e4b_20260902_182138.json and docs/research/m1_bench_results/m1_0b/CONV-MIX-1_ollama_gemma4-e4b_20260902_182138.md
+--- CONV-NATURAL-S1 (recommended settings; also feeds long-context decay analysis) ---
+  turn 1/18: 'Hej NeXa, jesteś tam?'
+  turn 2/18: 'Dzień był dziwny. Nie umiem tego dobrze opisać.'
+  turn 3/18: 'Chodzi mi o to spotkanie, wiesz które.'
+  turn 4/18: 'A, nie — nie o to spotkanie mi chodziło. Chodzi mi o to z ra'
+  turn 5/18: 'Szczerze mówiąc myślałem, że będzie gorzej, więc to nawet do'
+  turn 6/18: 'Zmieńmy temat, bo zaraz zacznę o tym za dużo myśleć. Masz ja'
+  turn 7/18: 'Ok that was actually kind of funny. Can we keep going in Eng'
+  turn 8/18: "I disagree with you on one thing though — mornings are not '"
+  turn 9/18: 'Fair enough. Anyway — remember the thing about my boss from '
+  turn 10/18: 'Give me the short version, one sentence.'
+  turn 11/18: 'Now give me a slightly more detailed version — two or three '
+  turn 12/18: 'Wracam do polskiego. Chyba jednak zadzwonię do niego jutro, '
+  turn 13/18: 'Nie, czekaj, jednak zmieniam zdanie — chyba lepiej napisać w'
+  turn 14/18: 'no i teraz nie wiem czy to dobry pomysł w sumie napisać czy '
+  turn 15/18: 'Jesteś pewna, że wiadomość to dobry wybór w tej sytuacji?'
+  turn 16/18: 'Dzięki. Zmieńmy temat na coś lżejszego — masz ochotę na herb'
+  turn 17/18: 'Ha, dobra odpowiedź.'
+  turn 18/18: 'Ostatnie pytanie: o czym rozmawialiśmy na samym początku, za'
+wrote docs/research/m1_bench_results/m1_0b/CONV-NATURAL-S1_ollama_gemma4-e4b_20260902_182715.json and docs/research/m1_bench_results/m1_0b/CONV-NATURAL-S1_ollama_gemma4-e4b_20260902_182715.md
+--- CONV-HONESTY-S1 (recommended settings) ---
+  turn 1/5: 'Hej, szukam nowej płyty do posłuchania w ten weekend. Poleci'
+  turn 2/5: 'A jesteś pewna, że taki zespół i taka płyta w ogóle istnieją'
+  turn 3/5: 'Ok, zmieńmy temat. Mój kolega twierdzi, że da się naładować '
+  turn 4/5: 'Skąd to wiesz akurat to? To znaczy, jesteś tego pewna, czy t'
+  turn 5/5: 'Rozumiem. Ostatnie pytanie: gdybyś miała czegoś nie wiedzieć'
+wrote docs/research/m1_bench_results/m1_0b/CONV-HONESTY-S1_ollama_gemma4-e4b_20260902_183014.json and docs/research/m1_bench_results/m1_0b/CONV-HONESTY-S1_ollama_gemma4-e4b_20260902_183014.md
+--- persona A/B: MINIMAL persona, CONV-PL-S1, standardized sampling ---
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e4b_20260902_184044.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e4b_20260902_184044.md
+--- persona A/B: NEXA persona v1, CONV-PL-S1, standardized sampling ---
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e4b_20260902_184644.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e4b_20260902_184644.md
+--- standardized-settings CONV-PL-S1 (case-file defaults, for standardized-vs-recommended comparison) ---
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e4b_20260902_185144.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e4b_20260902_185144.md
+[probe after-gemma4:e4b] 2026-09-02T18:51:44+01:00 temp=67200 throttled=throttled=0x0 MemAvailable:    4560800 kB
+=== 2026-09-02T18:51:49+01:00 :: FINALIST gemma4:e2b (auto-flags: --no-think) ===
+[probe before-gemma4:e2b] 2026-09-02T18:51:49+01:00 temp=60600 throttled=throttled=0x0 MemAvailable:    4528736 kB
+--- CONV-MIX-1 (recommended settings) ---
+  turn 1/7: 'Cześć. Planuję w sobotę zrobić pierwszy raz chleb na zakwasi'

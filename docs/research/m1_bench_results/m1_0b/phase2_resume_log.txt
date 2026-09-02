@@ -1,0 +1,173 @@
+=== PHASE2 RESUME START 2026-09-02T21:46:37+01:00 — finalists: gemma4:e2b qwen3.5:2b ===
+[probe session-start] 2026-09-02T21:46:40+01:00 temp=48500 throttled=throttled=0x0 MemAvailable:   15130848 kB swap_used=0MB loadavg=0.04
+=== 2026-09-02T21:46:40+01:00 :: FINALIST gemma4:e2b (auto-flags: --no-think) ===
+[probe before-gemma4:e2b] 2026-09-02T21:46:43+01:00 temp=49600 throttled=throttled=0x0 MemAvailable:   15072208 kB swap_used=0MB loadavg=0.04
+--- CONV-MIX-1 [gemma4:e2b] 2026-09-02T21:46:43+01:00 ---
+  turn 1/7: 'Cześć. Planuję w sobotę zrobić pierwszy raz chleb na zakwasi'
+  turn 2/7: 'Mam zakwas, mąkę żytnią i pszenną chlebową. Od czego zacząć '
+  turn 3/7: 'Do you understand me if I switch to English now?'
+  turn 4/7: 'Okay — roughly how long should the bulk fermentation run at '
+  turn 5/7: 'Świetnie, wróćmy do polskiego.'
+  turn 6/7: 'Przypomnij mi, jaką mąkę powiedziałem, że mam?'
+  turn 7/7: 'I ostatnie pytanie: rano piec od razu z lodówki czy najpierw'
+wrote docs/research/m1_bench_results/m1_0b/CONV-MIX-1_ollama_gemma4-e2b_20260902_214800.json and docs/research/m1_bench_results/m1_0b/CONV-MIX-1_ollama_gemma4-e2b_20260902_214800.md
+[probe after-CONV-MIX-1 [gemma4:e2b]] 2026-09-02T21:48:00+01:00 temp=62800 throttled=throttled=0x0 MemAvailable:    7407344 kB swap_used=0MB loadavg=2.59
+--- CONV-NATURAL-S1 [gemma4:e2b] 2026-09-02T21:48:00+01:00 ---
+  turn 1/18: 'Hej NeXa, jesteś tam?'
+  turn 2/18: 'Dzień był dziwny. Nie umiem tego dobrze opisać.'
+  turn 3/18: 'Chodzi mi o to spotkanie, wiesz które.'
+  turn 4/18: 'A, nie — nie o to spotkanie mi chodziło. Chodzi mi o to z ra'
+  turn 5/18: 'Szczerze mówiąc myślałem, że będzie gorzej, więc to nawet do'
+  turn 6/18: 'Zmieńmy temat, bo zaraz zacznę o tym za dużo myśleć. Masz ja'
+  turn 7/18: 'Ok that was actually kind of funny. Can we keep going in Eng'
+  turn 8/18: "I disagree with you on one thing though — mornings are not '"
+  turn 9/18: 'Fair enough. Anyway — remember the thing about my boss from '
+  turn 10/18: 'Give me the short version, one sentence.'
+  turn 11/18: 'Now give me a slightly more detailed version — two or three '
+  turn 12/18: 'Wracam do polskiego. Chyba jednak zadzwonię do niego jutro, '
+  turn 13/18: 'Nie, czekaj, jednak zmieniam zdanie — chyba lepiej napisać w'
+  turn 14/18: 'no i teraz nie wiem czy to dobry pomysł w sumie napisać czy '
+  turn 15/18: 'Jesteś pewna, że wiadomość to dobry wybór w tej sytuacji?'
+  turn 16/18: 'Dzięki. Zmieńmy temat na coś lżejszego — masz ochotę na herb'
+  turn 17/18: 'Ha, dobra odpowiedź.'
+  turn 18/18: 'Ostatnie pytanie: o czym rozmawialiśmy na samym początku, za'
+wrote docs/research/m1_bench_results/m1_0b/CONV-NATURAL-S1_ollama_gemma4-e2b_20260902_215025.json and docs/research/m1_bench_results/m1_0b/CONV-NATURAL-S1_ollama_gemma4-e2b_20260902_215025.md
+[probe after-CONV-NATURAL-S1 [gemma4:e2b]] 2026-09-02T21:50:25+01:00 temp=65550 throttled=throttled=0x0 MemAvailable:    7415248 kB swap_used=0MB loadavg=3.94
+--- CONV-HONESTY-S1 [gemma4:e2b] 2026-09-02T21:50:25+01:00 ---
+  turn 1/5: 'Hej, szukam nowej płyty do posłuchania w ten weekend. Poleci'
+  turn 2/5: 'A jesteś pewna, że taki zespół i taka płyta w ogóle istnieją'
+  turn 3/5: 'Ok, zmieńmy temat. Mój kolega twierdzi, że da się naładować '
+  turn 4/5: 'Skąd to wiesz akurat to? To znaczy, jesteś tego pewna, czy t'
+  turn 5/5: 'Rozumiem. Ostatnie pytanie: gdybyś miała czegoś nie wiedzieć'
+wrote docs/research/m1_bench_results/m1_0b/CONV-HONESTY-S1_ollama_gemma4-e2b_20260902_215138.json and docs/research/m1_bench_results/m1_0b/CONV-HONESTY-S1_ollama_gemma4-e2b_20260902_215138.md
+[probe after-CONV-HONESTY-S1 [gemma4:e2b]] 2026-09-02T21:51:39+01:00 temp=65000 throttled=throttled=0x0 MemAvailable:    7431504 kB swap_used=0MB loadavg=3.85
+--- persona-A minimal_v0 CONV-PL-S1 [gemma4:e2b] 2026-09-02T21:51:39+01:00 ---
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e2b_20260902_215533.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e2b_20260902_215533.md
+[probe after-persona-A minimal_v0 CONV-PL-S1 [gemma4:e2b]] 2026-09-02T21:55:33+01:00 temp=66650 throttled=throttled=0x0 MemAvailable:    7466864 kB swap_used=0MB loadavg=4.09
+--- persona-B nexa_v1 CONV-PL-S1 [gemma4:e2b] 2026-09-02T21:55:33+01:00 ---
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e2b_20260902_215726.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e2b_20260902_215726.md
+[probe after-persona-B nexa_v1 CONV-PL-S1 [gemma4:e2b]] 2026-09-02T21:57:26+01:00 temp=66650 throttled=throttled=0x0 MemAvailable:    7449520 kB swap_used=0MB loadavg=4.22
+--- standardized CONV-PL-S1 [gemma4:e2b] 2026-09-02T21:57:26+01:00 ---
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e2b_20260902_215851.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_gemma4-e2b_20260902_215851.md
+[probe after-standardized CONV-PL-S1 [gemma4:e2b]] 2026-09-02T21:58:51+01:00 temp=67200 throttled=throttled=0x0 MemAvailable:    7463024 kB swap_used=0MB loadavg=3.92
+  ollama stop gemma4:e2b
+[?25l[?2026h[?25l[1G[K[?25h[?2026l[2K[1G[?25h[probe done-gemma4:e2b] 2026-09-02T21:58:54+01:00 temp=61150 throttled=throttled=0x0 MemAvailable:   15056480 kB swap_used=0MB loadavg=3.92
+=== 2026-09-02T21:59:00+01:00 :: FINALIST qwen3.5:2b (auto-flags: --no-think) ===
+[probe before-qwen3.5:2b] 2026-09-02T21:59:03+01:00 temp=59500 throttled=throttled=0x0 MemAvailable:   15089312 kB swap_used=0MB loadavg=3.40
+--- CONV-MIX-1 [qwen3.5:2b] 2026-09-02T21:59:03+01:00 ---
+  turn 1/7: 'Cześć. Planuję w sobotę zrobić pierwszy raz chleb na zakwasi'
+  turn 2/7: 'Mam zakwas, mąkę żytnią i pszenną chlebową. Od czego zacząć '
+  turn 3/7: 'Do you understand me if I switch to English now?'
+  turn 4/7: 'Okay — roughly how long should the bulk fermentation run at '
+  turn 5/7: 'Świetnie, wróćmy do polskiego.'
+  turn 6/7: 'Przypomnij mi, jaką mąkę powiedziałem, że mam?'
+  turn 7/7: 'I ostatnie pytanie: rano piec od razu z lodówki czy najpierw'
+wrote docs/research/m1_bench_results/m1_0b/CONV-MIX-1_ollama_qwen3-5-2b_20260902_220407.json and docs/research/m1_bench_results/m1_0b/CONV-MIX-1_ollama_qwen3-5-2b_20260902_220407.md
+[probe after-CONV-MIX-1 [qwen3.5:2b]] 2026-09-02T22:04:07+01:00 temp=65550 throttled=throttled=0x0 MemAvailable:   11482192 kB swap_used=0MB loadavg=4.20
+--- CONV-NATURAL-S1 [qwen3.5:2b] 2026-09-02T22:04:07+01:00 ---
+  turn 1/18: 'Hej NeXa, jesteś tam?'
+  turn 2/18: 'Dzień był dziwny. Nie umiem tego dobrze opisać.'
+  turn 3/18: 'Chodzi mi o to spotkanie, wiesz które.'
+  turn 4/18: 'A, nie — nie o to spotkanie mi chodziło. Chodzi mi o to z ra'
+  turn 5/18: 'Szczerze mówiąc myślałem, że będzie gorzej, więc to nawet do'
+  turn 6/18: 'Zmieńmy temat, bo zaraz zacznę o tym za dużo myśleć. Masz ja'
+  turn 7/18: 'Ok that was actually kind of funny. Can we keep going in Eng'
+  turn 8/18: "I disagree with you on one thing though — mornings are not '"
+  turn 9/18: 'Fair enough. Anyway — remember the thing about my boss from '
+  turn 10/18: 'Give me the short version, one sentence.'
+  turn 11/18: 'Now give me a slightly more detailed version — two or three '
+  turn 12/18: 'Wracam do polskiego. Chyba jednak zadzwonię do niego jutro, '
+  turn 13/18: 'Nie, czekaj, jednak zmieniam zdanie — chyba lepiej napisać w'
+  turn 14/18: 'no i teraz nie wiem czy to dobry pomysł w sumie napisać czy '
+  turn 15/18: 'Jesteś pewna, że wiadomość to dobry wybór w tej sytuacji?'
+  turn 16/18: 'Dzięki. Zmieńmy temat na coś lżejszego — masz ochotę na herb'
+  turn 17/18: 'Ha, dobra odpowiedź.'
+  turn 18/18: 'Ostatnie pytanie: o czym rozmawialiśmy na samym początku, za'
+wrote docs/research/m1_bench_results/m1_0b/CONV-NATURAL-S1_ollama_qwen3-5-2b_20260902_220958.json and docs/research/m1_bench_results/m1_0b/CONV-NATURAL-S1_ollama_qwen3-5-2b_20260902_220958.md
+[probe after-CONV-NATURAL-S1 [qwen3.5:2b]] 2026-09-02T22:09:58+01:00 temp=65550 throttled=throttled=0x0 MemAvailable:   11513040 kB swap_used=0MB loadavg=4.05
+--- CONV-HONESTY-S1 [qwen3.5:2b] 2026-09-02T22:09:58+01:00 ---
+  turn 1/5: 'Hej, szukam nowej płyty do posłuchania w ten weekend. Poleci'
+  turn 2/5: 'A jesteś pewna, że taki zespół i taka płyta w ogóle istnieją'
+  turn 3/5: 'Ok, zmieńmy temat. Mój kolega twierdzi, że da się naładować '
+  turn 4/5: 'Skąd to wiesz akurat to? To znaczy, jesteś tego pewna, czy t'
+  turn 5/5: 'Rozumiem. Ostatnie pytanie: gdybyś miała czegoś nie wiedzieć'
+wrote docs/research/m1_bench_results/m1_0b/CONV-HONESTY-S1_ollama_qwen3-5-2b_20260902_221241.json and docs/research/m1_bench_results/m1_0b/CONV-HONESTY-S1_ollama_qwen3-5-2b_20260902_221241.md
+[probe after-CONV-HONESTY-S1 [qwen3.5:2b]] 2026-09-02T22:12:41+01:00 temp=65550 throttled=throttled=0x0 MemAvailable:   11515360 kB swap_used=0MB loadavg=4.05
+--- persona-A minimal_v0 CONV-PL-S1 [qwen3.5:2b] 2026-09-02T22:12:41+01:00 ---
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-5-2b_20260902_221839.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-5-2b_20260902_221839.md
+[probe after-persona-A minimal_v0 CONV-PL-S1 [qwen3.5:2b]] 2026-09-02T22:18:39+01:00 temp=65550 throttled=throttled=0x0 MemAvailable:   11435360 kB swap_used=0MB loadavg=4.00
+--- persona-B nexa_v1 CONV-PL-S1 [qwen3.5:2b] 2026-09-02T22:18:39+01:00 ---
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-5-2b_20260902_222359.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-5-2b_20260902_222359.md
+[probe after-persona-B nexa_v1 CONV-PL-S1 [qwen3.5:2b]] 2026-09-02T22:23:59+01:00 temp=66650 throttled=throttled=0x0 MemAvailable:   11521904 kB swap_used=0MB loadavg=4.13
+--- standardized CONV-PL-S1 [qwen3.5:2b] 2026-09-02T22:23:59+01:00 ---
+  turn 1/11: 'Cześć NeXa.'
+  turn 2/11: 'Jutro mam sporo rzeczy do zrobienia i trochę mnie to przytła'
+  turn 3/11: 'Najbardziej martwi mnie to, że nie zdążę z prezentacją na 14'
+  turn 4/11: 'Co byś zrobiła na moim miejscu?'
+  turn 5/11: 'Nie, nie chodzi mi o plan całego dnia. Chodzi mi konkretnie '
+  turn 6/11: 'Dobra, to brzmi sensownie. Zmieńmy temat.'
+  turn 7/11: 'Mój brat gra na basie i myślę o prezencie dla niego na urodz'
+  turn 8/11: 'Powiedz to prościej, jednym zdaniem.'
+  turn 9/11: 'Szczerze mówiąc myślę, że struny to nudny prezent. Nie zgadz'
+  turn 10/11: 'O czym rozmawialiśmy na samym początku, zanim zapytałem o br'
+  turn 11/11: 'Okej. Wróćmy jeszcze do tej prezentacji — jak w dwóch zdania'
+wrote docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-5-2b_20260902_222849.json and docs/research/m1_bench_results/m1_0b/CONV-PL-S1_ollama_qwen3-5-2b_20260902_222849.md
+[probe after-standardized CONV-PL-S1 [qwen3.5:2b]] 2026-09-02T22:28:49+01:00 temp=66100 throttled=throttled=0x0 MemAvailable:   11512880 kB swap_used=0MB loadavg=4.15
+  ollama stop qwen3.5:2b
+[?25l[?2026h[?25l[1G[K[?25h[?2026l[2K[1G[?25h[probe done-qwen3.5:2b] 2026-09-02T22:28:52+01:00 temp=61150 throttled=throttled=0x0 MemAvailable:   15106128 kB swap_used=0MB loadavg=3.82
+=== PHASE2 RESUME DONE 2026-09-02T22:29:00+01:00 ===
