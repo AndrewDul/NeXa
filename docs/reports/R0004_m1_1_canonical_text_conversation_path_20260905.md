@@ -197,3 +197,38 @@ owner may want first: resolve the Ollama blob-store permission blocker so
 `LlamaServerProvider` and the Ollama-vs-llama.cpp benchmark can run live; think
 through whether M2's barge-in needs a stronger cancellation guarantee than
 M1.1's cooperative `CancelToken` provides.
+
+---
+
+## Operator acceptance (2026-09-05, addendum — `OPERATOR-CONFIRMED`)
+
+**Status of this addendum:** informational — it does not change the PASS
+verdict or any evidence above; it adds a higher tier of evidence than the
+agent's own manual-CLI check in "WHAT I VERIFIED".
+
+Everything above this addendum (including the manual multi-turn conversation
+in "WHAT I VERIFIED") was `AGENT-ASSISTED`: the agent drove `apps/nexa_chat.py`
+itself via piped input and judged the result. Separately, and after this
+report was first written, **the owner/operator Andrzej personally used the
+real path** —
+
+```
+apps/nexa_chat.py → ConversationSession → ConversationContext →
+ModelProvider → LocalModelProvider (Ollama) → gemma4:e4b
+```
+
+— in a real, interactive multi-turn conversation (not piped input, not
+agent-driven), and recorded:
+
+> **M1.1 HUMAN ACCEPTANCE: PASS.** Everything worked correctly and the
+> conversation quality was satisfactory.
+
+This is the human-acceptance tier `AGENTS.md` §4's evidence labels exist to
+distinguish. `docs/CURRENT_STATE.md` has been updated to reflect it. No code,
+architecture, or test was changed to produce this addendum — it is a record
+of an evaluation, not new work.
+
+**Implication:** M1.1's exit criteria (ROADMAP "M1 — Natural Text
+Conversation … Rough exit criteria") are now met with both agent-assisted and
+operator-confirmed evidence. **M2 — Realtime Voice is clear to start** with no
+outstanding M1.1 acceptance gate.

@@ -12,13 +12,14 @@ Runtime / test evidence outranks anything else in this repo.
 - **Latest report:** `docs/reports/R0004_m1_1_canonical_text_conversation_path_20260905.md`
 - **Current milestone:** **M1 — Natural Text Conversation**
 - **Current substage:** **M1.1 — Minimal Canonical Text Conversation Path —
-  COMPLETE.** (M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1
-  local baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05.)
-- **Next substage:** **M2 — Realtime Voice** (**NOT STARTED**)
-- **Current objective:** none active — M1's minimal canonical text-conversation
-  path is implemented, tested (deterministic + one live Ollama run), and
-  documented. Next task is starting M2, or hardening M1.1 further if the owner
-  prefers (see "Exact next recommended task").
+  COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).** (M1.0B COMPLETE; operator
+  blind test COMPLETE 2026-09-04; M1.1 local baseline FROZEN to `gemma4:e4b`,
+  ADR-0002 Amendment 2, 2026-09-05.)
+- **Next substage:** **M2 — Realtime Voice** (**NOT STARTED — clear to
+  start**)
+- **Current objective:** none active — M1.1 is implemented, tested, and now
+  human-accepted by the owner. Next task is starting M2 (see "Exact next
+  recommended task").
 
 ---
 
@@ -47,6 +48,14 @@ Runtime / test evidence outranks anything else in this repo.
   multi-turn conversation through the real `apps/nexa_chat.py` CLI harness
   also verified end to end (real recall across turns, e.g. translating its own
   earlier Polish reply into English on request).
+- **`OPERATOR-CONFIRMED` (2026-09-05):** Andrzej personally ran a real
+  multi-turn conversation through `apps/nexa_chat.py` → `ConversationSession`
+  → `ConversationContext` → `ModelProvider` → Ollama → `gemma4:e4b` (the exact
+  canonical path, not a test-only harness) and recorded **"M1.1 HUMAN
+  ACCEPTANCE: PASS"** — everything worked correctly and conversation quality
+  was satisfactory. This is the human-acceptance evidence tier above the
+  agent's own manual-CLI verification recorded in `R0004`; see `R0004`'s
+  "Operator acceptance" addendum for the exact record.
 - M1.0 research complete: Pi hardware/runtime/model inventory verified;
   legacy conversation stack audited (read-only); external research done;
   local models benchmarked on the Pi.
@@ -163,6 +172,10 @@ Runtime / test evidence outranks anything else in this repo.
 - Live Ollama integration test (`NEXA_RUN_LIVE_TESTS=1 python -m unittest
   tests.test_live_ollama_integration`): **PASS** against real `gemma4:e4b`
   (2026-09-05) — see `R0004` for the transcript evidence.
+- **Human acceptance test:** Andrzej ran a real multi-turn conversation through
+  `apps/nexa_chat.py` (the actual canonical path, real `gemma4:e4b`) and
+  recorded **"M1.1 HUMAN ACCEPTANCE: PASS"** (2026-09-05) — see `R0004`'s
+  "Operator acceptance" addendum.
 - `scripts/m1_bench/bench.py`: smoke-tested and used for real measurements
   (M1.0/M1.0B; unrelated to the M1.1 product tests above).
 
@@ -177,9 +190,9 @@ Runtime / test evidence outranks anything else in this repo.
 ## Current focus
 
 - None active. M1 (Natural Text Conversation) M1.0 → M1.0B → operator blind
-  test → ADR-0002 Amendment 2 → M1.1 implementation is now a complete chain.
-  Awaiting the owner's choice of what's next: M2 (voice), or optional M1.1
-  hardening (see below).
+  test → ADR-0002 Amendment 2 → M1.1 implementation → **M1.1 human acceptance
+  (2026-09-05, PASS)** is now a complete, operator-confirmed chain. **M2 is
+  clear to start.**
 
 ## Exact next recommended task
 

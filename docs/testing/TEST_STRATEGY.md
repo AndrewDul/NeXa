@@ -86,6 +86,11 @@ milestone, and do not let them exist as skipped tests that imply coverage.
 - All `unit`/fake-server `integration` tests run with plain
   `python -m unittest discover -s tests` or `pytest` — no Ollama required, no
   new runtime dependency (stdlib only).
+- Beyond the automated tiers above, M1.1 also has a **human-acceptance**
+  record — the owner personally using the real path (`apps/nexa_chat.py`) and
+  giving an explicit verdict. Not a test suite tier; see
+  `docs/reports/R0004_m1_1_canonical_text_conversation_path_20260905.md`
+  ("Operator acceptance" addendum) and `docs/CURRENT_STATE.md`.
 
 ## Tooling direction
 
