@@ -5,18 +5,22 @@ Runtime / test evidence outranks anything else in this repo.
 
 ---
 
-- **Last verified:** 2026-09-02
+- **Last verified:** 2026-09-05
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
-- **Branch:** `main` — see `git log -1` for the current hash (1+ commit ahead of
-  `origin/main`; **not pushed**)
+- **Branch:** `main` — see `git log -1` for the current hash (not pushed)
 - **Latest report:** `docs/reports/R0003_m1_0b_current_small_model_sweep_20260901.md`
+  (the operator blind test + baseline freeze below postdate it; no new
+  numbered report written for those yet)
 - **Current milestone:** **M1 — Natural Text Conversation**
-- **Current substage:** **M1.0B — Current Small-Model Sweep — COMPLETE**
-  (research + benchmark only; M1.0 stays COMPLETE and unrewritten)
-- **Next substage:** **M1.1 — Minimal Canonical Text Conversation Path** (not started)
-- **Current objective:** none active — M1.0B delivered a fresh model sweep;
-  the owed step is the operator blind test, then M1.1.
+- **Current substage:** **M1.0B — COMPLETE**; **Operator blind conversation
+  test — COMPLETE (2026-09-04)**; **M1.1 local baseline model — FROZEN
+  (2026-09-05): `gemma4:e4b`** (ADR-0002 Amendment 2)
+- **Next substage:** **M1.1 — Minimal Canonical Text Conversation Path** (**NOT
+  STARTED**)
+- **Current objective:** none active — the model-selection decision is closed
+  (`docs/decisions/ADR-0002_text_conversation_foundation.md` Amendment 2). The
+  exact next task is M1.1 itself.
 
 ---
 
@@ -40,18 +44,34 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## What is partial
 
-- **All** M1.0 + M1.0B conversation-quality scores are **`AGENT-ASSISTED`**
-  (Claude vs transcripts + rubric), **not operator-confirmed**. The operator
-  blind test (`docs/testing/M1_OPERATOR_BLIND_CONVERSATION_TEST.md`) is prepared
-  with the 3 finalists (sealed A/B/C) but **not run** — it is the owed step
-  before an M1.1 baseline model is frozen.
-- **M1.0B model picture:** `gemma4:e4b` (PL 4/5, EN 4/5) is the quality leader;
-  `gemma4:e2b` (PL 3.5/5, EN 4/5, ~2× faster, flattest long-context decay) is
-  the recommended M1.1 baseline candidate; `qwen3:4b-instruct` (PL 3/5, EN 3.5/5)
-  is the reliable incumbent / safe fallback; `qwen3.5:2b` is English-only
-  (broken Polish + a honesty-probe hallucination). Bielik re-test at temp 0.1 +
-  Q4_K_M did **not** flip the baseline (Q8_0 weak EN / no TTFT warm-up; 3rd-party
-  Q4_K_M is a reliability failure). Full detail: `R0003`, sweep doc §8–§19.
+- M1.0 + M1.0B conversation-quality scores were **`AGENT-ASSISTED`** (Claude vs
+  transcripts + rubric). The **operator blind test is done and the baseline is
+  frozen** (`docs/testing/M1_OPERATOR_BLIND_CONVERSATION_TEST.md` §4/§8,
+  `docs/testing/m1_operator_blind_results/`, `ADR-0002` Amendment 2): Andrzej
+  talked blind to all 3 M1.0B finalists (~7–20 turns each), scored them, then
+  the mapping was revealed. Result — `OPERATOR-CONFIRMED`: `gemma4:e4b` ranked
+  best (4/5, everyday NeXa YES), `gemma4:e2b` second (3/5, maybe), `qwen3.5:2b`
+  worst (2/5, no — operator independently caught a live hallucination, matching
+  R0003's honesty-probe finding). This **superseded the M1.0B weighted-score
+  `PROPOSAL`** (which had favored `gemma4:e2b` 4.0 vs. `gemma4:e4b` 3.9, driven
+  by speed/RAM weighting, not a conversation-quality disagreement — see the
+  test doc §8). The owner then explicitly signed off on `gemma4:e4b`'s
+  RAM/latency cost (~10 GB resident, ~3 tok/s) and it is now **FROZEN** as the
+  M1.1 local conversation baseline in `ADR-0002` Amendment 2 (2026-09-05).
+- **M1.0B/blind-test model picture (historical vs. final — do not conflate):**
+  the **M1.0B weighted-score recommendation** (`R0003`, sweep doc §19,
+  `AGENT-ASSISTED`, 2026-09-01/02) was `gemma4:e2b` as the M1.1 baseline
+  *candidate*. The **final, operator-confirmed decision** (2026-09-04/05) froze
+  **`gemma4:e4b`** instead — see above. Both remain documented: `gemma4:e4b`
+  (PL 4/5, EN 4/5) is the frozen baseline / quality leader; `gemma4:e2b`
+  (PL 3.5/5, EN 4/5, ~2× faster, flattest long-context decay) is documented as
+  the fast/low-RAM alternative; `qwen3:4b-instruct` (PL 3/5, EN 3.5/5) remains
+  the reliable incumbent / safe fallback; `qwen3.5:2b` is English-only (broken
+  Polish + a honesty-probe hallucination, operator-confirmed). Bielik re-test at
+  temp 0.1 + Q4_K_M did **not** flip anything (Q8_0 weak EN / no TTFT warm-up;
+  3rd-party Q4_K_M is a reliability failure). Full detail: `R0003`, sweep doc
+  §8–§19 (historical M1.0B evidence and ranking — unedited); `ADR-0002`
+  Amendment 2 (final decision).
 - `llama.cpp`-direct vs Ollama head-to-head **still not measured** — blocked by
   Ollama blob-store permissions (`0700`/`ollama`-owned); needs an operator
   decision.
@@ -85,15 +105,20 @@ Runtime / test evidence outranks anything else in this repo.
   text-conversation path (`ConversationSession` → `ConversationContext` →
   `ModelProvider` → streamed tokens); model access via a minimal
   OpenAI-chat-shaped `ModelProvider` abstraction; **Ollama** as the first
-  `LocalModelProvider` implementation (`llama.cpp` second / portability);
-  `qwen3:4b-instruct` as the first baseline model — **baseline, not frozen**.
-- **ADR-0002 M1.0B amendment (2026-09-02, informational — D1–D4 unchanged):**
-  the fair Bielik re-test is done and does **not** flip the baseline (D4 caveat
-  (b) resolved); a better Polish persona lifted `qwen3:4b-instruct` PL 2/5 → 3/5
-  (caveat (a) partially addressed); new evidence — `gemma4:e4b` / `gemma4:e2b`
-  out-converse the incumbent in both languages. The M1.1 baseline-model choice
-  is now flagged for the operator blind test; a change would be a new/superseding
-  ADR, not a silent edit.
+  `LocalModelProvider` implementation (`llama.cpp` second / portability).
+- **ADR-0002 M1.0B amendment (2026-09-02, informational — D1–D4 unchanged at
+  the time):** the fair Bielik re-test is done and does **not** flip the
+  baseline (D4 caveat (b) resolved); a better Polish persona lifted
+  `qwen3:4b-instruct` PL 2/5 → 3/5 (caveat (a) partially addressed); new
+  evidence — `gemma4:e4b` / `gemma4:e2b` out-converse the incumbent in both
+  languages.
+- **ADR-0002 Amendment 2 (2026-09-05, decisive — supersedes D4 on model choice
+  only; D1–D3 unchanged):** operator blind test run and scored; owner signed
+  off on the RAM/latency cost; **`gemma4:e4b` is FROZEN as the M1.1 local
+  conversation baseline.** `gemma4:e2b` documented as the fast/low-RAM
+  alternative, `qwen3:4b-instruct` as the swappable safe fallback. Provider/model
+  abstraction (D1–D3) explicitly preserved — this model is the M1.1 *local*
+  baseline, not NeXa itself; no router implemented.
 - No product code exists for any of the above yet.
 
 ## Current test status
@@ -106,29 +131,25 @@ Runtime / test evidence outranks anything else in this repo.
 
 - **ADR-0001** — NeXa project foundation (Accepted).
 - **ADR-0002** — Text conversation foundation (Accepted for architecture /
-  provider boundary / first runtime; baseline-not-frozen for the first model)
-  + **M1.0B amendment** (2026-09-02, informational).
+  provider boundary / first runtime) + **M1.0B amendment** (2026-09-02,
+  informational) + **Amendment 2** (2026-09-05, decisive: M1.1 local baseline
+  model **FROZEN** to `gemma4:e4b`).
 
 ## Current focus
 
-- None active. M1.0B closed (research + benchmark). Awaiting the operator blind
-  test, then M1.1.
+- None active. Model-selection decision closed (M1.0B → operator blind test →
+  ADR-0002 Amendment 2). M1.1 is next, not yet started.
 
 ## Exact next recommended task
 
-**Run the operator blind test**
-(`docs/testing/M1_OPERATOR_BLIND_CONVERSATION_TEST.md`) — Andrzej talks blind to
-the 3 M1.0B finalists (`gemma4:e4b`, `qwen3.5:2b`, `gemma4:e2b`, sealed as
-A/B/C) for ~10–15 min each, scores them, then the mapping is revealed and
-compared with `R0003`'s agent-assisted ranking + weighted score. That result is
-the final qualitative input before the M1.1 baseline model is chosen.
-
-**Then M1.1 — Minimal Canonical Text Conversation Path.** Create `./.venv` +
-first real dependency; implement ADR-0002 D1's small type set in `src/nexa/`
-(`ModelProvider` + `LocalModelProvider` (Ollama, streaming) + `ConversationContext`
-(bounded) + `ConversationSession` + `ConversationTurn` + `StreamingResponse`) +
-one versioned system persona in `configs/`; deterministic turn-contract tests
-with a fake provider + one marked live Ollama integration test; freeze the
-baseline model on the blind-test result; add a `llama-server` provider adapter.
-No MAS, no model router, no capability layer, no fallback model, no memory, no
-voice, no UI.
+**M1.1 — Minimal Canonical Text Conversation Path.** The model-selection
+question is closed — `gemma4:e4b` is the frozen local baseline
+(`ADR-0002` Amendment 2); no further ADR work is owed before starting M1.1.
+Create `./.venv` + first real dependency; implement ADR-0002 D1's small type
+set in `src/nexa/` (`ModelProvider` + `LocalModelProvider` (Ollama, streaming,
+configured for `gemma4:e4b`) + `ConversationContext` (bounded) +
+`ConversationSession` + `ConversationTurn` + `StreamingResponse`) + one
+versioned system persona in `configs/`; deterministic turn-contract tests with
+a fake provider + one marked live Ollama integration test; add a
+`llama-server` provider adapter. No MAS, no model router, no capability layer,
+no fallback model, no memory, no voice, no UI.

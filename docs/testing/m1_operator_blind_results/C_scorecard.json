@@ -1,0 +1,8 @@
+{
+  "label": "C",
+  "scores": {
+    "overall_operator_score": 3
+  },
+  "everyday_nexa": "MAYBE",
+  "note": "Operator gave a compressed final judgement (overall score + everyday NeXa) instead of the full per-question scorecard for this model. Detailed per-question ratings (natural/human, understood me, Polish, English, context/recall, correction handling, speed/rhythm, factual trustworthiness) were not separately collected for C."
+}

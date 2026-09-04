@@ -524,6 +524,15 @@ recovery pass. Recorded as a blocked operator decision, not silently skipped.
 operator blind test (`docs/testing/M1_OPERATOR_BLIND_CONVERSATION_TEST.md`) is
 the owed confirmation before any M1.1 model is frozen.
 
+> **UPDATE (2026-09-05, historical note — this section is not rewritten):**
+> the operator blind test has since run (§8 of the test doc) and the owner
+> froze **`gemma4:e4b`** — not the `gemma4:e2b` this section proposes — as the
+> M1.1 local baseline, in `docs/decisions/ADR-0002_text_conversation_foundation.md`
+> Amendment 2. The divergence is explained there: it is a weighting difference
+> (this section's weighted score favors e2b's speed/RAM; the operator favored
+> e4b's live conversation quality), not a disagreement on the underlying
+> quality data below, which is unchanged.
+
 1. **Everyday bilingual NeXa (M1.1 baseline candidate): `gemma4:e2b`.** Best
    weighted score (4.0), best Pi balance, flattest long-context decay, warm TTFT
    ~1–2 s, conversation quality within ~0.5 of the roster's best. Cost: ~7.5 GB

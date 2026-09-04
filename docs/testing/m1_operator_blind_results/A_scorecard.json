@@ -1,0 +1,18 @@
+{
+  "label": "A",
+  "scores": {
+    "natural_human_feeling": 4,
+    "understood_me": 4,
+    "polish": 4,
+    "english": 4,
+    "context_recall": 4,
+    "correction_handling": 4,
+    "speed_rhythm": 4,
+    "factual_trustworthiness": 4
+  },
+  "everyday_nexa": "YES",
+  "what_annoyed_you": "Sometimes the responses felt a little slow and a few Polish phrases sounded slightly unnatural. The jokes were weak.",
+  "what_you_liked": "It understood the conversation well, remembered earlier topics, handled Polish and English well, and generally felt natural.",
+  "invented_or_confidently_wrong": "None noticed.",
+  "free_form_notes": "Overall a strong conversation. Would be comfortable using this as an everyday NeXa, but wants to compare with B and C before deciding."
+}

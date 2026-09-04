@@ -1,0 +1,21 @@
+{
+  "overall_scores": {
+    "A": 4,
+    "B": 2,
+    "C": 3
+  },
+  "everyday_nexa_per_model": {
+    "A": "YES",
+    "B": "NO",
+    "C": "MAYBE"
+  },
+  "overall_ranking_best_to_worst": ["A", "C", "B"],
+  "everyday_nexa_choice": "A",
+  "most_annoying": null,
+  "best_polish": null,
+  "best_english": null,
+  "felt_fastest": null,
+  "would_avoid": null,
+  "surprises": null,
+  "note": "Operator gave a compressed final judgement (per-model overall score + everyday NeXa verdict, ranking, and everyday choice) rather than answering every individual comparative question from the protocol (best Polish, best English, fastest-feeling, most trustworthy, model to avoid, surprises). Those fields are left null - not asked/answered in this compressed form."
+}

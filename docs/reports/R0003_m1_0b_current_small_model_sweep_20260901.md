@@ -253,6 +253,15 @@ The incumbent `qwen3:4b-instruct` is the continuity anchor for the head-to-head
 test), with **`gemma4:e4b`** as the quality-mode alternative. Both Apache-2.0,
 both run comfortably on the Pi 5 16GB with no throttling.
 
+> **UPDATE (2026-09-05, historical note — this report is not rewritten):**
+> this was the `AGENT-ASSISTED`, weighted-score recommendation at the time.
+> The operator blind test (`docs/testing/M1_OPERATOR_BLIND_CONVERSATION_TEST.md`
+> §8) subsequently ranked `gemma4:e4b` above `gemma4:e2b` live, and the owner
+> froze `gemma4:e4b` as the actual M1.1 local baseline —
+> `docs/decisions/ADR-0002_text_conversation_foundation.md` Amendment 2. The
+> analysis above remains accurate as of 2026-09-01/02; it is superseded as a
+> *recommendation*, not as evidence.
+
 ## BEST MODEL FOR POLISH
 
 **`gemma4:e4b`** (4/5), `gemma4:e2b` (3.5/5) second. Bielik Q8_0 is the

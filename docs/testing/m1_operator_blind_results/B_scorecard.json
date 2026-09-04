@@ -1,0 +1,20 @@
+{
+  "label": "B",
+  "scores": {
+    "natural_human_feeling": 2,
+    "understood_me": 2,
+    "polish": 1.5,
+    "english": null,
+    "english_note": "N/A - not sufficiently tested",
+    "context_recall": 4,
+    "correction_handling": null,
+    "correction_handling_note": "N/A - not sufficiently tested",
+    "speed_rhythm": 2,
+    "factual_trustworthiness": 1
+  },
+  "everyday_nexa": "NO",
+  "what_annoyed_you": "The Polish sounded unnatural and sometimes barely coherent. Answers often became strange or overly philosophical. Some responses felt slow. The joke was particularly bad and inappropriate.",
+  "what_you_liked": "It did correctly remember that I had said the days feel like they pass too quickly.",
+  "invented_or_confidently_wrong": "Yes. It said the sun rises in the west, which is clearly wrong. The location description involving Kotzebue and Sao Tome also appeared confused or invented.",
+  "free_form_notes": "Overall much weaker than Model A. Would not choose this as everyday NeXa."
+}

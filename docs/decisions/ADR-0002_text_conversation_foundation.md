@@ -1,7 +1,9 @@
 # ADR-0002 — Text conversation foundation (M1)
 
 - **Status:** Accepted (architecture, provider boundary, first runtime);
-  **Baseline — not frozen** (first model)
+  **Baseline — FROZEN 2026-09-05** (`gemma4:e4b` is the M1.1 local conversation
+  baseline — see Amendment 2). D1–D3 (provider abstraction, Ollama-first,
+  turn-path architecture) unchanged throughout.
 - **Date:** 2026-08-31
 - **Deciders:** Andrzej Dul (owner), Claude Code (agent)
 - **Related:** `docs/reports/R0002_m1_natural_conversation_research_20260831.md`,
@@ -231,3 +233,99 @@ is run and scored, and (2) the RAM/latency trade for a Gemma 4 model
 (~7.5–10 GB resident, ~3–7 tok/s) is accepted by the owner. A change to the
 baseline model is then made in a **new ADR** (or a superseding revision of this
 one) with that combined evidence — per the "Compliance / review" rule above.
+
+Both conditions are now met — see Amendment 2 below.
+
+---
+
+## Amendment 2 — Operator blind test result: M1.1 local baseline FROZEN (2026-09-05)
+
+- **Status of this amendment:** decisive. This **supersedes D4** on the model
+  choice only. D1–D3 (turn-path architecture, `ModelProvider` abstraction,
+  Ollama-first) are **unchanged**.
+- **Evidence:** `docs/testing/M1_OPERATOR_BLIND_CONVERSATION_TEST.md` §4/§8
+  (live, blind, operator-run — Andrzej Dul, 2026-09-04); full transcripts and
+  hidden per-turn metrics in `docs/testing/m1_operator_blind_results/`; prior
+  `AGENT-ASSISTED` evidence in `R0003` and
+  `docs/research/M1_0B_CURRENT_SMALL_MODEL_SWEEP.md`.
+
+### Decision
+
+**`gemma4:e4b` is FROZEN as the M1.1 local conversation baseline.**
+
+### Why
+
+- **Operator blind test winner.** Of the three sealed M1.0B finalists
+  (`gemma4:e4b`, `gemma4:e2b`, `qwen3.5:2b`), the operator — blind to identity,
+  talking normally in mixed Polish/English — scored it highest: **4/5
+  overall, "everyday NeXa: YES."** `gemma4:e2b` scored 3/5 ("maybe");
+  `qwen3.5:2b` scored 2/5 ("no").
+- **Best live conversation quality among the finalists**, matching R0003's raw
+  (unweighted) Phase-2 conversation-quality sub-scores, where `gemma4:e4b`
+  already led or tied `gemma4:e2b` (`CONV-NATURAL-S1` 4.5 vs. 4.0;
+  `CONV-HONESTY-S1` tied at 4.5) — the operator's live preference is not a
+  surprise reversal, it is agreement with the quality evidence R0003 already
+  had.
+- **Strongest Polish among the tested practical candidates** — R0003's "Best
+  model for Polish" call (`gemma4:e4b` 4/5, `gemma4:e2b` 3.5/5 second;
+  Bielik is native-grammar but undeployable) is now operator-confirmed rather
+  than agent-assisted only.
+- **Differs from the earlier `gemma4:e2b` weighted-score recommendation**
+  (`R0003`, sweep doc §19: `gemma4:e2b` 4.0 vs. `gemma4:e4b` 3.9) **because
+  that weighted total gave substantial weight to Pi speed/RAM efficiency**
+  (latency 15 + Pi practicality 5 of 100 points), not because the two
+  disagree on conversation quality. The operator, given the real trade-off
+  live, weighted quality over speed differently than the pre-set formula did.
+  This is the kind of divergence `docs/testing/M1_OPERATOR_BLIND_CONVERSATION_TEST.md`
+  §6 anticipated: "the operator's lived judgement is the actual product bar."
+
+### Accepted cost (owner sign-off, Andrzej Dul, 2026-09-05)
+
+The owner explicitly accepts the measured Raspberry Pi resource/latency trade
+of `gemma4:e4b` over `gemma4:e2b`:
+
+- ~10 GB resident RAM (vs. `gemma4:e2b`'s ~7.4 GB)
+- ~3 tok/s live generation (vs. `gemma4:e2b`'s ~6 tok/s)
+- slower TTFT than `gemma4:e2b` (live blind-test average ~3.6 s vs. ~1.5 s)
+
+Owner's words: *"I am choosing conversation quality over the speed/RAM
+advantage of gemma4:e2b for the canonical M1.1 local baseline."*
+
+### Provider/model abstraction — explicitly preserved
+
+- `gemma4:e4b` is the **M1.1 LOCAL baseline model** — a swappable
+  configuration choice behind the D2 `ModelProvider` interface. **It is not
+  NeXa.** NeXa's identity, memory, context, user relationship, goals,
+  capabilities, permissions, and learning belong to NeXa's canonical
+  system/runtime (per `AGENTS.md` §0, §3), never to one model.
+- This does **not** permanently bind NeXa to Gemma or to any vendor. A future
+  benchmark, a new model release, or a hardware change can supersede this
+  amendment the same way it superseded D4 — via evidence and a new/superseding
+  ADR, never a silent swap.
+- Future `AUTO` / `LOCAL ONLY` / `CLOUD PREFERRED` routing policies remain
+  **planned, not implemented**. Manual provider/model selection remains an
+  **advanced future capability**, not built here.
+- **No model router is implemented by this amendment.** M1.1 still builds
+  exactly the D1 turn path against this one frozen local model; routing
+  between models/providers is later work with its own ADR.
+
+### What remains documented alongside the frozen baseline
+
+- **`gemma4:e2b`** — strong faster / lower-resource local alternative
+  (~2× the tok/s, ~2.5 GB less RAM, flattest measured long-context decay of
+  the roster). Worth keeping as a fast-mode option once M1.1's provider layer
+  makes swapping trivial.
+- **`qwen3:4b-instruct`** — reliable, Apache-2.0, by far the largest context
+  window (262k) of the roster; remains documented as the swappable safe
+  fallback / reference baseline it already was.
+- **`qwen3.5:2b`** — English-primary / low-RAM option only; not suitable for
+  bilingual use (broken Polish, a honesty-probe hallucination the operator
+  independently reproduced live).
+
+### Follow-up work
+
+- M1.1 implements D1's turn path against `gemma4:e4b` via the D3 Ollama
+  provider, with `gemma4:e2b` and `qwen3:4b-instruct` kept as documented,
+  easily-swappable alternates behind the same `ModelProvider` interface.
+- A model router / `AUTO`/`LOCAL ONLY`/`CLOUD PREFERRED` policy layer remains
+  a later milestone, out of scope for M1.1.
