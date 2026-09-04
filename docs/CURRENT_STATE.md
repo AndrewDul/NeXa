@@ -9,18 +9,16 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0003_m1_0b_current_small_model_sweep_20260901.md`
-  (the operator blind test + baseline freeze below postdate it; no new
-  numbered report written for those yet)
+- **Latest report:** `docs/reports/R0004_m1_1_canonical_text_conversation_path_20260905.md`
 - **Current milestone:** **M1 — Natural Text Conversation**
-- **Current substage:** **M1.0B — COMPLETE**; **Operator blind conversation
-  test — COMPLETE (2026-09-04)**; **M1.1 local baseline model — FROZEN
-  (2026-09-05): `gemma4:e4b`** (ADR-0002 Amendment 2)
-- **Next substage:** **M1.1 — Minimal Canonical Text Conversation Path** (**NOT
-  STARTED**)
-- **Current objective:** none active — the model-selection decision is closed
-  (`docs/decisions/ADR-0002_text_conversation_foundation.md` Amendment 2). The
-  exact next task is M1.1 itself.
+- **Current substage:** **M1.1 — Minimal Canonical Text Conversation Path —
+  COMPLETE.** (M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1
+  local baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05.)
+- **Next substage:** **M2 — Realtime Voice** (**NOT STARTED**)
+- **Current objective:** none active — M1's minimal canonical text-conversation
+  path is implemented, tested (deterministic + one live Ollama run), and
+  documented. Next task is starting M2, or hardening M1.1 further if the owner
+  prefers (see "Exact next recommended task").
 
 ---
 
@@ -28,8 +26,27 @@ Runtime / test evidence outranks anything else in this repo.
 
 - Repository is a well-formed, importable Python project; foundation tests pass
   (`python -m unittest discover -s tests`).
-- Documentation + ADR + report systems in place (`R0001`, `R0002`, `R0003`;
-  `ADR-0001`, `ADR-0002` + its M1.0B amendment).
+- Documentation + ADR + report systems in place (`R0001`–`R0004`; `ADR-0001`,
+  `ADR-0002` + its M1.0B amendment + Amendment 2).
+- **M1.1 — Minimal Canonical Text Conversation Path implemented and verified**
+  (`R0004`; `docs/architecture/M1_1_TEXT_CONVERSATION_ARCHITECTURE.md`):
+  `ConversationSession` → `ConversationContext` (bounded, deterministic) →
+  `ModelProvider` → streamed tokens → appended `ConversationTurn`, in
+  `src/nexa/conversation/` + `src/nexa/providers/`. `LocalModelProvider`
+  (Ollama) is the first, live-verified implementation, configured for the
+  frozen baseline `gemma4:e4b`; `LlamaServerProvider` is a second
+  implementation behind the same interface (portability path), verified at the
+  interface level only — see limitations below. One versioned persona
+  (`configs/personas/nexa_persona_v1.json`). Repo-local `./.venv` created
+  (stdlib-only runtime — `pyproject.toml` `dependencies = []` unchanged; `dev`
+  extras `pytest`/`ruff` installed into it). 33 deterministic tests (unit +
+  fake-HTTP-server integration) pass via both `python -m unittest` and
+  `pytest`; `ruff check` clean. One live Ollama integration test (opt-in,
+  `NEXA_RUN_LIVE_TESTS=1`) passed against the real `gemma4:e4b`: one Polish and
+  one English turn, streamed, history correct, model unloaded after. A manual
+  multi-turn conversation through the real `apps/nexa_chat.py` CLI harness
+  also verified end to end (real recall across turns, e.g. translating its own
+  earlier Polish reply into English on request).
 - M1.0 research complete: Pi hardware/runtime/model inventory verified;
   legacy conversation stack audited (read-only); external research done;
   local models benchmarked on the Pi.
@@ -74,18 +91,26 @@ Runtime / test evidence outranks anything else in this repo.
   Amendment 2 (final decision).
 - `llama.cpp`-direct vs Ollama head-to-head **still not measured** — blocked by
   Ollama blob-store permissions (`0700`/`ollama`-owned); needs an operator
-  decision.
+  decision. The **same blocker** means `LlamaServerProvider` (built in M1.1)
+  has never been run against a real `llama-server` process — no GGUF weight
+  file is reachable outside that blob store on this machine. It is verified
+  only at the interface/request-shaping level (fake-HTTP-server tests).
 - Incumbent `qwen3:4b-instruct` was carried into the M1.0B head-to-head on
   Phase 1 data only (not run through the Phase 2 battery).
+- Cancellation (`CancelToken`) is cooperative between received stream chunks;
+  it cannot interrupt a token Ollama/llama.cpp is already computing
+  mid-inference (neither backend's streaming HTTP API exposes finer-grained
+  abort). Documented in `M1_1_TEXT_CONVERSATION_ARCHITECTURE.md` §6 as a known
+  limitation for M2 (voice/barge-in) to account for, not a silent gap.
 
 ## What is not implemented (by design)
 
-- The M1 conversation architecture itself (M1.1). `src/nexa/` is still the
-  placeholder package.
-- Realtime voice (M2), robust context (M3), device awareness / capability
-  registry (M4), long-term memory (M5), and everything later.
-- No Python virtual environment yet — created in M1.1 with the first real
-  dependency.
+- Realtime voice (M2), robust context beyond M1.1's bounded window (M3),
+  device awareness / capability registry (M4), long-term memory (M5), and
+  everything later.
+- Model router / `AUTO`/`LOCAL ONLY`/`CLOUD PREFERRED` policy, MAS, tools,
+  online model provider — all explicitly out of M1.1 scope (ADR-0002 D1,
+  ROADMAP "Later").
 
 ## Known problems / notes
 
@@ -100,12 +125,17 @@ Runtime / test evidence outranks anything else in this repo.
 ## Current architecture state
 
 - Conceptual boundaries: `docs/architecture/FOUNDATION_ARCHITECTURE.md`
-  (conceptual only).
+  (conceptual only, except two pointers into the doc below).
+- **Real (`VERIFIED FACT`):** `docs/architecture/M1_1_TEXT_CONVERSATION_ARCHITECTURE.md`
+  — the Conversation and (local) Model Providers boundaries, implemented in
+  `src/nexa/conversation/` + `src/nexa/providers/`.
 - **ADR-0002 (Accepted)** sets the M1 direction: one minimal canonical
   text-conversation path (`ConversationSession` → `ConversationContext` →
   `ModelProvider` → streamed tokens); model access via a minimal
   OpenAI-chat-shaped `ModelProvider` abstraction; **Ollama** as the first
-  `LocalModelProvider` implementation (`llama.cpp` second / portability).
+  `LocalModelProvider` implementation (`llama.cpp` second / portability) —
+  **both now implemented**, Ollama live-verified, `llama-server` interface-only
+  (see "What is partial").
 - **ADR-0002 M1.0B amendment (2026-09-02, informational — D1–D4 unchanged at
   the time):** the fair Bielik re-test is done and does **not** flip the
   baseline (D4 caveat (b) resolved); a better Polish persona lifted
@@ -119,13 +149,22 @@ Runtime / test evidence outranks anything else in this repo.
   alternative, `qwen3:4b-instruct` as the swappable safe fallback. Provider/model
   abstraction (D1–D3) explicitly preserved — this model is the M1.1 *local*
   baseline, not NeXa itself; no router implemented.
-- No product code exists for any of the above yet.
+- Product code now exists for M1.1 only (`src/nexa/conversation/`,
+  `src/nexa/providers/`, `src/nexa/config.py`, `src/nexa/bootstrap.py`,
+  `apps/nexa_chat.py`). Nothing else on the roadmap has product code yet.
 
 ## Current test status
 
-- `tests/test_foundation.py`: **PASS** via `python -m unittest`. `pytest`/`ruff`
-  still not installed (system interpreter); `dev` extras for M1.1.
-- `scripts/m1_bench/bench.py`: smoke-tested and used for real measurements.
+- Repo-local `./.venv` (system Python 3.13.5, **not** the legacy repo's venv)
+  with `dev` extras (`pytest`, `ruff`) installed.
+- `python -m unittest discover -s tests` and `pytest`: **33 tests, all PASS**,
+  1 intentionally skipped (live Ollama test, opt-in only). `ruff check src
+  tests apps`: clean.
+- Live Ollama integration test (`NEXA_RUN_LIVE_TESTS=1 python -m unittest
+  tests.test_live_ollama_integration`): **PASS** against real `gemma4:e4b`
+  (2026-09-05) — see `R0004` for the transcript evidence.
+- `scripts/m1_bench/bench.py`: smoke-tested and used for real measurements
+  (M1.0/M1.0B; unrelated to the M1.1 product tests above).
 
 ## Active architectural decisions
 
@@ -137,19 +176,21 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Current focus
 
-- None active. Model-selection decision closed (M1.0B → operator blind test →
-  ADR-0002 Amendment 2). M1.1 is next, not yet started.
+- None active. M1 (Natural Text Conversation) M1.0 → M1.0B → operator blind
+  test → ADR-0002 Amendment 2 → M1.1 implementation is now a complete chain.
+  Awaiting the owner's choice of what's next: M2 (voice), or optional M1.1
+  hardening (see below).
 
 ## Exact next recommended task
 
-**M1.1 — Minimal Canonical Text Conversation Path.** The model-selection
-question is closed — `gemma4:e4b` is the frozen local baseline
-(`ADR-0002` Amendment 2); no further ADR work is owed before starting M1.1.
-Create `./.venv` + first real dependency; implement ADR-0002 D1's small type
-set in `src/nexa/` (`ModelProvider` + `LocalModelProvider` (Ollama, streaming,
-configured for `gemma4:e4b`) + `ConversationContext` (bounded) +
-`ConversationSession` + `ConversationTurn` + `StreamingResponse`) + one
-versioned system persona in `configs/`; deterministic turn-contract tests with
-a fake provider + one marked live Ollama integration test; add a
-`llama-server` provider adapter. No MAS, no model router, no capability layer,
-no fallback model, no memory, no voice, no UI.
+**M2 — Realtime Voice**, as a new, explicitly-started milestone with its own
+ADR (transport/framework boundary, STT/TTS provider abstractions,
+ROADMAP "M2"). Nothing in M1.1 blocks starting it.
+
+Optional, not required, M1.1 hardening the owner may want first (each is a
+small, separate task — do not bundle silently into M2's ADR):
+- Resolve the pre-existing Ollama blob-store permission blocker (needs an
+  explicit operator/`sudo` decision) so the `llama-server` adapter and the
+  Ollama-vs-llama.cpp benchmark can actually run live.
+- Decide whether cancellation needs a stronger guarantee before M2's
+  barge-in depends on it (see `M1_1_TEXT_CONVERSATION_ARCHITECTURE.md` §6).

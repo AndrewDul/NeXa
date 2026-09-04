@@ -1,0 +1,120 @@
+"""Ollama-backed ``ModelProvider`` (ADR-0002 D3 — first ``LocalModelProvider``).
+
+Talks to Ollama's native streaming ``/api/chat`` endpoint. Uses only the
+standard library (no HTTP client dependency): the blocking streaming read runs
+on a background thread and feeds an ``asyncio.Queue`` so the rest of NeXa's
+conversation layer stays async without adding a runtime dependency.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import threading
+import urllib.error
+import urllib.request
+from collections.abc import AsyncIterator
+
+from .base import (
+    CancelToken,
+    GenerationOptions,
+    ModelProvider,
+    ModelUnavailableError,
+    ProviderDescription,
+    ProviderMessage,
+)
+
+_DONE = object()
+
+
+class LocalModelProvider(ModelProvider):
+    """First ``LocalModelProvider`` implementation: Ollama.
+
+    ``model`` and ``base_url`` are configuration, not identity — this class
+    knows nothing about "NeXa"; it only knows how to drive one Ollama model.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        base_url: str = "http://127.0.0.1:11434",
+        keep_alive: str | None = "5m",
+        timeout: float = 600.0,
+    ) -> None:
+        self._model = model
+        self._base_url = base_url.rstrip("/")
+        self._keep_alive = keep_alive
+        self._timeout = timeout
+
+    def describe(self) -> ProviderDescription:
+        return ProviderDescription(provider_name="ollama", model=self._model)
+
+    async def generate(
+        self,
+        messages: list[ProviderMessage],
+        options: GenerationOptions,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> AsyncIterator[str]:
+        body: dict[str, object] = {
+            "model": self._model,
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "stream": True,
+            "options": {
+                "num_ctx": options.num_ctx,
+                "temperature": options.temperature,
+                "top_p": options.top_p,
+                "top_k": options.top_k,
+                "repeat_penalty": options.repeat_penalty,
+                "num_predict": options.num_predict,
+            },
+        }
+        if self._keep_alive is not None:
+            body["keep_alive"] = self._keep_alive
+        if options.think is not None:
+            body["think"] = options.think
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[object] = asyncio.Queue()
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                req = urllib.request.Request(
+                    f"{self._base_url}/api/chat",
+                    data=json.dumps(body).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    for raw_line in resp:
+                        if cancel_token is not None and cancel_token.is_cancelled:
+                            return
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        chunk = json.loads(line)
+                        content = chunk.get("message", {}).get("content", "")
+                        if content:
+                            loop.call_soon_threadsafe(queue.put_nowait, content)
+                        if chunk.get("done"):
+                            return
+            except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as exc:
+                errors.append(exc)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+        while True:
+            item = await queue.get()
+            if item is _DONE:
+                break
+            yield item
+
+        if errors:
+            raise ModelUnavailableError(
+                f"ollama provider (model={self._model!r}, base_url={self._base_url!r}) "
+                f"failed: {errors[0]!r}"
+            ) from errors[0]

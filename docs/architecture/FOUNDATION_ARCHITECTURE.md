@@ -52,6 +52,10 @@ mode is a front-end onto the Conversation boundary, not its own brain.
 The single canonical authority that turns an incoming user turn into a response.
 No parallel "final answer" paths. Simple turns do not require MAS.
 
+> M1.1 made this boundary real (the minimal text-conversation path only): see
+> `docs/architecture/M1_1_TEXT_CONVERSATION_ARCHITECTURE.md`. Everything else
+> in this document remains conceptual.
+
 ### Context
 Transient, bounded, per-session working state that a turn needs. Distinct from
 chat history and from long-term memory.
@@ -67,6 +71,11 @@ User-owned, long-lived knowledge NeXa retains about the user and the world.
 Models are replaceable provider abstractions. Local-first default. No provider
 name in core control flow. Online providers, if used, receive only the minimum
 required context.
+
+> M1.1 made this boundary real for local providers only (Ollama + a
+> `llama-server` adapter): see
+> `docs/architecture/M1_1_TEXT_CONVERSATION_ARCHITECTURE.md` §3, §8. Online
+> providers remain conceptual.
 
 ### Device Awareness
 Answers: *"What hardware / body do I currently have right now?"* (sensors,

@@ -66,6 +66,27 @@ milestone, and do not let them exist as skipped tests that imply coverage.
   under `pytest` once the `dev` extra is installed.
 - No `hardware` or `benchmark` tests exist yet.
 
+## M1.1 status
+
+- `tests/fakes.py` — `FakeModelProvider`, a deterministic in-memory
+  `ModelProvider`. Never imported from `src/nexa/`.
+- `tests/test_context.py`, `tests/test_streaming_response.py`,
+  `tests/test_conversation_session.py` — tier `unit`. The canonical turn path
+  (`ConversationSession` → `ConversationContext` → `ModelProvider`) tested
+  entirely against `FakeModelProvider`; no network, no Ollama.
+- `tests/test_ollama_provider.py`, `tests/test_llama_server_provider.py` — tier
+  `integration`. Each provider tested against a small stdlib
+  `http.server`-based fake of its real wire protocol (NDJSON / OpenAI SSE) —
+  mocking at the true external (network) boundary per this doc's philosophy,
+  not by mocking the provider itself.
+- `tests/test_live_ollama_integration.py` — tier `integration`, real backend.
+  Talks to a real local Ollama + the frozen `gemma4:e4b` baseline
+  (ADR-0002 Amendment 2). **Not run by default** (loads a ~10 GB model) — set
+  `NEXA_RUN_LIVE_TESTS=1` to run it explicitly.
+- All `unit`/fake-server `integration` tests run with plain
+  `python -m unittest discover -s tests` or `pytest` — no Ollama required, no
+  new runtime dependency (stdlib only).
+
 ## Tooling direction
 
 - `pytest` as the runner (declared in `pyproject.toml` `dev` extras); config lives

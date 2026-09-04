@@ -1,9 +1,9 @@
 """NeXa — one personal, local-first AI system across the user's devices.
 
-M0 (Foundation): this package is an intentionally empty placeholder that makes
-the repository an importable Python project and gives the test suite something
-real to check. No subsystems live here yet. See ``docs/CURRENT_STATE.md`` and
-``docs/ROADMAP.md`` before adding anything.
+M1.1 (Minimal Canonical Text Conversation Path): ``nexa.conversation`` and
+``nexa.providers`` implement the one canonical turn path from ADR-0002 D1.
+No other subsystem (memory, capabilities, voice, MAS, routing) lives here yet
+— see ``docs/CURRENT_STATE.md`` and ``docs/ROADMAP.md`` before adding anything.
 """
 
 __version__ = "0.0.0"
