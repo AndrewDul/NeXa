@@ -9,22 +9,27 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0005_m2_realtime_voice_oss_research_20260905.md`
+- **Latest report:** `docs/reports/R0006_m2_voice_feasibility_spikes_20260905.md`
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
-  **M2 — Realtime Voice — RESEARCH DONE, implementation NOT STARTED**
+  **M2 — Realtime Voice — RESEARCH + FEASIBILITY SPIKES DONE, implementation
+  NOT STARTED**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
   M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1 local
-  baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. **M2
-  open-source-first research COMPLETE (2026-09-05)** —
-  `docs/research/M2_REALTIME_VOICE_RESEARCH.md`, `R0005` — no M2 product code,
+  baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. M2
+  open-source-first research COMPLETE (2026-09-05) — `R0005`. **M2.0A
+  feasibility spikes COMPLETE (2026-09-05)** —
+  `docs/research/M2_VOICE_FEASIBILITY_SPIKES.md`, `R0006`: local voice
+  pipeline classified **`LOCAL_FEASIBLE_WITH_TUNING`** — no M2 product code,
   no M2 ADR yet.
-- **Next substage:** **M2 implementation** (**NOT STARTED** — two small
-  spikes recommended first, see "Exact next recommended task")
+- **Next substage:** **M2 architecture ADR, then M2 implementation** (**NOT
+  STARTED** — see "Exact next recommended task")
 - **Current objective:** none active — M1.1 is implemented, tested, and
   human-accepted. M2's open-source-first architecture research
   (Pipecat/LiveKit Agents/STT/TTS/VAD candidates, license review,
-  make-vs-build table) is done and awaiting the owner's read before an M2
-  architecture ADR is written.
+  make-vs-build table) plus the M2.0A feasibility spikes (real whisper.cpp
+  vs. legacy faster-whisper measurement, real VAD+STT+LLM+TTS resource-budget
+  test) are both done. Evidence is ready for an M2 architecture ADR, not yet
+  written.
 
 ---
 
@@ -32,8 +37,30 @@ Runtime / test evidence outranks anything else in this repo.
 
 - Repository is a well-formed, importable Python project; foundation tests pass
   (`python -m unittest discover -s tests`).
-- Documentation + ADR + report systems in place (`R0001`–`R0005`; `ADR-0001`,
+- Documentation + ADR + report systems in place (`R0001`–`R0006`; `ADR-0001`,
   `ADR-0002` + its M1.0B amendment + Amendment 2).
+- **M2.0A voice feasibility spikes complete** (`R0006`;
+  `docs/research/M2_VOICE_FEASIBILITY_SPIKES.md`): real whisper.cpp benchmark
+  against the exact same 12 legacy PL/EN audio fixtures faster-whisper was
+  scored on — whisper.cpp's `base` model beat legacy's faster-whisper `base`
+  on **both** accuracy and speed even at a matched beam size (0.354 avg WER
+  at 1972 ms vs. legacy's 0.537–0.558 avg WER at 3486–3575 ms); `q8_0`
+  quantization cost no accuracy at ~23% less latency. Auto-language-detection
+  reproduced legacy's exact known failure (misdetects one Polish sentence as
+  Japanese) — confirmed independent of STT engine, an explicit language hint
+  is required. A real resource-budget test (VAD + whisper.cpp + the frozen
+  `gemma4:e4b` + Piper TTS, 8 stages) found no RAM/swap/thermal ceiling
+  (min free RAM ~3.8 GB, swap <70 MB, zero throttling, peak 64.8°C) but
+  reproduced and precisely quantified legacy's CPU-contention failure mode
+  under naive full concurrency (VAD ~73×, STT ~4.75×, TTS ~2.9×,
+  LLM time-to-first-token ~2.9× slower; LLM steady-state tok/s barely moved,
+  ~2%). Classified **`LOCAL_FEASIBLE_WITH_TUNING`** — local full pipeline is
+  viable provided the M2 architecture sequences the pipeline instead of
+  running everything concurrently. `gemma4:e4b` unchanged. NVIDIA
+  Parakeet/Canary's license (CC-BY-4.0) and Polish support were confirmed
+  from the primary model card (both `UNKNOWN` before); hardware path
+  plausible but not benchmarked (would need a multi-GB conversion,
+  correctly deferred).
 - **M2 open-source-first research complete** (`R0005`;
   `docs/research/M2_REALTIME_VOICE_RESEARCH.md`): deep-dived pipecat-ai/pipecat
   and livekit/agents source code (not just docs) against the requirement that
@@ -222,24 +249,27 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Exact next recommended task
 
-M2's open-source-first research is done
-(`docs/research/M2_REALTIME_VOICE_RESEARCH.md`, `R0005`) but its own §7–§8
-recommend **two small spikes before an M2 architecture ADR is written**, not
-jumping straight to implementation:
+Both spikes `R0005` §7–§8 called for are now **done**
+(`docs/research/M2_VOICE_FEASIBILITY_SPIKES.md`, `R0006`): the resource-budget
+test and the whisper.cpp Polish-accuracy check. **Evidence is ready for the
+M2 architecture ADR** — write it next, choosing among the research doc's A/B/C
+options (Pipecat / LiveKit Agents / both), and folding in the feasibility
+spike's findings as constraints, not just the framework comparison:
 
-1. **Resource-budget spike**: can this Pi 5 run VAD + STT + the frozen
-   `gemma4:e4b` (~10 GB, ~3 tok/s) + TTS concurrently without the
-   CPU-contention failure legacy already hit once? Cheapest way to find out
-   before committing to a framework integration.
-2. **whisper.cpp Polish-accuracy check** against the same test sentences
-   legacy already used for faster-whisper, to close the one clean
-   apples-to-apples STT gap the research left open.
+- LiveKit Agents' proprietary default-VAD framework-lock and Piper's GPL-3.0
+  successor both still need an explicit call in that ADR, not a silent
+  default (unchanged from `R0005`).
+- The M2 pipeline must be **sequenced** (VAD/STT before the LLM call starts;
+  only TTS-narrating-a-completed-sentence should overlap active generation),
+  not run fully concurrently — naive full concurrency measurably degrades
+  VAD/STT/TTS 3×–73× on this hardware (`R0006` §"CPU CONTENTION").
+- An explicit language-hint strategy is required — auto-detection is
+  unreliable regardless of STT engine (`R0006`, reproduced on whisper.cpp too).
+- `gemma4:e4b` stays the frozen baseline unless a future ADR changes it.
 
-Then: write the **M2 architecture ADR**, choosing among the research doc's
-A/B/C options (Pipecat / LiveKit Agents / both) — LiveKit Agents' proprietary
-default-VAD framework-lock and Piper's GPL-3.0 successor both need an
-explicit call in that ADR, not a silent default. Only after that ADR should
-M2 implementation start.
+Only after that ADR should M2 implementation start. Optional, non-blocking
+follow-up: a scoped Parakeet/Canary conversion + benchmark spike (license and
+Polish support are now confirmed clean; only the hardware path is untested).
 
 Optional, not required, M1.1 hardening the owner may still want at some
 point (unrelated to M2, each its own small task):

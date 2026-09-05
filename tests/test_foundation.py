@@ -48,6 +48,7 @@ class TestFoundationFiles(unittest.TestCase):
         "docs/reports/R0003_m1_0b_current_small_model_sweep_20260901.md",
         "docs/reports/R0004_m1_1_canonical_text_conversation_path_20260905.md",
         "docs/reports/R0005_m2_realtime_voice_oss_research_20260905.md",
+        "docs/reports/R0006_m2_voice_feasibility_spikes_20260905.md",
         "docs/research/RESEARCH_POLICY.md",
         "docs/research/M1_NATURAL_CONVERSATION_RESEARCH.md",
         "docs/research/M1_0B_CURRENT_SMALL_MODEL_SWEEP.md",

@@ -141,9 +141,19 @@ All of legacy's real Pi 5 numbers cited in the research doc were read
 
 ## TESTS
 
-N/A — research-only task, no code changed. `python -m unittest discover -s
-tests` was not expected to be affected; not re-run as part of this task since
-nothing under `src/`/`tests/` was touched (confirmed via `git status`).
+**Correction (2026-09-05, later in the same day's work): this paragraph was
+stale.** At the time this report
+was first written, no product code had changed and the suite was not
+expected to be affected, so it was not re-run. That became inaccurate once
+`tests/test_foundation.py` *was* touched (the `REQUIRED` list extension, see
+"DOCUMENTATION / REPORTS UPDATED") and the "WHAT I VERIFIED" section above was
+added recording that the full suite and `ruff` **were** re-run after the
+research corrections — both true, but left inconsistent with this paragraph's
+original wording. Corrected here, not rewritten elsewhere: `python -m
+unittest discover -s tests` and `ruff check src tests apps` were run after
+all edits in this task (including the `test_foundation.py` change) and both
+passed (33 tests, 1 intentionally skipped; lint clean). No `src/` product
+code was ever touched by this task — only the one `tests/` line noted above.
 
 ## UNRESOLVED
 

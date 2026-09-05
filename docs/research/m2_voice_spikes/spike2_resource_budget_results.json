@@ -1,0 +1,179 @@
+[
+  {
+    "stage": "A_vad_only",
+    "wall_s": 0.08,
+    "result": {
+      "elapsed_ms": 80.43971099687042,
+      "rc": 0
+    },
+    "system": {
+      "min_mem_available_mb": 14249,
+      "max_swap_used_mb": 0,
+      "max_load1": 0.69,
+      "temp_start": "temp=54.3'C",
+      "temp_end": "temp=54.3'C",
+      "throttled_ever_nonzero": false,
+      "n_samples": 1
+    }
+  },
+  {
+    "stage": "B_stt_only",
+    "wall_s": 2.64,
+    "result": {
+      "elapsed_ms": 2636.9020869969972,
+      "text": "Wiesz, jak grawitacja jest."
+    },
+    "system": {
+      "min_mem_available_mb": 13919,
+      "max_swap_used_mb": 0,
+      "max_load1": 0.71,
+      "temp_start": "temp=54.3'C",
+      "temp_end": "temp=59.3'C",
+      "throttled_ever_nonzero": false,
+      "n_samples": 6
+    }
+  },
+  {
+    "stage": "C_llm_only",
+    "wall_s": 40.56,
+    "result": {
+      "ttft_s": 35.28206948300067,
+      "total_s": 40.55742499700136,
+      "eval_count": 17,
+      "tok_s": 3.21944697476143,
+      "text": "Siła przyciągania między ciałami posiadającymi masę."
+    },
+    "system": {
+      "min_mem_available_mb": 4239,
+      "max_swap_used_mb": 41,
+      "max_load1": 1.24,
+      "temp_start": "temp=56.5'C",
+      "temp_end": "temp=61.5'C",
+      "throttled_ever_nonzero": false,
+      "n_samples": 81
+    }
+  },
+  {
+    "stage": "D_tts_only",
+    "wall_s": 3.41,
+    "result": {
+      "elapsed_ms": 3407.755056003225,
+      "rc": 0
+    },
+    "system": {
+      "min_mem_available_mb": 4107,
+      "max_swap_used_mb": 42,
+      "max_load1": 1.24,
+      "temp_start": "temp=58.2'C",
+      "temp_end": "temp=60.4'C",
+      "throttled_ever_nonzero": false,
+      "n_samples": 7
+    }
+  },
+  {
+    "stage": "E_vad_plus_stt",
+    "wall_s": 3.48,
+    "result": {
+      "vad": {
+        "elapsed_ms": 2439.042887999676,
+        "rc": 0
+      },
+      "stt": {
+        "elapsed_ms": 3482.42138200294,
+        "text": "Wiesz, jak grawitacja jest."
+      }
+    },
+    "system": {
+      "min_mem_available_mb": 3984,
+      "max_swap_used_mb": 69,
+      "max_load1": 1.77,
+      "temp_start": "temp=58.2'C",
+      "temp_end": "temp=60.9'C",
+      "throttled_ever_nonzero": false,
+      "n_samples": 7
+    }
+  },
+  {
+    "stage": "F_llm_plus_tts",
+    "wall_s": 7.59,
+    "result": {
+      "llm": {
+        "ttft_s": 4.364036582999688,
+        "total_s": 7.591423894999025,
+        "eval_count": 11,
+        "tok_s": 3.408700739626084,
+        "text": "Siła przyciągania między masami."
+      },
+      "tts": {
+        "elapsed_ms": 4067.767498003377,
+        "rc": 0
+      }
+    },
+    "system": {
+      "min_mem_available_mb": 4058,
+      "max_swap_used_mb": 68,
+      "max_load1": 2.02,
+      "temp_start": "temp=59.8'C",
+      "temp_end": "temp=62.6'C",
+      "throttled_ever_nonzero": false,
+      "n_samples": 15
+    }
+  },
+  {
+    "stage": "G_vad_stt_with_resident_idle_llm",
+    "wall_s": 3.77,
+    "result": {
+      "vad": {
+        "elapsed_ms": 2862.1464669995476,
+        "rc": 0
+      },
+      "stt": {
+        "elapsed_ms": 3766.047718003392,
+        "text": "Wiesz, jak grawitacja jest."
+      }
+    },
+    "system": {
+      "min_mem_available_mb": 3984,
+      "max_swap_used_mb": 62,
+      "max_load1": 2.95,
+      "temp_start": "temp=63.7'C",
+      "temp_end": "temp=63.7'C",
+      "throttled_ever_nonzero": false,
+      "n_samples": 8
+    }
+  },
+  {
+    "stage": "H_full_concurrent_llm_generating_plus_vad_stt_tts",
+    "wall_s": 16.15,
+    "result": {
+      "llm": {
+        "ttft_s": 12.844775573001243,
+        "total_s": 16.14686579300178,
+        "eval_count": 11,
+        "tok_s": 3.3321065122992595,
+        "text": "Siła przyciągania między masami."
+      },
+      "vad": {
+        "elapsed_ms": 5811.023253998428,
+        "rc": 0
+      },
+      "stt": {
+        "elapsed_ms": 12526.56009599741,
+        "text": "Wiesz, jak grawitacja jest."
+      },
+      "tts": {
+        "elapsed_ms": 9950.631561005139,
+        "rc": 0
+      }
+    },
+    "system": {
+      "min_mem_available_mb": 3806,
+      "max_swap_used_mb": 62,
+      "max_load1": 3.77,
+      "temp_start": "temp=60.9'C",
+      "temp_end": "temp=64.2'C",
+      "throttled_ever_nonzero": false,
+      "n_samples": 32
+    }
+  }
+]

@@ -1,0 +1,242 @@
+[
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "en_what_is_teleportation.wav",
+    "language": "en",
+    "expected_text": "what is teleportation",
+    "recognized_text": "What is the deportation?",
+    "wer": 0.6667,
+    "elapsed_ms": 907.4,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "en_what_is_the_speed_of_light.wav",
+    "language": "en",
+    "expected_text": "what is the speed of light",
+    "recognized_text": "What is the speed of light?",
+    "wer": 0.0,
+    "elapsed_ms": 899.9,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "en_what_are_colors.wav",
+    "language": "en",
+    "expected_text": "what are colors",
+    "recognized_text": "What are colors?",
+    "wer": 0.0,
+    "elapsed_ms": 835.4,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "en_how_big_is_the_USA.wav",
+    "language": "en",
+    "expected_text": "how big is the USA",
+    "recognized_text": "How big is the USA?",
+    "wer": 0.0,
+    "elapsed_ms": 949.3,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "en_explain_gravity.wav",
+    "language": "en",
+    "expected_text": "explain gravity",
+    "recognized_text": "Explained Gravity.",
+    "wer": 0.5,
+    "elapsed_ms": 905.1,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "pl_co_to_jest_teleportacja.wav",
+    "language": "pl",
+    "expected_text": "co to jest teleportacja",
+    "recognized_text": "Co to jest te deportacje?",
+    "wer": 0.5,
+    "elapsed_ms": 898.8,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "pl_czym_jest_teleportacja.wav",
+    "language": "pl",
+    "expected_text": "czym jest teleportacja",
+    "recognized_text": "Czym jest te leportacja?",
+    "wer": 0.6667,
+    "elapsed_ms": 904.7,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "pl_jaka_jest_prędkość_światła.wav",
+    "language": "pl",
+    "expected_text": "jaka jest prędkość światła",
+    "recognized_text": "Jak jest prędko światła?",
+    "wer": 0.5,
+    "elapsed_ms": 929.2,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "pl_jak_szybkie_jest_światło.wav",
+    "language": "pl",
+    "expected_text": "jak szybkie jest światło",
+    "recognized_text": "Jak szybkej światło?",
+    "wer": 0.5,
+    "elapsed_ms": 959.6,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "pl_co_to_są_kolory.wav",
+    "language": "pl",
+    "expected_text": "co to są kolory",
+    "recognized_text": "Co to są kolory?",
+    "wer": 0.0,
+    "elapsed_ms": 919.5,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "pl_jak_duże_jest_USA.wav",
+    "language": "pl",
+    "expected_text": "jak duże jest USA",
+    "recognized_text": "Jak tu jest USA?",
+    "wer": 0.25,
+    "elapsed_ms": 868.4,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "tiny/fp16/bs1",
+    "file": "pl_wyjaśnij_grawitację.wav",
+    "language": "pl",
+    "expected_text": "wyjaśnij grawitację",
+    "recognized_text": "wyjaś in gra witacją.",
+    "wer": 2.0,
+    "elapsed_ms": 905.0,
+    "peak_rss_mb": 148.5
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "en_what_is_teleportation.wav",
+    "language": "en",
+    "expected_text": "what is teleportation",
+    "recognized_text": "What is teleportation?",
+    "wer": 0.0,
+    "elapsed_ms": 1932.9,
+    "peak_rss_mb": 238.6
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "en_what_is_the_speed_of_light.wav",
+    "language": "en",
+    "expected_text": "what is the speed of light",
+    "recognized_text": "What is the speed of light?",
+    "wer": 0.0,
+    "elapsed_ms": 1972.6,
+    "peak_rss_mb": 238.6
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "en_what_are_colors.wav",
+    "language": "en",
+    "expected_text": "what are colors",
+    "recognized_text": "What are colors?",
+    "wer": 0.0,
+    "elapsed_ms": 1905.0,
+    "peak_rss_mb": 238.6
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "en_how_big_is_the_USA.wav",
+    "language": "en",
+    "expected_text": "how big is the USA",
+    "recognized_text": "How big is the USA?",
+    "wer": 0.0,
+    "elapsed_ms": 1949.4,
+    "peak_rss_mb": 238.6
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "en_explain_gravity.wav",
+    "language": "en",
+    "expected_text": "explain gravity",
+    "recognized_text": "Explan gravity.",
+    "wer": 0.5,
+    "elapsed_ms": 1868.2,
+    "peak_rss_mb": 238.6
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "pl_co_to_jest_teleportacja.wav",
+    "language": "pl",
+    "expected_text": "co to jest teleportacja",
+    "recognized_text": "Co to jest teleportacja?",
+    "wer": 0.0,
+    "elapsed_ms": 1930.5,
+    "peak_rss_mb": 238.6
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "pl_czym_jest_teleportacja.wav",
+    "language": "pl",
+    "expected_text": "czym jest teleportacja",
+    "recognized_text": "Czym jest teleportacja?",
+    "wer": 0.0,
+    "elapsed_ms": 1927.8,
+    "peak_rss_mb": 238.6
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "pl_jaka_jest_prędkość_światła.wav",
+    "language": "pl",
+    "expected_text": "jaka jest prędkość światła",
+    "recognized_text": "Jaka jest prędkoś światła?",
+    "wer": 0.25,
+    "elapsed_ms": 1990.6,
+    "peak_rss_mb": 238.6
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "pl_jak_szybkie_jest_światło.wav",
+    "language": "pl",
+    "expected_text": "jak szybkie jest światło",
+    "recognized_text": "Jak szybko i światło?",
+    "wer": 0.5,
+    "elapsed_ms": 1946.6,
+    "peak_rss_mb": 238.6
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "pl_co_to_są_kolory.wav",
+    "language": "pl",
+    "expected_text": "co to są kolory",
+    "recognized_text": "Soto są kolory.",
+    "wer": 0.5,
+    "elapsed_ms": 1948.6,
+    "peak_rss_mb": 238.6
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "pl_jak_duże_jest_USA.wav",
+    "language": "pl",
+    "expected_text": "jak duże jest USA",
+    "recognized_text": "Jak to już jest USA?",
+    "wer": 0.5,
+    "elapsed_ms": 1971.6,
+    "peak_rss_mb": 238.6
+  },
+  {
+    "config": "base/fp16/bs1",
+    "file": "pl_wyjaśnij_grawitację.wav",
+    "language": "pl",
+    "expected_text": "wyjaśnij grawitację",
+    "recognized_text": "Wiesz, jak się grawitatą.",
+    "wer": 2.0,
+    "elapsed_ms": 2320.6,
+    "peak_rss_mb": 239.0
+  }
+]

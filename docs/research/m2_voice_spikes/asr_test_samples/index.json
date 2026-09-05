@@ -1,0 +1,110 @@
+[
+  {
+    "file": "en_what_is_teleportation.wav",
+    "expected_text": "what is teleportation",
+    "language": "en",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  {
+    "file": "en_what_is_the_speed_of_light.wav",
+    "expected_text": "what is the speed of light",
+    "language": "en",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  {
+    "file": "en_what_are_colors.wav",
+    "expected_text": "what are colors",
+    "language": "en",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  {
+    "file": "en_how_big_is_the_USA.wav",
+    "expected_text": "how big is the USA",
+    "language": "en",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  {
+    "file": "en_explain_gravity.wav",
+    "expected_text": "explain gravity",
+    "language": "en",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  {
+    "file": "pl_co_to_jest_teleportacja.wav",
+    "expected_text": "co to jest teleportacja",
+    "language": "pl",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  {
+    "file": "pl_czym_jest_teleportacja.wav",
+    "expected_text": "czym jest teleportacja",
+    "language": "pl",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  {
+    "file": "pl_jaka_jest_prędkość_światła.wav",
+    "expected_text": "jaka jest prędkość światła",
+    "language": "pl",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  {
+    "file": "pl_jak_szybkie_jest_światło.wav",
+    "expected_text": "jak szybkie jest światło",
+    "language": "pl",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  {
+    "file": "pl_co_to_są_kolory.wav",
+    "expected_text": "co to są kolory",
+    "language": "pl",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  {
+    "file": "pl_jak_duże_jest_USA.wav",
+    "expected_text": "jak duże jest USA",
+    "language": "pl",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  {
+    "file": "pl_wyjaśnij_grawitację.wav",
+    "expected_text": "wyjaśnij grawitację",
+    "language": "pl",
+    "device_index": 2,
+    "device_reason": "matched device_name_contains='reSpeaker'",
+    "sample_rate": 16000,
+    "channels": 1
+  }
+]
