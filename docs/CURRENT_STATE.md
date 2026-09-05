@@ -9,17 +9,22 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0004_m1_1_canonical_text_conversation_path_20260905.md`
-- **Current milestone:** **M1 — Natural Text Conversation**
-- **Current substage:** **M1.1 — Minimal Canonical Text Conversation Path —
-  COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).** (M1.0B COMPLETE; operator
-  blind test COMPLETE 2026-09-04; M1.1 local baseline FROZEN to `gemma4:e4b`,
-  ADR-0002 Amendment 2, 2026-09-05.)
-- **Next substage:** **M2 — Realtime Voice** (**NOT STARTED — clear to
-  start**)
-- **Current objective:** none active — M1.1 is implemented, tested, and now
-  human-accepted by the owner. Next task is starting M2 (see "Exact next
-  recommended task").
+- **Latest report:** `docs/reports/R0005_m2_realtime_voice_oss_research_20260905.md`
+- **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
+  **M2 — Realtime Voice — RESEARCH DONE, implementation NOT STARTED**
+- **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
+  M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1 local
+  baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. **M2
+  open-source-first research COMPLETE (2026-09-05)** —
+  `docs/research/M2_REALTIME_VOICE_RESEARCH.md`, `R0005` — no M2 product code,
+  no M2 ADR yet.
+- **Next substage:** **M2 implementation** (**NOT STARTED** — two small
+  spikes recommended first, see "Exact next recommended task")
+- **Current objective:** none active — M1.1 is implemented, tested, and
+  human-accepted. M2's open-source-first architecture research
+  (Pipecat/LiveKit Agents/STT/TTS/VAD candidates, license review,
+  make-vs-build table) is done and awaiting the owner's read before an M2
+  architecture ADR is written.
 
 ---
 
@@ -27,8 +32,29 @@ Runtime / test evidence outranks anything else in this repo.
 
 - Repository is a well-formed, importable Python project; foundation tests pass
   (`python -m unittest discover -s tests`).
-- Documentation + ADR + report systems in place (`R0001`–`R0004`; `ADR-0001`,
+- Documentation + ADR + report systems in place (`R0001`–`R0005`; `ADR-0001`,
   `ADR-0002` + its M1.0B amendment + Amendment 2).
+- **M2 open-source-first research complete** (`R0005`;
+  `docs/research/M2_REALTIME_VOICE_RESEARCH.md`): deep-dived pipecat-ai/pipecat
+  and livekit/agents source code (not just docs) against the requirement that
+  `ConversationSession` stay the canonical brain — both frameworks have a
+  clean, confirmed integration seam (`Agent.llm_node`/custom
+  `FrameProcessor`) that can delegate straight to it. License review caught a
+  real risk by unpacking an actual PyPI wheel: LiveKit Agents' *default*
+  local VAD/turn-detector models carry a proprietary, framework-locked
+  license (usable only inside LiveKit Agents) — the open `livekit-plugins-silero`
+  (MIT) must be substituted explicitly. Piper's actively-maintained successor
+  (`OHF-Voice/piper1-gpl`) is GPL-3.0 (the original MIT `rhasspy/piper` is
+  archived) — recommended subprocess-only invocation, not an in-process
+  import. Real Pi 5 evidence pulled from the legacy repo (read-only) anchors
+  every feasibility claim: legacy's own measured numbers show
+  faster-whisper's fast configs (`tiny`/`base`) are too inaccurate for Polish
+  (WER 0.54–0.68) while the accurate config (`small`) is too slow
+  (35–92 s); Piper's real Polish-voice latency was ~7 s/utterance (much
+  slower than generic English-voice benchmarks suggest); and a full
+  LLM-answered voice turn took 27.6–54 s end-to-end, with a real CPU-contention
+  failure once recorded when other processes shared the same 4 cores. No
+  prototype was built or run — see `R0005`'s "UNRESOLVED".
 - **M1.1 — Minimal Canonical Text Conversation Path implemented and verified**
   (`R0004`; `docs/architecture/M1_1_TEXT_CONVERSATION_ARCHITECTURE.md`):
   `ConversationSession` → `ConversationContext` (bounded, deterministic) →
@@ -196,12 +222,27 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Exact next recommended task
 
-**M2 — Realtime Voice**, as a new, explicitly-started milestone with its own
-ADR (transport/framework boundary, STT/TTS provider abstractions,
-ROADMAP "M2"). Nothing in M1.1 blocks starting it.
+M2's open-source-first research is done
+(`docs/research/M2_REALTIME_VOICE_RESEARCH.md`, `R0005`) but its own §7–§8
+recommend **two small spikes before an M2 architecture ADR is written**, not
+jumping straight to implementation:
 
-Optional, not required, M1.1 hardening the owner may want first (each is a
-small, separate task — do not bundle silently into M2's ADR):
+1. **Resource-budget spike**: can this Pi 5 run VAD + STT + the frozen
+   `gemma4:e4b` (~10 GB, ~3 tok/s) + TTS concurrently without the
+   CPU-contention failure legacy already hit once? Cheapest way to find out
+   before committing to a framework integration.
+2. **whisper.cpp Polish-accuracy check** against the same test sentences
+   legacy already used for faster-whisper, to close the one clean
+   apples-to-apples STT gap the research left open.
+
+Then: write the **M2 architecture ADR**, choosing among the research doc's
+A/B/C options (Pipecat / LiveKit Agents / both) — LiveKit Agents' proprietary
+default-VAD framework-lock and Piper's GPL-3.0 successor both need an
+explicit call in that ADR, not a silent default. Only after that ADR should
+M2 implementation start.
+
+Optional, not required, M1.1 hardening the owner may still want at some
+point (unrelated to M2, each its own small task):
 - Resolve the pre-existing Ollama blob-store permission blocker (needs an
   explicit operator/`sudo` decision) so the `llama-server` adapter and the
   Ollama-vs-llama.cpp benchmark can actually run live.
