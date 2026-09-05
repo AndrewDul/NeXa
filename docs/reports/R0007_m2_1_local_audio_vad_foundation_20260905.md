@@ -38,17 +38,23 @@ substage, not smoothed over.
    project's own pre-existing `/etc/asound.conf` (a `respeaker` `plug:`
    alias by stable card name); discovered and documented that the
    system-wide default *output* device (a separate USB speaker DAC) is not
-   physically connected right now; verified mono capture/playback both work
-   cleanly through the `respeaker` alias via direct PyAudio testing before
-   writing any production code.
+   physically connected right now. Verified, via direct PyAudio testing
+   before writing any production code, that the `respeaker` alias opens
+   cleanly for **mono capture** (bytes were actually read back from the
+   real microphone) and that the **mono playback stream opens, accepts a
+   write, and closes without error**. This is stream-level open/close/write
+   verification, not confirmation of audible sound reproduction — no tone
+   was played and no operator listened for output in this test; that
+   remains unverified (see "LOCAL AUDIO OUTPUT" below and "UNRESOLVED").
 4. Installed `pipecat-ai[local]==1.8.1` into the repo's own `./.venv`
    (never the legacy repo's venv), explicitly **not** installing
    `[local-smart-turn]` (ADR-0003 D10).
 5. Implemented `src/nexa/voice/` (`state.py`, `config.py`, `device.py`,
    `runtime.py`) and `apps/nexa_voice_probe.py` — see "ARCHITECTURE /
    DOCUMENTATION" below for the full design.
-6. Wrote 34 new deterministic tests (`tests/test_voice_*.py`) plus one
-   opt-in hardware integration test.
+6. Wrote 31 new tests (`tests/test_voice_*.py`): 30 deterministic
+   (state machine, frame mapping, device resolution, architecture checks)
+   plus 1 opt-in hardware integration test.
 7. **Ran the manual hardware acceptance test with the operator across three
    rounds**, each driven by real operator feedback that caught a real
    methodological gap — see "REAL HARDWARE TEST" below in full.
@@ -79,12 +85,19 @@ test sessions — no device-open errors, no clipping observed.
 
 ## LOCAL AUDIO OUTPUT
 
-Also `"respeaker"` (its own playback subdevice), mono, 16 kHz — verified
-open/close cleanly. **New real-hardware finding**: the system-wide ALSA
-default *output* device (a separate USB speaker DAC, addressed by stable
-card name `UACDemoV10` in the pre-existing `/etc/asound.conf`) is not
-physically connected on this machine right now (`aplay -D default` fails
-outright). Using the reSpeaker's own output for M2.1 is a documented,
+Also `"respeaker"` (its own playback subdevice), mono, 16 kHz — **verified
+only that the output stream opens, accepts written samples, and closes
+without error**, both in isolated PyAudio testing and as part of every
+Pipecat pipeline run in this substage (the pipeline always opens both
+transports). **No audible tone or speech was ever played, and no operator
+confirmed hearing anything from this output path** — M2.2 does not need
+audio output at all (STT only), and TTS (M2.4) is what will first make this
+path carry real audio. Stated precisely rather than overclaimed. **New
+real-hardware finding**: the system-wide ALSA default *output* device (a
+separate USB speaker DAC, addressed by stable card name `UACDemoV10` in the
+pre-existing `/etc/asound.conf`) is not physically connected on this
+machine right now (`aplay -D default` fails outright). Using the
+reSpeaker's own output for M2.1 is a documented,
 verified choice given that reality, not a silent workaround
 (`LocalAudioConfig` docstring, `M2_1_LOCAL_AUDIO_VAD_ARCHITECTURE.md` §6).
 No TTS or other audio is played into it in M2.1 — only open/close plumbing
@@ -238,7 +251,9 @@ single inference thread by the library's own design.
 
 ## TESTS
 
-64 total (30 pre-existing M1.1 tests unaffected + 34 new):
+64 total (33 pre-existing M1.1 tests unaffected, verified via a temporary
+`git worktree` at the pre-M2.1 commit `283ef75` + fresh `unittest discover` —
+not assumed + 31 new, table below sums to 31):
 
 | File | Tier | Count |
 |---|---|---|

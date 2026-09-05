@@ -54,10 +54,15 @@ Runtime / test evidence outranks anything else in this repo.
   gaps against the actual `SileroVADAnalyzer`, `docs/research/m2_1_vad_calibration/`)
   found `stop_secs=1.0` is the smallest value that holds 0.4/0.6/0.8s pauses
   as one utterance; a live hardware retest confirmed it. Idle/listening
-  footprint: ~120 MB RAM, ~6.5% of one CPU core, no throttling. 34 new
-  deterministic tests + 1 opt-in hardware test, all passing. No STT, no LLM
-  call, no TTS, no `ConversationSession` — `ast`-verified, not just
-  asserted (ADR-0003 M2.1 scope).
+  footprint: ~120 MB RAM, ~6.5% of one CPU core, no throttling. 31 new
+  tests (30 deterministic + 1 opt-in hardware), all passing — verified
+  precisely against the pre-M2.1 commit's 33-test baseline, not assumed
+  (`R0007` "M2.1 DOCUMENTATION CHECK" corrects an earlier arithmetic
+  error). No STT, no LLM call, no TTS, no `ConversationSession` —
+  `ast`-verified, not just asserted (ADR-0003 M2.1 scope). Audio output was
+  verified only at the stream open/close/write level — no audible sound was
+  played or confirmed by the operator in M2.1 (accurate as of this
+  correction; unaffected by M2.2, which does not need audio output).
 - **M2.0A voice feasibility spikes complete** (`R0006`;
   `docs/research/M2_VOICE_FEASIBILITY_SPIKES.md`): real whisper.cpp benchmark
   against the exact same 12 legacy PL/EN audio fixtures faster-whisper was
