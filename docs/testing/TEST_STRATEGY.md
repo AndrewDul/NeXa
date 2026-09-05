@@ -92,6 +92,36 @@ milestone, and do not let them exist as skipped tests that imply coverage.
   `docs/reports/R0004_m1_1_canonical_text_conversation_path_20260905.md`
   ("Operator acceptance" addendum) and `docs/CURRENT_STATE.md`.
 
+## M2.1 status
+
+- `tests/test_voice_state.py` — tier `unit`. `VoiceStateMachine` — pure state
+  logic, no audio, no Pipecat.
+- `tests/test_voice_frame_mapping.py` — tier `unit`. Real Pipecat `Frame`
+  instances (plain, side-effect-free objects) fed to the pure
+  `apply_frame_to_state_machine()` function — deliberately extracted so the
+  frame→state mapping is testable without a running Pipecat
+  processor/task-manager lifecycle.
+- `tests/test_voice_device.py` — tier `unit`. PyAudio device-name resolution
+  against a fake device list — mocked at the PyAudio boundary, no real audio
+  hardware.
+- `tests/test_voice_architecture.py` — tier `unit`. `ast`-based import
+  inspection: verifies `src/nexa/voice/` does not import
+  `nexa.conversation`/`nexa.providers`/`nexa.bootstrap`/`nexa.config`, i.e.
+  no second conversation authority — checked structurally, not just by
+  convention.
+- `tests/test_voice_hardware_probe.py` — tier `integration`, real hardware.
+  Opens the real reSpeaker XVF3800 via the real Pipecat pipeline, confirms
+  LISTENING is reached and shutdown is clean. **Not run by default** — set
+  `NEXA_RUN_VOICE_HARDWARE_TEST=1`.
+- Beyond the automated tiers, M2.1 has the same **human-acceptance** pattern
+  as M1.1 — the owner personally using `apps/nexa_voice_probe.py` against
+  real speech, including a genuine evidence-based retuning cycle for VAD
+  endpointing. See `docs/reports/R0007_m2_1_local_audio_vad_foundation_20260905.md`
+  ("REAL HARDWARE TEST") and `docs/research/m2_1_vad_calibration/` (a
+  deterministic offline calibration script + raw results, used specifically
+  to avoid relying on further human-timed pause measurements once those
+  proved imprecise).
+
 ## Tooling direction
 
 - `pytest` as the runner (declared in `pyproject.toml` `dev` extras); config lives

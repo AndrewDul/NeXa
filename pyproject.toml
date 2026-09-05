@@ -12,9 +12,17 @@ license = { text = "Proprietary" }
 authors = [{ name = "Andrzej Dul" }]
 keywords = ["nexa", "ai", "assistant", "local-first", "companion"]
 
-# M0 has no runtime dependencies on purpose. Subsystems add their own,
-# each justified by an ADR. Do not grow this list speculatively.
-dependencies = []
+# Runtime dependencies, each justified by an ADR. Do not grow this list
+# speculatively.
+dependencies = [
+  # M2.1 (ADR-0003 D1): local realtime voice orchestration. Pinned exactly
+  # (no floating range) since the current API (PipelineWorker/WorkerRunner)
+  # is new enough that PipelineTask/PipelineRunner are still the commonly
+  # documented — but deprecated since 1.3.0 — path. The `local` extra pulls
+  # in pyaudio for local mic/speaker I/O. Deliberately NOT `local-smart-turn`
+  # (ADR-0003 D10: its CoreML path does not work on this Linux/ARM64 Pi).
+  "pipecat-ai[local]==1.8.1",
+]
 
 [project.optional-dependencies]
 dev = [

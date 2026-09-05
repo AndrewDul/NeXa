@@ -1,0 +1,122 @@
+[
+  {
+    "stop_secs": 0.2,
+    "gap_s": 0.4,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.16
+  },
+  {
+    "stop_secs": 0.2,
+    "gap_s": 0.6,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.16
+  },
+  {
+    "stop_secs": 0.2,
+    "gap_s": 0.8,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.16
+  },
+  {
+    "stop_secs": 0.2,
+    "gap_s": 1.0,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.16
+  },
+  {
+    "stop_secs": 0.2,
+    "gap_s": 1.2,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.16
+  },
+  {
+    "stop_secs": 0.6,
+    "gap_s": 0.4,
+    "stopped_during_gap": false,
+    "stop_latency_s": 1.888
+  },
+  {
+    "stop_secs": 0.6,
+    "gap_s": 0.6,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.576
+  },
+  {
+    "stop_secs": 0.6,
+    "gap_s": 0.8,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.576
+  },
+  {
+    "stop_secs": 0.6,
+    "gap_s": 1.0,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.576
+  },
+  {
+    "stop_secs": 0.6,
+    "gap_s": 1.2,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.576
+  },
+  {
+    "stop_secs": 0.8,
+    "gap_s": 0.4,
+    "stopped_during_gap": false,
+    "stop_latency_s": 2.08
+  },
+  {
+    "stop_secs": 0.8,
+    "gap_s": 0.6,
+    "stopped_during_gap": false,
+    "stop_latency_s": 2.272
+  },
+  {
+    "stop_secs": 0.8,
+    "gap_s": 0.8,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.768
+  },
+  {
+    "stop_secs": 0.8,
+    "gap_s": 1.0,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.768
+  },
+  {
+    "stop_secs": 0.8,
+    "gap_s": 1.2,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.768
+  },
+  {
+    "stop_secs": 1.0,
+    "gap_s": 0.4,
+    "stopped_during_gap": false,
+    "stop_latency_s": 2.272
+  },
+  {
+    "stop_secs": 1.0,
+    "gap_s": 0.6,
+    "stopped_during_gap": false,
+    "stop_latency_s": 2.464
+  },
+  {
+    "stop_secs": 1.0,
+    "gap_s": 0.8,
+    "stopped_during_gap": false,
+    "stop_latency_s": 2.656
+  },
+  {
+    "stop_secs": 1.0,
+    "gap_s": 1.0,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.96
+  },
+  {
+    "stop_secs": 1.0,
+    "gap_s": 1.2,
+    "stopped_during_gap": true,
+    "stop_latency_s": 0.96
+  }
+]
