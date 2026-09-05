@@ -93,6 +93,15 @@ Capabilities and by policy/consent.
 STT, TTS, wake, endpointing, barge-in. The realtime transport/framework is an
 internal, replaceable boundary.
 
+> `ADR-0003` (Accepted, 2026-09-05) decided this boundary's M2 architecture
+> (Pipecat orchestration, Silero VAD, whisper.cpp STT, Piper TTS as a
+> temporary baseline, full barge-in as the target) — see
+> `docs/decisions/ADR-0003_realtime_voice_foundation.md`. No code exists yet;
+> this remains conceptual until M2.1+ implements it, at which point a
+> verified architecture doc will replace this note, the same way
+> `docs/architecture/M1_1_TEXT_CONVERSATION_ARCHITECTURE.md` did for
+> Conversation.
+
 ### Vision
 Perception from cameras/sensors. Feeds Context and Capabilities.
 

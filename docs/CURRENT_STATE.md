@@ -10,26 +10,29 @@ Runtime / test evidence outranks anything else in this repo.
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
 - **Latest report:** `docs/reports/R0006_m2_voice_feasibility_spikes_20260905.md`
+  (this task's ADR does not have its own report — see precedent note below)
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
-  **M2 — Realtime Voice — RESEARCH + FEASIBILITY SPIKES DONE, implementation
+  **M2 — Realtime Voice — ARCHITECTURE DECIDED (ADR-0003), implementation
   NOT STARTED**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
   M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1 local
   baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. M2
-  open-source-first research COMPLETE (2026-09-05) — `R0005`. **M2.0A
-  feasibility spikes COMPLETE (2026-09-05)** —
-  `docs/research/M2_VOICE_FEASIBILITY_SPIKES.md`, `R0006`: local voice
-  pipeline classified **`LOCAL_FEASIBLE_WITH_TUNING`** — no M2 product code,
-  no M2 ADR yet.
-- **Next substage:** **M2 architecture ADR, then M2 implementation** (**NOT
-  STARTED** — see "Exact next recommended task")
+  open-source-first research COMPLETE (2026-09-05) — `R0005`. M2.0A
+  feasibility spikes COMPLETE (2026-09-05) — `R0006`: local voice pipeline
+  classified `LOCAL_FEASIBLE_WITH_TUNING`. **`ADR-0003` Accepted
+  (2026-09-05)**: Pipecat (local transport/VAD/turn-detection) +
+  `ConversationSession` unchanged as sole conversation authority + Silero VAD
+  + whisper.cpp `base/q8_0` (baseline, not frozen) + Piper via subprocess
+  (explicitly temporary TTS baseline) + explicit pipeline sequencing/thread
+  budgets + full barge-in as the M2 target (new coordination work named, not
+  built) + LiveKit deferred (not rejected) to a future cross-device
+  transport stage. No M2 product code yet.
+- **Next substage:** **M2.1 — Pipecat foundation + local audio + Silero VAD**
+  (**NOT STARTED** — see "Exact next recommended task")
 - **Current objective:** none active — M1.1 is implemented, tested, and
-  human-accepted. M2's open-source-first architecture research
-  (Pipecat/LiveKit Agents/STT/TTS/VAD candidates, license review,
-  make-vs-build table) plus the M2.0A feasibility spikes (real whisper.cpp
-  vs. legacy faster-whisper measurement, real VAD+STT+LLM+TTS resource-budget
-  test) are both done. Evidence is ready for an M2 architecture ADR, not yet
-  written.
+  human-accepted; M2's research, feasibility spikes, and architecture
+  decision (`ADR-0003`) are all done. Next is starting M2.1, a new,
+  explicitly-started implementation task.
 
 ---
 
@@ -167,9 +170,10 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## What is not implemented (by design)
 
-- Realtime voice (M2), robust context beyond M1.1's bounded window (M3),
-  device awareness / capability registry (M4), long-term memory (M5), and
-  everything later.
+- Realtime voice (M2) — **architecture decided (`ADR-0003`, Accepted), zero
+  product code**. Robust context beyond M1.1's bounded window (M3), device
+  awareness / capability registry (M4), long-term memory (M5), and
+  everything later — not yet researched or decided either.
 - Model router / `AUTO`/`LOCAL ONLY`/`CLOUD PREFERRED` policy, MAS, tools,
   online model provider — all explicitly out of M1.1 scope (ADR-0002 D1,
   ROADMAP "Later").
@@ -211,9 +215,27 @@ Runtime / test evidence outranks anything else in this repo.
   alternative, `qwen3:4b-instruct` as the swappable safe fallback. Provider/model
   abstraction (D1–D3) explicitly preserved — this model is the M1.1 *local*
   baseline, not NeXa itself; no router implemented.
+- **ADR-0003 (Accepted, 2026-09-05)** sets the M2 direction — architecture
+  and component choices decided, **no M2 product code written yet**: Pipecat
+  (BSD-2-Clause) as the local voice orchestration framework, owning audio
+  transport/VAD-wiring/turn-detection only; a new NeXa-owned `FrameProcessor`
+  (not yet built) feeds the same, unchanged `ConversationSession` — no second
+  history/persona/model choice for voice. Silero VAD (`USE AS-IS`).
+  whisper.cpp `base/q8_0` as the initial local STT baseline (**not frozen** —
+  same discipline as ADR-0002 D4; Parakeet/Canary and Hailo offload remain
+  open candidates). Piper via subprocess as an explicitly **temporary**
+  TTS baseline (**not frozen**; too slow for the final target, GPL-3.0
+  successor). Explicit PL/EN language-hint strategy required — auto-detect
+  rejected. Pipeline sequencing (VAD/STT before LLM generation; TTS may
+  overlap generation) and explicit CPU-thread budgets are architectural
+  requirements. Full barge-in is the M2 target, with new
+  interruption-coordination work named (not built) beyond M1.1's
+  `CancelToken`. LiveKit Agents is **deferred, not rejected** — no second
+  orchestration framework installed for the first local implementation.
 - Product code now exists for M1.1 only (`src/nexa/conversation/`,
   `src/nexa/providers/`, `src/nexa/config.py`, `src/nexa/bootstrap.py`,
-  `apps/nexa_chat.py`). Nothing else on the roadmap has product code yet.
+  `apps/nexa_chat.py`). M2 has an accepted architecture (`ADR-0003`) but
+  zero product code — that starts at M2.1.
 
 ## Current test status
 
@@ -239,37 +261,45 @@ Runtime / test evidence outranks anything else in this repo.
   provider boundary / first runtime) + **M1.0B amendment** (2026-09-02,
   informational) + **Amendment 2** (2026-09-05, decisive: M1.1 local baseline
   model **FROZEN** to `gemma4:e4b`).
+- **ADR-0003** — Realtime voice foundation (Accepted, 2026-09-05): Pipecat +
+  unchanged `ConversationSession` + Silero VAD + whisper.cpp `base/q8_0`
+  (baseline) + Piper/subprocess (temporary baseline) + sequencing/thread-budget
+  rules + full barge-in target + LiveKit deferred. See "Current architecture
+  state" above for the full summary; full text in
+  `docs/decisions/ADR-0003_realtime_voice_foundation.md`.
 
 ## Current focus
 
 - None active. M1 (Natural Text Conversation) M1.0 → M1.0B → operator blind
-  test → ADR-0002 Amendment 2 → M1.1 implementation → **M1.1 human acceptance
-  (2026-09-05, PASS)** is now a complete, operator-confirmed chain. **M2 is
-  clear to start.**
+  test → ADR-0002 Amendment 2 → M1.1 implementation → M1.1 human acceptance
+  (2026-09-05, PASS) is a complete, operator-confirmed chain. M2's research
+  (`R0005`) → feasibility spikes (`R0006`) → architecture decision
+  (`ADR-0003`) is now also complete. **M2.1 implementation is clear to
+  start**, as a new, explicitly-started task.
 
 ## Exact next recommended task
 
-Both spikes `R0005` §7–§8 called for are now **done**
-(`docs/research/M2_VOICE_FEASIBILITY_SPIKES.md`, `R0006`): the resource-budget
-test and the whisper.cpp Polish-accuracy check. **Evidence is ready for the
-M2 architecture ADR** — write it next, choosing among the research doc's A/B/C
-options (Pipecat / LiveKit Agents / both), and folding in the feasibility
-spike's findings as constraints, not just the framework comparison:
+**M2.1 — Pipecat foundation + local audio + Silero VAD**, the first M2
+implementation substage under `ADR-0003` (Accepted, 2026-09-05). The
+architecture question is closed — build next, don't re-decide:
 
-- LiveKit Agents' proprietary default-VAD framework-lock and Piper's GPL-3.0
-  successor both still need an explicit call in that ADR, not a silent
-  default (unchanged from `R0005`).
-- The M2 pipeline must be **sequenced** (VAD/STT before the LLM call starts;
-  only TTS-narrating-a-completed-sentence should overlap active generation),
-  not run fully concurrently — naive full concurrency measurably degrades
-  VAD/STT/TTS 3×–73× on this hardware (`R0006` §"CPU CONTENTION").
-- An explicit language-hint strategy is required — auto-detection is
-  unreliable regardless of STT engine (`R0006`, reproduced on whisper.cpp too).
+- Pipecat, local transport only (no server/WebRTC), Silero VAD wired via
+  Pipecat's default path.
+- Apply thread-budget discipline **from this substage on** — do not let any
+  component default to claiming all 4 cores (`ADR-0003`'s substage table
+  note); systematic tuning is M2.6, but the naive pattern should never be
+  built in the first place.
+- M2.2–M2.7 follow in the sequence `ADR-0003` lays out: whisper.cpp STT
+  adapter + language-hint strategy; the `ConversationSession`-feeding
+  `FrameProcessor` (no second history/persona/model choice, ever); streaming
+  Piper TTS; full barge-in coordination (new work beyond `CancelToken`,
+  `ADR-0003` D8); latency/thread tuning; an operator natural-voice acceptance
+  test before any voice baseline is called done.
 - `gemma4:e4b` stays the frozen baseline unless a future ADR changes it.
 
-Only after that ADR should M2 implementation start. Optional, non-blocking
-follow-up: a scoped Parakeet/Canary conversion + benchmark spike (license and
-Polish support are now confirmed clean; only the hardware path is untested).
+Optional, non-blocking, can run any time relative to M2.1: a scoped
+Parakeet/Canary conversion + benchmark spike (license and Polish support are
+confirmed clean per `R0006`; only the hardware path is untested).
 
 Optional, not required, M1.1 hardening the owner may still want at some
 point (unrelated to M2, each its own small task):
