@@ -172,9 +172,21 @@ architecture bikeshedding.
   stage.
 - **Maintenance**: `OBSERVATION` — 10.1k stars, 1.7k forks, maintained by
   Daily (a commercial WebRTC company) + community, active releases into 2026.
-- **Pi 5 / ARM feasibility**: `UNKNOWN` — no direct Pi 5 evidence found for
-  the framework's own overhead (separate from whatever STT/LLM/TTS is
-  plugged in, which is the dominant cost per §3–§4 anyway).
+- **Pi 5 / ARM feasibility**: `VERIFIED FACT` — base install confirmed
+  **directly on this exact Pi 5** (`pip install pipecat-ai` in a scratch
+  venv): resolves cleanly on `aarch64`, no PyTorch/`transformers` pulled in,
+  ~668–669 MB venv footprint (two independent installs, by two different
+  agents, agreed within noise). **Caveat, `VERIFIED FACT` — independently
+  reproduced**: the optional `pipecat-ai[local-smart-turn]` extra installs
+  `coremltools` **and pulls in full PyTorch (2.14) + `torchaudio`** — a much
+  heavier install than the base framework — but `coremltools`'s native
+  extension modules (`libcoremlpython`, `libmilstoragepython`) are
+  **macOS-only** and fail to load on this Linux/ARM64 Pi (confirmed directly:
+  `import coremltools` prints repeated `No module named
+  'coremltools.libcoremlpython'` failures). **That specific optional extra
+  does not work on this hardware.** This does not affect the base framework
+  or the default Silero-VAD path, which stay light (no torch) — it only rules
+  out that one optional local turn-detection extra on this Pi.
 - **Recommendation for this axis: WRAP-ADAPT.**
 
 ### 5.2 LiveKit Agents (livekit/agents)
@@ -249,10 +261,24 @@ architecture bikeshedding.
 - **Dependency weight**: `VERIFIED FACT` — core `livekit-agents` pulls in
   the OpenAI Python SDK as a **non-optional** dependency (used for its
   typed schemas even if the OpenAI plugin itself is unused), plus
-  `opentelemetry-sdk`, `av`, `numpy`, `sounddevice`. Heavier base install
-  than Pipecat's.
-- **Pi 5 / ARM feasibility**: `UNKNOWN` — no direct evidence found either
-  way.
+  `opentelemetry-sdk`, `av`, `numpy`, `sounddevice`. **Correction from an
+  earlier draft of this doc**: this was assumed to make it the heavier
+  install of the two by dependency-list count alone — real measured venv
+  size says the opposite. Pipecat's own base install already bundles
+  `onnxruntime` + `numba`/`llvmlite` + `nltk` + `sympy` (for its default
+  Silero VAD and text-normalization features), which measured **larger**
+  on disk (~668 MB) than LiveKit's OpenAI-SDK-plus-telemetry base (~438 MB)
+  — see the real measurements in "Pi 5 / ARM feasibility" below. Neither is
+  "heavy" in the PyTorch sense (neither pulls in `torch`), but the
+  qualitative size ranking in the original research pass was wrong and is
+  corrected here against real numbers.
+- **Pi 5 / ARM feasibility**: `VERIFIED FACT` — base install confirmed
+  directly on this exact Pi 5 (`pip install livekit-agents` in a scratch
+  venv, ~438 MB venv footprint, no torch/transformers), and independently, a
+  prebuilt `manylinux_2_28_aarch64` wheel exists for the compiled `livekit`
+  RTC core (10.6 MB) — **no Rust toolchain build needed on this machine**,
+  resolving the ARM64-wheel-availability risk this section originally
+  flagged as open.
 - **Recommendation for this axis: WRAP-ADAPT** — with the explicit
   requirement to force the local Silero VAD + local turn-detector fallback
   path, never the cloud-hosted default, to stay local-first.
@@ -269,6 +295,52 @@ architecture bikeshedding.
 | Latency | Legacy-verified, see §3 table | Native streaming example ships (0.5 s sampling) — better real-time story on paper | Fully offloaded from CPU/RAM if it works — the only option that doesn't compete with `gemma4:e4b` for the same 4 cores |
 | Gaps | Speed/accuracy trade-off already proven unacceptable at either end on this exact hardware | No same-hardware, same-language accuracy number yet — **the one prototype most worth running before an ADR** | Polish calibration unproven; no latency numbers found anywhere |
 | **Recommendation** | **WRAP-ADAPT** (fallback/accuracy path) | **WRAP-ADAPT** (likely primary, pending the PL accuracy spike) | **PATCH-EXTEND** (real and official-ish, but needs a dedicated Polish-calibration spike before relying on it for M2's architecture ADR) |
+
+### 5.3a Other 2026 STT candidates (supplemental)
+
+**Provenance note**: this subsection was added directly by the orchestrating
+agent after the dedicated STT-candidates research sub-task did not return
+within this task's window (an agent-orchestration issue, not a research
+finding — see `R0005` "UNRESOLVED"). It is lighter-touch than §5.3
+(`WebSearch`-sourced, not full source-code/license-file dives) and is labeled
+accordingly.
+
+- **Vosk (alphacep/vosk-api)**: `VERIFIED FACT` — Apache-2.0, actively
+  maintained (issue activity into 2026), genuinely tiny models (~50 MB),
+  native streaming with low latency, 20+ languages including Polish. This is
+  not a new discovery — **legacy NeXa already used Vosk in production** as
+  the fast-path bilingual PL/EN command-ASR layer, falling through to
+  faster-whisper for free-form speech (§3). Real prior art, not a
+  theoretical option: worth keeping in the make-vs-build picture specifically
+  for a constrained-grammar "fast path" (wake-word confirmations, short
+  commands), not as the primary free-form STT. **Recommendation: USE AS-IS**
+  for a narrow fast-path role, mirroring legacy's already-validated pattern.
+- **NVIDIA Parakeet / Canary (+ `parakeet.cpp`, a whisper.cpp-style ggml
+  port)**: `OBSERVATION` (WebSearch only, not independently verified against
+  primary license text) — the Canary-1B-v2 *code* is reported MIT, but "model
+  weights keep their original NVIDIA Parakeet licenses" — the exact terms of
+  that weight license were **not confirmed** in this pass and must be checked
+  before any adoption (NVIDIA model licenses often carry field-of-use or
+  redistribution conditions beyond a plain OSI license). Polish-language
+  coverage for the specific CPU-friendly Parakeet TDT variant was **not
+  confirmed** either (broad multilingual claims exist for related NVIDIA
+  speech models, but not verified for this exact one). Int8-quantized models
+  reportedly run in ~2 GB RAM on CPU — attractive for the resource budget in
+  §4, if the license and PL support check out. **Recommendation: PATCH-EXTEND
+  candidate for a future spike, not ready to recommend today** — both the
+  weight license and Polish support are open `UNKNOWN`s, not confirmed
+  suitable or unsuitable.
+- **distil-whisper**: `VERIFIED FACT` — MIT, but the official, maintained
+  release is **English-only**. A multilingual distillation covering Polish
+  exists only as an academic paper (arXiv), not a maintained package.
+  **Disqualified for NeXa's bilingual PL/EN requirement today**, same
+  reasoning as Kokoro in §5.4.
+
+None of these three change §5.3's bottom line (whisper.cpp/faster-whisper
+remain the best-evidenced candidates); Vosk adds a legacy-validated fast-path
+option worth carrying into an M2 ADR, and Parakeet is worth a lightweight
+follow-up license/PL-support check given its attractive CPU/RAM profile, but
+is not evidenced enough to recommend now.
 
 ### 5.4 TTS: Piper (+ successor) vs. Kokoro
 
@@ -322,7 +394,7 @@ architecture bikeshedding.
 
 | Responsibility | Best OSS candidate | License | Maintenance | Pi 5 feasibility | PL support | EN support | Latency | Replacement cost | Integration complexity | Gaps | Recommendation |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Realtime orchestration/pipeline | Pipecat **or** LiveKit Agents | BSD-2-Clause / Apache-2.0 (+ proprietary turn-detector weights, avoidable) | Active / very active | Unknown (framework overhead itself) | N/A (orchestration-agnostic) | N/A | Framework overhead unmeasured; dominated by LLM/STT/TTS regardless (§4) | Low (both interfaces are thin) | Low–medium (custom LLM node/processor is a documented, intended pattern in both) | No Pi 5-specific evidence for either | **WRAP-ADAPT** (see §7 for A/B/C comparison) |
+| Realtime orchestration/pipeline | Pipecat **or** LiveKit Agents | BSD-2-Clause / Apache-2.0 (+ proprietary turn-detector weights, avoidable) | Active / very active | Base install verified directly on this Pi 5 for both (~668 MB / ~438 MB venvs, no torch); runtime CPU/RAM overhead of the pipeline itself still unmeasured | N/A (orchestration-agnostic) | N/A | Framework overhead unmeasured; dominated by LLM/STT/TTS regardless (§4) | Low (both interfaces are thin) | Low–medium (custom LLM node/processor is a documented, intended pattern in both) | Runtime overhead (not just installability) still unmeasured for either | **WRAP-ADAPT** (see §7 for A/B/C comparison) |
 | Audio capture/playback | Pipecat `LocalAudioTransport` / LiveKit `console` mode | Same as framework | Same as framework | Untested here | N/A | N/A | Untested here | Low | Low (both ship this) | Neither verified on this exact reSpeaker XVF3800 mic | **USE AS-IS** (from whichever framework is picked) |
 | VAD | Silero VAD | MIT | Active | Proven in legacy | N/A | N/A | Lightweight, proven | Very low | Very low (first-party in both frameworks) | None found | **USE AS-IS** |
 | Turn detection / interruption | Framework default (LiveKit) or frame-based (Pipecat) | LiveKit's bundled local VAD/turn-detector weights are **framework-locked proprietary** (`LiveKit Model License`, verified by unpacking the actual wheel — usable only inside LiveKit Agents); the open equivalent (`livekit-plugins-silero`, MIT) must be selected explicitly; Pipecat's is fully open throughout | Active | Untested | N/A | N/A | Untested | Low–medium | Medium (must explicitly select the open VAD plugin over LiveKit's locked-in default; never set LiveKit Cloud credentials) | Legacy never achieved full open-mic barge-in (only wake-gated) | **WRAP-ADAPT**, with the framework-lock and default-model substitution named explicitly in any ADR |
@@ -354,9 +426,9 @@ building the wrong thing twice.
 |---|---|---|---|
 | `ConversationSession` stays canonical | Yes — custom `FrameProcessor` (§5.1) | Yes — `llm_node` override (§5.2), cleaner API surface | Yes, inherits A's integration |
 | License risk | Low (BSD-2-Clause throughout, no proprietary weights anywhere) | Medium — confirmed (§5.2) framework-locked proprietary license on the *default* bundled VAD/turn-detector weights; mitigated by explicitly selecting `livekit-plugins-silero` (MIT) instead | Low (Pipecat's integration governs) |
-| Local-first fit (M2 stage) | Direct — `LocalAudioTransport`, no server | Direct — `console` mode, no server, but pulls in more deps (OpenAI SDK, otel) | Direct for now; LiveKit transport unused until cross-device |
+| Local-first fit (M2 stage) | Direct — `LocalAudioTransport`, no server | Direct — `console` mode, no server; pulls in a non-optional OpenAI SDK + telemetry stack regardless (used for typed schemas, not a cloud call) | Direct for now; LiveKit transport unused until cross-device |
 | Future cross-device WebRTC | Would need to add LiveKit (or another WebRTC layer) later — real but not urgent work | Native — already the framework's design center | Native — this is the point of combining them |
-| Dependency weight | Lighter core install | Heavier core install (non-optional OpenAI SDK, full otel) | Heaviest — both frameworks present |
+| Dependency weight | ~668 MB venv (confirmed) — bundles `onnxruntime`/`numba`/`nltk`/`sympy` even in the base install | ~438 MB venv (confirmed), smaller on disk despite a non-optional OpenAI SDK + full `opentelemetry` — grows further per STT/TTS/LLM plugin added | Heaviest — both frameworks present |
 | Maintenance signal | Active, 10.1k★ | More active, 14k★, weekly releases | Depends on both |
 | Integration complexity estimate | Low–medium | Low–medium (arguably simpler override point) | Medium–high (two frameworks' concepts to reconcile) |
 
@@ -367,11 +439,15 @@ cleanest custom-LLM override point (`llm_node` returning plain
 turn-detector default must be pinned to the local ONNX fallback to respect
 NeXa's local-first principle, and its proprietary-weight component must be
 named in any ADR (not silently absorbed as "just a dependency"). Option
-**A (Pipecat)** is the lighter-weight, fully-open (no proprietary weights
-anywhere) choice with an equally workable integration point, at the cost of
-less momentum/less first-party local-STT/TTS coverage than LiveKit's plugin
-ecosystem implies (though neither ships first-party whisper.cpp/Piper
-plugins — both need the same custom-wrapper work). **Option C is premature**
+**A (Pipecat)** is the fully-open (no proprietary weights anywhere) choice
+with an equally workable integration point — **not actually the lighter
+install by measured size** (its base bundles `onnxruntime`/`numba`/`nltk`;
+LiveKit's smaller base pulls in the OpenAI SDK/telemetry instead — see the
+table above), so dependency weight is a wash between them and should not
+drive the decision either way. Pipecat's real cost is less momentum/less
+first-party local-STT/TTS plugin coverage than LiveKit's ecosystem implies
+(though neither ships first-party whisper.cpp/Piper plugins — both need the
+same custom-wrapper work). **Option C is premature**
 until a cross-device requirement is actually active (it isn't yet — see
 ROADMAP "Multi-device coordination," listed under "Later," not M2).
 
@@ -410,6 +486,10 @@ wrapping" (A) before that ADR is written.
    §6). Whichever framework is chosen, M2's ADR should state explicitly
    whether M2 targets full barge-in or (like legacy) a safer wake-gated
    reopen as a first step.
+7. **NVIDIA Parakeet/Canary weight license + Polish support** (§5.3a,
+   lighter-touch supplemental finding) — both are open `UNKNOWN`s; worth a
+   quick, dedicated check given its attractive ~2 GB CPU/RAM footprint, but
+   not evidenced enough to include in the A/B/C comparison yet.
 
 ## 9. What this research does NOT do
 
