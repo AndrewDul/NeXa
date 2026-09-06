@@ -1,0 +1,31 @@
+# M2.4B.1A buffer_validation.py — corrected-metric hardware run (2026-09-07)
+# real M2.4 output path; no Ollama (scripted token feed); pl_PL-gosia-medium
+# scenario 3 = bursty: 9 s quiet before sentence 3, 7 s before sentence 4
+
+===== tok_delay=330ms  (3.0 tok/s) =====
+  turn 1: BotStopped@[28.32]  underrun-events@[]
+    buffer estimate value at each real BotStopped: [0.01]
+    buffer min=0.01 max=10.94  underruns=0  gaps_ms=[]
+    buffer_drain_to_stop_lag_s   = None
+    underruns_without_following_stop = 0
+    (legacy alias) estimate_vs_real_stop_error_s = None
+    mean TRUE http RTF = None   context-span RTF mean = 0.54
+    diagnosis = UNKNOWN
+===== tok_delay=500ms  (2.0 tok/s) =====
+  turn 1: BotStopped@[14.52, 19.2, 23.4, 27.48]  underrun-events@[]
+    buffer estimate value at each real BotStopped: [4.69, 4.25, 4.13, 3.68]
+    buffer min=0.3 max=5.72  underruns=0  gaps_ms=[0.0, 0.0, 0.0]
+    buffer_drain_to_stop_lag_s   = None
+    underruns_without_following_stop = 0
+    (legacy alias) estimate_vs_real_stop_error_s = None
+    mean TRUE http RTF = None   context-span RTF mean = 0.66
+    diagnosis = UNKNOWN
+===== tok_delay=330ms  (3.0 tok/s)  stalls={2: 9.0, 4: 7.0} =====
+  turn 1: BotStopped@[11.78, 27.26, 38.58]  underrun-events@[11.81]
+    buffer estimate value at each real BotStopped: [0.0, -6.47, -10.0]
+    buffer min=-10.0 max=5.59  underruns=1  gaps_ms=[6455.0, 3536.0]
+    buffer_drain_to_stop_lag_s   = -0.03
+    underruns_without_following_stop = 0
+    (legacy alias) estimate_vs_real_stop_error_s = -0.03
+    mean TRUE http RTF = None   context-span RTF mean = 0.6
+    diagnosis = LLM TEXT PRODUCTION

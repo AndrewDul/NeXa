@@ -1,0 +1,27 @@
+# M2.4B.1A piper_cores.py — Piper RTF vs core budget (2026-09-07, uncontended)
+# pl_PL-gosia-medium, 22050 Hz, 6 reps x 3-sentence workload per budget
+
+=== Piper affinity: CONTROL (0-3, all 4 cores)  (Cpus_allowed_list=0-3) ===
+  reps=6  wall_total=12.22s  audio_total=89.29s
+  RTF: min=0.132 mean=0.137 max=0.142
+  peak process threads: 13
+  Piper CPU over burst: ~30.15 cpu-seconds  => ~2.47 cores while synthesizing
+  faster-than-realtime? YES  (worst RTF 0.142)
+=== Piper affinity: 1 core (taskset -c 3)  (Cpus_allowed_list=3) ===
+  reps=6  wall_total=43.29s  audio_total=89.25s
+  RTF: min=0.471 mean=0.485 max=0.496
+  peak process threads: 13
+  Piper CPU over burst: ~33.36 cpu-seconds  => ~0.77 cores while synthesizing
+  faster-than-realtime? YES  (worst RTF 0.496)
+=== Piper affinity: 2 cores (taskset -c 2,3)  (Cpus_allowed_list=2-3) ===
+  reps=6  wall_total=20.96s  audio_total=89.61s
+  RTF: min=0.224 mean=0.234 max=0.243
+  peak process threads: 13
+  Piper CPU over burst: ~31.21 cpu-seconds  => ~1.49 cores while synthesizing
+  faster-than-realtime? YES  (worst RTF 0.243)
+=== Piper affinity: 3 cores (taskset -c 1,2,3)  (Cpus_allowed_list=1-3) ===
+  reps=6  wall_total=17.32s  audio_total=88.92s
+  RTF: min=0.191 mean=0.195 max=0.198
+  peak process threads: 13
+  Piper CPU over burst: ~36.71 cpu-seconds  => ~2.12 cores while synthesizing
+  faster-than-realtime? YES  (worst RTF 0.198)

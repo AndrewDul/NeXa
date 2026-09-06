@@ -50,21 +50,26 @@ PL_SENTENCES = [
 
 
 class _Src(FrameProcessor):
-    def __init__(self, bridge, collector, tok_delay, **kw):
-        super().__init__(**kw)
-        self.b, self.c, self.d = bridge, collector, tok_delay
-
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         await self.push_frame(frame, direction)
         if isinstance(frame, StartFrame):
             self.create_task(self._run())
 
+    def __init__(self, bridge, collector, tok_delay, *, stalls=(), **kw):
+        super().__init__(**kw)
+        self.b, self.c, self.d = bridge, collector, tok_delay
+        # stalls: {sentence_index: extra_seconds} — simulate a bursty LLM that
+        # goes quiet mid-reply (the real M2.4B.1 operator failure mode).
+        self.stalls = dict(stalls)
+
     async def _run(self):
         await asyncio.sleep(0.2)
         self.c.start_turn(end_of_turn=time.monotonic(), stt_result=time.monotonic(), stt_text="q")
         self.b.on_user_transcript("Co to jest czarna dziura i jak powstaje?")
-        for s in PL_SENTENCES:
+        for i, s in enumerate(PL_SENTENCES):
+            if i in self.stalls:
+                await asyncio.sleep(self.stalls[i])
             for w in s.split(" "):
                 self.c.first_token()
                 self.c.assistant_token(w + " ")
@@ -81,7 +86,7 @@ async def _periodic(collector, stop):
         await asyncio.sleep(0.2)
 
 
-async def run_one(server, tok_delay):
+async def run_one(server, tok_delay, stalls=()):
     cfg = LocalAudioConfig()
     pa = pyaudio.PyAudio()
     out_idx = find_device_index(pa, cfg.output_device_name, require_output=True)
@@ -102,7 +107,7 @@ async def run_one(server, tok_delay):
         on_bot_started_speaking=collector.bot_started_speaking,
         on_bot_stopped_speaking=collector.bot_stopped_speaking,
     )
-    src = _Src(bridge, collector, tok_delay)
+    src = _Src(bridge, collector, tok_delay, stalls=stalls)
     transport = LocalAudioTransport(LocalAudioTransportParams(
         audio_in_enabled=False, audio_out_enabled=True,
         audio_out_sample_rate=cfg.sample_rate, audio_out_channels=cfg.channels,
@@ -133,7 +138,10 @@ async def run_one(server, tok_delay):
         finals.append(tm)
     await sess.close()
 
-    print(f"\n===== tok_delay={tok_delay*1000:.0f}ms  ({1/tok_delay:.1f} tok/s) =====")
+    label = f"tok_delay={tok_delay*1000:.0f}ms  ({1/tok_delay:.1f} tok/s)"
+    if stalls:
+        label += f"  stalls={dict(stalls)}"
+    print(f"\n===== {label} =====")
     for tm in finals:
         stops = [round(s.stopped_at - (tm.timing.end_of_turn or 0), 2)
                  for s in tm.playback_spans if s.stopped_at]
@@ -144,12 +152,25 @@ async def run_one(server, tok_delay):
                 # nearest buffer sample to this BotStopped
                 near = min(tm.buffer.samples, key=lambda x: abs(x[0] - s.stopped_at), default=None)
                 buf_at_stop.append(round(near[1], 2) if near else None)
+        d = tm.to_dict()
+        bev = d["buffer_estimate_validation"]
         print(f"  turn {tm.turn_index}: BotStopped@{stops}  underrun-events@{unders}")
         print(f"    buffer estimate value at each real BotStopped: {buf_at_stop}")
+        gaps = [round(g, 0) for g in tm.silence_gaps_ms]
         print(f"    buffer min={_r(tm.buffer.min_value)} max={_r(tm.buffer.max_value)}  "
-              f"underruns={tm.output_underrun_count}  gaps_ms={[round(g,0) for g in tm.silence_gaps_ms]}")
-        print(f"    estimate_vs_real_stop_error_s = {_r(tm.estimate_vs_real_stop_error_s)}")
-        print(f"    diagnosis = {tm.to_dict()['diagnosis']}")
+              f"underruns={tm.output_underrun_count}  gaps_ms={gaps}")
+        # M2.4B.1A: corrected metric — delay to the NEXT BotStopped, not the
+        # nearest in any direction (the old estimate_vs_real_stop_error_s bug
+        # that produced the operator's spurious ~18 s).
+        lag = bev.get("buffer_drain_to_stop_lag_s")
+        nofollow = bev.get("underruns_without_following_stop")
+        print(f"    buffer_drain_to_stop_lag_s   = {_r(lag)}")
+        print(f"    underruns_without_following_stop = {nofollow}")
+        print(f"    (legacy alias) estimate_vs_real_stop_error_s = "
+              f"{_r(tm.estimate_vs_real_stop_error_s)}")
+        print(f"    mean TRUE http RTF = {_r(tm.mean_http_rtf)}   "
+              f"context-span RTF mean = {_r(tm.mean_context_span_rtf)}")
+        print(f"    diagnosis = {d['diagnosis']}")
 
 
 def _r(x):
@@ -162,6 +183,11 @@ async def main():
     await server.prewarm()
     await run_one(server, 0.33)   # ~3 tok/s (warm gemma4:e4b)
     await run_one(server, 0.50)   # ~2 tok/s (stress)
+    # M2.4B.1A: bursty LLM — quiet for 9 s before sentence 2 and 7 s before
+    # sentence 4, so the buffer drains mid-reply then resumes and finally
+    # stops much later. This is the shape the old nearest-stop metric got
+    # wrong (operator's ~18 s). Expect buffer_drain_to_stop_lag_s ~3 s.
+    await run_one(server, 0.33, stalls={2: 9.0, 4: 7.0})
     await server.stop()
 
 

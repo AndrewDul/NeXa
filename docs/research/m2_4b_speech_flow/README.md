@@ -55,6 +55,29 @@ report and recommendation.
   and generation 2.9 → 0.15 tok/s. Two distinct first-token causes, both
   LLM-layer.
 
+## M2.4B.1A additions (2026-09-07 — see R0014, CPU contention spike)
+
+- `piper_cores.py` + `piper_cores_raw_20260907.txt` — Piper `pl_PL-gosia-medium`
+  RTF vs CPU-core budget (`taskset -a -pc`), uncontended, 6 reps each.
+  **1 core → RTF 0.485 (worst 0.496) — comfortably ~2× faster than real
+  time**; 2 → 0.234; 3 → 0.195; 4 (control) → 0.137. Piper uses ~2.5 cores
+  unrestricted, ~0.77 when pinned to one. **Answer to "can Piper live on
+  one core?": yes.**
+- `cpu_strat_fast.py` + `cpu_strat_fast_raw_20260907.txt` — five CPU
+  strategies, ~35 s concurrent LLM+Piper window each, ordinary CFS only (no
+  SCHED_FIFO/RR). CONTROL (both free): `gemma4:e4b` `prompt_eval` **24 s**,
+  **1.3 tok/s** — the intra-response-silence mechanism. **C (Piper
+  `renice +10`, no affinity): `prompt_eval` 0.91 s, 3.1 tok/s** (back to
+  uncontended) while Piper still ran at RTF 0.44 — the recommended
+  topology. D (1-core pin **+** nice) starved Piper to RTF 0.88 — never
+  stack the two. A/B/D LLM figures are model-eviction noise.
+- `buffer_validation.py` (updated) + `buffer_validation_raw_20260907.txt` —
+  re-run with the corrected metrics + a bursty mid-reply-stall scenario.
+  On the bursty turn (the shape that gave the operator's spurious ~18 s):
+  `buffer_drain_to_stop_lag_s = -0.03 s`, `underruns_without_following_stop
+  = 0`, `diagnosis = LLM TEXT PRODUCTION`, real gaps `[6.5, 3.5] s`,
+  `context-span RTF 0.60` vs true synthesis ~0.24 (metric bug visible).
+
 ## One-line conclusion
 
 Synthesis is ~7× faster than real-time and is **not** the bottleneck. The
