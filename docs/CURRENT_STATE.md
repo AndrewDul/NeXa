@@ -9,9 +9,9 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0009_m2_3_voice_conversation_adapter_20260906.md`
+- **Latest report:** `docs/reports/R0011_m2_4_streaming_piper_http_tts_integration_20260906.md`
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
-  **M2 — Realtime Voice — IN PROGRESS (M2.1, M2.2, M2.3 COMPLETE, `OPERATOR-CONFIRMED`)**
+  **M2 — Realtime Voice — IN PROGRESS (M2.1, M2.2, M2.3, M2.4 COMPLETE, `OPERATOR-CONFIRMED`)**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
   M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1 local
   baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. M2
@@ -32,11 +32,29 @@ Runtime / test evidence outranks anything else in this repo.
   session answered in Polish) whose first fix caused its own latency
   regression (broke Ollama/llama.cpp prompt-prefix caching) — both found
   live, fixed, and reconfirmed before PASS. No TTS/barge-in yet.
-- **Next substage:** **M2.4 — streaming/chunked Piper TTS integration**
-  (**NOT STARTED** — see "Exact next recommended task")
-- **Current objective:** none active — M2.3 is implemented, tested, and
-  human-accepted on real hardware. Next is starting M2.4, a new,
-  explicitly-started implementation task.
+  **M2.4 — streaming local Piper TTS (Piper HTTP + Pipecat) — COMPLETE,
+  `OPERATOR-CONFIRMED` (2026-09-06)** — `R0011`: new `src/nexa/tts/`
+  (external Piper HTTP process boundary) + `src/nexa/voice_tts/`
+  (`AssistantSpeechBridge`, `TtsStatusObserver`, `voice_for_language`,
+  preflight, turn-timing) feed M2.3's streamed assistant text into
+  Pipecat 1.8.1's `PiperHttpTTSService` + built-in SENTENCE aggregation +
+  `LocalAudioOutputTransport`; PL/EN voice chosen by the canonical M2.3
+  language function. Two real-hardware findings, fixed before PASS:
+  (1) a self-conversation loop (the reSpeaker heard NeXa's own TTS and
+  whisper.cpp re-transcribed her answer as new user turns) — fixed with a
+  **temporary half-duplex self-echo gate** (`HalfDuplexGate` +
+  `_MicGateFrameProcessor`, mic audio withheld before VAD/STT while real
+  TTS playback is active; not barge-in — that is M2.5); (2) output routed
+  to the reSpeaker's own alias after a USB replug — fixed to independent
+  by-name selection (`LocalAudioConfig.output_device_name = "usb_speaker"`
+  = the dedicated USB DAC's stable ALSA alias; input stays `"respeaker"`).
+  Plus a probe turn-timing instrumentation fix. No barge-in.
+- **Next substage:** **M2.4B — Natural Speech Flow / Streaming Pacing**
+  (**NOT STARTED** — see "Exact next recommended task"). Then **M2.5 —
+  barge-in / interruption** (replaces the temporary half-duplex gate).
+- **Current objective:** none active — M2.4's functional baseline is
+  implemented, tested, and human-accepted on real hardware, and is frozen
+  by the M2.4 commit. Next is M2.4B, a new, explicitly-started task.
 
 ---
 
@@ -44,8 +62,49 @@ Runtime / test evidence outranks anything else in this repo.
 
 - Repository is a well-formed, importable Python project; foundation tests pass
   (`python -m unittest discover -s tests`).
-- Documentation + ADR + report systems in place (`R0001`–`R0009`; `ADR-0001`,
+- Documentation + ADR + report systems in place (`R0001`–`R0011`; `ADR-0001`,
   `ADR-0002` + its M1.0B amendment + Amendment 2, `ADR-0003`).
+- **M2.4 — streaming local Piper TTS complete, `OPERATOR-CONFIRMED`**
+  (`R0011`; `docs/architecture/M2_4_STREAMING_TTS_ARCHITECTURE.md`):
+  `src/nexa/tts/` (external `python -m piper.http_server` process on
+  `127.0.0.1:5001`, its own venv `~/.local/share/nexa/tts/piper-http-venv/`,
+  GPL `piper-tts` never imported into NeXa's process — `ast`-verified;
+  `pyproject.toml` unchanged) + `src/nexa/voice_tts/` (`AssistantSpeechBridge`
+  translates M2.3's `on_assistant_token`/`_complete` callbacks into
+  Pipecat's `LLMFullResponseStart`/`LLMTextFrame`/`LLMFullResponseEnd`
+  vocabulary in FIFO; `TtsStatusObserver` reports only real
+  `TTSStarted`/`AudioRaw`/`Stopped`/`Error` frames; `voice_for_language`
+  maps the **canonical** `nexa.conversation.language.detect_response_language`
+  result to `pl_PL-gosia-medium` / `en_GB-jenny_dioco-medium` — the exact
+  prior-assistant voices, byte-identical files, config-json inference
+  defaults). Pipecat 1.8.1 `PiperHttpTTSService` (configured with the
+  `/synthesize` URL) + built-in SENTENCE aggregation +
+  `LocalAudioOutputTransport` (auto-resamples 22050→16 kHz) reused as-is,
+  no patch. Output is now the **dedicated USB DAC** (`UACDemoV1.0`,
+  `usb_speaker` alias → `hw:CARD=UACDemoV10`), selected **independently**
+  of the reSpeaker input (`respeaker` alias), both by name, no shared
+  index, no silent fallback. **Two real-hardware findings fixed before
+  PASS**: (1) self-conversation loop — the reSpeaker heard NeXa's own TTS
+  and whisper.cpp re-transcribed fragments of her answer ("Saturny nie
+  jest czarną dziurą.", "Masz rację.", …) as new user turns; fixed with a
+  **temporary half-duplex self-echo gate** — `HalfDuplexGate`
+  (event-backed boolean, driven by real
+  `BotStartedSpeakingFrame`/`BotStoppedSpeakingFrame` + the bridge's
+  response-lifecycle notifications, no timers, no fake `VoiceState`) +
+  `_MicGateFrameProcessor` (right after `transport.input()`, drops
+  `InputAudioRawFrame` before VAD/STT while suppressed; multi-sentence
+  latch never reopens the mic between chunks of one reply). NOT barge-in —
+  nothing is cancelled, the user cannot interrupt NeXa mid-reply; M2.5
+  replaces it. (2) Output routed to the reSpeaker's own alias after a USB
+  replug re-enumeration; fixed to independent by-name selection.
+  Plus a genuine probe **instrumentation** fix (`TurnTimingTracker` —
+  per-turn FIFO-correlated latency record; `first_tts_audio_at` /
+  `first_sentence_ready_at` written once per response). 91 new passing
+  tests + 3 opt-in live-Piper skips, 11 new test files. No barge-in —
+  `ast`-verified. Operator-confirmed real conversation: full local voice
+  loop works, NeXa no longer talks to herself, context preserved,
+  responses coherent. Known follow-up: natural-speech-flow / pacing
+  (`M2.4B`, not started).
 - **M2.3 — voice → `ConversationSession` adapter complete, `OPERATOR-CONFIRMED`**
   (`R0009`; `docs/architecture/M2_3_VOICE_CONVERSATION_ADAPTER_ARCHITECTURE.md`):
   new `src/nexa/voice_conversation/` — `VoiceConversationAdapter` (owns no
@@ -264,10 +323,22 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## What is not implemented (by design)
 
-- Realtime voice (M2) — **architecture decided (`ADR-0003`, Accepted), zero
-  product code**. Robust context beyond M1.1's bounded window (M3), device
-  awareness / capability registry (M4), long-term memory (M5), and
-  everything later — not yet researched or decided either.
+- **Barge-in / interruption (M2.5)** — not built. While NeXa speaks, the
+  temporary M2.4 half-duplex gate withholds mic input entirely; the user
+  cannot interrupt her, and nothing (TTS / LLM / `ConversationSession`) is
+  cancelled on user speech. M2.5 replaces the gate with true full-duplex
+  handling (interruption, own-TTS acoustic suppression, echo handling).
+- **Natural speech flow / streaming pacing (`M2.4B`)** — not built. M2.4's
+  spoken output is per-sentence Piper synthesis with audible gaps between
+  chunks and occasional bad phrase-boundary splits (incl. Polish
+  abbreviations — Pipecat's NLTK splitter runs English-only). Buffered/
+  look-ahead generation and buffer-adaptive pacing are `M2.4B`.
+- **Voice-model selection** — `pl_PL-gosia-medium` / `en_GB-jenny_dioco-medium`
+  (the prior assistant's voices) are in use. A softer/cozier voice is a
+  separate research task after the pipeline is stable, not M2.4/M2.4B.
+- Robust context beyond M1.1's bounded window (M3), device awareness /
+  capability registry (M4), long-term memory (M5), and everything later —
+  not yet researched or decided.
 - Model router / `AUTO`/`LOCAL ONLY`/`CLOUD PREFERRED` policy, MAS, tools,
   online model provider — all explicitly out of M1.1 scope (ADR-0002 D1,
   ROADMAP "Later").
@@ -281,6 +352,20 @@ Runtime / test evidence outranks anything else in this repo.
 - `VERIFIED FACT`: legacy `smart-desk-ai-assistant/config/settings.json` `/llm`
   block is stale (points at a llama-server + Qwen2.5-1.5B path the MAS does not
   actually use). Legacy is reference-only; not our file to fix.
+- `OBSERVATION` (M2.4, non-fatal): a run once logged
+  `"TTS context … completed with no audio"` before audio then appeared
+  normally — no audible effect; not root-caused; deferred to `M2.4B`.
+- `OBSERVATION` (M2.4, shutdown-only): abrupt Ctrl+C (`WorkerRunner.cancel`)
+  can trip an ALSA-lib `snd_pcm_plugin_status` assertion during interpreter
+  teardown, **after** all audio has played, on the `plug`→`dmix` chain. A
+  graceful `EndFrame` stop is clean. Cosmetic; a fix needs
+  `VoiceRuntime.run()` shutdown changes — deferred.
+- `VERIFIED FACT` (M2.4): the two Piper voice files in
+  `~/.local/share/nexa/tts/voices/` are byte-identical (sha256) to the
+  legacy `smart-desk-ai-assistant/voices/piper/` files.
+  `scripts/setup_piper_http.py` *optionally* copies them from that
+  read-only legacy path if present (else downloads); NeXa's runtime code
+  never reads the legacy path.
 
 ## Current architecture state
 
@@ -302,6 +387,14 @@ Runtime / test evidence outranks anything else in this repo.
   wiring, serialized conversation-turn execution, response-language
   mirroring), implemented in `src/nexa/voice_conversation/` +
   `src/nexa/conversation/language.py`/`context.py`.
+- **Real (`VERIFIED FACT`):** `docs/architecture/M2_4_STREAMING_TTS_ARCHITECTURE.md`
+  — the M2.4 slice of the Voice boundary (streamed assistant text →
+  sentence-chunked Piper TTS via an external HTTP process → dedicated USB
+  speaker DAC; response-language → voice mapping; a temporary half-duplex
+  self-echo gate; independent input/output device selection), implemented
+  in `src/nexa/tts/` + `src/nexa/voice_tts/` + `src/nexa/voice/gate.py` +
+  `src/nexa/voice/runtime.py`'s `_MicGateFrameProcessor` +
+  `src/nexa/voice/config.py`. **Barge-in is NOT here** — M2.5.
 - **ADR-0002 (Accepted)** sets the M1 direction: one minimal canonical
   text-conversation path (`ConversationSession` → `ConversationContext` →
   `ModelProvider` → streamed tokens); model access via a minimal
@@ -364,21 +457,41 @@ Runtime / test evidence outranks anything else in this repo.
   above for the two real-hardware findings (conversation-turn concurrency;
   language mirroring plus its own cache-breaking latency regression) and
   their fixes. No TTS/barge-in yet.
+- **M2.4 implemented per ADR-0003 D6, D7** (`src/nexa/tts/`,
+  `src/nexa/voice_tts/`, `src/nexa/voice/gate.py`, `R0011`; follows R0010's
+  Recommendation A): `AssistantSpeechBridge` → `PiperHttpTTSService`
+  (Pipecat 1.8.1, `/synthesize` URL, built-in SENTENCE aggregation) →
+  `TtsStatusObserver` → `LocalAudioOutputTransport` → the `UACDemoV1.0` USB
+  DAC. External `python -m piper.http_server` process, its own venv, GPL
+  `piper-tts` never imported in-process (`ast`-verified), `pyproject.toml`
+  unchanged. Voice chosen from M2.3's canonical response-language function.
+  A temporary **half-duplex self-echo gate** (`HalfDuplexGate` +
+  `_MicGateFrameProcessor`) withholds mic audio before VAD/STT while real
+  TTS playback frames say NeXa is speaking — NOT barge-in (M2.5). Output is
+  now an **independent** by-name device selection from the reSpeaker input.
+  See "What works" above for the two real-hardware findings
+  (self-conversation loop; post-replug output routing) and their fixes.
 - Product code now exists for M1.1 (`src/nexa/conversation/`,
   `src/nexa/providers/`, `src/nexa/config.py`, `src/nexa/bootstrap.py`,
   `apps/nexa_chat.py`), M2.1 (`src/nexa/voice/`, `apps/nexa_voice_probe.py`),
-  M2.2 (`src/nexa/stt/`, `apps/nexa_stt_probe.py`), and M2.3
-  (`src/nexa/voice_conversation/`, `apps/nexa_voice_chat_probe.py`). M2.4
-  onward (TTS, barge-in) has no product code yet.
+  M2.2 (`src/nexa/stt/`, `apps/nexa_stt_probe.py`), M2.3
+  (`src/nexa/voice_conversation/`, `apps/nexa_voice_chat_probe.py`), and
+  M2.4 (`src/nexa/tts/`, `src/nexa/voice_tts/`, `src/nexa/voice/gate.py`,
+  `apps/nexa_voice_tts_probe.py`, `scripts/setup_piper_http.py`). M2.4B
+  (natural speech flow) and M2.5 (barge-in) have no product code yet.
 
 ## Current test status
 
 - Repo-local `./.venv` (system Python 3.13.5, **not** the legacy repo's venv)
   with `dev` extras (`pytest`, `ruff`) and `pipecat-ai[local]==1.8.1`
   installed.
-- `python -m unittest discover -s tests` and `pytest`: **159 tests, all
-  PASS**, 4 intentionally skipped (live Ollama test + M2.1 hardware probe +
-  2 opt-in live-whisper.cpp tests). `ruff check src tests apps`: clean.
+- `python -m unittest discover -s tests` and `pytest`: **246 passed, 7
+  intentionally skipped, 14 subtests passed** (253 collected). The 7 skips
+  are all opt-in / environment-gated: 1 live Ollama, 2 live whisper.cpp,
+  3 live Piper HTTP (`NEXA_RUN_LIVE_TTS_TEST=1`), 1 reSpeaker hardware
+  probe. `ruff check src tests apps scripts/setup_piper_http.py`: clean.
+  (Pre-existing unrelated `ruff` findings in `scripts/m1_bench/` — M1
+  benchmark tooling, committed in `b79a752`, untouched.)
 - Live Ollama integration test (`NEXA_RUN_LIVE_TESTS=1 python -m unittest
   tests.test_live_ollama_integration`): **PASS** against real `gemma4:e4b`
   (2026-09-05) — see `R0004` for the transcript evidence.
@@ -409,6 +522,17 @@ Runtime / test evidence outranks anything else in this repo.
   its own cache-breaking latency regression were found live and fixed — a
   final retest confirming both correct PL/EN mirroring and restored warm
   first-token latency (~2-5s) — see `R0009` for the full evidence chain.
+- **Hardware acceptance test (M2.4):** Andrzej ran the real
+  `apps/nexa_voice_tts_probe.py` for an extended real voice conversation
+  and explicitly confirmed the full local loop (mic → VAD → whisper.cpp →
+  `ConversationSession`/`gemma4:e4b` → streamed reply → Piper TTS →
+  `UACDemoV1.0` USB DAC): old NeXa Piper voice audible, NeXa no longer
+  talks to herself (half-duplex gate), multi-turn context preserved,
+  responses coherent. Preceded by separately-confirmed direct-hardware
+  steps (device re-detection after reboot/replug, direct tone, direct old
+  PL/EN Piper playback to the DAC, Pipecat-only playback without LLM) —
+  see `R0011` for the full evidence chain. Optional live suite:
+  `NEXA_RUN_LIVE_TTS_TEST=1 python -m unittest tests.test_tts_server_live`.
 - `scripts/m1_bench/bench.py`: smoke-tested and used for real measurements
   (M1.0/M1.0B; unrelated to the M1.1/M2.1/M2.2/M2.3 product tests above).
 
@@ -429,39 +553,48 @@ Runtime / test evidence outranks anything else in this repo.
   open for this substage to decide) — see "Current architecture state"
   above for the full summary; full text in
   `docs/decisions/ADR-0003_realtime_voice_foundation.md`. Not modified by
-  M2.2 or M2.3 — no implementation contradiction was found in either.
+  M2.2, M2.3, or M2.4 — no implementation contradiction was found in any.
+  **D6's TTS baseline is now real** (M2.4, `R0011`): external Piper HTTP
+  process, no in-process GPL import — Piper stays explicitly *temporary*,
+  not frozen.
 
 ## Current focus
 
 - None active. M1 (Natural Text Conversation) is a complete,
   operator-confirmed chain through M1.1. M2's research (`R0005`) →
   feasibility spikes (`R0006`) → architecture decision (`ADR-0003`) → M2.1
-  (`R0007`) → M2.2 (`R0008`) → M2.3 (`R0009`) implementations, all
-  operator-confirmed on real hardware, is now also complete. **M2.4 is
-  clear to start**, as a new, explicitly-started task.
+  (`R0007`) → M2.2 (`R0008`) → M2.3 (`R0009`) → M2.4A spike (`R0010`) →
+  M2.4 (`R0011`) implementations, all operator-confirmed on real hardware,
+  are now complete. The M2.4 functional baseline is frozen by its commit.
+  **M2.4B is clear to start**, as a new, explicitly-started task.
 
 ## Exact next recommended task
 
-**M2.4 — streaming/chunked Piper TTS integration**, the next M2
-implementation substage under `ADR-0003` D6. M2.1/M2.2/M2.3 are done —
-build on them, don't re-decide them:
+**M2.4B — Natural Speech Flow / Streaming Pacing.** The M2.4 loop works and
+is operator-accepted, but spoken replies are not yet sufficiently
+continuous. Build on M2.4 — do not destabilise it:
 
-- Sentence/chunk-boundary triggering so TTS can start narrating before the
-  full LLM reply is generated — consume `VoiceConversationAdapter`'s
-  existing `on_assistant_token`/`on_assistant_complete` streaming exactly
-  as M2.3 already surfaces it; no new conversation-authority wiring should
-  be needed.
-- Piper via subprocess (never an in-process import — ADR-0003 D6, R0005's
-  license finding: `OHF-Voice/piper1-gpl` is GPL-3.0). Piper remains an
-  explicitly **temporary** TTS baseline, not frozen.
-- `gemma4:e4b` stays the frozen baseline unless a future ADR changes it.
-- Continue thread-budget discipline (ADR-0003 D7) — TTS is a third
-  concurrent CPU consumer alongside STT and the LLM; R0006's contention
-  findings still apply.
-- Still no barge-in in M2.4 — that remains M2.5 per `ADR-0003`'s substage
-  table. An operator acceptance test (voice question in, spoken assistant
-  reply out) before M2.4 is called done, matching the M1.1/M2.1/M2.2/M2.3
-  human-acceptance pattern.
+- Buffered / look-ahead generation so TTS is not driven one isolated
+  sentence at a time; a continuous coherent spoken response rather than
+  independent sentence clips.
+- Pacing that adapts mildly to how much future generated/audio content is
+  buffered.
+- Better sentence/phrase boundaries — Pipecat's NLTK splitter runs
+  `language="english"` only, so Polish abbreviations (`ul.`, `tzw.`) can
+  split a phrase badly (e.g. `"…jest tzw."` / `"horyzont zdarzeń…"`).
+- Investigate the non-fatal `"TTS context … completed with no audio"`
+  event observed once in a real run.
+- Keep the temporary half-duplex gate as-is (M2.5 replaces it).
+- `gemma4:e4b` stays frozen; Piper stays the temporary TTS baseline.
+- Thread-budget discipline (ADR-0003 D7) still applies — STT + LLM + TTS
+  are three concurrent CPU consumers.
+
+Then **M2.5 — barge-in / interruption / own-TTS suppression / echo
+handling**, replacing the temporary half-duplex gate.
+
+Separate, any time after the pipeline is stable (NOT M2.4B): voice-model
+selection research (the operator would eventually prefer a softer/cozier
+voice than `pl_PL-gosia-medium` / `en_GB-jenny_dioco-medium`).
 
 Optional, non-blocking, can run any time: a scoped Parakeet/Canary
 conversion + benchmark spike (license and Polish support are confirmed

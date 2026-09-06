@@ -48,6 +48,7 @@ from nexa.stt import (
 
 from .config import LocalAudioConfig
 from .device import find_device_index
+from .gate import HalfDuplexGate
 from .state import VoiceEvent, VoiceStateMachine
 
 # NeXa-chosen VAD default — evidence-based, not the library default.
@@ -199,16 +200,84 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class _MicGateFrameProcessor(FrameProcessor):
+    """M2.4 half-duplex safety: while NeXa's own TTS audio is playing, drop
+    inbound microphone audio so it can never reach VAD -> utterance capture
+    -> whisper.cpp -> ``ConversationSession`` and create a self-conversation
+    loop (real-hardware failure: the reSpeaker heard NeXa and re-transcribed
+    her own answer as new user turns).
+
+    Placed **immediately after** ``transport.input()``, before
+    ``VADProcessor`` — the gate happens before any expensive STT work, and
+    before VAD can even emit a ``VADUserStartedSpeakingFrame`` for the echo
+    (Silero needs ~0.2s of confirmed speech; the gate closes the instant the
+    first ``BotStartedSpeakingFrame`` reaches here travelling upstream from
+    the output transport, comfortably ahead of any acoustic echo).
+
+    Suppression is driven entirely by :class:`~nexa.voice.gate.HalfDuplexGate`
+    — real Pipecat playback frames + response-lifecycle notifications from
+    the assistant-speech bridge, never a timer or a fake ``VoiceState``.
+    Every non-audio frame (control, lifecycle, the playback frames
+    themselves) is forwarded unchanged in both directions; only
+    ``InputAudioRawFrame`` is withheld, and only while the gate is closed.
+
+    This is temporary M2.4 behaviour — no barge-in, no interruption of TTS/
+    LLM/session. M2.5 replaces it with true full-duplex handling.
+    """
+
+    def __init__(self, gate: HalfDuplexGate, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._gate = gate
+        self._suppressed_frames = 0
+
+    @property
+    def suppressed_frame_count(self) -> int:
+        """How many microphone audio frames have been withheld this session
+        (diagnostics only)."""
+        return self._suppressed_frames
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+
+        # Let the gate see playback-lifecycle frames (they travel upstream
+        # from the output transport, so they pass through here) and hard
+        # stops.
+        self._gate.observe_frame(frame)
+
+        if isinstance(frame, InputAudioRawFrame) and self._gate.mic_suppressed:
+            self._suppressed_frames += 1
+            return  # withhold — NeXa is speaking; this is (or may be) her echo
+
+        await self.push_frame(frame, direction)
+
+
 class VoiceRuntime:
     """Owns the Pipecat pipeline: local audio in/out + Silero VAD (M2.1),
     plus optional local whisper.cpp STT (M2.2).
 
-    No LLM, no TTS, no ConversationSession, no barge-in — those remain
-    M2.3+ (ADR-0003). ``state_machine`` is the one thing calling code should
-    observe for voice-activity state; it is real NeXa-owned state,
-    independent of Pipecat's own frame/lifecycle model. STT is entirely
-    optional: omitting ``transcriber`` reproduces exact M2.1 pipeline
-    behavior.
+    No LLM, no ConversationSession — those live in `nexa.conversation` /
+    `nexa.voice_conversation`. No **barge-in**: that is M2.5 (ADR-0003).
+    ``state_machine`` is the one thing calling code should observe for
+    voice-activity state; it is real NeXa-owned state, independent of
+    Pipecat's own frame/lifecycle model. STT is entirely optional: omitting
+    ``transcriber`` reproduces exact M2.1 pipeline behavior.
+
+    ``extra_output_stages`` (M2.4) lets a caller insert additional, already-
+    built Pipecat ``FrameProcessor``s (e.g. a TTS bridge + TTS service)
+    just before the output transport, without ``nexa.voice`` ever needing
+    to import anything TTS- or conversation-shaped itself — it only ever
+    sees the generic Pipecat ``FrameProcessor`` type, exactly like
+    ``transcriber`` is accepted as the generic ``SpeechTranscriber``
+    protocol rather than a concrete whisper.cpp import.
+
+    ``half_duplex_gate`` (M2.4, temporary until M2.5) — a
+    :class:`~nexa.voice.gate.HalfDuplexGate`. When given, a
+    ``_MicGateFrameProcessor`` is inserted right after ``transport.input()``
+    that withholds microphone audio while NeXa's own TTS is playing, so the
+    reSpeaker can't feed NeXa's voice back into STT. This is NOT barge-in:
+    nothing is cancelled, the user simply cannot interrupt while NeXa
+    speaks. Omitting it leaves the M2.1/M2.2 pipeline byte-for-byte
+    unchanged.
     """
 
     def __init__(
@@ -221,6 +290,8 @@ class VoiceRuntime:
         language: Language | None = None,
         on_transcription: Callable[[TranscriptionResult], None] | None = None,
         on_transcription_error: Callable[[Exception], None] | None = None,
+        extra_output_stages: list[FrameProcessor] | None = None,
+        half_duplex_gate: HalfDuplexGate | None = None,
     ) -> None:
         self.config = config or LocalAudioConfig()
         self.vad_params = vad_params or DEFAULT_VAD_PARAMS
@@ -236,6 +307,13 @@ class VoiceRuntime:
         self._on_transcription = on_transcription
         self._on_transcription_error = on_transcription_error
         self._capture_processor: _UtteranceCaptureFrameProcessor | None = None
+        self._extra_output_stages = extra_output_stages or []
+        # M2.4 half-duplex safety gate (optional). When present, a
+        # _MicGateFrameProcessor is inserted right after transport.input() to
+        # withhold mic audio while NeXa's TTS is playing. Omitting it leaves
+        # the exact M2.1/M2.2 pipeline unchanged.
+        self._half_duplex_gate = half_duplex_gate
+        self._mic_gate_processor: _MicGateFrameProcessor | None = None
 
     @property
     def max_observed_stt_concurrency(self) -> int | None:
@@ -245,6 +323,15 @@ class VoiceRuntime:
         if self._capture_processor is None:
             return None
         return self._capture_processor.max_observed_stt_concurrency
+
+    @property
+    def suppressed_mic_frames(self) -> int | None:
+        """How many microphone audio frames the M2.4 half-duplex gate has
+        withheld this session (because NeXa was speaking). ``None`` if no
+        gate was configured, or the pipeline hasn't been built yet."""
+        if self._mic_gate_processor is None:
+            return None
+        return self._mic_gate_processor.suppressed_frame_count
 
     def _build_pipeline(self) -> Pipeline:
         pa = pyaudio.PyAudio()
@@ -274,7 +361,11 @@ class VoiceRuntime:
         vad_processor = VADProcessor(vad_analyzer=vad_analyzer)
         state_processor = _VoiceStateFrameProcessor(self.state_machine)
 
-        stages: list[FrameProcessor] = [transport.input(), vad_processor]
+        stages: list[FrameProcessor] = [transport.input()]
+        if self._half_duplex_gate is not None:
+            self._mic_gate_processor = _MicGateFrameProcessor(self._half_duplex_gate)
+            stages.append(self._mic_gate_processor)
+        stages.append(vad_processor)
         if self._transcriber is not None:
             self._capture_processor = _UtteranceCaptureFrameProcessor(
                 sample_rate=self.config.sample_rate,
@@ -285,6 +376,7 @@ class VoiceRuntime:
             )
             stages.append(self._capture_processor)
         stages.append(state_processor)
+        stages.extend(self._extra_output_stages)
         stages.append(transport.output())
 
         return Pipeline(stages)

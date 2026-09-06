@@ -227,6 +227,93 @@ milestone, and do not let them exist as skipped tests that imply coverage.
   ("REAL POLISH TEST", "REAL ENGLISH TEST", "FAST SECOND-UTTERANCE TEST",
   "RESPONSE-LANGUAGE MIRRORING", "LATENCY / RESOURCES").
 
+## M2.4 status
+
+M2.4 (streaming local Piper TTS — `src/nexa/tts/`, `src/nexa/voice_tts/`,
+`src/nexa/voice/gate.py`, `R0011`) adds **91 passing tests + 3 opt-in
+live-Piper skips across 11 new files**. No tracked test file was modified.
+Suite total: **246 passed, 7 skipped, 14 subtests** (was 155/4/14 before
+M2.4).
+
+- `tests/test_tts_config.py` — tier `unit`. `nexa.tts.config` — the
+  `/synthesize` URL (not the bare `base_url` — R0010's 405 finding), pinned
+  external Piper version, PL/EN voice ids match the prior local assistant,
+  frozen/typed `PiperHttpConfig`.
+- `tests/test_tts_server.py` — tier `unit`. `PiperHttpServer` construction
+  validation (missing venv / missing voice model → explicit typed
+  `PiperVenv/VoiceNotFoundError`), stop-without-start, synth error mapping —
+  faked at the response boundary, no real process.
+- `tests/test_tts_server_live.py` — tier `integration`, real external Piper
+  HTTP process. **Not run by default** — set `NEXA_RUN_LIVE_TTS_TEST=1`
+  (mirrors M2.2's opt-in live-whisper.cpp pattern).
+- `tests/test_voice_tts_bridge.py` — tier `unit`. Real Pipecat frame types,
+  a fake downstream sink (no real `PiperHttpTTSService`). `AssistantSpeechBridge`
+  frame vocabulary + strict FIFO ordering; `voice_for_language` PL/EN/`None`;
+  `TTSUpdateSettingsFrame` emitted only on a voice change; `TtsStatusObserver`
+  maps only real `TTSStarted`/`AudioRaw`/`Stopped`/`Error` frames;
+  unsupported language raises.
+- `tests/test_voice_tts_preflight.py` — tier `unit`. `ensure_sentence_tokenizer_data`
+  passes silently when NLTK `punkt_tab` is present, raises (and **never
+  downloads**) when absent — NeXa's "no silent network download at runtime"
+  discipline (established for whisper.cpp in M2.2), applied to Pipecat's
+  sentence aggregation.
+- `tests/test_voice_tts_timing.py` — tier `unit`. `TurnTimingTracker` — the
+  fix for a genuine **instrumentation** bug found on hardware (a later turn
+  overwriting an earlier turn's timestamps before its TTS finished
+  *playing*). Per-turn FIFO-correlated records; `first_tts_audio_at` and
+  `first_sentence_ready_at` written once per response (a later sentence must
+  not overwrite them); `streaming_overlap_confirmed` is exactly
+  `first_tts_audio_at < assistant_complete_at`; cross-turn regression cases.
+- `tests/test_voice_output_routing.py` — tier `unit`. Independent
+  input/output device selection: mic and speaker resolve to different
+  indices from a realistic post-reboot device list; resolving the USB DAC
+  for output does not disturb the reSpeaker input resolution; a missing
+  output device raises `AudioDeviceNotFoundError` — **no silent fallback**
+  to another output-capable device.
+- `tests/test_voice_half_duplex_gate.py` — tier `unit`. `HalfDuplexGate`
+  (`src/nexa/voice/gate.py`) — the temporary M2.4 self-echo safety gate.
+  `mic_suppressed` closed only while NeXa's real TTS playback is active;
+  the response-level latch never reopens the mic between sentence chunks of
+  one reply; the think window leaves the mic open; hard stops
+  (`EndFrame`/`CancelFrame`/`ErrorFrame`) always release; **no `SPEAKING`
+  member added to the `VoiceState` enum** and the gate never references it
+  (`ast`); **no M2.5 barge-in machinery** — `ast`-guarded against
+  `StartInterruptionFrame`/`BotInterruptionFrame`/`EmulateUser*`/
+  `cancel`/`handle_interruptions`.
+- `tests/test_voice_mic_gate_processor.py` — tier `unit`. Real
+  `_MicGateFrameProcessor` (`push_frame` captured; PyAudio/transport/VAD
+  mocked only for the `_build_pipeline` wiring case). TTS inactive →
+  `InputAudioRawFrame` passes to VAD/STT; TTS active → it is withheld here
+  (never enters `SerialTranscriptionQueue`, never creates a
+  `ConversationSession` turn); TTS stops → capture resumes; multi-sentence
+  never reopens between chunks; `_build_pipeline` inserts the gate stage
+  **only** when a gate is supplied — the M2.1/M2.2 pipeline is otherwise
+  byte-for-byte unchanged.
+- `tests/test_voice_tts_architecture.py` — tier `unit`, `ast`-based
+  (mirrors M2.1/M2.2/M2.3's own architecture tests). `nexa.tts` imports no
+  Pipecat / no `piper` / no `nexa.conversation`; `nexa.voice_tts`
+  constructs no `ConversationSession`/provider/persona, imports no
+  bootstrap/config/LLM client, and defines no language classifier (it must
+  *call* the one canonical `nexa.conversation.language` function); and
+  `nexa.voice`/`nexa.stt`/`nexa.voice_conversation` are still TTS- and
+  conversation-free (regression guard — M2.4 must not have weakened them).
+- `tests/test_voice_tts_probe_state_display.py` — tier `unit`, `ast`-based.
+  Same lesson M2.2/M2.3 recorded for their probes: the M2.4 probe's TTS-
+  status and conversation callbacks must never print a `voice state:` line
+  or reference the `VoiceStateMachine` — the acoustic `VoiceState` can have
+  moved on while TTS is still speaking a previous turn.
+- Beyond the automated tiers, M2.4 has the same **human-acceptance** pattern
+  as M1.1/M2.1/M2.2/M2.3 — the owner personally ran
+  `apps/nexa_voice_tts_probe.py` for an extended real conversation and
+  explicitly accepted it (full loop works, NeXa no longer talks to herself,
+  context preserved), preceded by separately-confirmed direct-hardware
+  playback steps. See `docs/reports/R0011_m2_4_streaming_piper_http_tts_integration_20260906.md`
+  ("OPERATOR ACCEPTANCE").
+- Known follow-up, **not** covered by tests yet (deferred to `M2.4B`):
+  natural-speech-flow / streaming-pacing quality, Polish sentence-boundary
+  splitting, and a non-fatal `"TTS context … completed with no audio"`
+  event observed once.
+
 ## Tooling direction
 
 - `pytest` as the runner (declared in `pyproject.toml` `dev` extras); config lives

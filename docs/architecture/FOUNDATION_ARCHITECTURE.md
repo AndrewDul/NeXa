@@ -97,14 +97,18 @@ internal, replaceable boundary.
 > (Pipecat orchestration, Silero VAD, whisper.cpp STT, Piper TTS as a
 > temporary baseline, full barge-in as the target) — see
 > `docs/decisions/ADR-0003_realtime_voice_foundation.md`. **M2.1 (local audio
-> transport + VAD only), M2.2 (local whisper.cpp STT), and M2.3 (voice →
-> `ConversationSession` adapter) are now real** — see
+> transport + VAD), M2.2 (local whisper.cpp STT), M2.3 (voice →
+> `ConversationSession` adapter), and M2.4 (streamed reply → sentence-chunked
+> Piper TTS via an external HTTP process → dedicated USB speaker DAC, with a
+> temporary half-duplex self-echo gate) are now real** — see
 > `docs/architecture/M2_1_LOCAL_AUDIO_VAD_ARCHITECTURE.md`,
-> `docs/architecture/M2_2_LOCAL_STT_ARCHITECTURE.md`, and
-> `docs/architecture/M2_3_VOICE_CONVERSATION_ADAPTER_ARCHITECTURE.md`, the
-> same way `docs/architecture/M1_1_TEXT_CONVERSATION_ARCHITECTURE.md` made
-> Conversation real. Everything else in this Voice boundary (TTS, barge-in)
-> remains conceptual until M2.4+ implements it.
+> `docs/architecture/M2_2_LOCAL_STT_ARCHITECTURE.md`,
+> `docs/architecture/M2_3_VOICE_CONVERSATION_ADAPTER_ARCHITECTURE.md`, and
+> `docs/architecture/M2_4_STREAMING_TTS_ARCHITECTURE.md`, the same way
+> `docs/architecture/M1_1_TEXT_CONVERSATION_ARCHITECTURE.md` made
+> Conversation real. **Barge-in / interruption stays conceptual until M2.5**
+> (the M2.4 half-duplex gate is an explicit temporary stand-in); natural
+> speech-flow pacing is `M2.4B`.
 
 ### Vision
 Perception from cameras/sensors. Feeds Context and Capabilities.

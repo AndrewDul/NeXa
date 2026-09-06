@@ -11,11 +11,13 @@ from __future__ import annotations
 
 from .config import LocalAudioConfig
 from .device import AudioDeviceNotFoundError, find_device_index
+from .gate import HalfDuplexGate
 from .runtime import VoiceRuntime
 from .state import VoiceEvent, VoiceState, VoiceStateMachine
 
 __all__ = [
     "AudioDeviceNotFoundError",
+    "HalfDuplexGate",
     "LocalAudioConfig",
     "VoiceEvent",
     "VoiceRuntime",

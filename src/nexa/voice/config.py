@@ -15,17 +15,34 @@ from dataclasses import dataclass
 class LocalAudioConfig:
     """Configuration for the M2.1 local audio input/output + VAD.
 
-    Defaults target the reSpeaker XVF3800's own ALSA ``plug:respeaker`` alias
-    for both input and output. `VERIFIED FACT` (2026-09-05): the system's
-    dedicated USB speaker DAC (configured as the system-wide ALSA default
-    output in ``/etc/asound.conf``, addressed by stable card name
-    ``UACDemoV10``) is not physically connected on this machine right now —
-    only the reSpeaker's own playback subdevice is actually present and
-    usable. Using it for output here is a documented, verified choice, not a
-    silent fallback.
+    Input and output are **independent** device selections — never a single
+    shared index. Each name is resolved separately by ``device.py``
+    (``require_input`` for the mic, ``require_output`` for the speaker), and
+    a name that matches nothing raises rather than falling back to another
+    device.
+
+    Defaults, `VERIFIED FACT` (2026-09-06, this Pi, after a reboot + USB
+    replug — operator-confirmed by a direct test tone and by direct
+    old-NeXa-voice playback):
+
+    - **input** ``"respeaker"`` — the reSpeaker XVF3800's own
+      ``/etc/asound.conf`` ``plug:`` alias (``slave.pcm
+      "hw:CARD=Array,DEV=0"``), addressed by stable ALSA card name.
+    - **output** ``"usb_speaker"`` — the dedicated Jieli ``UACDemoV1.0`` USB
+      DAC's ``/etc/asound.conf`` ``plug:`` alias (``slave.pcm
+      "hw:CARD=UACDemoV10,DEV=0"``), also by stable card name. This DAC is
+      the system-wide ALSA default sink and is physically connected again as
+      of the 2026-09-06 replug; the earlier M2.1 note that it was absent
+      (which forced ``"respeaker"`` for output too) no longer holds.
+
+    Both aliases are ALSA ``plug`` devices, so the fixed 16 kHz / mono
+    ``sample_rate``/``channels`` below are converted in software to whatever
+    each piece of hardware natively wants (the reSpeaker is 16 kHz stereo;
+    the UACDemoV1.0 is 48 kHz stereo) — no channel/rate handling is needed
+    in NeXa itself.
     """
 
     input_device_name: str = "respeaker"
-    output_device_name: str = "respeaker"
+    output_device_name: str = "usb_speaker"
     sample_rate: int = 16000
     channels: int = 1
