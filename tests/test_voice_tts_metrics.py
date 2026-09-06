@@ -55,6 +55,10 @@ def _mk_turn(**kw) -> TurnMetrics:
     return TurnMetrics(turn_index=1, timing=TurnTiming(**kw))
 
 
+async def _drain(agen):
+    return [f async for f in agen]
+
+
 # 5. audio byte -> duration
 class TestAudioBytesToSeconds(unittest.TestCase):
     def test_16k_mono_s16le(self) -> None:
@@ -114,24 +118,96 @@ class TestLlmMath(unittest.TestCase):
         self.assertIsNone(tm2.llm_chars_per_s)  # no char count
 
 
-# 4. TTS synthesis RTF
-class TestTtsSegmentRtf(unittest.TestCase):
-    def test_rtf_fast_synth(self) -> None:
+# 4. TTS timing — context span (NOT synthesis speed) vs true HTTP RTF (B.1A)
+class TestTtsSegmentContextSpan(unittest.TestCase):
+    def test_context_span_is_the_lifecycle_span_not_synth(self) -> None:
         seg = TtsSegment(index=0, started_at=100.0, stopped_at=100.8)
         seg.audio_bytes = 32000 * 6  # 6 s of 16k mono
         seg.sample_rate, seg.num_channels = 16000, 1
         self.assertAlmostEqual(seg.audio_duration_s, 6.0)
-        self.assertAlmostEqual(seg.synthesis_duration_s, 0.8)
-        self.assertAlmostEqual(seg.synthesis_rtf, 0.8 / 6.0, places=4)
+        self.assertAlmostEqual(seg.context_span_s, 0.8)
+        self.assertAlmostEqual(seg.context_span_rtf, 0.8 / 6.0, places=4)
+        # the old misleading names are gone
+        self.assertFalse(hasattr(seg, "synthesis_rtf"))
+        self.assertFalse(hasattr(seg, "synthesis_duration_s"))
 
-    def test_rtf_none_when_no_audio_or_not_stopped(self) -> None:
-        self.assertIsNone(TtsSegment(index=0, started_at=100.0).synthesis_rtf)
+    def test_context_span_none_when_no_audio_or_not_stopped(self) -> None:
+        self.assertIsNone(TtsSegment(index=0, started_at=100.0).context_span_rtf)
         seg = TtsSegment(index=0, started_at=100.0, stopped_at=101.0)
-        self.assertIsNone(seg.synthesis_rtf)  # no audio bytes / rate
+        self.assertIsNone(seg.context_span_rtf)  # no audio bytes / rate
 
     def test_time_to_first_audio(self) -> None:
         seg = TtsSegment(index=0, started_at=100.0, first_audio_at=100.9)
         self.assertAlmostEqual(seg.time_to_first_audio_s, 0.9)
+
+
+class TestTrueHttpSynthesisTiming(unittest.TestCase):
+    """B.1A: the TRUE per-request Piper HTTP synthesis timing, fed from the
+    measurement-only ``TimedPiperHttpTTSService`` subclass."""
+
+    def _turn_with_http(self, rtfs: list[float]) -> TurnMetrics:
+        from nexa.voice_tts.timed_tts import HttpSynthCall
+
+        tm = _mk_turn()
+        for r in rtfs:
+            tm.http_calls.append(
+                HttpSynthCall(text_len=90, http_wall_s=6.0 * r, ttfb_s=6.0 * r,
+                              audio_bytes=32000 * 6, audio_s=6.0, http_rtf=r)
+            )
+        return tm
+
+    def test_mean_http_rtf_is_the_true_value(self) -> None:
+        tm = self._turn_with_http([0.14, 0.20, 0.26])
+        self.assertAlmostEqual(tm.mean_http_rtf, 0.20)
+        self.assertAlmostEqual(tm.mean_http_synthesis_s, 1.2)
+
+    def test_mean_http_rtf_none_without_timed_service(self) -> None:
+        # A context span that reads "RTF 0.9" must NOT be used as synth speed.
+        tm = _mk_turn()
+        seg = TtsSegment(index=0, started_at=0.0, stopped_at=5.4)
+        seg.audio_bytes, seg.sample_rate, seg.num_channels = 32000 * 6, 16000, 1
+        tm.tts_segments = [seg]
+        self.assertAlmostEqual(tm.mean_context_span_rtf, 0.9)
+        self.assertIsNone(tm.mean_http_rtf)  # falls back to None, never to 0.9
+
+    def test_timed_service_wrapper_yields_identical_stream(self) -> None:
+        import asyncio
+
+        from pipecat.frames.frames import TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame
+
+        import nexa.voice_tts.timed_tts as T
+        from nexa.voice_tts.timed_tts import TimedPiperHttpTTSService
+
+        frames = [
+            TTSStartedFrame(),
+            TTSAudioRawFrame(b"\x01\x02" * 800, 16000, 1),
+            TTSAudioRawFrame(b"\x03\x04" * 800, 16000, 1),
+            TTSStoppedFrame(),
+        ]
+        sink: list = []
+        # instantiate without touching the real HTTP __init__
+        svc = TimedPiperHttpTTSService.__new__(TimedPiperHttpTTSService)
+        svc._on_http_call = sink.append
+        svc.http_calls = []
+
+        async def fake(self, text, cid):
+            for f in frames:
+                yield f
+
+        orig = T.PiperHttpTTSService.run_tts
+        T.PiperHttpTTSService.run_tts = fake
+        try:
+            out = asyncio.run(_drain(svc.run_tts("hi", "ctx")))
+        finally:
+            T.PiperHttpTTSService.run_tts = orig
+
+        self.assertEqual(out, frames)  # same objects, same order — no change
+        self.assertEqual(len(sink), 1)          # the external sink got it once
+        self.assertEqual(len(svc.http_calls), 1)  # and the service's own log once
+        call = sink[0]
+        self.assertEqual(call.audio_bytes, 800 * 2 * 2)
+        self.assertAlmostEqual(call.audio_s, (800 * 2 * 2) / 32000.0)
+        self.assertIsNotNone(call.http_wall_s)
 
 
 # 6. multiple TTS segments correlated to one assistant turn
@@ -267,6 +343,30 @@ class TestCollectorCorrelation(unittest.TestCase):
         self.assertGreater(first_samples[0], 0.0)  # not a 0.0 underrun
         self.assertEqual(tm.output_underrun_count, 0)
 
+    def test_head_skips_a_finalized_turn(self) -> None:
+        # B.1A: a stray late TTS frame after a turn was finalised must not be
+        # re-attributed to it.
+        finals: list[TurnMetrics] = []
+        c = MetricsCollector(on_turn_finalized=finals.append)
+        c.start_turn(stt_result=0.0, stt_text="q")
+        c.assistant_complete("done")
+        c.tts_started()
+        c.tts_first_audio()
+        c.tts_audio(32000 * 3, 16000, 1)
+        c.tts_stopped()
+        c.tts_response_end()  # finalised (no open span)
+        self.assertEqual(len(finals), 1)
+        before = finals[0].total_audio_seconds
+        # a stray late audio frame
+        c.tts_audio(32000 * 9, 16000, 1)
+        self.assertEqual(finals[0].total_audio_seconds, before)  # unchanged
+
+    def test_audio_seconds_per_wall_second(self) -> None:
+        tm = _mk_turn()
+        tm.playback_spans = [PlaybackSpan(started_at=100.0, stopped_at=130.0)]
+        tm.buffer.total_audio_seconds = 24.0  # 24 s of audio over a 30 s window
+        self.assertAlmostEqual(tm.audio_seconds_per_wall_second, 0.8)
+
     def test_text_chunk_since_prev_and_after_complete(self) -> None:
         c = MetricsCollector()
         c.start_turn(stt_result=0.0, stt_text="q")
@@ -375,19 +475,42 @@ class TestBufferValidation(unittest.TestCase):
         self.assertIn("ESTIMATE", BufferEstimate().note)
         self.assertIn("NOT a control signal", BufferEstimate().note)
 
-    def test_estimate_vs_real_stop_error(self) -> None:
+    def test_drain_to_stop_lag_uses_the_NEXT_stop_only(self) -> None:
+        # B.1A correction: the healthy signal is "how long after the buffer
+        # drained did a BotStopped follow", not the nearest stop in any
+        # direction (which for a mid-reply drain picks a far-away final stop).
         tm = _mk_turn()
-        tm.playback_spans = [PlaybackSpan(started_at=100.0, stopped_at=106.0)]
-        tm.buffer.underrun_events = [106.3, 105.5]  # 0.3 and 0.5 off the real stop
-        self.assertAlmostEqual(tm.estimate_vs_real_stop_error_s, 0.4)
+        tm.playback_spans = [
+            PlaybackSpan(started_at=100.0, stopped_at=105.0),   # cosmetic stop
+            PlaybackSpan(started_at=105.0, stopped_at=130.0),   # final stop
+        ]
+        tm.buffer.underrun_events = [108.0]  # buffer drained mid-reply
+        # next stop after 108.0 is 130.0 -> lag 22.0 (the real discrepancy),
+        # NOT |108 - 105| = 3.0
+        self.assertAlmostEqual(tm.buffer_drain_to_stop_lag_s, 22.0)
+        self.assertEqual(tm.underruns_without_following_stop, 0)
 
-    def test_error_none_without_underruns_or_stops(self) -> None:
+    def test_healthy_lag_is_about_the_3s_fallback(self) -> None:
+        tm = _mk_turn()
+        tm.playback_spans = [PlaybackSpan(started_at=100.0, stopped_at=109.0)]
+        tm.buffer.underrun_events = [106.0]  # drained; transport fallback ~3 s later
+        self.assertAlmostEqual(tm.buffer_drain_to_stop_lag_s, 3.0)
+
+    def test_underrun_with_no_following_stop_is_counted(self) -> None:
+        tm = _mk_turn()
+        tm.playback_spans = [PlaybackSpan(started_at=100.0, stopped_at=104.0)]
+        tm.buffer.underrun_events = [110.0]  # after the only stop -> no following stop
+        self.assertEqual(tm.underruns_without_following_stop, 1)
+        self.assertIsNone(tm.buffer_drain_to_stop_lag_s)
+
+    def test_lag_none_without_underruns_or_stops(self) -> None:
         tm = _mk_turn()
         tm.playback_spans = [PlaybackSpan(started_at=100.0, stopped_at=106.0)]
-        self.assertIsNone(tm.estimate_vs_real_stop_error_s)  # no underruns
+        self.assertIsNone(tm.buffer_drain_to_stop_lag_s)  # no underruns
         tm2 = _mk_turn()
         tm2.buffer.underrun_events = [10.0]
-        self.assertIsNone(tm2.estimate_vs_real_stop_error_s)  # no stops
+        self.assertIsNone(tm2.buffer_drain_to_stop_lag_s)  # no stops
+        self.assertEqual(tm2.underruns_without_following_stop, 1)
 
 
 # 11. missing timestamps handled explicitly, never fabricated
@@ -565,28 +688,47 @@ class TestDiagnosis(unittest.TestCase):
         self.assertEqual(diagnose_dominant_wait(tm), "FIRST TOKEN")
 
     def test_llm_text_production_dominant(self) -> None:
+        from nexa.voice_tts.timed_tts import HttpSynthCall
+
         tm = _mk_turn(stt_result=0.0, first_token=1.0, assistant_complete=20.0)
         tm.assistant_text_chars = 300
         tm.playback_spans = [
             PlaybackSpan(started_at=2.0, stopped_at=8.0),
             PlaybackSpan(started_at=13.0, stopped_at=19.0),  # 5 s gap
         ]
-        seg = TtsSegment(index=0, started_at=2.0, stopped_at=2.8)
-        seg.audio_bytes, seg.sample_rate, seg.num_channels = 32000 * 6, 16000, 1  # RTF ~0.13
-        tm.tts_segments = [seg]
+        # TRUE synth was fast (RTF ~0.13) — the LLM, not Piper, caused the gap
+        tm.http_calls = [HttpSynthCall(90, 0.8, 0.8, 32000 * 6, 6.0, 0.133)]
         tm.buffer.underrun_events = [8.5]
         self.assertEqual(diagnose_dominant_wait(tm), "LLM TEXT PRODUCTION")
 
-    def test_tts_synthesis_dominant(self) -> None:
+    def test_tts_synthesis_dominant_uses_true_http_rtf(self) -> None:
+        from nexa.voice_tts.timed_tts import HttpSynthCall
+
         tm = _mk_turn(stt_result=0.0, first_token=1.0, assistant_complete=6.0)
         tm.playback_spans = [
             PlaybackSpan(started_at=2.0, stopped_at=6.0),
             PlaybackSpan(started_at=9.0, stopped_at=13.0),  # 3 s gap
         ]
-        seg = TtsSegment(index=0, started_at=2.0, stopped_at=6.0)
-        seg.audio_bytes, seg.sample_rate, seg.num_channels = 32000 * 4, 16000, 1  # RTF 1.0
+        # TRUE synth RTF ~1.0 (Piper genuinely not keeping up) -> TTS SYNTHESIS
+        tm.http_calls = [HttpSynthCall(90, 4.0, 4.0, 32000 * 4, 4.0, 1.0)]
+        # an inflated context-span "RTF" must NOT be what triggers this
+        seg = TtsSegment(index=0, started_at=2.0, stopped_at=11.0)
+        seg.audio_bytes, seg.sample_rate, seg.num_channels = 32000 * 4, 16000, 1
         tm.tts_segments = [seg]
         self.assertEqual(diagnose_dominant_wait(tm), "TTS SYNTHESIS")
+
+    def test_context_span_rtf_alone_does_not_trigger_tts_synthesis(self) -> None:
+        # The R0013 bug: context-span "RTF" ~0.9 spuriously said TTS SYNTHESIS.
+        tm = _mk_turn(stt_result=0.0, first_token=1.0, assistant_complete=6.0)
+        tm.playback_spans = [
+            PlaybackSpan(started_at=2.0, stopped_at=6.0),
+            PlaybackSpan(started_at=9.0, stopped_at=13.0),
+        ]
+        seg = TtsSegment(index=0, started_at=2.0, stopped_at=11.0)  # span 9s / audio 4s => 2.25
+        seg.audio_bytes, seg.sample_rate, seg.num_channels = 32000 * 4, 16000, 1
+        tm.tts_segments = [seg]
+        # no http_calls -> mean_http_rtf is None -> not "TTS SYNTHESIS"
+        self.assertNotEqual(diagnose_dominant_wait(tm), "TTS SYNTHESIS")
 
     def test_unknown_when_smooth(self) -> None:
         tm = _mk_turn(stt_result=0.0, first_token=1.0, assistant_complete=6.0)
@@ -695,6 +837,29 @@ class TestNoSecondAuthorityOrFakeState(unittest.TestCase):
         ):
             self.assertIn(name, sig.parameters)
             self.assertIsNone(sig.parameters[name].default)
+
+    def test_timed_tts_wrapper_builds_no_frames(self) -> None:
+        # B.1A: the measurement wrapper must only *time* super().run_tts and
+        # re-yield — it must never construct a frame of its own.
+        tree = ast.parse(self._src("nexa/voice_tts/timed_tts.py"))
+        rt = next(
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "run_tts"
+        )
+        for node in ast.walk(rt):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                nm = getattr(fn, "id", None) or getattr(fn, "attr", None)
+                self.assertNotIn(
+                    nm, {"TTSAudioRawFrame", "TTSStartedFrame", "TTSStoppedFrame",
+                         "ErrorFrame", "TTSTextFrame", "Frame"},
+                    "timed_tts.run_tts must not construct frames",
+                )
+
+    def test_timed_tts_imports_no_model_or_conversation(self) -> None:
+        imports = self._imports("nexa/voice_tts/timed_tts.py")
+        for bad in ("nexa.providers", "nexa.conversation", "nexa.bootstrap"):
+            self.assertNotIn(bad, imports)
 
 
 if __name__ == "__main__":

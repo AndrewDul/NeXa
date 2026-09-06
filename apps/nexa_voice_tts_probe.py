@@ -62,6 +62,7 @@ from nexa.voice_tts import (  # noqa: E402
     AssistantSpeechBridge,
     MetricsCollector,
     ResourceSampler,
+    TimedPiperHttpTTSService,
     TtsStatusObserver,
     TurnMetrics,
     TurnReportJsonlWriter,
@@ -377,9 +378,19 @@ async def main() -> None:
     )
 
     aiohttp_session = aiohttp.ClientSession()
-    tts_service = PiperHttpTTSService(
-        base_url=piper_server.config.synthesize_url, aiohttp_session=aiohttp_session
-    )
+    if report_mode:
+        # Measure-only subclass: times each run_tts HTTP request (true Piper
+        # synthesis speed) — yields an identical frame stream, no behaviour
+        # change. M2.4B.1A metric correction (R0013/R0014).
+        tts_service = TimedPiperHttpTTSService(
+            base_url=piper_server.config.synthesize_url,
+            aiohttp_session=aiohttp_session,
+            on_http_call=(lambda call: _metrics.http_synthesis(call)),
+        )
+    else:
+        tts_service = PiperHttpTTSService(
+            base_url=piper_server.config.synthesize_url, aiohttp_session=aiohttp_session
+        )
 
     on_user_transcript, on_assistant_token, on_assistant_complete, on_conversation_error = (
         make_conversation_handlers(bridge)

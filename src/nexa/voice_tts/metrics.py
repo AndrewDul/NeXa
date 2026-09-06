@@ -102,9 +102,13 @@ class TtsSegment:
     sample_width_bytes: int = _BYTES_PER_SAMPLE
 
     @property
-    def synthesis_duration_s(self) -> float | None:
-        """Wall time from segment start to segment stop (synthesis + enqueue;
-        the observable proxy for ``tts_request_complete_at - tts_request_started_at``)."""
+    def context_span_s(self) -> float | None:
+        """Wall time of the Pipecat **audio context** span
+        (``TTSStartedFrame`` → ``TTSStoppedFrame``). This is NOT the HTTP
+        synthesis time — it is inflated by playback drain and the 3 s
+        ``stop_frame_timeout_s`` (R0013 "B.1 METRIC CORRECTIONS"). Use
+        :class:`~nexa.voice_tts.timed_tts.HttpSynthCall` /
+        ``TurnMetrics.mean_http_rtf`` for the true synthesis speed."""
         if self.stopped_at is None:
             return None
         return self.stopped_at - self.started_at
@@ -120,10 +124,11 @@ class TtsSegment:
         return audio_bytes_to_seconds(self.audio_bytes, self.sample_rate, self.num_channels)
 
     @property
-    def synthesis_rtf(self) -> float | None:
-        """``synthesis_duration_s / audio_duration_s``. < 1 means faster than
-        real time. ``None`` if either part is missing or no audio."""
-        dur = self.synthesis_duration_s
+    def context_span_rtf(self) -> float | None:
+        """``context_span_s / audio_duration_s`` — the *context lifecycle*
+        ratio, NOT true synthesis RTF (see ``context_span_s``). Kept for
+        diagnostics only."""
+        dur = self.context_span_s
         aud = self.audio_duration_s
         if dur is None or aud is None or aud <= 0:
             return None
@@ -138,10 +143,10 @@ class TtsSegment:
             "audio_bytes": self.audio_bytes,
             "sample_rate": self.sample_rate,
             "num_channels": self.num_channels,
-            "synthesis_duration_s": _round(self.synthesis_duration_s),
+            "context_span_s": _round(self.context_span_s),
             "time_to_first_audio_s": _round(self.time_to_first_audio_s),
             "audio_duration_s": _round(self.audio_duration_s),
-            "synthesis_rtf": _round(self.synthesis_rtf, 3),
+            "context_span_rtf": _round(self.context_span_rtf, 3),
         }
 
 
@@ -280,6 +285,7 @@ class TurnMetrics:
     assistant_text_chars: int | None = None
     tts_segments: list[TtsSegment] = field(default_factory=list)
     text_chunks: list[TtsTextChunk] = field(default_factory=list)
+    http_calls: list = field(default_factory=list)  # list[HttpSynthCall] (M2.4B.1A)
     playback_spans: list[PlaybackSpan] = field(default_factory=list)
     buffer: BufferEstimate = field(default_factory=BufferEstimate)
     resources: ResourceWindowSummary | None = None
@@ -378,27 +384,73 @@ class TurnMetrics:
         return len(self.buffer.underrun_events)
 
     @property
-    def mean_synthesis_rtf(self) -> float | None:
-        rtfs = [s.synthesis_rtf for s in self.tts_segments if s.synthesis_rtf is not None]
+    def mean_http_rtf(self) -> float | None:
+        """TRUE mean Piper synthesis real-time factor — one HTTP request per
+        sentence, request issued → whole WAV received (M2.4B.1A). Falls back
+        to ``None`` (never to the inflated context-span ratio) when no
+        :class:`~nexa.voice_tts.timed_tts.TimedPiperHttpTTSService` was used."""
+        rtfs = [c.http_rtf for c in self.http_calls if getattr(c, "http_rtf", None) is not None]
+        return sum(rtfs) / len(rtfs) if rtfs else None
+
+    @property
+    def mean_http_synthesis_s(self) -> float | None:
+        walls = [c.http_wall_s for c in self.http_calls if getattr(c, "http_wall_s", None)]
+        return sum(walls) / len(walls) if walls else None
+
+    @property
+    def mean_context_span_rtf(self) -> float | None:
+        """Mean of the Pipecat *context-span* ratio — diagnostic only, NOT
+        true synthesis RTF (R0013 correction)."""
+        rtfs = [s.context_span_rtf for s in self.tts_segments if s.context_span_rtf is not None]
         return sum(rtfs) / len(rtfs) if rtfs else None
 
     @property
     def total_audio_seconds(self) -> float:
         return self.buffer.total_audio_seconds
 
+    @property
+    def audio_seconds_per_wall_second(self) -> float | None:
+        """Audio produced ÷ the turn's spoken wall window (first playback
+        start → final playback stop). ~1.0 = kept up with real time; < 1.0
+        = the pipeline ran dry for part of the reply."""
+        start = self.first_playback_started_at
+        end = self.final_playback_stopped_at
+        if start is None or end is None or end <= start:
+            return None
+        return self.total_audio_seconds / (end - start)
+
     # -- Buffer-estimate validation ----------------------------------------- #
 
     @property
-    def estimate_vs_real_stop_error_s(self) -> float | None:
-        """Mean |Δt| between a buffer-underrun estimate event (estimate <= 0)
-        and the nearest real ``BotStoppedSpeaking`` timestamp. ``None`` if
-        there are no underrun events or no BotStopped events to compare
-        against — never fabricated."""
+    def buffer_drain_to_stop_lag_s(self) -> float | None:
+        """For each buffer-underrun event (estimate crossed ≤ 0), the delay
+        until the **next** ``BotStoppedSpeaking``. Mean over events that had
+        a following stop. A healthy value is ≈ the transport's ~3 s
+        ``BOT_VAD_STOP_FALLBACK_SECS`` — the estimate correctly predicts the
+        drain a few seconds before the transport declares it. A large value
+        (or many ``underruns_without_following_stop``) means the estimate
+        and reality disagree — do NOT use the estimate as a control signal
+        until that is understood (R0013 / R0014). ``None`` if no underrun
+        event had a following stop."""
+        stops = sorted(s.stopped_at for s in self.playback_spans if s.stopped_at is not None)
+        lags: list[float] = []
+        for ev in self.buffer.underrun_events:
+            later = [st - ev for st in stops if st >= ev - 0.05]
+            if later:
+                lags.append(min(later))
+        return sum(lags) / len(lags) if lags else None
+
+    @property
+    def underruns_without_following_stop(self) -> int:
         stops = [s.stopped_at for s in self.playback_spans if s.stopped_at is not None]
-        if not self.buffer.underrun_events or not stops:
-            return None
-        errs = [min(abs(ev - st) for st in stops) for ev in self.buffer.underrun_events]
-        return sum(errs) / len(errs)
+        return sum(
+            1 for ev in self.buffer.underrun_events if not any(st >= ev - 0.05 for st in stops)
+        )
+
+    # Back-compat alias for the JSONL key; now points at the corrected metric.
+    @property
+    def estimate_vs_real_stop_error_s(self) -> float | None:
+        return self.buffer_drain_to_stop_lag_s
 
     # -- Serialisation / rendering ---------------------------------------- #
 
@@ -443,7 +495,23 @@ class TurnMetrics:
                 }
                 for c in self.text_chunks
             ],
+            "tts_http_synthesis": {
+                "true_request_count": len(self.http_calls),
+                "mean_http_wall_s": _round(self.mean_http_synthesis_s),
+                "mean_http_rtf": _round(self.mean_http_rtf, 3),
+                "calls": [
+                    {
+                        "text_len": getattr(c, "text_len", None),
+                        "http_wall_s": _round(getattr(c, "http_wall_s", None)),
+                        "ttfb_s": _round(getattr(c, "ttfb_s", None)),
+                        "audio_s": _round(getattr(c, "audio_s", None)),
+                        "http_rtf": _round(getattr(c, "http_rtf", None), 3),
+                    }
+                    for c in self.http_calls
+                ],
+            },
             "tts_segments": [s.to_dict() for s in self.tts_segments],
+            "tts_context_span_rtf_mean": _round(self.mean_context_span_rtf, 3),
             "playback": {
                 "first_started_at": self.first_playback_started_at,
                 "final_stopped_at": self.final_playback_stopped_at,
@@ -453,9 +521,12 @@ class TurnMetrics:
                 "max_gap_ms": _round(self.max_gap_ms, 1),
                 "mean_gap_ms": _round(self.mean_gap_ms, 1),
                 "output_underrun_count": self.output_underrun_count,
+                "audio_seconds_per_wall_second": _round(self.audio_seconds_per_wall_second),
             },
             "buffer_estimate": self.buffer.to_dict(),
             "buffer_estimate_validation": {
+                "buffer_drain_to_stop_lag_s": _round(self.buffer_drain_to_stop_lag_s),
+                "underruns_without_following_stop": self.underruns_without_following_stop,
                 "estimate_vs_real_stop_error_s": _round(self.estimate_vs_real_stop_error_s),
             },
             "diagnosis": diagnose_dominant_wait(self),
@@ -493,7 +564,9 @@ def diagnose_dominant_wait(tm: TurnMetrics) -> str:
     ftl = tm.first_token_latency_s
     gaps = tm.silence_gaps_ms
     gap_total_s = sum(gaps) / 1000.0 if gaps else 0.0
-    rtf = tm.mean_synthesis_rtf
+    # TRUE synthesis RTF (M2.4B.1A) — the context-span ratio is NOT synthesis
+    # speed and must never drive this classification.
+    rtf = tm.mean_http_rtf
     underruns = tm.output_underrun_count
 
     # Span of the turn's spoken part, for proportion checks.
@@ -619,7 +692,21 @@ class MetricsCollector:
     # -- TTS side (FIFO: oldest turn still speaking) ----------------------- #
 
     def _head(self) -> TurnMetrics | None:
-        return self._queue[0] if self._queue else None
+        """The oldest turn whose TTS lifecycle has not finished. Never a
+        turn that has already been finalised (defensive against a stray late
+        frame — M2.4B.1A)."""
+        for tm in self._queue:
+            if tm.finalized_wall is None:
+                return tm
+        return None
+
+    def http_synthesis(self, call) -> None:
+        """One real ``run_tts`` HTTP request completed
+        (:class:`~nexa.voice_tts.timed_tts.HttpSynthCall`) — the TRUE Piper
+        synthesis timing. Attributed FIFO like the other TTS-side events."""
+        tm = self._head()
+        if tm is not None:
+            tm.http_calls.append(call)
 
     def tts_started(self) -> None:
         tm = self._head()
@@ -816,12 +903,22 @@ def render_turn_report(tm: TurnMetrics) -> str:
         L.append(f"    #{c.index}  chars={c.text_len:<4} "
                  f"since_prev={_fmt(c.since_prev_s, 's')}  "
                  f"{'(after gen complete)' if c.after_assistant_complete else ''}")
-    L.append(f"  tts segments (Started->Stopped): {len(tm.tts_segments)}")
+    L.append(f"  TRUE Piper HTTP synthesis (one request per sentence): "
+             f"{len(tm.http_calls)} requests")
+    for i, c in enumerate(tm.http_calls):
+        L.append(f"    #{i}  http_wall={_fmt(getattr(c, 'http_wall_s', None), 's')}  "
+                 f"ttfb={_fmt(getattr(c, 'ttfb_s', None), 's')}  "
+                 f"audio={_fmt(getattr(c, 'audio_s', None), 's')}  "
+                 f"RTF={_fmt(getattr(c, 'http_rtf', None), '', 3)}")
+    L.append(f"  mean TRUE synthesis RTF: {_fmt(tm.mean_http_rtf, '', 3)}  "
+             f"(mean http wall {_fmt(tm.mean_http_synthesis_s, 's')})")
+    L.append(f"  tts context spans (TTSStarted->Stopped): {len(tm.tts_segments)}  "
+             f"-- context-span 'RTF' mean {_fmt(tm.mean_context_span_rtf, '', 3)} "
+             f"(NOT synthesis speed; inflated by playback drain + 3s timeout)")
     for s in tm.tts_segments:
-        L.append(f"    #{s.index}  synth={_fmt(s.synthesis_duration_s, 's')}  "
+        L.append(f"    #{s.index}  context_span={_fmt(s.context_span_s, 's')}  "
                  f"first_audio={_fmt(s.time_to_first_audio_s, 's')}  "
-                 f"audio={_fmt(s.audio_duration_s, 's')}  RTF={_fmt(s.synthesis_rtf, '', 3)}")
-    L.append(f"  mean synthesis RTF: {_fmt(tm.mean_synthesis_rtf, '', 3)}")
+                 f"audio={_fmt(s.audio_duration_s, 's')}")
 
     L.append("\nPLAYBACK")
     L.append(f"  first audio:      {_fmt(_rel(tm, tm.timing.tts_first_audio), 's')}")
@@ -832,6 +929,8 @@ def render_turn_report(tm: TurnMetrics) -> str:
     L.append(f"  max gap:          {_fmt(tm.max_gap_ms, 'ms', 1)}")
     L.append(f"  mean gap:         {_fmt(tm.mean_gap_ms, 'ms', 1)}")
     L.append(f"  underruns (est):  {tm.output_underrun_count}")
+    L.append(f"  audio-s per wall-s: {_fmt(tm.audio_seconds_per_wall_second, '', 2)}  "
+             f"(~1.0 = kept up; <1.0 = ran dry)")
 
     L.append("\nBUFFER ESTIMATE")
     L.append(f"  {BUFFER_ESTIMATE_NOTE}")
@@ -839,8 +938,10 @@ def render_turn_report(tm: TurnMetrics) -> str:
     L.append(f"  min:              {_fmt(tm.buffer.min_value, 's')}")
     chunk_samples = [round(v, 2) for at, v, lab in tm.buffer.samples if lab == "first_audio"]
     L.append(f"  at chunk arrivals:{chunk_samples or '-'}")
-    L.append(f"  underrun estimate events: {len(tm.buffer.underrun_events)}")
-    L.append(f"  estimate vs real stop error: {_fmt(tm.estimate_vs_real_stop_error_s, 's')}")
+    L.append(f"  underrun estimate events: {len(tm.buffer.underrun_events)}  "
+             f"(without a following BotStopped: {tm.underruns_without_following_stop})")
+    L.append(f"  buffer-drain -> BotStopped lag: {_fmt(tm.buffer_drain_to_stop_lag_s, 's')}  "
+             f"(healthy ~= 3 s transport fallback; large => estimate & reality disagree)")
 
     if tm.resources is not None:
         r = tm.resources
