@@ -1,0 +1,136 @@
+2026-09-06 21:30:22.648 | INFO     | pipecat:<module>:54 - ᓚᘏᗢ Pipecat 1.8.1 (Python 3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]) ᓚᘏᗢ
+2026-09-06 21:30:25.471 | INFO     | nexa.tts.server:start:88 - nexa.tts: Piper HTTP server ready at http://127.0.0.1:5001
+2026-09-06 21:30:25.624 | INFO     | nexa.tts.server:prewarm:109 - nexa.tts: prewarmed voice 'en_GB-jenny_dioco-medium' in 0.15s
+2026-09-06 21:30:27.871 | INFO     | nexa.tts.server:prewarm:109 - nexa.tts: prewarmed voice 'pl_PL-gosia-medium' in 2.25s
+prewarm: {'en_GB-jenny_dioco-medium': 0.15, 'pl_PL-gosia-medium': 2.25}
+
+===== 1. PIPER HTTP SYNTHESIS LATENCY (pl_PL-gosia-medium, this Pi 5) =====
+ chars  synth_s  audio_s    RTF  text
+   112    0.913     6.76  0.135  Czarna dziura to obszar w przestrzeni, w którym grawitacja j...
+    94    0.821     6.14  0.134  Najważniejszą cechą jest tak zwany horyzont zdarzeń, czyli g...
+    90    0.812     6.20  0.131  Powstaje, gdy bardzo masywna gwiazda kończy swoje życie i za...
+    65    0.624     4.56  0.137  W środku znajduje się osobliwość, punkt o nieskończonej gęst...
+    91    0.771     5.75  0.134  Choć nie widać ich bezpośrednio, astronomowie wykrywają je p...
+
+WHOLE REPLY in ONE request: 456 chars -> synth 4.034s, audio 29.29s, RTF 0.138
+
+===== 2. gemma4:e4b TOKEN TIMING (raw Ollama /api/chat) =====
+ollama measure failed: 
+
+===== 3. SCRIPTED END-TO-END PIPELINE, token delay=330ms (~3.0 tok/s) =====
+  +  0.20s  LLM start
+2026-09-06 21:33:36.591 | INFO     | pipecat.services.ai_service:_update_settings:163 - PiperHttpTTSService#0: updated settings fields: {'voice'}
+  +  6.82s  sentence 1 text complete
+2026-09-06 21:33:43.250 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - PiperHttpTTSService#0: Generating TTS [Czarna dziura to obszar w przestrzeni, w którym grawitacja jest tak silna, że nic nie może się z niego wydostać.]
+  +  7.01s  TTSStarted
+  +  7.89s  first TTS audio
+2026-09-06 21:33:44.136 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+  +  7.89s  BotStartedSpeakingFrame
+2026-09-06 21:33:47.135 | DEBUG    | pipecat.services.tts_service:push_frame:935 - PiperHttpTTSService#0 cleaning up TTS context 47b10ca3-8b24-4ee3-9fdd-eaac7e517b70
+  + 10.89s  TTSStopped
+  + 11.45s  sentence 2 text complete
+2026-09-06 21:33:47.837 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - PiperHttpTTSService#0: Generating TTS [Najważniejszą cechą jest tak zwany horyzont zdarzeń, czyli granica, zza której nie ma powrotu.]
+  + 11.59s  TTSStarted
+  + 12.42s  first TTS audio
+  + 12.42s  >>> audio-frame gap 4.53s
+2026-09-06 21:33:50.721 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-06 21:33:50.721 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-06 21:33:50.722 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+  + 14.48s  BotStoppedSpeakingFrame
+  + 14.48s  BotStartedSpeakingFrame
+2026-09-06 21:33:51.663 | DEBUG    | pipecat.services.tts_service:push_frame:935 - PiperHttpTTSService#0 cleaning up TTS context 47b10ca3-8b24-4ee3-9fdd-eaac7e517b70
+  + 15.42s  TTSStopped
+  + 16.08s  sentence 3 text complete
+2026-09-06 21:33:52.471 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - PiperHttpTTSService#0: Generating TTS [Powstaje, gdy bardzo masywna gwiazda kończy swoje życie i zapada się pod własnym ciężarem.]
+  + 16.23s  TTSStarted
+  + 18.34s  first TTS audio
+  + 18.34s  >>> audio-frame gap 5.92s
+  + 19.06s  sentence 4 text complete
+2026-09-06 21:33:55.453 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - PiperHttpTTSService#0: Generating TTS [W środku znajduje się osobliwość, punkt o nieskończonej gęstości.]
+  + 20.49s  >>> audio-frame gap 2.14s
+2026-09-06 21:33:56.844 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-06 21:33:56.844 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-06 21:33:56.845 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+  + 20.60s  BotStoppedSpeakingFrame
+  + 20.60s  BotStartedSpeakingFrame
+2026-09-06 21:33:59.733 | DEBUG    | pipecat.services.tts_service:push_frame:935 - PiperHttpTTSService#0 cleaning up TTS context 47b10ca3-8b24-4ee3-9fdd-eaac7e517b70
+  + 23.49s  TTSStopped
+  + 23.37s  sentence 5 text complete
+  + 23.37s  LLM complete
+2026-09-06 21:33:59.764 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - PiperHttpTTSService#0: Generating TTS [Choć nie widać ich bezpośrednio, astronomowie wykrywają je po wpływie na okoliczną materię.]
+  + 23.52s  TTSStarted
+  + 25.25s  first TTS audio
+  + 25.25s  >>> audio-frame gap 4.76s
+2026-09-06 21:34:01.501 | DEBUG    | pipecat.services.tts_service:push_frame:935 - PiperHttpTTSService#0 cleaning up TTS context 47b10ca3-8b24-4ee3-9fdd-eaac7e517b70
+  + 25.26s  TTSStopped
+2026-09-06 21:34:07.483 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-06 21:34:07.484 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-06 21:34:07.484 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+  + 31.24s  BotStoppedSpeakingFrame
+  + 31.24s  BotStartedSpeakingFrame
+2026-09-06 21:34:13.244 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-06 21:34:13.244 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+  + 37.00s  BotStoppedSpeakingFrame
+2026-09-06 21:34:15.254 | DEBUG    | pipecat.pipeline.worker:run:869 - Pipeline worker PipelineWorker#0 is finishing...
+2026-09-06 21:34:15.254 | DEBUG    | pipecat.pipeline.worker:run:873 - Pipeline worker PipelineWorker#0 has finished
+  --- total audio produced: 29.1s; audio-frame gaps >0.35s: 4 ['4.53s', '5.92s', '2.14s', '4.76s']
+
+===== 3. SCRIPTED END-TO-END PIPELINE, token delay=500ms (~2.0 tok/s) =====
+  +  0.20s  LLM start
+2026-09-06 21:34:15.484 | INFO     | pipecat.services.ai_service:_update_settings:163 - PiperHttpTTSService#1: updated settings fields: {'voice'}
+  + 10.23s  sentence 1 text complete
+2026-09-06 21:34:25.509 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - PiperHttpTTSService#1: Generating TTS [Czarna dziura to obszar w przestrzeni, w którym grawitacja jest tak silna, że nic nie może się z niego wydostać.]
+  + 10.25s  TTSStarted
+  + 12.26s  first TTS audio
+2026-09-06 21:34:27.516 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+  + 12.26s  BotStartedSpeakingFrame
+2026-09-06 21:34:30.515 | DEBUG    | pipecat.services.tts_service:push_frame:935 - PiperHttpTTSService#1 cleaning up TTS context 899866ad-bdcc-4158-9181-63b49418530a
+  + 15.26s  TTSStopped
+  + 17.24s  sentence 2 text complete
+2026-09-06 21:34:32.523 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - PiperHttpTTSService#1: Generating TTS [Najważniejszą cechą jest tak zwany horyzont zdarzeń, czyli granica, zza której nie ma powrotu.]
+  + 17.27s  TTSStarted
+2026-09-06 21:34:34.186 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-06 21:34:34.186 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+  + 18.93s  BotStoppedSpeakingFrame
+  + 19.12s  first TTS audio
+  + 19.13s  >>> audio-frame gap 6.87s
+2026-09-06 21:34:34.383 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+  + 19.13s  BotStartedSpeakingFrame
+2026-09-06 21:34:37.374 | DEBUG    | pipecat.services.tts_service:push_frame:935 - PiperHttpTTSService#1 cleaning up TTS context 899866ad-bdcc-4158-9181-63b49418530a
+  + 22.12s  TTSStopped
+  + 24.27s  sentence 3 text complete
+2026-09-06 21:34:39.551 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - PiperHttpTTSService#1: Generating TTS [Powstaje, gdy bardzo masywna gwiazda kończy swoje życie i zapada się pod własnym ciężarem.]
+  + 24.30s  TTSStarted
+2026-09-06 21:34:40.456 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-06 21:34:40.457 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+  + 25.20s  BotStoppedSpeakingFrame
+  + 25.97s  first TTS audio
+  + 25.97s  >>> audio-frame gap 6.84s
+2026-09-06 21:34:41.231 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+  + 25.97s  BotStartedSpeakingFrame
+  + 28.78s  sentence 4 text complete
+2026-09-06 21:34:44.067 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - PiperHttpTTSService#1: Generating TTS [W środku znajduje się osobliwość, punkt o nieskończonej gęstości.]
+  + 30.39s  >>> audio-frame gap 4.42s
+2026-09-06 21:34:48.648 | DEBUG    | pipecat.services.tts_service:push_frame:935 - PiperHttpTTSService#1 cleaning up TTS context 899866ad-bdcc-4158-9181-63b49418530a
+  + 33.39s  TTSStopped
+  + 35.29s  sentence 5 text complete
+  + 35.29s  LLM complete
+2026-09-06 21:34:50.577 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - PiperHttpTTSService#1: Generating TTS [Choć nie widać ich bezpośrednio, astronomowie wykrywają je po wpływie na okoliczną materię.]
+  + 35.32s  TTSStarted
+2026-09-06 21:34:51.736 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-06 21:34:51.736 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+  + 36.48s  BotStoppedSpeakingFrame
+2026-09-06 21:34:52.160 | DEBUG    | pipecat.services.tts_service:push_frame:935 - PiperHttpTTSService#1 cleaning up TTS context 899866ad-bdcc-4158-9181-63b49418530a
+  + 36.91s  first TTS audio
+  + 36.91s  TTSStopped
+  + 36.91s  >>> audio-frame gap 6.52s
+2026-09-06 21:34:52.172 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+  + 36.92s  BotStartedSpeakingFrame
+2026-09-06 21:34:57.837 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-06 21:34:57.837 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+  + 42.58s  BotStoppedSpeakingFrame
+2026-09-06 21:34:59.861 | DEBUG    | pipecat.pipeline.worker:run:869 - Pipeline worker PipelineWorker#1 is finishing...
+2026-09-06 21:34:59.861 | DEBUG    | pipecat.pipeline.worker:run:873 - Pipeline worker PipelineWorker#1 has finished
+  --- total audio produced: 28.9s; audio-frame gaps >0.35s: 4 ['6.87s', '6.84s', '4.42s', '6.52s']
+
+[exited with code 0]
