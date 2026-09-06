@@ -8,6 +8,12 @@ provider/model (AGENTS.md §3.2/§3.3, ADR-0002 D1).
 On provider failure the exception propagates to the caller unchanged (fail
 closed) and no assistant turn is recorded — the user's turn stays in history,
 but nothing false is appended in its place.
+
+Response-language mirroring (M2.3, R0009) is implemented in
+``ConversationContext.to_provider_messages()``, not here — see that
+module's docstring. ``session.history`` (the real transcript, ADR-0003 D2)
+is completely unaffected: it stores exactly what the user said and what the
+model replied, nothing else.
 """
 
 from __future__ import annotations

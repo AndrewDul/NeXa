@@ -176,6 +176,57 @@ milestone, and do not let them exist as skipped tests that imply coverage.
   against R0006's original scratch-build measurement on the identical 12
   fixtures.
 
+## M2.3 status
+
+- `tests/test_language.py` — tier `unit`. `detect_response_language`/
+  `language_directive` (`nexa.conversation.language`) — deterministic PL/EN
+  classification, tested against exactly the phrases this milestone's real
+  acceptance test used.
+- `tests/test_conversation_session.py`'s new `TestResponseLanguageMirroring`
+  class — tier `unit`, `FakeModelProvider`. Proves the canonical policy
+  (not the voice adapter) injects the language directive, on PL/EN/switch/
+  explicit-override cases, and proves (`test_each_turns_prompt_prefix_exactly_matches_the_previous_turn`)
+  the specific cache-friendliness property a real-hardware latency
+  regression required: turn N+1's prompt must start with byte-for-byte the
+  same messages turn N's prompt ended with, plus turn N's reply and the
+  new turn.
+- `tests/test_context.py` — one existing case updated for the new message
+  shape (a language directive follows every user turn); no new tier.
+- `tests/test_voice_conversation_adapter.py` — tier `unit`.
+  `VoiceConversationAdapter` against `FakeModelProvider`/a fake slow
+  `ModelProvider` — the exact same fakes-at-the-provider-boundary pattern
+  as `test_conversation_session.py`, never mocking `ConversationSession` or
+  the adapter itself. Covers the canonical-path proof (typed + voice reach
+  the identical `ConversationSession` instance, in submission order),
+  empty/whitespace transcript rejection, STT-failure-produces-no-turn,
+  conversation-turn FIFO ordering and concurrency (`max_observed_concurrency
+  == 1`, a second transcription accepted non-blockingly while the first
+  turn is active), streaming, bounded-overflow error, and clean shutdown.
+- `tests/test_voice_conversation_architecture.py` — tier `unit`. `ast`-based
+  import/call inspection (mirrors M2.1/M2.2's own architecture tests):
+  `src/nexa/voice_conversation/` never constructs
+  `ConversationSession`/`LocalModelProvider`/`LlamaServerProvider`/
+  `PersonaConfig` itself, never imports `nexa.bootstrap`/`nexa.config`, never
+  imports an LLM client directly, references no TTS engine, and — specific
+  to this substage's real-hardware-informed fix — never imports
+  `nexa.conversation.language` or calls its functions (response-language
+  mirroring is canonical `ConversationSession` policy, not the adapter's).
+- `tests/test_voice_chat_probe_state_display.py` — tier `unit`, `ast`-based.
+  Regression test for a second real hardware finding (mirroring M2.2's own
+  STT-probe lesson): the conversation-side callbacks in
+  `apps/nexa_voice_chat_probe.py` must never print a `"voice state: ..."`
+  line or reference `VoiceState`/`state_machine` — only the real
+  `VoiceStateMachine` event stream may.
+- Beyond the automated tiers, M2.3 has the same **human-acceptance** pattern
+  as M1.1/M2.1/M2.2 — the owner personally using
+  `apps/nexa_voice_chat_probe.py` for real Polish and English multi-turn
+  voice conversations, a dedicated fast-second-utterance concurrency
+  retest, and a final retest confirming both the response-language fix and
+  its own latency-regression fix. See
+  `docs/reports/R0009_m2_3_voice_conversation_adapter_20260906.md`
+  ("REAL POLISH TEST", "REAL ENGLISH TEST", "FAST SECOND-UTTERANCE TEST",
+  "RESPONSE-LANGUAGE MIRRORING", "LATENCY / RESOURCES").
+
 ## Tooling direction
 
 - `pytest` as the runner (declared in `pyproject.toml` `dev` extras); config lives

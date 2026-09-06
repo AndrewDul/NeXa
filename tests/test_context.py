@@ -64,9 +64,17 @@ class TestConversationContext(unittest.TestCase):
         history = [_turn(Role.USER, "hi"), _turn(Role.ASSISTANT, "hello")]
         context = ConversationContext.build(SYSTEM_PROMPT, history)
         messages = context.to_provider_messages()
+        # A language directive (M2.3, R0009) follows every user turn — see
+        # test_language.py for dedicated detect/inject coverage; this
+        # test's own concern is the system-prompt-prefix/turn ordering.
         self.assertEqual(
             [(m.role, m.content) for m in messages],
-            [("system", SYSTEM_PROMPT), ("user", "hi"), ("assistant", "hello")],
+            [
+                ("system", SYSTEM_PROMPT),
+                ("user", "hi"),
+                ("system", "Respond to this message in English."),
+                ("assistant", "hello"),
+            ],
         )
 
 
