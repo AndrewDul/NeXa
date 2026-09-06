@@ -1,0 +1,12 @@
+===== tok_delay=330ms  (3.0 tok/s) =====
+  turn 1: BotStopped@[28.61]  underrun-events@[28.61]
+    buffer estimate value at each real BotStopped: [-0.0]
+    buffer min=-0.0 max=11.15  underruns=1  gaps_ms=[]
+    estimate_vs_real_stop_error_s = 0.0
+    diagnosis = UNKNOWN
+===== tok_delay=500ms  (2.0 tok/s) =====
+  turn 1: BotStopped@[14.58, 19.42, 23.7, 27.7]  underrun-events@[]
+    buffer estimate value at each real BotStopped: [4.85, 4.32, 4.05, 3.6]
+    buffer min=0.3 max=5.6  underruns=0  gaps_ms=[0.0, 0.0, 0.0]
+    estimate_vs_real_stop_error_s = None
+    diagnosis = UNKNOWN

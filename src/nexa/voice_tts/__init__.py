@@ -19,6 +19,16 @@ from __future__ import annotations
 from nexa.voice import HalfDuplexGate
 
 from .bridge import AssistantSpeechBridge, TtsStatusObserver, voice_for_language
+from .metrics import (
+    ActivityFlags,
+    BufferEstimate,
+    MetricsCollector,
+    ResourceSampler,
+    TurnMetrics,
+    TurnReportJsonlWriter,
+    diagnose_dominant_wait,
+    render_turn_report,
+)
 from .preflight import ensure_sentence_tokenizer_data
 from .timing import TurnTiming, TurnTimingTracker
 
@@ -30,4 +40,13 @@ __all__ = [
     "ensure_sentence_tokenizer_data",
     "TurnTiming",
     "TurnTimingTracker",
+    # M2.4B.1 — measure-only instrumentation
+    "MetricsCollector",
+    "TurnMetrics",
+    "BufferEstimate",
+    "ActivityFlags",
+    "ResourceSampler",
+    "TurnReportJsonlWriter",
+    "render_turn_report",
+    "diagnose_dominant_wait",
 ]

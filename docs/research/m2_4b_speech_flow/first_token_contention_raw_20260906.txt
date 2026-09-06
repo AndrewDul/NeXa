@@ -1,0 +1,31 @@
+2026-09-06 22:35:34.584 | INFO     | pipecat:<module>:54 - ᓚᘏᗢ Pipecat 1.8.1 (Python 3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]) ᓚᘏᗢ
+
+===== SCENARIO A — idle system =====
+  run 1: first_token=33.481359033001354s prompt_eval=2.09s gen_tok_s=3.22 load=31.37s
+  run 2: first_token=0.6448072439998214s prompt_eval=0.63s gen_tok_s=3.17 load=0.01s
+  run 3: first_token=Nones prompt_eval=0.74s gen_tok_s=3.06 load=0.00s
+  run 4: first_token=Nones prompt_eval=0.61s gen_tok_s=3.09 load=0.00s
+  first_token_wall_s : min=0.64 mean=17.06 max=33.48
+  prompt_eval_s      : min=0.61 mean=1.02 max=2.09
+  gen_tok_s          : min=3.06 mean=3.13 max=3.22
+  llama-server CPU%  : mean None peak None
+  system CPU%        : mean 73.8200129825586 peak 100.0
+  temp max / throttled: 66.1C / 0x0
+  MemAvailable min / swap max: 4452.859375MB / 1.875MB
+
+===== SCENARIO B — Piper server up, idle =====
+  run 1: first_token=0.6326709629993275s prompt_eval=0.62s gen_tok_s=3.11 load=0.00s
+  run 2: first_token=0.6355208629993285s prompt_eval=0.63s gen_tok_s=2.61 load=0.00s
+  run 3: first_token=0.7278578619989275s prompt_eval=0.72s gen_tok_s=2.72 load=0.00s
+  run 4: first_token=0.6780596620010328s prompt_eval=0.66s gen_tok_s=2.97 load=0.01s
+  first_token_wall_s : min=0.63 mean=0.67 max=0.73
+  prompt_eval_s      : min=0.62 mean=0.66 max=0.72
+  gen_tok_s          : min=2.61 mean=2.85 max=3.11
+  llama-server CPU%  : mean 365.36434777124697 peak 394.5397782243353
+  system CPU%        : mean 99.44771185685158 peak 100.0
+  temp max / throttled: 67.2C / 0x0
+  MemAvailable min / swap max: 4114.015625MB / 1.671875MB
+
+===== SCENARIO C — Piper synthesising concurrently =====
+  run 1: first_token=16.18296423299944s prompt_eval=16.16s gen_tok_s=0.15 load=0.00s
+(scenario C killed after run 1 — 16 s first-token / 16 s prompt_eval / 0.15 tok/s under concurrent Piper load is conclusive)

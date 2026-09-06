@@ -58,16 +58,29 @@ from nexa.voice import HalfDuplexGate, LocalAudioConfig, VoiceRuntime  # noqa: E
 from nexa.voice.state import VoiceEvent, VoiceState  # noqa: E402
 from nexa.voice_conversation import VoiceConversationAdapter  # noqa: E402
 from nexa.voice_tts import (  # noqa: E402
+    ActivityFlags,
     AssistantSpeechBridge,
+    MetricsCollector,
+    ResourceSampler,
     TtsStatusObserver,
+    TurnMetrics,
+    TurnReportJsonlWriter,
     TurnTimingTracker,
     ensure_sentence_tokenizer_data,
+    render_turn_report,
 )
 
 # M2.4 half-duplex safety gate — while NeXa's TTS audio plays, the mic is
 # withheld before VAD/STT so she can't hear and re-transcribe herself
 # (real-hardware self-conversation loop). Temporary until M2.5 barge-in.
 _gate = HalfDuplexGate()
+
+# M2.4B.1 — realtime speech-flow instrumentation. `None` unless --report is
+# passed; when None every hook below is a no-op and the probe runs the exact
+# frozen M2.4 path. Never changes speech behaviour, never touches the model
+# or the pipeline — it only observes.
+_metrics: MetricsCollector | None = None
+_activity: ActivityFlags | None = None
 
 # FIFO of (end_of_turn_monotonic, stt_result_monotonic) pairs — same
 # correlation pattern as apps/nexa_voice_chat_probe.py.
@@ -88,20 +101,33 @@ def on_event(event: VoiceEvent) -> None:
     print(f"voice state: {event.to_state.value.upper()}")
     if event.to_state == VoiceState.END_OF_TURN:
         _last_end_of_turn = time.monotonic()
+        if _activity is not None:
+            # STT (whisper.cpp) runs between END_OF_TURN and the transcription
+            # result — an approximate "STT active" window for the report's
+            # concurrency check. Labelled as a proxy in R0013.
+            _activity.stt_active = True
+
+
+_pending_stt: deque[tuple[str, float]] = deque()  # (stt_text, stt_wall_latency_s) for --report
 
 
 def make_transcription_handlers(adapter_ref: list[VoiceConversationAdapter]):
     def on_transcription(result: TranscriptionResult) -> None:
         now = time.monotonic()
         text = result.text.strip()
+        if _activity is not None:
+            _activity.stt_active = False
         print(f'  stt result: "{result.text}" (stt latency {result.wall_latency_s:.1f}s)')
         if text and _last_end_of_turn is not None:
             _pending_timings.append((_last_end_of_turn, now))
+            _pending_stt.append((text, result.wall_latency_s))
         if text:
             print("conversation: QUEUED")
         adapter_ref[0].handle_transcription(result)
 
     def on_transcription_error(exc: Exception) -> None:
+        if _activity is not None:
+            _activity.stt_active = False
         print(f"  stt error: {exc}")
         adapter_ref[0].handle_transcription_error(exc)
 
@@ -114,6 +140,14 @@ def make_conversation_handlers(bridge: AssistantSpeechBridge):
             _pending_timings.popleft() if _pending_timings else (None, None)
         )
         _timing.start_turn(end_of_turn=end_of_turn_ts, stt_result=stt_result_ts)
+        if _metrics is not None:
+            stt_text, stt_lat = _pending_stt.popleft() if _pending_stt else (text, None)
+            _metrics.start_turn(
+                end_of_turn=end_of_turn_ts,
+                stt_result=stt_result_ts,
+                stt_text=stt_text,
+                stt_wall_latency_s=stt_lat,
+            )
         print(f'\nuser: "{text}"')
         print("conversation: THINKING")
         print("assistant: ", end="", flush=True)
@@ -121,15 +155,22 @@ def make_conversation_handlers(bridge: AssistantSpeechBridge):
 
     def on_assistant_token(token: str) -> None:
         _timing.first_token()
+        if _metrics is not None:
+            _metrics.first_token()
+            _metrics.assistant_token(token)
         print(token, end="", flush=True)
         bridge.on_assistant_token(token)
 
     def on_assistant_complete(full_text: str) -> None:
-        _timing.assistant_complete()
+        _timing.assistant_complete(full_text)
+        if _metrics is not None:
+            _metrics.assistant_complete(full_text)
         print()
         bridge.on_assistant_complete(full_text)
 
     def on_conversation_error(exc: Exception) -> None:
+        if _metrics is not None:
+            _metrics.conversation_error(exc)
         print(f"\n[error] conversation failed: {exc}\n")
         bridge.on_conversation_error(exc)
 
@@ -139,16 +180,22 @@ def make_conversation_handlers(bridge: AssistantSpeechBridge):
 def make_tts_handlers(adapter_ref: list[VoiceConversationAdapter]):
     def on_tts_started() -> None:
         _timing.tts_started()
+        if _metrics is not None:
+            _metrics.tts_started()
         print("tts: sentence ready")
 
     def on_tts_first_audio() -> None:
         _timing.tts_first_audio()
+        if _metrics is not None:
+            _metrics.tts_first_audio()
         gate_state = "CLOSED" if _gate.mic_suppressed else "OPEN"
         print(f"tts: PLAYING   [mic gate: {gate_state}]")
 
     def on_tts_stopped() -> None:
         gate_state = "CLOSED" if _gate.mic_suppressed else "OPEN"
         print(f"tts: done   [mic gate: {gate_state}]")
+        if _metrics is not None:
+            _metrics.tts_stopped()
         finished = _timing.tts_stopped()
         if finished is not None:
             _report_turn_timings(finished, adapter_ref)
@@ -156,7 +203,28 @@ def make_tts_handlers(adapter_ref: list[VoiceConversationAdapter]):
     def on_tts_error(error: str) -> None:
         print(f"\n[error] tts failed: {error}\n")
 
-    return on_tts_started, on_tts_first_audio, on_tts_stopped, on_tts_error
+    # M2.4B.1 measurement-only hooks (active only with --report).
+    def on_tts_audio(nbytes: int, sample_rate: int, num_channels: int) -> None:
+        if _metrics is not None:
+            _metrics.tts_audio(nbytes, sample_rate, num_channels)
+
+    def on_tts_text(text: str) -> None:
+        if _metrics is not None:
+            _metrics.tts_text(text)
+
+    def on_tts_response_end() -> None:
+        if _metrics is not None:
+            _metrics.tts_response_end()
+
+    return (
+        on_tts_started,
+        on_tts_first_audio,
+        on_tts_stopped,
+        on_tts_error,
+        on_tts_audio,
+        on_tts_text,
+        on_tts_response_end,
+    )
 
 
 def _report_turn_timings(turn, adapter_ref: list[VoiceConversationAdapter]) -> None:
@@ -198,12 +266,34 @@ def parse_args() -> argparse.Namespace:
         default=Language.PL.value,
         help="explicit STT language hint (no auto-detect) — default: pl",
     )
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="M2.4B.1: measure-only speech-flow instrumentation. Prints a "
+        "compact per-turn gap report and samples OS resources. Does NOT "
+        "change speech behaviour, the model, or the pipeline.",
+    )
+    parser.add_argument(
+        "--report-json",
+        metavar="PATH",
+        default=None,
+        help="M2.4B.1: append one JSON record per turn to PATH (implies "
+        "--report). Short text previews only; never raw audio.",
+    )
+    parser.add_argument(
+        "--report-sample-ms",
+        type=int,
+        default=400,
+        help="resource-sampler period in ms (--report only; default 400).",
+    )
     return parser.parse_args()
 
 
 async def main() -> None:
+    global _metrics, _activity
     args = parse_args()
     language = Language(args.language)
+    report_mode = args.report or args.report_json is not None
 
     try:
         ensure_sentence_tokenizer_data()
@@ -233,16 +323,57 @@ async def main() -> None:
     description = session.provider.describe()
     print(f"model: {description.model}")
 
+    # --- M2.4B.1: measure-only instrumentation (only when --report) --------
+    sampler: ResourceSampler | None = None
+    jsonl: TurnReportJsonlWriter | None = None
+    if report_mode:
+        _activity = ActivityFlags()
+        sampler = ResourceSampler(
+            period_s=max(0.05, args.report_sample_ms / 1000.0), activity=_activity
+        )
+        if args.report_json is not None:
+            jsonl = TurnReportJsonlWriter(args.report_json)
+
+        def _on_turn_finalized(tm: TurnMetrics) -> None:
+            print("\n" + render_turn_report(tm) + "\n", flush=True)
+            if jsonl is not None:
+                jsonl.write(tm)
+
+        _metrics = MetricsCollector(
+            on_turn_finalized=_on_turn_finalized,
+            resource_summary_fn=(sampler.window_summary if sampler is not None else None),
+            activity=_activity,
+        )
+        sampler.start()
+        print("M2.4B.1 report mode ON — measure-only; speech behaviour unchanged.")
+        if jsonl is not None:
+            print(f"M2.4B.1 JSONL: {args.report_json}")
+
     bridge = AssistantSpeechBridge(en_voice=EN_VOICE, pl_voice=PL_VOICE, gate=_gate)
     adapter_ref: list[VoiceConversationAdapter] = []
-    on_tts_started, on_tts_first_audio, on_tts_stopped, on_tts_error = make_tts_handlers(
-        adapter_ref
-    )
+    (
+        on_tts_started,
+        on_tts_first_audio,
+        on_tts_stopped,
+        on_tts_error,
+        on_tts_audio,
+        on_tts_text,
+        on_tts_response_end,
+    ) = make_tts_handlers(adapter_ref)
     tts_observer = TtsStatusObserver(
         on_tts_started=on_tts_started,
         on_tts_first_audio=on_tts_first_audio,
         on_tts_stopped=on_tts_stopped,
         on_tts_error=on_tts_error,
+        on_tts_audio=(on_tts_audio if report_mode else None),
+        on_tts_text=(on_tts_text if report_mode else None),
+        on_tts_response_end=(on_tts_response_end if report_mode else None),
+        on_bot_started_speaking=(
+            (lambda: _metrics.bot_started_speaking()) if report_mode else None
+        ),
+        on_bot_stopped_speaking=(
+            (lambda: _metrics.bot_stopped_speaking()) if report_mode else None
+        ),
     )
 
     aiohttp_session = aiohttp.ClientSession()
@@ -286,6 +417,17 @@ async def main() -> None:
             await piper_server.stop()
         except PiperHttpError:
             pass
+        if _metrics is not None:
+            # Flush any turn that never received its downstream
+            # LLMFullResponseEndFrame (e.g. Ctrl+C mid-reply). _finalize is
+            # the single emit point — it prints + writes JSONL exactly once.
+            flushed = _metrics.close()
+            if flushed:
+                print(f"(M2.4B.1: flushed {len(flushed)} unfinished turn record(s) at shutdown)")
+        if sampler is not None:
+            sampler.stop()
+        if jsonl is not None:
+            jsonl.close()
 
     print("\nfinal voice state:", runtime.state_machine.state.value.upper())
     print(f"max concurrent STT executions observed this session: "

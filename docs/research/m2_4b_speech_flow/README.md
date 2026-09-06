@@ -38,6 +38,23 @@ report and recommendation.
 | Scripted pipeline, 3 tok/s feed | first audio **+7.9 s**; production gaps **4.5 / 5.9 / 2.1 / 4.8 s**; 3× `BotStopped`→`BotStarted` |
 | Scripted pipeline, 2 tok/s feed | first audio **+12.3 s**; production gaps **6.9 / 6.8 / 4.4 / 6.5 s** |
 
+## M2.4B.1 additions (2026-09-06 — see R0013)
+
+- `buffer_validation.py` + `buffer_validation_raw_20260906.txt` — runs the
+  real M2.4 output path with the in-tree `MetricsCollector` and a 200 ms
+  periodic buffer sampler; compares `buffered_audio_seconds` reaching ≤ 0
+  against real `BotStoppedSpeaking`. Result: at 3 tok/s the estimate hit 0
+  at the exact BotStopped (`estimate_vs_real_stop_error_s = 0.0`); at
+  2 tok/s it stayed > +3.6 s with no underruns and no audible gaps — the
+  3 s-`stop_frame_timeout_s` `BotStopped`/`BotStarted` churn is cosmetic
+  while the buffer holds.
+- `first_token_contention.py` + `first_token_contention_raw_20260906.txt` —
+  controlled first-token latency (product model unchanged). Idle run 1 =
+  33 s with `load_duration` 31 s (model **eviction + reload**); warm =
+  0.65 s; with Piper synthesising concurrently `prompt_eval` 0.66 s → 16 s
+  and generation 2.9 → 0.15 tok/s. Two distinct first-token causes, both
+  LLM-layer.
+
 ## One-line conclusion
 
 Synthesis is ~7× faster than real-time and is **not** the bottleneck. The

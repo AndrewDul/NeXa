@@ -36,6 +36,8 @@ from collections.abc import Callable
 
 from loguru import logger
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     ErrorFrame,
     Frame,
     LLMFullResponseEndFrame,
@@ -44,6 +46,7 @@ from pipecat.frames.frames import (
     TTSAudioRawFrame,
     TTSStartedFrame,
     TTSStoppedFrame,
+    TTSTextFrame,
     TTSUpdateSettingsFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -168,7 +171,18 @@ class TtsStatusObserver(FrameProcessor):
     status via callbacks — never a fabricated one. Forwards every frame
     downstream unchanged. Place immediately *after* the `PiperHttpTTSService`
     stage (TTS output frames flow downstream from where they're produced,
-    never back upstream through a processor placed before it)."""
+    never back upstream through a processor placed before it).
+
+    The `on_tts_audio` / `on_tts_text` / `on_tts_response_end` callbacks
+    (M2.4B.1, all optional, default `None`) are pure measurement hooks for
+    the gap profiler: `on_tts_audio` receives each `TTSAudioRawFrame`'s byte
+    count + format for in-memory buffer accounting; `on_tts_text` receives
+    each synthesized sentence's text (`TTSTextFrame`); `on_tts_response_end`
+    fires on the downstream `LLMFullResponseEndFrame`, which Pipecat emits
+    only *after* a turn's entire audio context has drained — the definitive
+    "this turn's TTS is finished" signal. None of them change what is
+    forwarded; omitting them (the M2.4 default) is byte-for-byte the M2.4
+    observer."""
 
     def __init__(
         self,
@@ -177,6 +191,11 @@ class TtsStatusObserver(FrameProcessor):
         on_tts_first_audio: Callable[[], None] | None = None,
         on_tts_stopped: Callable[[], None] | None = None,
         on_tts_error: Callable[[str], None] | None = None,
+        on_tts_audio: Callable[[int, int, int], None] | None = None,
+        on_tts_text: Callable[[str], None] | None = None,
+        on_tts_response_end: Callable[[], None] | None = None,
+        on_bot_started_speaking: Callable[[], None] | None = None,
+        on_bot_stopped_speaking: Callable[[], None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -184,6 +203,11 @@ class TtsStatusObserver(FrameProcessor):
         self._on_tts_first_audio = on_tts_first_audio
         self._on_tts_stopped = on_tts_stopped
         self._on_tts_error = on_tts_error
+        self._on_tts_audio = on_tts_audio
+        self._on_tts_text = on_tts_text
+        self._on_tts_response_end = on_tts_response_end
+        self._on_bot_started_speaking = on_bot_started_speaking
+        self._on_bot_stopped_speaking = on_bot_stopped_speaking
         self._awaiting_first_audio = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
@@ -196,9 +220,25 @@ class TtsStatusObserver(FrameProcessor):
             if self._awaiting_first_audio and self._on_tts_first_audio is not None:
                 self._on_tts_first_audio()
             self._awaiting_first_audio = False
+            if self._on_tts_audio is not None:
+                self._on_tts_audio(
+                    len(frame.audio), frame.sample_rate, frame.num_channels
+                )
+        elif isinstance(frame, TTSTextFrame):
+            if self._on_tts_text is not None:
+                self._on_tts_text(frame.text)
         elif isinstance(frame, TTSStoppedFrame):
             if self._on_tts_stopped is not None:
                 self._on_tts_stopped()
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            if self._on_tts_response_end is not None:
+                self._on_tts_response_end()
+        elif isinstance(frame, BotStartedSpeakingFrame):
+            if self._on_bot_started_speaking is not None:
+                self._on_bot_started_speaking()
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            if self._on_bot_stopped_speaking is not None:
+                self._on_bot_stopped_speaking()
         elif isinstance(frame, ErrorFrame):
             if self._on_tts_error is not None:
                 self._on_tts_error(frame.error)

@@ -61,6 +61,11 @@ class TurnTiming:
     tts_started: float | None = None
     tts_first_audio: float | None = None
     tts_stopped: float | None = None
+    assistant_text_chars: int | None = None
+    """Length of the assistant reply, in characters (M2.4B.1). A real count
+    of the streamed text — never a token estimate (Ollama's token count is
+    in the ``done`` chunk the provider discards; see
+    ``nexa.voice_tts.metrics`` / R0013)."""
 
     @property
     def streaming_overlap_seconds(self) -> float | None:
@@ -109,12 +114,17 @@ class TurnTimingTracker:
         if self._active is not None and self._active.first_token is None:
             self._active.first_token = time.monotonic()
 
-    def assistant_complete(self) -> TurnTiming | None:
+    def assistant_complete(self, text: str | None = None) -> TurnTiming | None:
         """Call from `on_assistant_complete`. Returns the completed turn's
-        record (still in the TTS queue — not popped until `tts_stopped`)."""
+        record (still in the TTS queue — not popped until `tts_stopped`).
+
+        ``text`` (M2.4B.1, optional) records the real character length of the
+        reply; passing nothing keeps the exact M2.4 behaviour."""
         turn = self._active
         if turn is not None:
             turn.assistant_complete = time.monotonic()
+            if text is not None:
+                turn.assistant_text_chars = len(text)
             self._active = None
         return turn
 
