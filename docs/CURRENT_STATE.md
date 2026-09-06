@@ -5,30 +5,33 @@ Runtime / test evidence outranks anything else in this repo.
 
 ---
 
-- **Last verified:** 2026-09-05
+- **Last verified:** 2026-09-06
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0007_m2_1_local_audio_vad_foundation_20260905.md`
+- **Latest report:** `docs/reports/R0008_m2_2_local_whisper_cpp_stt_20260906.md`
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
-  **M2 — Realtime Voice — IN PROGRESS (M2.1 COMPLETE, `OPERATOR-CONFIRMED`)**
+  **M2 — Realtime Voice — IN PROGRESS (M2.1, M2.2 COMPLETE, `OPERATOR-CONFIRMED`)**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
   M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1 local
   baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. M2
   open-source-first research COMPLETE (2026-09-05) — `R0005`. M2.0A
   feasibility spikes COMPLETE (2026-09-05) — `R0006`. `ADR-0003` Accepted
   (2026-09-05). **M2.1 — Pipecat foundation + local audio + Silero VAD —
-  COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05)** — `R0007`:
-  `src/nexa/voice/` implemented (Pipecat local audio transport + Silero VAD
-  + a NeXa `VoiceState` machine); real reSpeaker XVF3800 hardware verified;
-  VAD endpointing (`stop_secs`) retuned from the library default (0.2s,
-  measured to split a natural sentence into 3 turns) to an evidence-based
-  1.0s via a deterministic offline calibration + a confirmed live retest.
-  No STT/LLM/TTS/barge-in yet — `ConversationSession` untouched.
-- **Next substage:** **M2.2 — whisper.cpp STT adapter + PL/EN language-hint
-  strategy** (**NOT STARTED** — see "Exact next recommended task")
-- **Current objective:** none active — M2.1 is implemented, tested, and
-  human-accepted on real hardware. Next is starting M2.2, a new,
+  COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05)** — `R0007`. **M2.2 — local
+  whisper.cpp STT adapter + explicit PL/EN language strategy — COMPLETE,
+  `OPERATOR-CONFIRMED` (2026-09-06)** — `R0008`: `src/nexa/stt/` implemented
+  (`WhisperCppTranscriber`, `UtteranceBuffer` with a measured 500ms
+  pre-roll, `SerialTranscriptionQueue`); wired into `src/nexa/voice/runtime.py`
+  via a new `_UtteranceCaptureFrameProcessor`; real reSpeaker PL/EN
+  transcription verified on hardware, including a genuine concurrency
+  defect (found live, fixed, retested) and a probe state-display bug (found
+  live, fixed, retested). No LLM/`ConversationSession` adapter/TTS/barge-in
+  yet — `ConversationSession` untouched.
+- **Next substage:** **M2.3 — the `ConversationSession` voice adapter**
+  (**NOT STARTED** — see "Exact next recommended task")
+- **Current objective:** none active — M2.2 is implemented, tested, and
+  human-accepted on real hardware. Next is starting M2.3, a new,
   explicitly-started implementation task.
 
 ---
@@ -39,6 +42,38 @@ Runtime / test evidence outranks anything else in this repo.
   (`python -m unittest discover -s tests`).
 - Documentation + ADR + report systems in place (`R0001`–`R0007`; `ADR-0001`,
   `ADR-0002` + its M1.0B amendment + Amendment 2, `ADR-0003`).
+- **M2.2 — local whisper.cpp STT foundation complete, `OPERATOR-CONFIRMED`**
+  (`R0008`; `docs/architecture/M2_2_LOCAL_STT_ARCHITECTURE.md`):
+  `src/nexa/stt/` — pinned whisper.cpp `v1.9.3`/`base`/`q8_0` (R0006's
+  measured baseline), built/installed outside git via
+  `scripts/setup_whisper_cpp.py` into `~/.local/share/nexa/stt/`.
+  `WhisperCppTranscriber` (the `SpeechTranscriber` boundary's only
+  implementation) owns subprocess invocation (explicit arg list, no
+  `shell=True`), JSON parsing, and typed errors — no silent fallback.
+  `UtteranceBuffer` adds a pre-roll ring (`PRE_ROLL_MS=500`, justified by a
+  192ms theoretical minimum plus a 288-352ms *empirical* measurement against
+  real Silero VAD + real fixtures — the empirical number, not the
+  theoretical one, drove the choice). `Language` is a strict `pl`/`en`
+  enum with no `AUTO` member — auto-detect is structurally impossible to
+  select (R0006 measured it misdetecting Polish as Japanese).
+  **Two real hardware findings, found live and fixed before PASS**: (1) the
+  first implementation could run two whisper.cpp subprocesses concurrently
+  if a short utterance followed quickly — fixed with
+  `SerialTranscriptionQueue` (FIFO, ≤1 execution at a time, non-blocking
+  `submit()`, explicit bounded-overflow error, no orphan task on shutdown);
+  reconfirmed live afterward (`max concurrent STT executions observed this
+  session: 1`). (2) `apps/nexa_stt_probe.py` printed a fake `LISTENING` line
+  from the transcription callback — fixed so only the real
+  `VoiceStateMachine` event stream ever prints a state line. Real reSpeaker
+  hardware verified: Polish and English phrases transcribed correctly with
+  **no first-word truncation** in any case (the pre-roll's explicit
+  acceptance condition). Same-corpus regression against R0006's exact 12
+  fixtures: 0.3542 avg WER / 1.648s avg latency / 220.5MB avg peak RSS — no
+  meaningful regression vs. R0006's ~0.354/~1.69s/~221MB. 4 threads
+  (R0006's measured baseline), zero throttling. 54 new tests (52
+  deterministic + 2 opt-in live-whisper.cpp), all passing. No LLM, no
+  `ConversationSession` adapter, no TTS, no barge-in — `ast`-verified, not
+  just asserted (ADR-0003 M2.2 scope).
 - **M2.1 — local audio + Silero VAD foundation complete, `OPERATOR-CONFIRMED`**
   (`R0007`; `docs/architecture/M2_1_LOCAL_AUDIO_VAD_ARCHITECTURE.md`):
   `src/nexa/voice/` — Pipecat (`pipecat-ai[local]==1.8.1`, current
@@ -219,6 +254,11 @@ Runtime / test evidence outranks anything else in this repo.
 - **Real (`VERIFIED FACT`):** `docs/architecture/M2_1_LOCAL_AUDIO_VAD_ARCHITECTURE.md`
   — the M2.1 slice of the Voice boundary (local audio transport + VAD only),
   implemented in `src/nexa/voice/`.
+- **Real (`VERIFIED FACT`):** `docs/architecture/M2_2_LOCAL_STT_ARCHITECTURE.md`
+  — the M2.2 slice of the Voice boundary (local whisper.cpp STT, pre-roll
+  capture, serialized transcription execution), implemented in
+  `src/nexa/stt/` + `src/nexa/voice/runtime.py`'s
+  `_UtteranceCaptureFrameProcessor`.
 - **ADR-0002 (Accepted)** sets the M1 direction: one minimal canonical
   text-conversation path (`ConversationSession` → `ConversationContext` →
   `ModelProvider` → streamed tokens); model access via a minimal
@@ -261,20 +301,30 @@ Runtime / test evidence outranks anything else in this repo.
   `VoiceStateMachine`. VAD `stop_secs` retuned from the library default
   (0.2s) to an evidence-based `1.0s` — see "What works" above for the full
   chain. No STT/LLM/TTS/barge-in — `ConversationSession` untouched.
+- **M2.2 implemented per ADR-0003 D4, D5, D7, D11** (`src/nexa/stt/`,
+  `R0008`): pinned whisper.cpp `base/q8_0` → `WhisperCppTranscriber` →
+  `SerialTranscriptionQueue` → `on_transcription` callback, fed by a
+  pre-roll-preserving `UtteranceBuffer` inside a new
+  `_UtteranceCaptureFrameProcessor` in the M2.1 pipeline. Explicit `pl`/`en`
+  language hint required — no `AUTO` member exists. See "What works" above
+  for the two real-hardware findings (concurrency, state-display) and their
+  fixes. No LLM/`ConversationSession` adapter/TTS/barge-in —
+  `ConversationSession` untouched.
 - Product code now exists for M1.1 (`src/nexa/conversation/`,
   `src/nexa/providers/`, `src/nexa/config.py`, `src/nexa/bootstrap.py`,
-  `apps/nexa_chat.py`) and M2.1 (`src/nexa/voice/`, `apps/nexa_voice_probe.py`).
-  M2.2 onward (STT, the `ConversationSession` voice adapter, TTS, barge-in)
-  has no product code yet.
+  `apps/nexa_chat.py`), M2.1 (`src/nexa/voice/`, `apps/nexa_voice_probe.py`),
+  and M2.2 (`src/nexa/stt/`, `apps/nexa_stt_probe.py`). M2.3 onward (the
+  `ConversationSession` voice adapter, TTS, barge-in) has no product code
+  yet.
 
 ## Current test status
 
 - Repo-local `./.venv` (system Python 3.13.5, **not** the legacy repo's venv)
   with `dev` extras (`pytest`, `ruff`) and `pipecat-ai[local]==1.8.1`
   installed.
-- `python -m unittest discover -s tests` and `pytest`: **64 tests, all PASS**,
-  2 intentionally skipped (live Ollama test + M2.1 hardware probe, both
-  opt-in only). `ruff check src tests apps`: clean.
+- `python -m unittest discover -s tests` and `pytest`: **118 tests, all
+  PASS**, 4 intentionally skipped (live Ollama test + M2.1 hardware probe +
+  2 opt-in live-whisper.cpp tests). `ruff check src tests apps`: clean.
 - Live Ollama integration test (`NEXA_RUN_LIVE_TESTS=1 python -m unittest
   tests.test_live_ollama_integration`): **PASS** against real `gemma4:e4b`
   (2026-09-05) — see `R0004` for the transcript evidence.
@@ -288,6 +338,14 @@ Runtime / test evidence outranks anything else in this repo.
   `apps/nexa_voice_probe.py` across a genuine tuning cycle (library-default
   `stop_secs=0.2` → deterministic offline calibration → confirmed live
   retest at `stop_secs=1.0`) — see `R0007` for the full evidence chain.
+- **Hardware acceptance test (M2.2):** `NEXA_RUN_LIVE_STT_TEST=1 python -m
+  unittest tests.test_stt_transcriber_live`: **PASS** against the real
+  pinned whisper.cpp binary+model. Separately, Andrzej ran the real
+  `apps/nexa_stt_probe.py` for real Polish/English transcription (no
+  first-word truncation in any case) and, after a real concurrency defect
+  was found live and fixed, a dedicated concurrency retest confirming
+  `max concurrent STT executions observed this session: 1` — see `R0008`
+  for the full evidence chain.
 - `scripts/m1_bench/bench.py`: smoke-tested and used for real measurements
   (M1.0/M1.0B; unrelated to the M1.1/M2.1 product tests above).
 
@@ -301,45 +359,42 @@ Runtime / test evidence outranks anything else in this repo.
 - **ADR-0003** — Realtime voice foundation (Accepted, 2026-09-05): Pipecat +
   unchanged `ConversationSession` + Silero VAD + whisper.cpp `base/q8_0`
   (baseline) + Piper/subprocess (temporary baseline) + sequencing/thread-budget
-  rules + full barge-in target + LiveKit deferred. See "Current architecture
-  state" above for the full summary; full text in
-  `docs/decisions/ADR-0003_realtime_voice_foundation.md`.
+  rules + full barge-in target + LiveKit deferred. **whisper.cpp `base/q8_0`
+  is now real** (M2.2, `R0008`) — see "Current architecture state" above for
+  the full summary; full text in
+  `docs/decisions/ADR-0003_realtime_voice_foundation.md`. Not modified by
+  M2.2 — no implementation contradiction was found.
 
 ## Current focus
 
 - None active. M1 (Natural Text Conversation) is a complete,
   operator-confirmed chain through M1.1. M2's research (`R0005`) →
   feasibility spikes (`R0006`) → architecture decision (`ADR-0003`) → M2.1
-  implementation (`R0007`, operator-confirmed on real hardware) is now also
-  complete. **M2.2 is clear to start**, as a new, explicitly-started task.
+  implementation (`R0007`) → M2.2 implementation (`R0008`), both
+  operator-confirmed on real hardware, is now also complete. **M2.3 is
+  clear to start**, as a new, explicitly-started task.
 
 ## Exact next recommended task
 
-**M2.2 — whisper.cpp STT adapter + PL/EN language-hint strategy**, the next
-M2 implementation substage under `ADR-0003`. M2.1 is done — build on it,
-don't re-decide it:
+**M2.3 — the `ConversationSession` voice adapter**, the next M2
+implementation substage under `ADR-0003`. M2.1/M2.2 are done — build on
+them, don't re-decide them:
 
-- Wire `whisper.cpp` `base/q8_0` (`R0006`'s measured baseline — beat legacy's
-  faster-whisper on both accuracy and speed on this exact hardware/material)
-  to trigger on M2.1's `END_OF_TURN` event, transcribing the utterance
-  captured since the matching `USER_SPEAKING`.
-- Explicit language hint required — **never** `auto` (`R0006` §2.5, reproduced
-  independently in M2.1's own evidence base: auto-detect is unreliable
-  regardless of STT engine). The exact hint strategy (configured default,
-  wake-word-driven switch, or dual-hint arbitration) is M2.2's design choice.
-- Continue thread-budget discipline from M2.1 — STT is a real, measurable
-  CPU cost (`R0006`'s contention findings); don't let it default to claiming
-  all 4 cores once a later substage adds the LLM back into the picture.
-- Per ADR-0003 D11: decide whether a small STT provider interface is
-  genuinely warranted now that STT is real (mirroring ADR-0002 D2's
-  `ModelProvider` pattern) — do not build one speculatively if M2.2 doesn't
-  need it yet.
-- M2.3–M2.7 remain as `ADR-0003` lays out: the `ConversationSession`-feeding
-  `FrameProcessor` (no second history/persona/model choice, ever); streaming
-  Piper TTS; full barge-in coordination (new work beyond `CancelToken`,
-  `ADR-0003` D8); latency/thread tuning; an operator natural-voice acceptance
-  test before any voice baseline is called done.
+- A thin `FrameProcessor` (or equivalent) that takes a `TranscriptionResult`'s
+  text from M2.2's `on_transcription` callback and feeds it into the
+  **existing, unchanged** `ConversationSession` (M1.1) as a user turn — the
+  same canonical path `apps/nexa_chat.py` already uses, now driven by voice
+  input.
+- Explicitly **no second history/persona/model choice for voice** — ADR-0003
+  D2 already decided this; M2.3's job is wiring, not re-deciding it.
 - `gemma4:e4b` stays the frozen baseline unless a future ADR changes it.
+- `SerialTranscriptionQueue`'s FIFO-ordered results (M2.2) are exactly what
+  a session-per-turn feed needs — no new ordering/concurrency work should be
+  required for M2.3 to consume them correctly.
+- Still no TTS output and no barge-in in M2.3 — those remain M2.4/M2.5 per
+  `ADR-0003`'s substage table. An operator acceptance test (voice question
+  in, real `ConversationSession` text response out) before M2.3 is called
+  done, matching the M1.1/M2.1/M2.2 human-acceptance pattern.
 
 Optional, non-blocking, can run any time: a scoped Parakeet/Canary
 conversion + benchmark spike (license and Polish support are confirmed

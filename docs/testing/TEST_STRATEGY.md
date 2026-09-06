@@ -122,6 +122,60 @@ milestone, and do not let them exist as skipped tests that imply coverage.
   to avoid relying on further human-timed pause measurements once those
   proved imprecise).
 
+## M2.2 status
+
+- `tests/test_stt_config.py` — tier `unit`. `Language` (strict `pl`/`en`,
+  no `AUTO` member) and `WhisperCppConfig` — typed, frozen, explicit.
+- `tests/test_stt_transcriber.py` — tier `unit`. `WhisperCppTranscriber`
+  against a fake `subprocess.run` boundary (patched at
+  `nexa.stt.transcriber.subprocess.run`) — mocking at the true external
+  (subprocess) boundary per this doc's philosophy, not by mocking the
+  transcriber itself. Covers command construction (explicit language/thread
+  flags, no `shell=True`), JSON parsing (valid/malformed/missing output),
+  subprocess failure/timeout, and temp-file cleanup.
+- `tests/test_stt_utterance_buffer.py` — tier `unit`. `UtteranceBuffer` —
+  pure logic, no Pipecat/hardware. Covers pre-roll retention, the ring's
+  budget cap, no cross-turn audio leakage, and no trailing-audio truncation.
+- `tests/test_stt_queue.py` — tier `unit`. `SerialTranscriptionQueue`
+  against a fake slow transcriber — proves FIFO ordering, ≤1 execution in
+  flight (`max_observed_concurrency`), non-blocking `submit()`, explicit
+  bounded-overflow error, and clean shutdown with no orphan task. Added
+  after a **real hardware finding** (2026-09-05/06): the original per-turn
+  `create_task` dispatch could run two whisper.cpp subprocesses
+  concurrently — these tests are the regression guard for that fix.
+- `tests/test_voice_utterance_capture.py` — tier `unit`. The real
+  `_UtteranceCaptureFrameProcessor` driven with real Pipecat `Frame`
+  instances (no running pipeline/`TaskManager` — `push_frame` on an
+  unlinked processor is a documented no-op; the processor's internal queue
+  is started explicitly and drained via `shutdown()` per test).
+- `tests/test_stt_architecture.py` — tier `unit`. `ast`-based import
+  inspection (mirrors M2.1's `test_voice_architecture.py`): `src/nexa/stt/`
+  imports no `nexa.conversation`/`nexa.providers`, references no TTS
+  engine, and constructs no `ConversationSession`. Also verifies
+  `VoiceRuntime`'s STT parameters default to `None` (M2.1 behavior
+  preserved when STT isn't configured).
+- `tests/test_stt_probe_state_display.py` — tier `unit`, `ast`-based.
+  Regression test for a second **real hardware finding**: the probe
+  originally printed a fake `LISTENING` line from the transcription
+  callback, which could be false if a new `USER_SPEAKING` arrived first.
+  Asserts the transcription/error callback functions never reference
+  `VoiceState`/`state_machine` or print a `"state:"` line.
+- `tests/test_stt_transcriber_live.py` — tier `integration`, real
+  whisper.cpp binary+model (no microphone). Transcribes two real R0006
+  fixtures and checks the recognized text contains the expected words.
+  **Not run by default** — set `NEXA_RUN_LIVE_STT_TEST=1`.
+- Beyond the automated tiers, M2.2 has the same **human-acceptance** pattern
+  as M1.1/M2.1 — the owner personally using `apps/nexa_stt_probe.py` against
+  real Polish and English speech, including a genuine fix-and-retest cycle
+  for the concurrency defect above. See
+  `docs/reports/R0008_m2_2_local_whisper_cpp_stt_20260906.md` ("REAL POLISH
+  TEST", "REAL ENGLISH TEST", "REAL HARDWARE CONCURRENCY RETEST").
+- `docs/research/m2_2_stt_regression/run_stt_regression.py` — a same-corpus
+  regression script (not a `tests/` suite; throwaway research harness like
+  M2.0A's spike scripts) comparing the product `WhisperCppTranscriber`
+  against R0006's original scratch-build measurement on the identical 12
+  fixtures.
+
 ## Tooling direction
 
 - `pytest` as the runner (declared in `pyproject.toml` `dev` extras); config lives

@@ -1,0 +1,118 @@
+{
+  "config": "base/q8_0",
+  "threads": 4,
+  "results": [
+    {
+      "file": "en_what_is_teleportation.wav",
+      "language": "en",
+      "expected_text": "what is teleportation",
+      "recognized_text": "What is teleportation?",
+      "wer": 0.0,
+      "elapsed_s": 1.65,
+      "peak_rss_mb": 220.5
+    },
+    {
+      "file": "en_what_is_the_speed_of_light.wav",
+      "language": "en",
+      "expected_text": "what is the speed of light",
+      "recognized_text": "What is the speed of light?",
+      "wer": 0.0,
+      "elapsed_s": 1.685,
+      "peak_rss_mb": 220.5
+    },
+    {
+      "file": "en_what_are_colors.wav",
+      "language": "en",
+      "expected_text": "what are colors",
+      "recognized_text": "What are colors?",
+      "wer": 0.0,
+      "elapsed_s": 1.52,
+      "peak_rss_mb": 220.5
+    },
+    {
+      "file": "en_how_big_is_the_USA.wav",
+      "language": "en",
+      "expected_text": "how big is the USA",
+      "recognized_text": "How big is the USA?",
+      "wer": 0.0,
+      "elapsed_s": 1.644,
+      "peak_rss_mb": 220.5
+    },
+    {
+      "file": "en_explain_gravity.wav",
+      "language": "en",
+      "expected_text": "explain gravity",
+      "recognized_text": "Explan gravity.",
+      "wer": 0.5,
+      "elapsed_s": 1.557,
+      "peak_rss_mb": 220.5
+    },
+    {
+      "file": "pl_co_to_jest_teleportacja.wav",
+      "language": "pl",
+      "expected_text": "co to jest teleportacja",
+      "recognized_text": "Co to jest teleportacja?",
+      "wer": 0.0,
+      "elapsed_s": 1.598,
+      "peak_rss_mb": 220.5
+    },
+    {
+      "file": "pl_czym_jest_teleportacja.wav",
+      "language": "pl",
+      "expected_text": "czym jest teleportacja",
+      "recognized_text": "Czym jest teleportacja?",
+      "wer": 0.0,
+      "elapsed_s": 1.608,
+      "peak_rss_mb": 220.5
+    },
+    {
+      "file": "pl_jaka_jest_prędkość_światła.wav",
+      "language": "pl",
+      "expected_text": "jaka jest prędkość światła",
+      "recognized_text": "Jaka jest prędkoś światła?",
+      "wer": 0.25,
+      "elapsed_s": 1.657,
+      "peak_rss_mb": 220.5
+    },
+    {
+      "file": "pl_jak_szybkie_jest_światło.wav",
+      "language": "pl",
+      "expected_text": "jak szybkie jest światło",
+      "recognized_text": "Jak szybko i światło?",
+      "wer": 0.5,
+      "elapsed_s": 1.622,
+      "peak_rss_mb": 220.5
+    },
+    {
+      "file": "pl_co_to_są_kolory.wav",
+      "language": "pl",
+      "expected_text": "co to są kolory",
+      "recognized_text": "Soto są kolory.",
+      "wer": 0.5,
+      "elapsed_s": 1.624,
+      "peak_rss_mb": 220.5
+    },
+    {
+      "file": "pl_jak_duże_jest_USA.wav",
+      "language": "pl",
+      "expected_text": "jak duże jest USA",
+      "recognized_text": "Jak to już jest USA?",
+      "wer": 0.5,
+      "elapsed_s": 1.554,
+      "peak_rss_mb": 220.5
+    },
+    {
+      "file": "pl_wyjaśnij_grawitację.wav",
+      "language": "pl",
+      "expected_text": "wyjaśnij grawitację",
+      "recognized_text": "Wiesz, jak grawitacja jest.",
+      "wer": 2.0,
+      "elapsed_s": 2.056,
+      "peak_rss_mb": 220.5
+    }
+  ],
+  "avg_wer": 0.3542,
+  "avg_latency_s": 1.648,
+  "avg_peak_rss_mb": 220.5,
+  "temp_before_c": 59.3
+}

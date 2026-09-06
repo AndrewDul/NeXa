@@ -25,6 +25,7 @@ from pipecat.frames.frames import (
     EndFrame,
     ErrorFrame,
     Frame,
+    InputAudioRawFrame,
     StartFrame,
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
@@ -32,9 +33,18 @@ from pipecat.frames.frames import (
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.audio.vad_processor import VADProcessor
-from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor, FrameProcessorSetup
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.workers.runner import WorkerRunner
+
+from nexa.stt import (
+    Language,
+    SerialTranscriptionQueue,
+    SpeechTranscriber,
+    SttQueueOverflowError,
+    TranscriptionResult,
+    UtteranceBuffer,
+)
 
 from .config import LocalAudioConfig
 from .device import find_device_index
@@ -108,13 +118,97 @@ class _VoiceStateFrameProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class VoiceRuntime:
-    """Owns the M2.1 Pipecat pipeline: local audio in/out + Silero VAD.
+class _UtteranceCaptureFrameProcessor(FrameProcessor):
+    """M2.2: captures one utterance's raw PCM per LISTENING -> END_OF_TURN
+    cycle (via ``UtteranceBuffer``, which owns the pre-roll) and submits it
+    to a ``SerialTranscriptionQueue`` on end-of-turn.
 
-    No STT, no LLM, no TTS, no ConversationSession — those are M2.2+
-    (ADR-0003). ``state_machine`` is the one thing calling code should
-    observe; it is real NeXa-owned state, independent of Pipecat's own
-    frame/lifecycle model.
+    Placed immediately after ``VADProcessor`` in the pipeline:
+    ``VADProcessor.process_frame`` (see
+    ``pipecat/processors/audio/vad_processor.py``) pushes each
+    ``InputAudioRawFrame`` downstream *before* running VAD analysis that
+    might broadcast a ``VADUserStartedSpeakingFrame``/
+    ``VADUserStoppedSpeakingFrame`` for it — so this processor always sees
+    an audio chunk before any VAD event that chunk triggers, by construction
+    (verified from the installed Pipecat 1.8.1 source, not assumed).
+
+    Audio/VAD capture is never blocked by STT: ``queue.submit()`` only
+    enqueues and returns immediately, so a new utterance can be captured
+    while whisper.cpp is still transcribing the previous one. But real
+    hardware testing (2026-09-05/06) showed the earlier per-turn
+    ``self.create_task(...)`` pattern could run two whisper.cpp subprocesses
+    concurrently if a short utterance followed quickly — real CPU
+    contention risk per R0006. ``SerialTranscriptionQueue`` fixes this by
+    serializing STT *execution* only, one utterance at a time, FIFO.
+    """
+
+    def __init__(
+        self,
+        *,
+        sample_rate: int,
+        transcriber: SpeechTranscriber,
+        language: Language,
+        on_transcription: Callable[[TranscriptionResult], None] | None,
+        on_transcription_error: Callable[[Exception], None] | None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._buffer = UtteranceBuffer(sample_rate=sample_rate)
+        self._language = language
+        self._on_transcription_error = on_transcription_error
+        self._queue = SerialTranscriptionQueue(
+            transcriber,
+            on_result=on_transcription,
+            on_error=self._handle_stt_error,
+        )
+
+    @property
+    def max_observed_stt_concurrency(self) -> int:
+        return self._queue.max_observed_concurrency
+
+    def _handle_stt_error(self, exc: Exception) -> None:
+        logger.error(f"nexa.stt: transcription failed: {exc}")
+        if self._on_transcription_error is not None:
+            self._on_transcription_error(exc)
+
+    async def setup(self, setup: FrameProcessorSetup) -> None:
+        await super().setup(setup)
+        self._queue.start(self.create_task)
+
+    async def cleanup(self) -> None:
+        await self._queue.shutdown()
+        await super().cleanup()
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, InputAudioRawFrame):
+            self._buffer.append_audio(frame.audio)
+        elif isinstance(frame, VADUserStartedSpeakingFrame):
+            self._buffer.mark_speech_started()
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            audio = self._buffer.mark_speech_stopped()
+            if audio:
+                try:
+                    self._queue.submit(audio, self._language)
+                except SttQueueOverflowError as exc:
+                    self._handle_stt_error(exc)
+        elif isinstance(frame, (ErrorFrame, EndFrame, CancelFrame)):
+            self._buffer.reset()
+
+        await self.push_frame(frame, direction)
+
+
+class VoiceRuntime:
+    """Owns the Pipecat pipeline: local audio in/out + Silero VAD (M2.1),
+    plus optional local whisper.cpp STT (M2.2).
+
+    No LLM, no TTS, no ConversationSession, no barge-in — those remain
+    M2.3+ (ADR-0003). ``state_machine`` is the one thing calling code should
+    observe for voice-activity state; it is real NeXa-owned state,
+    independent of Pipecat's own frame/lifecycle model. STT is entirely
+    optional: omitting ``transcriber`` reproduces exact M2.1 pipeline
+    behavior.
     """
 
     def __init__(
@@ -123,11 +217,34 @@ class VoiceRuntime:
         *,
         vad_params: VADParams | None = None,
         on_event: Callable[[VoiceEvent], None] | None = None,
+        transcriber: SpeechTranscriber | None = None,
+        language: Language | None = None,
+        on_transcription: Callable[[TranscriptionResult], None] | None = None,
+        on_transcription_error: Callable[[Exception], None] | None = None,
     ) -> None:
         self.config = config or LocalAudioConfig()
         self.vad_params = vad_params or DEFAULT_VAD_PARAMS
         self.state_machine = VoiceStateMachine(on_event=on_event)
         self._runner: WorkerRunner | None = None
+        if transcriber is not None and language is None:
+            raise ValueError(
+                "language is required when a transcriber is provided — "
+                "auto-detect is never used (ADR-0003 D5)"
+            )
+        self._transcriber = transcriber
+        self._language = language
+        self._on_transcription = on_transcription
+        self._on_transcription_error = on_transcription_error
+        self._capture_processor: _UtteranceCaptureFrameProcessor | None = None
+
+    @property
+    def max_observed_stt_concurrency(self) -> int | None:
+        """Peak number of simultaneous whisper.cpp transcriptions observed
+        this session. Must never exceed 1. ``None`` if no transcriber was
+        configured, or the pipeline hasn't been built yet."""
+        if self._capture_processor is None:
+            return None
+        return self._capture_processor.max_observed_stt_concurrency
 
     def _build_pipeline(self) -> Pipeline:
         pa = pyaudio.PyAudio()
@@ -157,14 +274,20 @@ class VoiceRuntime:
         vad_processor = VADProcessor(vad_analyzer=vad_analyzer)
         state_processor = _VoiceStateFrameProcessor(self.state_machine)
 
-        return Pipeline(
-            [
-                transport.input(),
-                vad_processor,
-                state_processor,
-                transport.output(),
-            ]
-        )
+        stages: list[FrameProcessor] = [transport.input(), vad_processor]
+        if self._transcriber is not None:
+            self._capture_processor = _UtteranceCaptureFrameProcessor(
+                sample_rate=self.config.sample_rate,
+                transcriber=self._transcriber,
+                language=self._language,
+                on_transcription=self._on_transcription,
+                on_transcription_error=self._on_transcription_error,
+            )
+            stages.append(self._capture_processor)
+        stages.append(state_processor)
+        stages.append(transport.output())
+
+        return Pipeline(stages)
 
     async def run(self) -> None:
         """Run the voice pipeline until stopped (Ctrl+C / SIGINT by default).

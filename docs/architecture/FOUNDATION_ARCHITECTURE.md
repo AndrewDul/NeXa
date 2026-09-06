@@ -97,12 +97,12 @@ internal, replaceable boundary.
 > (Pipecat orchestration, Silero VAD, whisper.cpp STT, Piper TTS as a
 > temporary baseline, full barge-in as the target) — see
 > `docs/decisions/ADR-0003_realtime_voice_foundation.md`. **M2.1 (local audio
-> transport + VAD only) is now real** — see
-> `docs/architecture/M2_1_LOCAL_AUDIO_VAD_ARCHITECTURE.md`, the same way
+> transport + VAD only) and M2.2 (local whisper.cpp STT) are now real** —
+> see `docs/architecture/M2_1_LOCAL_AUDIO_VAD_ARCHITECTURE.md` and
+> `docs/architecture/M2_2_LOCAL_STT_ARCHITECTURE.md`, the same way
 > `docs/architecture/M1_1_TEXT_CONVERSATION_ARCHITECTURE.md` made Conversation
-> real. Everything else in this Voice boundary (STT, the
-> `ConversationSession` adapter, TTS, barge-in) remains conceptual until
-> M2.2+ implements it.
+> real. Everything else in this Voice boundary (the `ConversationSession`
+> adapter, TTS, barge-in) remains conceptual until M2.3+ implements it.
 
 ### Vision
 Perception from cameras/sensors. Feeds Context and Capabilities.
