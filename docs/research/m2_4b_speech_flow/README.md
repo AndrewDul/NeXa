@@ -93,6 +93,32 @@ report and recommendation.
   byte-identical to the raw model output. Long intra-response silence
   still present — the B.3 target.
 
+## M2.4B.2A additions (2026-09-07 — see R0016, edge-case fix)
+
+The real operator mic run (`/tmp/nexa_m24b2_operator.jsonl` +
+`_console.txt`) confirmed B.2 removed the fragmentation it targeted
+(`tiny_text_chunk_count = 0` all 5 turns; `np. → na przykład`; no isolated
+`tzw.`/`1.`/`**`; true Piper RTF ~0.24–0.30) — and exposed two gaps, both
+fixed in B.2A:
+
+- **LaTeX math leaked to Piper** — `gemma4:e4b` emits `$\text{H}$` /
+  `$\text{He}$` for element symbols inside bolded list titles.
+  `normalize_for_speech` now has `_strip_math` (`$…$`, `\(…\)`, `\[…\]`,
+  `\text{}` → readable text; equations never interpreted).
+- **Dangling trailing `"("` / mid-word chunk** — traced to
+  `GenerationOptions.num_predict = 200` (`providers/base.py`): the model
+  hit its token cap mid-word / right after `(`, and the planner's
+  final-flush emitted the buffer verbatim. `_tidy_spoken` now trims a
+  dangling trailing opener from the *spoken* copy (never the transcript);
+  a genuine mid-word partial is kept (transcript truth, no invented
+  completion). The planner's boundary logic already cannot cut inside a
+  word.
+
+Also recorded: long intra-response silence persists (≈ 19.6 / 13.5 /
+39.1 s gaps; CPU ~99–100 %; turns 2–5 diagnose LLM TEXT PRODUCTION) — the
+B.3 target. And a **separate STT-quality issue** ("horyzont zdarzeń"
+mistranscribed as "chory zęzdarzyń" etc.) — flagged, not fixed here.
+
 ## One-line conclusion
 
 Synthesis is ~7× faster than real-time and is **not** the bottleneck. The

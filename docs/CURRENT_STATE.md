@@ -9,8 +9,9 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0015_m2_4b_2_speech_planner_20260907.md`
-  (M2.4B.2 Polish-aware speech planner / TTS-only normalisation;
+- **Latest report:** `docs/reports/R0016_m2_4b_2a_tts_normalization_edge_cases_20260907.md`
+  (M2.4B.2A — LaTeX-math + truncation-tail fix on the speech planner, from
+  the real operator mic run; `R0015` = M2.4B.2 speech planner;
   `R0014` = M2.4B.1A CPU spike + metric fixes; `R0013` = M2.4B.1
   instrumentation; `R0012` = M2.4B research; `R0011` = M2.4)
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
@@ -68,10 +69,22 @@ Runtime / test evidence outranks anything else in this repo.
   emitting one natural-phrase `AggregatedTextFrame` at a time; Polish/EN
   abbreviation-aware boundaries; Markdown/list → prose; conservative
   abbreviation expansion; `tzw.` deliberately not expanded). No pacing yet.
-  Transcript invariant proven (`ast` + behaviour). **M2.4B.3 (look-ahead /
-  buffered-audio refill controller — where the long intra-response silence
-  is actually addressed) is next.** Then **M2.5 — barge-in / interruption**
-  (replaces the temporary half-duplex gate). **M2.4B is NOT complete.**
+  Transcript invariant proven (`ast` + behaviour). **M2.4B.2A — edge-case
+  fix: DONE** (`R0016`): the real operator mic run showed B.2 removed the
+  fragmentation (`tiny_text_chunk_count = 0` all turns; `np. → na
+  przykład`; no isolated `tzw.`) but leaked inline LaTeX math
+  (`$\text{H}$`) to Piper and emitted a dangling trailing `"("` on a reply
+  `gemma4:e4b` truncated at its `num_predict = 200` cap. Fixed:
+  `_strip_math` in `normalize_for_speech`; `_tidy_spoken` trims dangling
+  openers from the spoken copy only (mid-word truncations kept =
+  transcript truth); multi-sentence list items joined as plain sentences
+  not "oraz". **B.2 is NOT yet `OPERATOR-CONFIRMED`** — needs a fresh mic
+  run after B.2A. **M2.4B.3 (look-ahead / buffered-audio refill
+  controller — where the long ~19.6/13.5/39.1 s intra-response gaps
+  confirmed in the mic run are actually addressed) is next.** Then **M2.5
+  — barge-in / interruption** (replaces the temporary half-duplex gate).
+  **M2.4B is NOT complete.** Separate future track flagged: STT quality —
+  whisper.cpp mistranscribed "horyzont zdarzeń" as "chory zęzdarzyń" etc.
 - **Current objective:** M2.4B.3 — see "Exact next recommended task".
   M2.4's functional baseline is frozen by the M2.4 commit and unchanged;
   the speech planner is additive (remove it from `extra_output_stages` →
@@ -511,13 +524,13 @@ Runtime / test evidence outranks anything else in this repo.
 - Repo-local `./.venv` (system Python 3.13.5, **not** the legacy repo's venv)
   with `dev` extras (`pytest`, `ruff`) and `pipecat-ai[local]==1.8.1`
   installed.
-- `python -m unittest discover -s tests`: **367 OK, 7 skipped**;
-  `pytest`: **360 passed, 7 skipped, 14 subtests passed** (2026-09-07).
+- `python -m unittest discover -s tests`: **381 OK, 7 skipped**;
+  `pytest`: **374 passed, 7 skipped, 14 subtests passed** (2026-09-07).
   The 7 skips are all opt-in / environment-gated: 1 live Ollama, 2 live
   whisper.cpp, 3 live Piper HTTP (`NEXA_RUN_LIVE_TTS_TEST=1`), 1 reSpeaker
   hardware probe. `ruff check src tests apps scripts/setup_piper_http.py`:
   clean. (`tests/test_voice_tts_metrics.py` 69 tests — B.1/B.1A/B.2;
-  `tests/test_voice_tts_speech_planner.py` 45 tests — B.2.)
+  `tests/test_voice_tts_speech_planner.py` 59 tests — B.2 + B.2A.)
   (Pre-existing unrelated `ruff` findings in `scripts/m1_bench/` — M1
   benchmark tooling, committed in `b79a752`, untouched.)
 - Live Ollama integration test (`NEXA_RUN_LIVE_TESTS=1 python -m unittest
@@ -596,7 +609,8 @@ Runtime / test evidence outranks anything else in this repo.
   are now complete. The M2.4 functional baseline is frozen by its commit.
   **M2.4B is in progress** — research frozen (`f8c3964`/`R0012`); M2.4B.1
   instrumentation (`R0013`), M2.4B.1A CPU spike + metric fixes (`R0014`),
-  and M2.4B.2 Polish-aware speech planner (`R0015`) implemented. **M2.4B.3
+  M2.4B.2 Polish-aware speech planner (`R0015`), and M2.4B.2A LaTeX/
+  truncation-tail edge-case fix (`R0016`) implemented. **M2.4B.3
   (look-ahead / buffered-audio pacing) is next.**
 
 ## Exact next recommended task
@@ -616,10 +630,18 @@ re-validate the buffered-audio estimate as a *control* signal on a real
 bursty `gemma4:e4b` turn with `TimedPiperHttpTTSService` wired in
 (`buffer_drain_to_stop_lag_s` within a few s, `underruns_without_following_stop`
 = 0); (d) sweep `target ∈ {0.5,1,1.5,2,3}` s with the `--report` profiler,
-operator A/B picks it. Parallel track: Ollama `keep_alive` for the
-first-token eviction stalls. The B.2 planner tunables
-(`MIN_SENTENCE_CHARS` etc., connector words) are CANDIDATE and may be
-adjusted here.
+operator A/B picks it. Parallel tracks (not blocking B.3): Ollama
+`keep_alive` for first-token eviction stalls; **STT quality** —
+whisper.cpp mistranscribed "horyzont zdarzeń" as "chory zęzdarzyń" /
+"choryząt zdarzeń" / "choryząc dażem" in the B.2 mic run (R0016); and, if
+the operator wants replies to finish rather than truncate mid-word, a
+`GenerationOptions.num_predict` (=200) review. The B.2 planner tunables
+(`MIN_SENTENCE_CHARS` etc., connector words, `_LIST_PROSE_MAX_ITEM_CHARS`)
+are CANDIDATE and may be adjusted here.
+
+Before B.3: a fresh operator mic run to confirm the B.2A corrections
+(no `$\text{...}` reaches Piper, no dangling `"("` chunk) and mark B.2
+`OPERATOR-CONFIRMED`.
 
 Then **M2.5 — barge-in / interruption / own-TTS suppression / echo
 handling**, replacing the temporary half-duplex gate.

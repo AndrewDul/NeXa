@@ -35,6 +35,8 @@ from nexa.voice_tts import NexaSpeechPlanner, find_phrase_cut, normalize_for_spe
 from nexa.voice_tts.speech_planner import (  # noqa: E402
     MAX_PHRASE_CHARS,
     _ends_with_abbreviation,
+    _strip_math,
+    _tidy_spoken,
 )
 
 EN_VOICE = "en_GB-jenny_dioco-medium"
@@ -521,6 +523,156 @@ class TestEnglishStillWorks(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("*", spoken)
             self.assertNotIn("`", spoken)
             self.assertNotIn("#", spoken)
+
+
+# --------------------------------------------------------------------------- #
+# M2.4B.2A — LaTeX/math normalization + truncation-tail cleanup (R0016)
+# --------------------------------------------------------------------------- #
+
+
+class TestLatexMathNormalization(unittest.IsolatedAsyncioTestCase):
+    async def test_a1_text_H_does_not_reach_piper_literally(self) -> None:
+        p, _ = _planner(default_language="pl")
+        reply = (
+            "Skład chemiczny jest następujący:\n"
+            "1.  **Wodór ($\\text{H}$):** Jest to najczęściej występujący pierwiastek.\n"
+            "2.  **Hel ($\\text{He}$):** Jest to drugi pod względem obfitości pierwiastek.\n"
+        )
+        joined = " ".join(_spoken(await _feed(p, _tok(reply))))
+        self.assertNotIn("$", joined)
+        self.assertNotIn("\\text", joined)
+        self.assertNotIn("{", joined)
+        self.assertIn("Wodór (H)", joined)
+        self.assertIn("Hel (He)", joined)
+
+    async def test_a2_text_He_span_removed_but_content_kept(self) -> None:
+        p, _ = _planner(default_language="en")
+        joined = " ".join(
+            _spoken(await _feed(p, _tok("The symbol $\\text{He}$ denotes helium in the table.")))
+        )
+        self.assertNotIn("$", joined)
+        self.assertIn("He", joined)
+        self.assertIn("helium", joined)
+
+    def test_a3_plain_inline_math_markers_removed_safely(self) -> None:
+        for src, must_have, must_not in [
+            (r"Energia to $E = mc^2$ w fizyce.", "E = mc2", "$"),
+            (r"Wartość $H$ oraz $He$ tutaj.", "H", "$"),
+            (r"Wzór \( a + b \) koniec.", "a + b", "\\("),
+            (r"Display \[ x = y \] tu.", "x = y", "\\["),
+            (r"Bare \text{Fe} outside.", "Fe", "\\text"),
+        ]:
+            out = normalize_for_speech(src, language="pl")
+            self.assertIn(must_have, out, src)
+            self.assertNotIn(must_not, out, src)
+
+    def test_a4_strip_math_never_interprets_equations(self) -> None:
+        # \cdot / \alpha etc. are dropped, not turned into words — no invented
+        # semantic reading of an arbitrary equation.
+        out = _strip_math(r"$a \cdot b + \alpha$")
+        self.assertNotIn("$", out)
+        self.assertNotIn("\\", out)
+        self.assertNotIn("cdot", out)
+
+    def test_a5_normalizer_still_never_raises_on_math_junk(self) -> None:
+        for junk in (r"$", r"$$", r"\(", r"\)", r"$\text{", r"${}$", r"\[\]", r"$^_{}$"):
+            self.assertIsInstance(normalize_for_speech(junk, language="pl"), str)
+
+
+class TestTruncationTailCleanup(unittest.IsolatedAsyncioTestCase):
+    async def test_a6_no_standalone_open_paren_chunk(self) -> None:
+        # the real operator run: gemma4:e4b hit num_predict=200 right after "("
+        p, _ = _planner(default_language="pl")
+        reply = "Wszystko za horyzontem jest skazane na nieuchronne zapadnięcie do osobliwości ("
+        pushed = await _feed(p, _tok(reply))  # no explicit end -> _feed sends LLMFullResponseEnd
+        spoken = _spoken(pushed)
+        self.assertTrue(spoken)
+        for s in spoken:
+            self.assertNotEqual(s.strip(), "(")
+            self.assertTrue(any(ch.isalnum() for ch in s))
+            self.assertFalse(s.rstrip().endswith("("), s)
+        self.assertIn("osobliwości", " ".join(spoken))
+
+    def test_a7_tidy_spoken_trims_dangling_openers_only(self) -> None:
+        self.assertEqual(_tidy_spoken("do osobliwości ("), "do osobliwości")
+        self.assertEqual(_tidy_spoken("coś tam –"), "coś tam")
+        self.assertEqual(_tidy_spoken("otwórz [  "), "otwórz")
+        # kept: real terminal punctuation, closing brackets, clause pauses
+        self.assertEqual(_tidy_spoken("Zdanie."), "Zdanie.")
+        self.assertEqual(_tidy_spoken("(nawias zamknięty)"), "(nawias zamknięty)")
+        self.assertEqual(_tidy_spoken("lead-in:"), "lead-in:")
+        self.assertEqual(_tidy_spoken("klauzula,"), "klauzula,")
+
+    async def test_a8_max_phrase_chars_never_cuts_inside_a_word(self) -> None:
+        p, _ = _planner(default_language="pl")
+        giant = "a" * (MAX_PHRASE_CHARS + 80)  # one 320-char token, no spaces
+        pushed = await _feed(p, _tok(giant), end=False)
+        # the hard cap cannot cut inside a word -> nothing is released mid-stream
+        self.assertEqual(_spoken(pushed), [])
+        # a run-on WITH spaces is cut, but only at a space — every emitted
+        # token is a whole "slowo", never a fragment of one
+        p2, _ = _planner(default_language="pl")
+        run_on = "slowo " * 60
+        out = _spoken(await _feed(p2, _tok(run_on), end=False))
+        self.assertTrue(out)
+        for s in out:
+            for w in s.split():
+                self.assertEqual(w.strip(".,;:!?…"), "slowo", f"fragment {w!r} in {s!r}")
+
+    async def test_a9_mid_word_truncation_is_preserved_not_completed(self) -> None:
+        # source genuinely ends mid-word -> planner speaks what's there, does
+        # NOT invent the missing letters and does NOT drop the partial word.
+        p, _ = _planner(default_language="pl")
+        reply = "które zostały wytworzone w wcześniejszych etapach życia gwiaz"
+        spoken = _spoken(await _feed(p, _tok(reply)))
+        self.assertEqual(spoken, ["które zostały wytworzone w wcześniejszych etapach życia gwiaz"])
+
+    async def test_a10_final_flush_no_duplicate_no_invented_content(self) -> None:
+        p, _ = _planner(default_language="pl")
+        reply = (
+            "Pierwsze zdanie jest kompletne i sensowne. Drugie zdanie też niesie treść. "
+            "Trzecie zostało ucięte w poł"
+        )
+        spoken = _spoken(await _feed(p, _tok(reply)))
+        self.assertEqual(" ".join(spoken), reply)  # exact, once, nothing added
+        self.assertEqual(len(spoken), 3, spoken)
+
+    async def test_a11_long_multi_sentence_list_items_no_oraz_between_paragraphs(self) -> None:
+        p, _ = _planner(default_language="pl")
+        reply = (
+            "Elementy:\n"
+            "1. Wodór jest pierwiastkiem. Stanowi główne paliwo gwiazdy w reakcjach fuzji.\n"
+            "2. Hel jest drugim pierwiastkiem. Powstaje w wyniku fuzji wodoru w jądrze gwiazdy.\n"
+        )
+        joined = " ".join(_spoken(await _feed(p, _tok(reply))))
+        self.assertNotIn(" oraz Hel", joined)  # not glued paragraph-to-paragraph
+        self.assertIn("Wodór jest pierwiastkiem.", joined)
+        self.assertIn("Hel jest drugim pierwiastkiem.", joined)
+
+    async def test_a12_short_name_list_still_uses_oraz(self) -> None:
+        p, _ = _planner(default_language="pl")
+        joined = " ".join(
+            _spoken(await _feed(p, _tok("Przykłady:\n1. Call of Duty\n2. Battlefield\nto tyle.")))
+        )
+        self.assertIn("Call of Duty oraz Battlefield", joined)
+
+
+class TestB2SuccessesNotRegressed(unittest.IsolatedAsyncioTestCase):
+    async def test_a13_preserves_np_expansion_and_no_isolated_tzw(self) -> None:
+        p, _ = _planner(default_language="pl")
+        reply = "Najważniejszą cechą jest tzw. horyzont zdarzeń. Podaj np. gwiazdę tutaj."
+        joined = " ".join(_spoken(await _feed(p, _tok(reply))))
+        self.assertIn("tzw. horyzont zdarzeń", joined)
+        self.assertIn("na przykład gwiazdę", joined)
+        self.assertNotIn(" np.", joined)
+
+    async def test_a14_transcript_source_still_byte_identical(self) -> None:
+        p, _ = _planner(default_language="pl")
+        tokens = _tok(
+            "**Wodór ($\\text{H}$):** oryginalny tekst z formatowaniem i math markup tutaj."
+        )
+        await _feed(p, tokens, end=False)
+        self.assertEqual(p._raw, "".join(tokens))
 
 
 # --------------------------------------------------------------------------- #

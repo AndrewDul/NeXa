@@ -129,6 +129,33 @@ _LEADING_MARKER_RE = re.compile(r"^[ \t]*(?:\d+[.)]|[-*+•·‣▪])[ \t]+")
 #: half-arrived tail of a streamed list, never a real run terminator.
 _BARE_MARKER_RE = re.compile(r"^[ \t]*(?:\d+[.)]?|[-*+•·‣▪])[ \t]*$")
 
+#: A list is spoken with an "oraz"/"and" connector only when every item is
+#: this short (a list of names — "Call of Duty oraz Battlefield"). Longer,
+#: multi-sentence items are joined as plain consecutive sentences instead
+#: (markers dropped, each item keeps its own full stop) — B.2A: "oraz"
+#: between paragraphs read badly on the real operator run.
+_LIST_PROSE_MAX_ITEM_CHARS = 60
+
+#: A trailing run of these — a dangling opener, a bare dash — that the
+#: source left at the end of a phrase (e.g. a reply truncated by
+#: ``num_predict`` right after "(") carries no speech content and is
+#: trimmed from the spoken copy (never from the transcript). Closing
+#: brackets and ``. ! ? … , ; :`` are kept.
+_DANGLING_TAIL = " \t([{„«‹<–—-"
+
+# LaTeX / Markdown-math wrappers (B.2A). gemma4:e4b emits inline math such
+# as ``$\text{H}$`` for element symbols inside bolded list titles.
+_MATH_SPAN_RES = (
+    re.compile(r"\$\$(.+?)\$\$", re.DOTALL),
+    re.compile(r"\\\[(.+?)\\\]", re.DOTALL),
+    re.compile(r"\\\((.+?)\\\)", re.DOTALL),
+    re.compile(r"\$(.+?)\$", re.DOTALL),
+)
+_MATH_TEXT_CMD_RE = re.compile(
+    r"\\(?:text|mathrm|mathbf|mathit|mathsf|mathtt|mathcal|operatorname|boldsymbol|"
+    r"textbf|textit|textrm|rm|bf|it)\s*\{([^{}]*)\}"
+)
+
 
 def _alnum_len(s: str) -> int:
     return sum(1 for ch in s if ch.isalnum())
@@ -168,19 +195,63 @@ def _strip_emphasis(text: str) -> str:
     return text
 
 
+def _despan_math(inner: str) -> str:
+    """Reduce the contents of a math span to readable text. Never interprets
+    an equation — just removes the markup."""
+    s = _MATH_TEXT_CMD_RE.sub(r"\1", inner)
+    s = re.sub(r"\\[a-zA-Z]+\s*\{([^{}]*)\}", r"\1", s)  # \frac{a}{b}-ish -> keep args
+    s = re.sub(r"\\[a-zA-Z]+", "", s)  # bare \alpha, \cdot, \left ... -> drop
+    s = s.replace("{", "").replace("}", "")
+    s = re.sub(r"[_^]", "", s)  # sub/superscript markers
+    s = re.sub(r"\\[^a-zA-Z\s]", "", s)  # \, \! \; etc.
+    return re.sub(r"\s{2,}", " ", s).strip()
+
+
+def _strip_math(text: str) -> str:
+    for pat in _MATH_SPAN_RES:
+        text = pat.sub(lambda m: _despan_math(m.group(1)), text)
+    # bare \text{...} outside any span
+    text = _MATH_TEXT_CMD_RE.sub(r"\1", text)
+    # any leftover unmatched delimiters
+    text = text.replace("$", "")
+    text = text.replace(r"\(", "").replace(r"\)", "").replace(r"\[", "").replace(r"\]", "")
+    return text
+
+
+def _tidy_spoken(text: str) -> str:
+    """Final polish on a phrase's *spoken* copy (never the transcript):
+    drop a dangling opener / bare dash the source left at the tail, and an
+    unbalanced trailing quote. Keeps closing brackets and ``. ! ? … , ; :``.
+    """
+    text = text.strip()
+    stripped = text.rstrip(_DANGLING_TAIL)
+    if stripped != text:
+        text = stripped.rstrip()
+    if text.count('"') % 2 == 1 and text.endswith('"'):
+        text = text[:-1].rstrip()
+    return text
+
+
 def _join_items(items: list[str], language: str) -> str:
-    parts = [i.strip().rstrip(" ,;:.!?…") for i in items if i.strip()]
+    parts = [i.strip() for i in items if i.strip()]
     parts = [p for p in parts if p]
     if not parts:
         return ""
-    conn = " oraz " if language == "pl" else " and "
-    if len(parts) == 1:
-        body = parts[0]
-    elif len(parts) == 2:
-        body = parts[0] + conn + parts[1]
-    else:
-        body = ", ".join(parts[:-1]) + conn + parts[-1]
-    return body + "."
+    if len(parts) >= 2 and all(len(p) <= _LIST_PROSE_MAX_ITEM_CHARS for p in parts):
+        # short items = a list of names -> natural "a, b oraz c."
+        names = [p.rstrip(" ,;:.!?…") for p in parts]
+        conn = " oraz " if language == "pl" else " and "
+        if len(names) == 2:
+            body = names[0] + conn + names[1]
+        else:
+            body = ", ".join(names[:-1]) + conn + names[-1]
+        return body + "."
+    # long / multi-sentence items -> just drop the markers, keep each as its
+    # own sentence(s) so "oraz" never joins two paragraphs.
+    out = []
+    for p in parts:
+        out.append(p if p[-1] in ".!?…:" else p + ".")
+    return " ".join(out)
 
 
 def _normalize_lists(text: str, language: str, *, streaming: bool) -> str:
@@ -228,6 +299,8 @@ def _normalize(text: str, language: str, *, streaming: bool, expand: bool) -> st
     # inline code
     text = re.sub(r"`([^`]*)`", r"\1", text)
     text = text.replace("`", "")
+    # LaTeX / Markdown math ($...$, \(...\), \[...\], bare \text{...})
+    text = _strip_math(text)
     # images / links / autolinks / bare urls
     text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)
     text = re.sub(r"<(https?://[^>]+)>", r"\1", text)
@@ -460,10 +533,16 @@ class NexaSpeechPlanner(FrameProcessor):
 
         phrases: list[str] = []
         if final:
-            rem = tail.strip()
-            if _alnum_len(rem) >= 1:
-                phrases.append(rem)
-                self._emitted = norm
+            # ``_emitted`` tracking stays on the raw normalized text (prefix
+            # stability); only the spoken copy is tidied. A partial final
+            # word from an upstream ``num_predict`` truncation is kept as-is
+            # — transcript truth, no invented completion — but a dangling
+            # trailing "(" the model left is trimmed (un-speakable, no
+            # content). See B.2A / R0016.
+            self._emitted = norm
+            spoken = _tidy_spoken(tail)
+            if _alnum_len(spoken) >= 1:
+                phrases.append(spoken)
             return phrases
 
         while True:
@@ -479,7 +558,7 @@ class NexaSpeechPlanner(FrameProcessor):
             )
             if idx is None:
                 break
-            phrase = body[:idx].strip()
+            phrase = _tidy_spoken(body[:idx])
             self._emitted += tail[: lead + idx]
             tail = tail[lead + idx :]
             if _alnum_len(phrase) >= 1:

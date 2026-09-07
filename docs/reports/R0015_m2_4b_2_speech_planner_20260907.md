@@ -20,6 +20,14 @@ scheduling, no dynamic speech speed, no fillers, no voice change, no M2.5.
 `ConversationSession` / canonical assistant text / history / persona /
 model output / response-language authority are all unchanged.**
 
+> **Follow-up (2026-09-07):** the real operator microphone run exposed two
+> normalization edge cases — inline LaTeX math (`$\text{H}$`) reaching
+> Piper, and a dangling trailing `"("` on a reply the model truncated at
+> its 200-token cap. Both are fixed in **M2.4B.2A** —
+> `docs/reports/R0016_m2_4b_2a_tts_normalization_edge_cases_20260907.md`.
+> **B.2 is not yet `OPERATOR-CONFIRMED`**; it waits on a fresh mic run
+> after the B.2A corrections.
+
 ---
 
 ## TASK RESULT
