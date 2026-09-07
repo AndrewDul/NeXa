@@ -1,0 +1,261 @@
+===== BATCH B: gemma4:e2b core+science+cold =====
+
+===== gemma4:e2b =====
+  [gemma4:e2b COLD] load=24.374s ttft=38.681s tok/s=5.26 mem_before=14463.6 mem_after=6902.0
+  [gemma4:e2b warm-prime] ttft=12.865s prompt_eval=12.855s (536 tok) tok/s=6.66
+  [gemma4:e2b pl short t1] ttft=13.728s tok/s=5.71 ch/s=18.88 chars=215 
+  [gemma4:e2b pl followup t1] ttft=0.185s tok/s=5.48 ch/s=17.81 chars=208 
+  [gemma4:e2b pl followup t2] ttft=1.181s tok/s=5.44 ch/s=19.9 chars=194 
+  [gemma4:e2b pl science t1] ttft=15.075s tok/s=5.87 ch/s=23.59 chars=241 
+  [gemma4:e2b pl reasoning t1] ttft=13.51s tok/s=5.99 ch/s=14.97 chars=110 
+  [gemma4:e2b pl thread t1] ttft=13.167s tok/s=5.95 ch/s=20.88 chars=193 
+  [gemma4:e2b pl thread t2] ttft=1.392s tok/s=5.96 ch/s=18.78 chars=148 
+  [gemma4:e2b pl thread t3] ttft=1.105s tok/s=5.92 ch/s=18.98 chars=141 
+  [gemma4:e2b pl thread t4] ttft=1.072s tok/s=5.65 ch/s=19.48 chars=138 
+  [gemma4:e2b pl thread t5] ttft=1.247s tok/s=5.93 ch/s=13.29 chars=56 
+  [gemma4:e2b en short t1] ttft=12.664s tok/s=5.99 ch/s=27.71 chars=199 
+  [gemma4:e2b en followup t1] ttft=0.186s tok/s=5.98 ch/s=29.45 chars=207 
+  [gemma4:e2b en followup t2] ttft=0.921s tok/s=5.97 ch/s=31.62 chars=180 
+  [gemma4:e2b en science t1] ttft=12.885s tok/s=5.99 ch/s=34.44 chars=230 
+  [gemma4:e2b en reasoning t1] ttft=13.475s tok/s=6.01 ch/s=15.02 chars=70 
+  [gemma4:e2b en thread t1] ttft=13.145s tok/s=5.99 ch/s=30.64 chars=179 
+  [gemma4:e2b en thread t2] ttft=1.093s tok/s=5.91 ch/s=25.25 chars=158 
+  [gemma4:e2b en thread t3] ttft=1.112s tok/s=5.88 ch/s=27.16 chars=240 
+  [gemma4:e2b en thread t4] ttft=1.137s tok/s=5.89 ch/s=27.05 chars=170 
+  [gemma4:e2b en thread t5] ttft=0.995s tok/s=6.11 ch/s=25.36 chars=54 
+  [gemma4:e2b pl science relativity_mass] ch/s=20.35 chars=294
+  [gemma4:e2b pl science boiling_point] ch/s=14.59 chars=146
+  [gemma4:e2b pl science kg_iron_feathers] ch/s=17.29 chars=111
+  [gemma4:e2b pl science ten_percent_brain] ch/s=21.17 chars=209
+  [gemma4:e2b pl science sky_blue] ch/s=20.4 chars=160
+  [gemma4:e2b pl science sun_colour] ch/s=17.7 chars=123
+  [gemma4:e2b en science relativity_mass] ch/s=29.91 chars=273
+  [gemma4:e2b en science boiling_point] ch/s=26.07 chars=142
+  [gemma4:e2b en science kg_iron_feathers] ch/s=24.26 chars=91
+  [gemma4:e2b en science ten_percent_brain] ch/s=20.13 chars=193
+  [gemma4:e2b en science sky_blue] ch/s=30.52 chars=257
+  [gemma4:e2b en science sun_colour] ch/s=28.93 chars=153
+
+wrote 34 rows -> docs/research/m2_4b_llm_bench/bench_e2b_20260907.json
+===== BATCH C: gemma4:e4b serving sweep =====
+
+===== gemma4:e4b =====
+  [gemma4:e4b warm-prime] ttft=26.206s prompt_eval=26.196s (536 tok) tok/s=3.75
+  [gemma4:e4b serving baseline pl rep1] ttft=26.775s tok/s=3.31 ch/s=11.9
+  [gemma4:e4b serving baseline pl rep2] ttft=0.324s tok/s=3.3 ch/s=10.76
+  [gemma4:e4b serving baseline en rep1] ttft=26.668s tok/s=3.32 ch/s=18.31
+  [gemma4:e4b serving baseline en rep2] ttft=0.329s tok/s=3.36 ch/s=17.25
+  [gemma4:e4b serving num_thread=4 pl rep1] ttft=60.262s tok/s=3.28 ch/s=11.56
+  [gemma4:e4b serving num_thread=4 pl rep2] ttft=0.329s tok/s=3.31 ch/s=11.9
+  [gemma4:e4b serving num_thread=4 en rep1] ttft=26.666s tok/s=3.33 ch/s=16.85
+  [gemma4:e4b serving num_thread=4 en rep2] ttft=0.334s tok/s=3.32 ch/s=18.21
+  [gemma4:e4b serving num_thread=3 pl rep1] ttft=62.771s tok/s=3.6 ch/s=13.75
+  [gemma4:e4b serving num_thread=3 pl rep2] ttft=0.306s tok/s=3.59 ch/s=12.82
+  [gemma4:e4b serving num_thread=3 en rep1] ttft=30.946s tok/s=3.67 ch/s=20.49
+  [gemma4:e4b serving num_thread=3 en rep2] ttft=0.301s tok/s=3.66 ch/s=17.77
+  [gemma4:e4b serving num_thread=2 pl rep1] ttft=76.357s tok/s=3.77 ch/s=13.8
+  [gemma4:e4b serving num_thread=2 pl rep2] ttft=0.29s tok/s=3.76 ch/s=13.2
+  [gemma4:e4b serving num_thread=2 en rep1] ttft=43.905s tok/s=3.8 ch/s=20.02
+  [gemma4:e4b serving num_thread=2 en rep2] ttft=0.293s tok/s=3.81 ch/s=19.61
+  [gemma4:e4b serving num_batch=256 pl rep1] ttft=57.859s tok/s=3.24 ch/s=10.96
+  [gemma4:e4b serving num_batch=256 pl rep2] ttft=0.365s tok/s=3.27 ch/s=12.66
+  [gemma4:e4b serving num_batch=256 en rep1] ttft=12.903s tok/s=3.3 ch/s=17.05
+  [gemma4:e4b serving num_batch=256 en rep2] ttft=0.331s tok/s=3.28 ch/s=16.47
+  [gemma4:e4b serving num_batch=1024 pl rep1] ttft=58.601s tok/s=3.3 ch/s=12.34
+  [gemma4:e4b serving num_batch=1024 pl rep2] ttft=0.338s tok/s=3.29 ch/s=11.45
+  [gemma4:e4b serving num_batch=1024 en rep1] ttft=26.33s tok/s=3.37 ch/s=16.95
+  [gemma4:e4b serving num_batch=1024 en rep2] ttft=0.331s tok/s=3.33 ch/s=17.93
+  [gemma4:e4b serving num_ctx=4096 pl rep1] ttft=58.651s tok/s=3.27 ch/s=11.48
+  [gemma4:e4b serving num_ctx=4096 pl rep2] ttft=0.326s tok/s=3.3 ch/s=12.35
+  [gemma4:e4b serving num_ctx=4096 en rep1] ttft=24.24s tok/s=3.37 ch/s=16.94
+  [gemma4:e4b serving num_ctx=4096 en rep2] ttft=0.338s tok/s=3.34 ch/s=16.8
+  [gemma4:e4b serving num_ctx=2048 pl rep1] ttft=58.611s tok/s=3.28 ch/s=11.92
+  [gemma4:e4b serving num_ctx=2048 pl rep2] ttft=0.329s tok/s=3.32 ch/s=12.61
+  [gemma4:e4b serving num_ctx=2048 en rep1] ttft=25.034s tok/s=3.37 ch/s=16.94
+  [gemma4:e4b serving num_ctx=2048 en rep2] ttft=0.33s tok/s=3.27 ch/s=16.42
+
+wrote 33 rows -> docs/research/m2_4b_llm_bench/bench_serving_e4b_20260907.json
+===== BATCH D: qwen3:4b-instruct + qwen3.5:4b core+science+cold =====
+
+===== qwen3:4b-instruct =====
+  [qwen3:4b-instruct COLD] load=12.424s ttft=38.675s tok/s=3.53 mem_before=14501.0 mem_after=10501.2
+  [qwen3:4b-instruct warm-prime] ttft=2.567s prompt_eval=2.532s (583 tok) tok/s=4.41
+  [qwen3:4b-instruct pl short t1] ttft=2.344s tok/s=3.9 ch/s=11.63 chars=268 
+  [qwen3:4b-instruct pl followup t1] ttft=0.29s tok/s=3.99 ch/s=11.87 chars=134 
+  [qwen3:4b-instruct pl followup t2] ttft=3.141s tok/s=3.86 ch/s=10.65 chars=146 
+  [qwen3:4b-instruct pl science t1] ttft=3.818s tok/s=3.89 ch/s=12.02 chars=210 
+  [qwen3:4b-instruct pl reasoning t1] ttft=3.533s tok/s=3.92 ch/s=6.6 chars=91 
+  [qwen3:4b-instruct pl thread t1] ttft=3.642s tok/s=3.89 ch/s=8.86 chars=198 
+  [qwen3:4b-instruct pl thread t2] ttft=5.435s tok/s=3.68 ch/s=8.34 chars=229 
+  [qwen3:4b-instruct pl thread t3] ttft=6.85s tok/s=3.46 ch/s=7.39 chars=320 
+  [qwen3:4b-instruct pl thread t4] ttft=5.7s tok/s=3.18 ch/s=7.99 chars=286 
+  [qwen3:4b-instruct pl thread t5] ttft=7.118s tok/s=3.06 ch/s=6.63 chars=104 
+  [qwen3:4b-instruct en short t1] ttft=2.033s tok/s=3.98 ch/s=17.63 chars=177 
+  [qwen3:4b-instruct en followup t1] ttft=0.29s tok/s=3.94 ch/s=17.28 chars=171 
+  [qwen3:4b-instruct en followup t2] ttft=4.006s tok/s=3.91 ch/s=19.34 chars=203 
+  [qwen3:4b-instruct en science t1] ttft=2.325s tok/s=3.95 ch/s=20.93 chars=233 
+  [qwen3:4b-instruct en reasoning t1] ttft=3.546s tok/s=3.89 ch/s=7.67 chars=132 
+  [qwen3:4b-instruct en thread t1] ttft=2.732s tok/s=3.9 ch/s=13.7 chars=253 
+  [qwen3:4b-instruct en thread t2] ttft=3.599s tok/s=3.8 ch/s=16.47 chars=260 
+  [qwen3:4b-instruct en thread t3] ttft=3.67s tok/s=3.63 ch/s=12.15 chars=224 
+  [qwen3:4b-instruct en thread t4] ttft=4.165s tok/s=3.57 ch/s=12.75 chars=175 
+  [qwen3:4b-instruct en thread t5] ttft=3.994s tok/s=3.71 ch/s=13.82 chars=41 
+  [qwen3:4b-instruct pl science relativity_mass] ch/s=10.86 chars=577
+  [qwen3:4b-instruct pl science boiling_point] ch/s=9.87 chars=210
+  [qwen3:4b-instruct pl science kg_iron_feathers] ch/s=9.89 chars=84
+  [qwen3:4b-instruct pl science ten_percent_brain] ch/s=11.45 chars=205
+  [qwen3:4b-instruct pl science sky_blue] ch/s=11.37 chars=165
+  [qwen3:4b-instruct pl science sun_colour] ch/s=11.86 chars=306
+  [qwen3:4b-instruct en science relativity_mass] ch/s=17.8 chars=883
+  [qwen3:4b-instruct en science boiling_point] ch/s=13.21 chars=201
+  [qwen3:4b-instruct en science kg_iron_feathers] ch/s=16.52 chars=154
+  [qwen3:4b-instruct en science ten_percent_brain] ch/s=16.12 chars=188
+  [qwen3:4b-instruct en science sky_blue] ch/s=20.64 chars=260
+  [qwen3:4b-instruct en science sun_colour] ch/s=16.52 chars=302
+
+===== qwen3.5:4b =====
+  [qwen3.5:4b COLD] load=16.28s ttft=41.819s tok/s=3.15 mem_before=14522.5 mem_after=10167.0
+  [qwen3.5:4b warm-prime] ttft=25.401s prompt_eval=25.393s (550 tok) tok/s=3.65
+  [qwen3.5:4b pl short t1] ttft=24.883s tok/s=3.29 ch/s=11.45 chars=216 
+  [qwen3.5:4b pl followup t1] ttft=0.4s tok/s=3.29 ch/s=11.0 chars=254 
+  [qwen3.5:4b pl followup t2] ttft=5.092s tok/s=3.28 ch/s=10.1 chars=203 
+  [qwen3.5:4b pl science t1] ttft=24.909s tok/s=3.32 ch/s=10.81 chars=205 
+  [qwen3.5:4b pl reasoning t1] ttft=26.227s tok/s=3.34 ch/s=7.75 chars=109 
+  [qwen3.5:4b pl thread t1] ttft=24.664s tok/s=3.32 ch/s=10.77 chars=217 
+  [qwen3.5:4b pl thread t2] ttft=5.544s tok/s=3.3 ch/s=9.29 chars=186 
+  [qwen3.5:4b pl thread t3] ttft=5.173s tok/s=3.28 ch/s=9.89 chars=217 
+  [qwen3.5:4b pl thread t4] ttft=5.434s tok/s=3.21 ch/s=9.27 chars=248 
+  [qwen3.5:4b pl thread t5] ttft=6.276s tok/s=3.27 ch/s=8.68 chars=61 
+  [qwen3.5:4b en short t1] ttft=24.023s tok/s=3.32 ch/s=16.11 chars=320 
+  [qwen3.5:4b en followup t1] ttft=0.402s tok/s=3.36 ch/s=17.01 chars=253 
+  [qwen3.5:4b en followup t2] ttft=3.794s tok/s=3.32 ch/s=17.99 chars=309 
+  [qwen3.5:4b en science t1] ttft=24.939s tok/s=3.34 ch/s=19.11 chars=263 
+  [qwen3.5:4b en reasoning t1] ttft=25.644s tok/s=3.33 ch/s=8.41 chars=134 
+  [qwen3.5:4b en thread t1] ttft=24.549s tok/s=3.35 ch/s=14.98 chars=210 
+  [qwen3.5:4b en thread t2] ttft=4.216s tok/s=3.31 ch/s=13.67 chars=244 
+  [qwen3.5:4b en thread t3] ttft=4.466s tok/s=3.26 ch/s=14.32 chars=316 
+  [qwen3.5:4b en thread t4] ttft=5.31s tok/s=3.25 ch/s=13.15 chars=198 
+  [qwen3.5:4b en thread t5] ttft=4.104s tok/s=3.24 ch/s=13.37 chars=132 
+  [qwen3.5:4b pl science relativity_mass] ch/s=10.8 chars=289
+  [qwen3.5:4b pl science boiling_point] ch/s=9.69 chars=145
+  [qwen3.5:4b pl science kg_iron_feathers] ch/s=11.38 chars=218
+  [qwen3.5:4b pl science ten_percent_brain] ch/s=8.65 chars=89
+  [qwen3.5:4b pl science sky_blue] ch/s=10.85 chars=250
+  [qwen3.5:4b pl science sun_colour] ch/s=11.84 chars=233
+  [qwen3.5:4b en science relativity_mass] ch/s=10.73 chars=273
+  [qwen3.5:4b en science boiling_point] ch/s=10.49 chars=208
+  [qwen3.5:4b en science kg_iron_feathers] ch/s=16.45 chars=105
+  [qwen3.5:4b en science ten_percent_brain] ch/s=15.47 chars=155
+  [qwen3.5:4b en science sky_blue] ch/s=17.76 chars=248
+  [qwen3.5:4b en science sun_colour] ch/s=17.59 chars=222
+
+wrote 68 rows -> docs/research/m2_4b_llm_bench/bench_alt_20260907.json
+===== BATCH E: fixed-length throughput, 7 models =====
+
+===== gemma4:e4b =====
+  [gemma4:e4b warm-prime] ttft=26.054s prompt_eval=26.044s (536 tok) tok/s=3.75
+  [gemma4:e4b pl fixed rep1] ttft=26.639s tok/s=3.27 ch/s=11.52 chars=367
+  [gemma4:e4b pl fixed rep2] ttft=0.335s tok/s=3.3 ch/s=12.3 chars=216
+  [gemma4:e4b pl fixed rep3] ttft=0.325s tok/s=3.29 ch/s=11.33 chars=300
+  [gemma4:e4b en fixed rep1] ttft=27.611s tok/s=2.86 ch/s=13.22 chars=185
+  [gemma4:e4b en fixed rep2] ttft=0.37s tok/s=3.01 ch/s=16.12 chars=252
+  [gemma4:e4b en fixed rep3] ttft=0.36s tok/s=3.2 ch/s=16.06 chars=221
+
+===== gemma4:e2b =====
+  [gemma4:e2b warm-prime] ttft=13.071s prompt_eval=13.061s (536 tok) tok/s=7.23
+  [gemma4:e2b pl fixed rep1] ttft=13.7s tok/s=6.35 ch/s=21.83 chars=220
+  [gemma4:e2b pl fixed rep2] ttft=0.179s tok/s=6.3 ch/s=21.17 chars=215
+  [gemma4:e2b pl fixed rep3] ttft=0.174s tok/s=6.33 ch/s=20.84 chars=224
+  [gemma4:e2b en fixed rep1] ttft=13.324s tok/s=6.45 ch/s=22.99 chars=164
+  [gemma4:e2b en fixed rep2] ttft=0.174s tok/s=6.23 ch/s=22.91 chars=195
+  [gemma4:e2b en fixed rep3] ttft=0.178s tok/s=6.38 ch/s=23.19 chars=229
+
+===== qwen3:4b-instruct =====
+  [qwen3:4b-instruct warm-prime] ttft=2.626s prompt_eval=2.596s (583 tok) tok/s=4.42
+  [qwen3:4b-instruct pl fixed rep1] ttft=3.53s tok/s=3.79 ch/s=11.05 chars=495
+  [qwen3:4b-instruct pl fixed rep2] ttft=0.292s tok/s=3.86 ch/s=11.35 chars=300
+  [qwen3:4b-instruct pl fixed rep3] ttft=0.29s tok/s=3.82 ch/s=10.96 chars=367
+  [qwen3:4b-instruct en fixed rep1] ttft=2.365s tok/s=3.91 ch/s=17.91 chars=321
+  [qwen3:4b-instruct en fixed rep2] ttft=0.287s tok/s=3.88 ch/s=16.63 chars=373
+  [qwen3:4b-instruct en fixed rep3] ttft=0.288s tok/s=3.88 ch/s=16.88 chars=309
+
+===== qwen3.5:4b =====
+  [qwen3.5:4b warm-prime] ttft=25.546s prompt_eval=25.537s (550 tok) tok/s=3.7
+  [qwen3.5:4b pl fixed rep1] ttft=26.037s tok/s=3.23 ch/s=9.99 chars=378
+  [qwen3.5:4b pl fixed rep2] ttft=0.42s tok/s=3.23 ch/s=10.63 chars=362
+  [qwen3.5:4b pl fixed rep3] ttft=0.42s tok/s=3.25 ch/s=8.7 chars=252
+  [qwen3.5:4b en fixed rep1] ttft=25.804s tok/s=3.26 ch/s=17.15 chars=379
+  [qwen3.5:4b en fixed rep2] ttft=0.419s tok/s=3.22 ch/s=11.21 chars=268
+  [qwen3.5:4b en fixed rep3] ttft=0.417s tok/s=3.24 ch/s=10.62 chars=256
+
+===== SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 =====
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 warm-prime] ttft=12.886s prompt_eval=12.877s (769 tok) tok/s=2.32
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 pl fixed rep1] ttft=14.769s tok/s=2.02 ch/s=9.1 chars=742
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 pl fixed rep2] ttft=0.505s tok/s=2.02 ch/s=7.71 chars=647
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 pl fixed rep3] ttft=0.506s tok/s=2.0 ch/s=6.73 chars=573
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 en fixed rep1] ttft=14.48s tok/s=2.01 ch/s=6.32 chars=533
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 en fixed rep2] ttft=0.51s tok/s=2.03 ch/s=5.75 chars=483
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 en fixed rep3] ttft=0.503s tok/s=2.02 ch/s=6.19 chars=522
+
+===== bielik-4.5b-v3-q4km-thirdparty:latest =====
+  [bielik-4.5b-v3-q4km-thirdparty:latest warm-prime] ttft=6.736s prompt_eval=6.728s (759 tok) tok/s=4.07
+  [bielik-4.5b-v3-q4km-thirdparty:latest pl fixed rep1] ttft=7.133s tok/s=3.52 ch/s=13.44 chars=577
+  [bielik-4.5b-v3-q4km-thirdparty:latest pl fixed rep2] ttft=0.293s tok/s=3.5 ch/s=13.67 chars=663
+  [bielik-4.5b-v3-q4km-thirdparty:latest pl fixed rep3] ttft=0.337s tok/s=3.51 ch/s=11.2 chars=543
+  [bielik-4.5b-v3-q4km-thirdparty:latest en fixed rep1] ttft=Nones tok/s=3.95 ch/s=0.0 chars=0
+  [bielik-4.5b-v3-q4km-thirdparty:latest en fixed rep2] ttft=Nones tok/s=3.97 ch/s=0.0 chars=0
+  [bielik-4.5b-v3-q4km-thirdparty:latest en fixed rep3] ttft=Nones tok/s=4.04 ch/s=0.0 chars=0
+
+===== llama3.2:latest =====
+  [llama3.2:latest warm-prime] ttft=1.15s prompt_eval=0.934s (624 tok) tok/s=5.55
+  [llama3.2:latest pl fixed rep1] ttft=1.979s tok/s=4.82 ch/s=13.04 chars=203
+  [llama3.2:latest pl fixed rep2] ttft=0.43s tok/s=4.78 ch/s=12.29 chars=311
+  [llama3.2:latest pl fixed rep3] ttft=0.424s tok/s=4.69 ch/s=13.35 chars=290
+  [llama3.2:latest en fixed rep1] ttft=1.835s tok/s=4.86 ch/s=25.04 chars=484
+  [llama3.2:latest en fixed rep2] ttft=0.419s tok/s=4.86 ch/s=19.7 chars=430
+  [llama3.2:latest en fixed rep3] ttft=0.419s tok/s=4.8 ch/s=22.52 chars=535
+
+===== qwen2.5:3b =====
+  [qwen2.5:3b warm-prime] ttft=0.759s prompt_eval=0.743s (573 tok) tok/s=6.09
+  [qwen2.5:3b pl fixed rep1] ttft=1.127s tok/s=5.29 ch/s=15.51 chars=375
+  [qwen2.5:3b pl fixed rep2] ttft=0.198s tok/s=5.32 ch/s=14.23 chars=401
+  [qwen2.5:3b pl fixed rep3] ttft=0.198s tok/s=5.3 ch/s=13.34 chars=330
+  [qwen2.5:3b en fixed rep1] ttft=1.173s tok/s=5.34 ch/s=24.0 chars=490
+  [qwen2.5:3b en fixed rep2] ttft=0.198s tok/s=5.34 ch/s=26.97 chars=394
+  [qwen2.5:3b en fixed rep3] ttft=0.204s tok/s=5.35 ch/s=25.24 chars=406
+
+wrote 56 rows -> docs/research/m2_4b_llm_bench/bench_fixed_20260907.json
+===== BATCH F: Bielik science-truth (PL reference) =====
+
+===== SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 =====
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 warm-prime] ttft=Nones prompt_eval=12.898s (769 tok) tok/s=2.29
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 pl science relativity_mass] ch/s=5.64 chars=555
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 pl science boiling_point] ch/s=7.74 chars=339
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 pl science kg_iron_feathers] ch/s=0.0 chars=0
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 pl science ten_percent_brain] ch/s=0.0 chars=0
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 pl science sky_blue] ch/s=0.0 chars=0
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 pl science sun_colour] ch/s=7.12 chars=140
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 en science relativity_mass] ch/s=4.94 chars=488
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 en science boiling_point] ch/s=5.28 chars=224
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 en science kg_iron_feathers] ch/s=4.8 chars=94
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 en science ten_percent_brain] ch/s=6.18 chars=607
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 en science sky_blue] ch/s=5.25 chars=341
+  [SpeakLeash/bielik-4.5b-v3.0-instruct:Q8_0 en science sun_colour] ch/s=4.33 chars=115
+
+===== bielik-4.5b-v3-q4km-thirdparty:latest =====
+  [bielik-4.5b-v3-q4km-thirdparty:latest warm-prime] ttft=6.807s prompt_eval=6.795s (759 tok) tok/s=4.08
+  [bielik-4.5b-v3-q4km-thirdparty:latest pl science relativity_mass] ch/s=10.78 chars=419
+  [bielik-4.5b-v3-q4km-thirdparty:latest pl science boiling_point] ch/s=13.59 chars=154
+  [bielik-4.5b-v3-q4km-thirdparty:latest pl science kg_iron_feathers] ch/s=11.15 chars=95
+  [bielik-4.5b-v3-q4km-thirdparty:latest pl science ten_percent_brain] ch/s=0.0 chars=0
+  [bielik-4.5b-v3-q4km-thirdparty:latest pl science sky_blue] ch/s=0.0 chars=0
+  [bielik-4.5b-v3-q4km-thirdparty:latest pl science sun_colour] ch/s=15.46 chars=344
+  [bielik-4.5b-v3-q4km-thirdparty:latest en science relativity_mass] ch/s=8.76 chars=509
+  [bielik-4.5b-v3-q4km-thirdparty:latest en science boiling_point] ch/s=7.92 chars=131
+  [bielik-4.5b-v3-q4km-thirdparty:latest en science kg_iron_feathers] ch/s=0.0 chars=0
+  [bielik-4.5b-v3-q4km-thirdparty:latest en science ten_percent_brain] ch/s=0.0 chars=0
+  [bielik-4.5b-v3-q4km-thirdparty:latest en science sky_blue] ch/s=8.26 chars=198
+  [bielik-4.5b-v3-q4km-thirdparty:latest en science sun_colour] ch/s=8.16 chars=170
+
+wrote 26 rows -> docs/research/m2_4b_llm_bench/bench_bielik_science_20260907.json
+===== ALL BATCHES DONE =====

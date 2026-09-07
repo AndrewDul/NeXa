@@ -1,0 +1,38 @@
+
+===== gemma4:e4b =====
+  [gemma4:e4b COLD] load=33.186s ttft=60.256s tok/s=3.28 mem_before=14417.0 mem_after=4253.1
+  [gemma4:e4b warm-prime] ttft=26.444s prompt_eval=26.434s (536 tok) tok/s=3.7
+  [gemma4:e4b pl short t1] ttft=29.233s tok/s=3.1 ch/s=9.75 chars=170 
+  [gemma4:e4b pl followup t1] ttft=0.484s tok/s=3.0 ch/s=9.43 chars=176 
+  [gemma4:e4b pl followup t2] ttft=2.26s tok/s=2.93 ch/s=9.79 chars=194 
+  [gemma4:e4b pl science t1] ttft=29.926s tok/s=3.22 ch/s=11.55 chars=301 
+  [gemma4:e4b pl reasoning t1] ttft=29.557s tok/s=3.28 ch/s=6.02 chars=99 
+  [gemma4:e4b pl thread t1] ttft=29.47s tok/s=3.25 ch/s=11.58 chars=317 
+  [gemma4:e4b pl thread t2] ttft=3.324s tok/s=2.94 ch/s=9.23 chars=182 
+  [gemma4:e4b pl thread t3] ttft=2.758s tok/s=2.98 ch/s=9.8 chars=191 
+  [gemma4:e4b pl thread t4] ttft=2.637s tok/s=2.99 ch/s=9.9 chars=189 
+  [gemma4:e4b pl thread t5] ttft=3.171s tok/s=2.95 ch/s=6.93 chars=47 
+  [gemma4:e4b en short t1] ttft=29.559s tok/s=3.24 ch/s=15.16 chars=173 
+  [gemma4:e4b en followup t1] ttft=0.461s tok/s=3.05 ch/s=14.74 chars=203 
+  [gemma4:e4b en followup t2] ttft=2.328s tok/s=2.89 ch/s=14.47 chars=170 
+  [gemma4:e4b en science t1] ttft=28.362s tok/s=3.32 ch/s=16.42 chars=183 
+  [gemma4:e4b en reasoning t1] ttft=28.512s tok/s=3.31 ch/s=7.5 chars=86 
+  [gemma4:e4b en thread t1] ttft=30.61s tok/s=3.15 ch/s=15.88 chars=116 
+  [gemma4:e4b en thread t2] ttft=2.338s tok/s=3.27 ch/s=16.95 chars=114 
+  [gemma4:e4b en thread t3] ttft=2.454s tok/s=3.33 ch/s=17.94 chars=151 
+  [gemma4:e4b en thread t4] ttft=2.469s tok/s=3.05 ch/s=13.46 chars=141 
+  [gemma4:e4b en thread t5] ttft=2.064s tok/s=3.55 ch/s=14.57 chars=41 
+  [gemma4:e4b pl science relativity_mass] ch/s=9.43 chars=622
+  [gemma4:e4b pl science boiling_point] ch/s=10.75 chars=199
+  [gemma4:e4b pl science kg_iron_feathers] ch/s=12.06 chars=123
+  [gemma4:e4b pl science ten_percent_brain] ch/s=11.33 chars=169
+  [gemma4:e4b pl science sky_blue] ch/s=11.63 chars=209
+  [gemma4:e4b pl science sun_colour] ch/s=11.27 chars=175
+  [gemma4:e4b en science relativity_mass] ch/s=13.52 chars=838
+  [gemma4:e4b en science boiling_point] ch/s=13.93 chars=108
+  [gemma4:e4b en science kg_iron_feathers] ch/s=15.0 chars=107
+  [gemma4:e4b en science ten_percent_brain] ch/s=17.23 chars=202
+  [gemma4:e4b en science sky_blue] ch/s=17.13 chars=222
+  [gemma4:e4b en science sun_colour] ch/s=15.22 chars=137
+
+wrote 34 rows -> docs/research/m2_4b_llm_bench/bench_baseline_e4b_20260907.json

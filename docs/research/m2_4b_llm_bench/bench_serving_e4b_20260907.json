@@ -1,0 +1,1178 @@
+[
+ {
+  "text": "Dzień dobry. Jak Ci minął",
+  "gen_chars": 25,
+  "ttft_s": 26.206,
+  "wall_s": 28.341,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 536,
+  "prompt_eval_duration_s": 26.196,
+  "prompt_eval_tok_s": 20.46,
+  "eval_count": 8,
+  "eval_duration_s": 2.133,
+  "tok_s": 3.75,
+  "gen_chars_s": 11.72,
+  "done_reason": "length",
+  "truncated_num_predict": true,
+  "model": "gemma4:e4b",
+  "set": "warm_prime",
+  "lang": "pl",
+  "case": "warm_ttft",
+  "turn": 1,
+  "pre": {
+   "mem_avail_mb": 4277.3,
+   "temp_c": 66.1,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4275.8,
+   "temp_c": 66.1,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:02:51.540475+00:00"
+ },
+ {
+  "text": "To wynika z podstawowych zasad fizyki relatywistycznej Einsteina. Im szybciej porusza się obiekt, tym większa jego masa relatywistyczna, a ta rośnie w taki sposób, że osiągnięcie prędkości światła wymagałoby nieskończonej ilości energii.",
+  "gen_chars": 237,
+  "ttft_s": 26.775,
+  "wall_s": 46.693,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 26.766,
+  "prompt_eval_tok_s": 20.32,
+  "eval_count": 66,
+  "eval_duration_s": 19.918,
+  "tok_s": 3.31,
+  "gen_chars_s": 11.9,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "baseline",
+  "turn": 1,
+  "opts": {},
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4291.7,
+   "temp_c": 70.5,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4289.2,
+   "temp_c": 71.05,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:03:38.241052+00:00"
+ },
+ {
+  "text": "To wynika z relatywistycznej teorii Einsteina. Gdyby obiekt miał masę i poruszał się z prędkością bliską prędkości światła, jego masa spoczynkowa wzrosłaby do nieskończoności. W efekcie wymagałoby to nieskończonej ilości energii, co jest niemożliwe do osiągnięcia.",
+  "gen_chars": 264,
+  "ttft_s": 0.324,
+  "wall_s": 24.863,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 0.314,
+  "prompt_eval_tok_s": 1733.12,
+  "eval_count": 81,
+  "eval_duration_s": 24.538,
+  "tok_s": 3.3,
+  "gen_chars_s": 10.76,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "baseline",
+  "turn": 2,
+  "opts": {},
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4271.1,
+   "temp_c": 69.95,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4262.9,
+   "temp_c": 69.95,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:04:03.110210+00:00"
+ },
+ {
+  "text": "It's due to special relativity. As an object with mass approaches the speed of light, its relativistic mass increases, requiring infinite energy to accelerate it further. This infinite energy barrier makes exceeding $c$ impossible according to our current understanding of physics.",
+  "gen_chars": 281,
+  "ttft_s": 26.668,
+  "wall_s": 42.018,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 26.658,
+  "prompt_eval_tok_s": 20.18,
+  "eval_count": 51,
+  "eval_duration_s": 15.35,
+  "tok_s": 3.32,
+  "gen_chars_s": 18.31,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "baseline",
+  "turn": 1,
+  "opts": {},
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4308.7,
+   "temp_c": 69.95,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4298.6,
+   "temp_c": 68.85,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:04:45.234880+00:00"
+ },
+ {
+  "text": "It requires infinite energy to accelerate any object with mass up to the speed of light. As an object approaches $c$, its relativistic mass increases, demanding ever-increasing amounts of energy.",
+  "gen_chars": 195,
+  "ttft_s": 0.329,
+  "wall_s": 11.631,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 0.316,
+  "prompt_eval_tok_s": 1701.49,
+  "eval_count": 38,
+  "eval_duration_s": 11.304,
+  "tok_s": 3.36,
+  "gen_chars_s": 17.25,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "baseline",
+  "turn": 2,
+  "opts": {},
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4286.3,
+   "temp_c": 68.85,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4285.8,
+   "temp_c": 70.5,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:04:56.871606+00:00"
+ },
+ {
+  "text": "To wynika z relatywystyka Einsteina. Im obiekt zbliża się do prędkości światła, tym jego masa efektywnie rośnie, a potrzeba energii do przyspieszenia staje się nieskończona. Dlatego przekroczenie tej granicy jest fizycznie niemożliwe dla czegokolwiek posiadającego masę spoczynkową.",
+  "gen_chars": 282,
+  "ttft_s": 60.262,
+  "wall_s": 84.646,
+  "load_duration_s": 33.369,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 26.884,
+  "prompt_eval_tok_s": 20.24,
+  "eval_count": 80,
+  "eval_duration_s": 24.384,
+  "tok_s": 3.28,
+  "gen_chars_s": 11.56,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_thread=4",
+  "turn": 1,
+  "opts": {
+   "num_thread": 4
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4305.3,
+   "temp_c": 68.85,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4303.8,
+   "temp_c": 68.85,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:06:21.525566+00:00"
+ },
+ {
+  "text": "To wynika z relatywistyki Einsteina. Im szybciej obiekt zbliża się do prędkości światła, tym większa energia i masa, jaką musi posiadać, co wymaga nieskończonej ilości energii.",
+  "gen_chars": 176,
+  "ttft_s": 0.329,
+  "wall_s": 15.12,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 0.313,
+  "prompt_eval_tok_s": 1735.31,
+  "eval_count": 49,
+  "eval_duration_s": 14.794,
+  "tok_s": 3.31,
+  "gen_chars_s": 11.9,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_thread=4",
+  "turn": 2,
+  "opts": {
+   "num_thread": 4
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4288.0,
+   "temp_c": 68.85,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4286.5,
+   "temp_c": 69.4,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:06:36.653295+00:00"
+ },
+ {
+  "text": "It's due to the principles of special relativity. As an object with mass accelerates toward the speed of light, its effective mass increases towards infinity. To reach that speed, an infinite amount of energy would be required, which is impossible.",
+  "gen_chars": 248,
+  "ttft_s": 26.666,
+  "wall_s": 41.388,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 26.656,
+  "prompt_eval_tok_s": 20.18,
+  "eval_count": 49,
+  "eval_duration_s": 14.72,
+  "tok_s": 3.33,
+  "gen_chars_s": 16.85,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_thread=4",
+  "turn": 1,
+  "opts": {
+   "num_thread": 4
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4326.0,
+   "temp_c": 69.95,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4319.8,
+   "temp_c": 70.5,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:07:18.048163+00:00"
+ },
+ {
+  "text": "It's due to the relationship between mass, energy, and velocity described by special relativity. As an object approaches the speed of light, its relativistic mass increases infinitely, requiring infinite energy to accelerate it further.",
+  "gen_chars": 236,
+  "ttft_s": 0.334,
+  "wall_s": 13.293,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 0.324,
+  "prompt_eval_tok_s": 1662.09,
+  "eval_count": 43,
+  "eval_duration_s": 12.959,
+  "tok_s": 3.32,
+  "gen_chars_s": 18.21,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_thread=4",
+  "turn": 2,
+  "opts": {
+   "num_thread": 4
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4296.2,
+   "temp_c": 69.95,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4296.2,
+   "temp_c": 69.95,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:07:31.347804+00:00"
+ },
+ {
+  "text": "To wynika z podstawowych zasad fizyki relatywistycznej Einsteina. Im szybciej porusza się obiekt, tym większa energia kinetyczna musi mieć, a ta rośnie w sposób powodujący, że przekroczenie prędkości światła wymagałoby nieskończonej ilości energii.",
+  "gen_chars": 248,
+  "ttft_s": 62.771,
+  "wall_s": 80.811,
+  "load_duration_s": 31.579,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 31.181,
+  "prompt_eval_tok_s": 17.45,
+  "eval_count": 65,
+  "eval_duration_s": 18.04,
+  "tok_s": 3.6,
+  "gen_chars_s": 13.75,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_thread=3",
+  "turn": 1,
+  "opts": {
+   "num_thread": 3
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4320.0,
+   "temp_c": 67.75,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4310.8,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:08:52.162983+00:00"
+ },
+ {
+  "text": "To wynika z podstawowych zasad fizyki relatywistycznej Einsteina. Im szybciej porusza się obiekt o masie, tym większa energia potrzebna jest do dalszego przyspieszenia. Aby osiągnąć prędkość światła, masa musiałaby mieć nieskończową energię, co jest niemożliwe.",
+  "gen_chars": 261,
+  "ttft_s": 0.306,
+  "wall_s": 20.663,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 0.295,
+  "prompt_eval_tok_s": 1843.22,
+  "eval_count": 73,
+  "eval_duration_s": 20.357,
+  "tok_s": 3.59,
+  "gen_chars_s": 12.82,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_thread=3",
+  "turn": 2,
+  "opts": {
+   "num_thread": 3
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4293.7,
+   "temp_c": 67.75,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4291.7,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:09:12.833890+00:00"
+ },
+ {
+  "text": "It requires infinite energy to accelerate any object with mass to the speed of light. As an object approaches $c$, its relativistic mass increases towards infinity, necessitating infinite energy input.",
+  "gen_chars": 201,
+  "ttft_s": 30.946,
+  "wall_s": 40.759,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 30.936,
+  "prompt_eval_tok_s": 17.39,
+  "eval_count": 36,
+  "eval_duration_s": 9.812,
+  "tok_s": 3.67,
+  "gen_chars_s": 20.49,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_thread=3",
+  "turn": 1,
+  "opts": {
+   "num_thread": 3
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4328.5,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4300.4,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:09:53.597441+00:00"
+ },
+ {
+  "text": "It's due to special relativity. As an object with mass accelerates, its effective mass increases, requiring an infinite amount of energy to reach the speed of light.",
+  "gen_chars": 165,
+  "ttft_s": 0.301,
+  "wall_s": 9.586,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 0.291,
+  "prompt_eval_tok_s": 1851.93,
+  "eval_count": 34,
+  "eval_duration_s": 9.284,
+  "tok_s": 3.66,
+  "gen_chars_s": 17.77,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_thread=3",
+  "turn": 2,
+  "opts": {
+   "num_thread": 3
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4295.3,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4295.3,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:10:03.187023+00:00"
+ },
+ {
+  "text": "To wynika z podstawów szczególnej teorii względności Einsteina. Im szybciej porusza się obiekt o masie, tym większa energia kinetyczna jest wymagana do dalszego przyspieszenia. Aby osiągnąć prędkość światła, masa musiałaby mieć nieskończoną energię.",
+  "gen_chars": 249,
+  "ttft_s": 76.357,
+  "wall_s": 94.394,
+  "load_duration_s": 31.846,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 44.502,
+  "prompt_eval_tok_s": 12.22,
+  "eval_count": 68,
+  "eval_duration_s": 18.037,
+  "tok_s": 3.77,
+  "gen_chars_s": 13.8,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_thread=2",
+  "turn": 1,
+  "opts": {
+   "num_thread": 2
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4289.4,
+   "temp_c": 66.65,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4289.4,
+   "temp_c": 66.65,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:11:37.585003+00:00"
+ },
+ {
+  "text": "To wynika ze struktury relatywistycznej masy i energii. Im bliżej jesteś prędkości światła, tym większa masa, jaką musiałbyś nadać swojemu obiektowi, a ta masa rośnie do nieskończoności. W efekcie potrzeba by to nieskończonej ilości energii, której nie ma.",
+  "gen_chars": 256,
+  "ttft_s": 0.29,
+  "wall_s": 19.687,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 0.28,
+  "prompt_eval_tok_s": 1943.29,
+  "eval_count": 73,
+  "eval_duration_s": 19.397,
+  "tok_s": 3.76,
+  "gen_chars_s": 13.2,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_thread=2",
+  "turn": 2,
+  "opts": {
+   "num_thread": 2
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4283.8,
+   "temp_c": 67.2,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4283.4,
+   "temp_c": 67.2,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:11:57.276066+00:00"
+ },
+ {
+  "text": "It's due to the principles of special relativity. As an object approaches the speed of light, its effective mass increases toward infinity. To accelerate infinite mass requires an infinite amount of energy, which is impossible to obtain.",
+  "gen_chars": 237,
+  "ttft_s": 43.905,
+  "wall_s": 55.745,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 43.895,
+  "prompt_eval_tok_s": 12.26,
+  "eval_count": 45,
+  "eval_duration_s": 11.84,
+  "tok_s": 3.8,
+  "gen_chars_s": 20.02,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_thread=2",
+  "turn": 1,
+  "opts": {
+   "num_thread": 2
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4317.6,
+   "temp_c": 65.55,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4317.6,
+   "temp_c": 65.55,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:12:53.024752+00:00"
+ },
+ {
+  "text": "It's due to the principles of special relativity. As an object with mass approaches the speed of light, its relativistic mass increases, requiring an infinite amount of energy to accelerate it further.",
+  "gen_chars": 201,
+  "ttft_s": 0.293,
+  "wall_s": 10.542,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 0.283,
+  "prompt_eval_tok_s": 1901.99,
+  "eval_count": 39,
+  "eval_duration_s": 10.249,
+  "tok_s": 3.81,
+  "gen_chars_s": 19.61,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_thread=2",
+  "turn": 2,
+  "opts": {
+   "num_thread": 2
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4292.9,
+   "temp_c": 66.1,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4292.9,
+   "temp_c": 66.1,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:13:03.570691+00:00"
+ },
+ {
+  "text": "To wynika z podstawowych zasad fizyki relatywistycznej Einsteina. Gdyby jakiś obiekt miał masę i poruszał się z prędkością bliską prędkości światła, jego masa spoczynkowa wzrosłaby do nieskończoności. Aby osiągnąć tę prędkość, potrzeba by mu nieskończonej ilości energii, co jest niemożliwe.",
+  "gen_chars": 291,
+  "ttft_s": 57.859,
+  "wall_s": 84.407,
+  "load_duration_s": 31.619,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 26.231,
+  "prompt_eval_tok_s": 20.74,
+  "eval_count": 86,
+  "eval_duration_s": 26.548,
+  "tok_s": 3.24,
+  "gen_chars_s": 10.96,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_batch=256",
+  "turn": 1,
+  "opts": {
+   "num_batch": 256
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4469.8,
+   "temp_c": 67.2,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4468.9,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:14:27.982808+00:00"
+ },
+ {
+  "text": "To wynika ze struktury czasoprzestrzeni opisanej przez teorię względności Einsteina. Im bliżej jesteś prędkości światła, tym większa masa bezwładnościowa wymaga nieskończonej ilości energii do dalszego przyspieszenia.",
+  "gen_chars": 217,
+  "ttft_s": 0.365,
+  "wall_s": 17.503,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 0.355,
+  "prompt_eval_tok_s": 1532.11,
+  "eval_count": 56,
+  "eval_duration_s": 17.137,
+  "tok_s": 3.27,
+  "gen_chars_s": 12.66,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_batch=256",
+  "turn": 2,
+  "opts": {
+   "num_batch": 256
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4487.6,
+   "temp_c": 67.2,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4485.6,
+   "temp_c": 67.2,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:14:45.492805+00:00"
+ },
+ {
+  "text": "It's due to the principles of special relativity. As an object with mass accelerates toward the speed of light, its relativistic mass increases, requiring infinite energy to reach that speed.",
+  "gen_chars": 191,
+  "ttft_s": 12.903,
+  "wall_s": 24.102,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 12.886,
+  "prompt_eval_tok_s": 41.75,
+  "eval_count": 37,
+  "eval_duration_s": 11.205,
+  "tok_s": 3.3,
+  "gen_chars_s": 17.05,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_batch=256",
+  "turn": 1,
+  "opts": {
+   "num_batch": 256
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4474.1,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4474.1,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:15:09.600278+00:00"
+ },
+ {
+  "text": "It's due to the principles of special relativity. As an object with mass accelerates, its relativistic mass increases, requiring an infinite amount of energy to reach the speed of light.",
+  "gen_chars": 186,
+  "ttft_s": 0.331,
+  "wall_s": 11.621,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 0.316,
+  "prompt_eval_tok_s": 1701.4,
+  "eval_count": 37,
+  "eval_duration_s": 11.294,
+  "tok_s": 3.28,
+  "gen_chars_s": 16.47,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_batch=256",
+  "turn": 2,
+  "opts": {
+   "num_batch": 256
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4479.4,
+   "temp_c": 68.85,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4479.4,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:15:21.229442+00:00"
+ },
+ {
+  "text": "To wynika z fundamentalnych zasad fizyki relatywistycznej. Im bliżej obiekt zbliża się do prędkości światła, tym większa staje się jego masa i energia kinetyczna. Aby osiągnąć taką prędkość, trzeba by dostarczyć nieskończoną ilość energii.",
+  "gen_chars": 239,
+  "ttft_s": 58.601,
+  "wall_s": 77.967,
+  "load_duration_s": 31.88,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 26.712,
+  "prompt_eval_tok_s": 20.37,
+  "eval_count": 64,
+  "eval_duration_s": 19.366,
+  "tok_s": 3.3,
+  "gen_chars_s": 12.34,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_batch=1024",
+  "turn": 1,
+  "opts": {
+   "num_batch": 1024
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4314.2,
+   "temp_c": 67.75,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4312.8,
+   "temp_c": 67.75,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:16:39.202818+00:00"
+ },
+ {
+  "text": "To wynika z podstawowych zasad fizyki relatywistycznej. Im szybciej porusza się obiekt z masą, tym większa energia kinetyczna i masa spoczynkową musi on posiadać. Aby osiągnąć prędkość światła, taka masa musiałaby mieć nieskończową energię.",
+  "gen_chars": 240,
+  "ttft_s": 0.338,
+  "wall_s": 21.296,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 0.325,
+  "prompt_eval_tok_s": 1674.26,
+  "eval_count": 69,
+  "eval_duration_s": 20.959,
+  "tok_s": 3.29,
+  "gen_chars_s": 11.45,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_batch=1024",
+  "turn": 2,
+  "opts": {
+   "num_batch": 1024
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4287.5,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4287.5,
+   "temp_c": 67.75,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:17:00.509109+00:00"
+ },
+ {
+  "text": "It's due to the principles of special relativity. As an object with mass accelerates, its relativistic mass increases, requiring an infinite amount of energy to reach the speed of light.",
+  "gen_chars": 186,
+  "ttft_s": 26.33,
+  "wall_s": 37.305,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 26.319,
+  "prompt_eval_tok_s": 20.44,
+  "eval_count": 37,
+  "eval_duration_s": 10.974,
+  "tok_s": 3.37,
+  "gen_chars_s": 16.95,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_batch=1024",
+  "turn": 1,
+  "opts": {
+   "num_batch": 1024
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4319.6,
+   "temp_c": 69.4,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4319.6,
+   "temp_c": 68.85,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:17:37.821427+00:00"
+ },
+ {
+  "text": "It's fundamentally limited by the relationship between mass, energy, and momentum. As an object with mass accelerates toward the speed of light, its relativistic mass increases towards infinity, requiring an infinite amount of energy to push it further.",
+  "gen_chars": 253,
+  "ttft_s": 0.331,
+  "wall_s": 14.434,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 0.315,
+  "prompt_eval_tok_s": 1707.21,
+  "eval_count": 47,
+  "eval_duration_s": 14.108,
+  "tok_s": 3.33,
+  "gen_chars_s": 17.93,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_batch=1024",
+  "turn": 2,
+  "opts": {
+   "num_batch": 1024
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4296.2,
+   "temp_c": 69.4,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4293.8,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:17:52.260878+00:00"
+ },
+ {
+  "text": "To wynika ze struktury czasoprzestrzeni i fizyki relatywistycznej. Im szybciej porusza się obiekt z masą, tym większa jego masa, a energia potrzebna do przyspieszenia rośnie wykładniczo. Przy prędkości światła wymagana energia staje się nieskończona, co jest niemożliwe do osiągnięcia dla czegokolwiek mającego masę.",
+  "gen_chars": 316,
+  "ttft_s": 58.651,
+  "wall_s": 86.184,
+  "load_duration_s": 32.874,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 25.768,
+  "prompt_eval_tok_s": 21.11,
+  "eval_count": 90,
+  "eval_duration_s": 27.532,
+  "tok_s": 3.27,
+  "gen_chars_s": 11.48,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_ctx=4096",
+  "turn": 1,
+  "opts": {
+   "num_ctx": 4096
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4473.4,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4458.4,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:19:18.450258+00:00"
+ },
+ {
+  "text": "To wynika z podstawowych zasad fizyki relatywistycznej. Im szybciej porusza się obiekt, tym większa energia jest potrzebna do zwiększenia jego prędkości, a masa sprawia, że ta wymagana energia rośnie wykładniczo. Aby osiągnąć prędkość światła, taka energia musiałaby być nieskończona.",
+  "gen_chars": 284,
+  "ttft_s": 0.326,
+  "wall_s": 23.324,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 0.315,
+  "prompt_eval_tok_s": 1725.18,
+  "eval_count": 76,
+  "eval_duration_s": 22.998,
+  "tok_s": 3.3,
+  "gen_chars_s": 12.35,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_ctx=4096",
+  "turn": 2,
+  "opts": {
+   "num_ctx": 4096
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4488.9,
+   "temp_c": 69.4,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4488.9,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:19:41.782186+00:00"
+ },
+ {
+  "text": "It's due to the principles of special relativity. As an object with mass accelerates, its relativistic mass increases, requiring an infinite amount of energy to reach the speed of light.",
+  "gen_chars": 186,
+  "ttft_s": 24.24,
+  "wall_s": 35.222,
+  "load_duration_s": 0.002,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 24.23,
+  "prompt_eval_tok_s": 22.2,
+  "eval_count": 37,
+  "eval_duration_s": 10.982,
+  "tok_s": 3.37,
+  "gen_chars_s": 16.94,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_ctx=4096",
+  "turn": 1,
+  "opts": {
+   "num_ctx": 4096
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4492.1,
+   "temp_c": 69.4,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4489.2,
+   "temp_c": 69.4,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:20:17.012103+00:00"
+ },
+ {
+  "text": "It's due to the principles of special relativity. As an object with mass accelerates, its relativistic mass increases, requiring an infinite amount of energy to reach the speed of light.",
+  "gen_chars": 186,
+  "ttft_s": 0.338,
+  "wall_s": 11.407,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 0.325,
+  "prompt_eval_tok_s": 1654.7,
+  "eval_count": 37,
+  "eval_duration_s": 11.071,
+  "tok_s": 3.34,
+  "gen_chars_s": 16.8,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_ctx=4096",
+  "turn": 2,
+  "opts": {
+   "num_ctx": 4096
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4488.3,
+   "temp_c": 69.4,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4488.3,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:20:28.423775+00:00"
+ },
+ {
+  "text": "To wynika z podstawowych zasad fizyki relatywistycznej Einsteina. Im szybciej porusza się obiekt z masą, tym większa energia kinetyczna jest potrzebna do przyspieszenia, a ta energia rośnie w sposób wykładniczy. Aby osiągnąć prędkość światła, obiekt musiałby mieć nieskończową masę i wymagałoby to nieskończonej ilości energii.",
+  "gen_chars": 327,
+  "ttft_s": 58.611,
+  "wall_s": 86.032,
+  "load_duration_s": 31.877,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 26.721,
+  "prompt_eval_tok_s": 20.36,
+  "eval_count": 90,
+  "eval_duration_s": 27.421,
+  "tok_s": 3.28,
+  "gen_chars_s": 11.92,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_ctx=2048",
+  "turn": 1,
+  "opts": {
+   "num_ctx": 2048
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4501.1,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4481.2,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:21:54.462577+00:00"
+ },
+ {
+  "text": "To wynika ze szczególnej teorii względności Einsteina. Im szybciej obiekt przyspiesza, tym większa staje się jego masa, a ta masa wymaga nieskończonej energii do przekroczenia prędkości światła.",
+  "gen_chars": 194,
+  "ttft_s": 0.329,
+  "wall_s": 15.709,
+  "load_duration_s": 0.004,
+  "prompt_eval_count": 544,
+  "prompt_eval_duration_s": 0.313,
+  "prompt_eval_tok_s": 1735.42,
+  "eval_count": 51,
+  "eval_duration_s": 15.379,
+  "tok_s": 3.32,
+  "gen_chars_s": 12.61,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "pl",
+  "case": "num_ctx=2048",
+  "turn": 2,
+  "opts": {
+   "num_ctx": 2048
+  },
+  "prompt": "Dlaczego nic mającego masę nie może przekroczyć prędkości światła?",
+  "pre": {
+   "mem_avail_mb": 4518.6,
+   "temp_c": 68.3,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4518.6,
+   "temp_c": 68.85,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:22:10.180197+00:00"
+ },
+ {
+  "text": "It's due to the principles of special relativity. As an object with mass accelerates, its relativistic mass increases, requiring an infinite amount of energy to reach the speed of light.",
+  "gen_chars": 186,
+  "ttft_s": 25.034,
+  "wall_s": 36.017,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 25.021,
+  "prompt_eval_tok_s": 21.5,
+  "eval_count": 37,
+  "eval_duration_s": 10.983,
+  "tok_s": 3.37,
+  "gen_chars_s": 16.94,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_ctx=2048",
+  "turn": 1,
+  "opts": {
+   "num_ctx": 2048
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4525.9,
+   "temp_c": 69.4,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4522.5,
+   "temp_c": 70.5,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:22:46.203610+00:00"
+ },
+ {
+  "text": "It's due to the principles of special relativity. As an object with mass accelerates, its relativistic mass increases, requiring an infinite amount of energy to reach the speed of light.",
+  "gen_chars": 186,
+  "ttft_s": 0.33,
+  "wall_s": 11.657,
+  "load_duration_s": 0.001,
+  "prompt_eval_count": 538,
+  "prompt_eval_duration_s": 0.317,
+  "prompt_eval_tok_s": 1696.68,
+  "eval_count": 37,
+  "eval_duration_s": 11.326,
+  "tok_s": 3.27,
+  "gen_chars_s": 16.42,
+  "done_reason": "stop",
+  "truncated_num_predict": false,
+  "model": "gemma4:e4b",
+  "set": "serving",
+  "lang": "en",
+  "case": "num_ctx=2048",
+  "turn": 2,
+  "opts": {
+   "num_ctx": 2048
+  },
+  "prompt": "Why can't an object with mass exceed the speed of light?",
+  "pre": {
+   "mem_avail_mb": 4514.6,
+   "temp_c": 68.85,
+   "throttled": "0x0"
+  },
+  "post": {
+   "mem_avail_mb": 4514.1,
+   "temp_c": 68.85,
+   "throttled": "0x0"
+  },
+  "ts": "2026-09-07T18:22:57.869048+00:00"
+ }
+]

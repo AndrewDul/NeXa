@@ -1,0 +1,53 @@
+
+===== qwen2.5:3b =====
+  [qwen2.5:3b warm-prime] ttft=0.795s prompt_eval=0.786s (573 tok) tok/s=5.62
+  [qwen2.5:3b pl short t1] ttft=0.654s tok/s=4.88 ch/s=13.17 chars=262 
+  [qwen2.5:3b pl followup t1] ttft=0.207s tok/s=4.86 ch/s=13.11 chars=224 
+  [qwen2.5:3b pl followup t2] ttft=4.676s tok/s=4.81 ch/s=13.21 chars=313 
+  [qwen2.5:3b pl science t1] ttft=1.447s tok/s=4.74 ch/s=13.48 chars=236 
+  [qwen2.5:3b pl reasoning t1] ttft=1.801s tok/s=4.81 ch/s=10.12 chars=120 
+  [qwen2.5:3b pl thread t1] ttft=1.11s tok/s=4.72 ch/s=11.87 chars=362 
+  [qwen2.5:3b pl thread t2] ttft=8.012s tok/s=4.48 ch/s=12.59 chars=329 
+  [qwen2.5:3b pl thread t3] ttft=13.596s tok/s=5.15 ch/s=13.59 chars=528 TRUNC
+  [qwen2.5:3b pl thread t4] ttft=19.455s tok/s=5.07 ch/s=14.19 chars=316 
+  [qwen2.5:3b pl thread t5] ttft=24.314s tok/s=5.01 ch/s=12.82 chars=284 
+  [qwen2.5:3b en short t1] ttft=1.035s tok/s=5.51 ch/s=24.8 chars=126 
+  [qwen2.5:3b en followup t1] ttft=0.243s tok/s=5.2 ch/s=25.19 chars=155 
+  [qwen2.5:3b en followup t2] ttft=2.524s tok/s=5.35 ch/s=27.37 chars=348 
+  [qwen2.5:3b en science t1] ttft=0.921s tok/s=5.37 ch/s=24.48 chars=488 
+  [qwen2.5:3b en reasoning t1] ttft=1.388s tok/s=5.41 ch/s=13.82 chars=207 
+  [qwen2.5:3b en thread t1] ttft=1.012s tok/s=5.37 ch/s=21.9 chars=208 
+  [qwen2.5:3b en thread t2] ttft=3.612s tok/s=5.33 ch/s=24.82 chars=578 
+  [qwen2.5:3b en thread t3] ttft=8.425s tok/s=5.23 ch/s=22.98 chars=523 
+  [qwen2.5:3b en thread t4] ttft=13.054s tok/s=5.16 ch/s=18.22 chars=540 
+  [qwen2.5:3b en thread t5] ttft=18.669s tok/s=5.22 ch/s=23.06 chars=274 
+
+===== llama3.2:latest =====
+  [llama3.2:latest warm-prime] ttft=1.137s prompt_eval=0.923s (624 tok) tok/s=5.7
+  [llama3.2:latest pl short t1] ttft=0.841s tok/s=4.96 ch/s=11.89 chars=115 
+  [llama3.2:latest pl followup t1] ttft=0.418s tok/s=4.94 ch/s=13.55 chars=244 
+  [llama3.2:latest pl followup t2] ttft=4.859s tok/s=4.78 ch/s=12.61 chars=224 
+  [llama3.2:latest pl science t1] ttft=2.078s tok/s=4.95 ch/s=14.13 chars=194 
+  [llama3.2:latest pl reasoning t1] ttft=3.139s tok/s=5.19 ch/s=10.06 chars=31 
+  [llama3.2:latest pl thread t1] ttft=1.686s tok/s=4.92 ch/s=12.84 chars=180 
+  [llama3.2:latest pl thread t2] ttft=5.429s tok/s=4.8 ch/s=12.76 chars=186 
+  [llama3.2:latest pl thread t3] ttft=8.349s tok/s=4.69 ch/s=12.27 chars=149 
+  [llama3.2:latest pl thread t4] ttft=11.26s tok/s=4.42 ch/s=11.97 chars=325 
+  [llama3.2:latest pl thread t5] ttft=16.459s tok/s=4.35 ch/s=10.31 chars=90 
+  [llama3.2:latest en short t1] ttft=1.482s tok/s=5.02 ch/s=23.33 chars=288 
+  [llama3.2:latest en followup t1] ttft=0.408s tok/s=4.92 ch/s=23.5 chars=301 
+  [llama3.2:latest en followup t2] ttft=3.689s tok/s=4.86 ch/s=23.44 chars=347 
+  [llama3.2:latest en science t1] ttft=1.366s tok/s=4.92 ch/s=23.63 chars=500 
+  [llama3.2:latest en reasoning t1] ttft=1.991s tok/s=4.95 ch/s=14.72 chars=223 
+  [llama3.2:latest en thread t1] ttft=1.441s tok/s=4.96 ch/s=21.81 chars=365 
+  [llama3.2:latest en thread t2] ttft=5.127s tok/s=4.77 ch/s=20.45 chars=463 
+  [llama3.2:latest en thread t3] ttft=9.305s tok/s=4.64 ch/s=22.14 chars=444 
+  [llama3.2:latest en thread t4] ttft=13.098s tok/s=4.39 ch/s=19.67 chars=430 
+  [llama3.2:latest en thread t5] ttft=17.037s tok/s=4.42 ch/s=16.3 chars=70 
+
+wrote 42 rows -> docs/research/m2_4b_llm_bench/bench_smallpl_20260907.json
+  File "<stdin>", line 19
+    print(f"{name} rep{rep}: tok/s={r[\"tok_s\"]} ch/s={r[\"gen_chars_s\"]} chars={r[\"gen_chars\"]}",flush=True)
+                                       ^
+SyntaxError: unexpected character after line continuation character
+SPOTCHECK+CONFIRM DONE

@@ -1,0 +1,32 @@
+  [gemma4:e4b warm-prime] ttft=31.279s prompt_eval=31.269s (536 tok) tok/s=3.38
+baseline rep0: tok/s=2.86 ch/s=8.97 chars=204
+baseline rep1: tok/s=2.89 ch/s=9.73 chars=148
+baseline rep2: tok/s=2.91 ch/s=9.84 chars=342
+baseline rep3: tok/s=3.32 ch/s=10.47 chars=167
+baseline rep4: tok/s=3.34 ch/s=11.31 chars=139
+  => baseline: tok/s 3.06  chars/s 10.06
+num_thread=3 rep0: tok/s=3.64 ch/s=11.3 chars=180
+num_thread=3 rep1: tok/s=3.67 ch/s=12.58 chars=113
+num_thread=3 rep2: tok/s=3.66 ch/s=17.79 chars=170
+num_thread=3 rep3: tok/s=3.62 ch/s=11.51 chars=162
+num_thread=3 rep4: tok/s=3.66 ch/s=11.98 chars=118
+  => num_thread=3: tok/s 3.65  chars/s 13.03
+num_thread=2 rep0: tok/s=3.75 ch/s=11.11 chars=160
+num_thread=2 rep1: tok/s=3.78 ch/s=13.55 chars=154
+num_thread=2 rep2: tok/s=3.78 ch/s=18.57 chars=226
+num_thread=2 rep3: tok/s=3.77 ch/s=11.65 chars=167
+num_thread=2 rep4: tok/s=3.79 ch/s=13.11 chars=135
+  => num_thread=2: tok/s 3.77  chars/s 13.60
+num_thread=1 rep0: tok/s=2.84 ch/s=8.92 chars=173
+num_thread=1 rep1: tok/s=2.9 ch/s=9.82 chars=122
+num_thread=1 rep2: tok/s=2.88 ch/s=15.58 chars=238
+num_thread=1 rep3: tok/s=2.88 ch/s=8.96 chars=168
+num_thread=1 rep4: tok/s=2.91 ch/s=10.06 chars=135
+  => num_thread=1: tok/s 2.88  chars/s 10.67
+baseline_again rep0: tok/s=3.37 ch/s=10.42 chars=170
+baseline_again rep1: tok/s=3.38 ch/s=11.65 chars=155
+baseline_again rep2: tok/s=3.4 ch/s=15.82 chars=186
+baseline_again rep3: tok/s=3.37 ch/s=10.37 chars=163
+baseline_again rep4: tok/s=3.39 ch/s=11.4 chars=138
+  => baseline_again: tok/s 3.38  chars/s 11.93
+NT_CONFIRM DONE

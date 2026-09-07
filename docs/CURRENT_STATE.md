@@ -9,17 +9,28 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0020_m2_4b_3_3_conversational_voice_response_policy_20260907.md`
-  (M2.4B.3.3 — `ResponseMode.{TEXT,VOICE}`: one constant, fixed-position
-  `system` message (`voice_response_directive()`) added to the SAME
-  `ConversationSession` wire prompt when a reply will be spoken — "answer
-  directly, 1–3 sentences for an ordinary question, short first sentence,
-  honour explicit detail requests". Never stored in history; does not
-  decide the response language; `TEXT` (default) = byte-for-byte
-  pre-B.3.3. Hardware A/B: ordinary voice answers 1–3 sentences
-  (mean chars 395→186, two markdown lectures/lists became prose), detail
-  override uncut, first-audio equal-or-better on 4 of 5, ordinary gaps
-  41.6 s→≤5 s. `realtime_text_ratio ≈ 0.53` unchanged — shape, not rate.
+- **Latest report:** `docs/reports/R0021_m2_4b_3_4_local_llm_serving_voice_benchmark_20260907.md`
+  (M2.4B.3.4 — local LLM serving & voice performance benchmark;
+  **research only, no production model switch**. Measured `gemma4:e4b`
+  under the real B.3.3 voice path: **PL ~9.4 generated chars/s** (~59 % of
+  R0018's 15.9 target), **EN ~14.7** (~92 %); language ratio PL/EN ≈ 0.64;
+  tok/s ~3.1; warm-prefix TTFT ~2.6 s, cold-prefix (fresh conversation
+  turn 1) ~29 s (the ~535-tok persona+voice-directive preamble at
+  ~20 tok/s), cold load ~33 s, ~10.2 GB resident; temp ≤ 72 °C, never
+  throttled. Serving: **`num_thread=2` gives +14 % tok/s** (per-request
+  Ollama option, no sudo) — still ~85 % of PL target; `num_batch`/`num_ctx`
+  do nothing. Shortlist: **`gemma4:e2b` is the only real candidate** —
+  ~2× faster (PL ~18.7 chars/s ✓ target, EN ~27), warm TTFT ~1.2 s,
+  7.5 GB, same family so the persona + voice directive port unchanged —
+  **BUT a repeatable quality regression** (factual self-contradictions,
+  a hallucination, one EN→PL mirroring break, thinner reasoning). qwen3/
+  qwen3.5:4b = same speed, garbled PL. qwen2.5:3b / llama3.2:3b = fast but
+  word-salad PL. Bielik Q8_0/Q4KM = 2 tok/s / empty completions. **No
+  model beats `gemma4:e4b` without quality loss.** Recommendation:
+  operator A/B blind `e4b` vs `e2b`; take `num_thread=2` + warm-keep as
+  free wins regardless. Also fixed (separate commit `c64b66b`): the
+  continuity `_hold_then_release` self-cancel log warning + 2 regression
+  tests. `R0020` = M2.4B.3.3 `ResponseMode` voice reply policy;
   `R0019` = M2.4B.3.2 continuity controller (no-op on today's rate);
   `R0018` = the rate-budget math authority; `R0017` = M2.4B.3.1 Piper
   `nice +10` + TTS context timeout 8 s; `R0016` = M2.4B.2A
@@ -140,21 +151,40 @@ Runtime / test evidence outranks anything else in this repo.
   first-audio equal-or-better on 4 of 5 (Q-B −8.0 s, Q-E −16.4 s);
   ordinary intra-response gaps 41.6 s→≤5 s. **`realtime_text_ratio ≈
   0.53` is unchanged** — a long answer still gaps; this stage is reply
-  *shape*, not rate. **M2.4B is NOT complete** — the remaining continuity
-  work is ~2× faster generation (~15.9 chars/s). Then **M2.5 — barge-in /
-  interruption** (replaces the temporary half-duplex gate). Separate
-  flagged tracks: STT quality (whisper.cpp "horyzont zdarzeń" → "chory
-  zęzdarzyń" etc.); `GenerationOptions.num_predict = 200` truncating long
-  replies (it truncated both `TEXT`-mode long answers mid-word in the
-  B.3.3 A/B).
-- **Current objective:** operator voice-session confirmation of B.3.3
-  (incl. an English turn + a "rozwiń"/"tell me more" follow-up), then the
-  faster-generation / model-serving track — see "Exact next recommended
-  task". M2.4's functional baseline is frozen by the M2.4 commit and
-  unchanged; the speech planner + continuity controller are additive
-  (remove them from `extra_output_stages` → byte-for-byte M2.4); the
-  voice response policy is additive too (`ResponseMode.TEXT` → byte-for-
-  byte pre-B.3.3 wire prompt).
+  *shape*, not rate. **M2.4B.3.4 — local LLM serving & voice performance
+  benchmark: DONE, research only** (`R0021`, `docs/research/m2_4b_llm_bench/`;
+  **no production model change**). Measured `gemma4:e4b` under the real
+  B.3.3 voice path: PL ~9.4 generated chars/s (~59 % of R0018's 15.9
+  target), EN ~14.7 (~92 %); PL/EN throughput ratio ≈ 0.64; ~3.1 tok/s;
+  warm-prefix TTFT ~2.6 s, cold-prefix ~29 s, cold load ~33 s, ~10.2 GB
+  resident; never throttled. Serving: `num_thread=2` = +14 % tok/s
+  (per-request Ollama option, no sudo; still ~85 % of PL target);
+  `num_batch`/`num_ctx` inert. `gemma4:e2b` is the only viable faster
+  model (~2× — PL ~18.7 chars/s clears target, warm TTFT ~1.2 s, 7.5 GB,
+  same family/persona/voice-policy) **but has a repeatable quality
+  regression** (factual self-contradictions, a hallucination, one EN→PL
+  break, thinner reasoning). qwen3/3.5:4b same speed + garbled PL;
+  qwen2.5:3b/llama3.2:3b fast but word-salad PL; Bielik 2 tok/s / empty
+  completions. **No model beats `gemma4:e4b` without quality loss** —
+  recommend operator A/B blind `e4b` vs `e2b`; `num_thread=2` + warm-keep
+  are free wins regardless. Also fixed separately (`c64b66b`): continuity
+  `_hold_then_release` self-cancel log warning + 2 regression tests.
+  **M2.4B is NOT complete** — the remaining continuity work is faster
+  generation (a model / serving / hardware call, now benchmarked). Then
+  **M2.5 — barge-in / interruption** (replaces the temporary half-duplex
+  gate). Separate flagged tracks: STT quality (whisper.cpp "horyzont
+  zdarzeń" → "chory zęzdarzyń" etc.); `GenerationOptions.num_predict = 200`
+  truncating long replies.
+- **Current objective:** operator A/B blind session `gemma4:e4b` vs
+  `gemma4:e2b` on real PL+EN voice (M1.0B blind-test instrument), plus the
+  free `num_thread=2` + `keep_alive`/prefix-warm provider-config change —
+  see "Exact next recommended task". Also owed: operator voice-session
+  confirmation of B.3.3 (an EN turn + a "rozwiń"/"tell me more" follow-up).
+  M2.4's functional baseline is frozen by the M2.4 commit and unchanged;
+  the speech planner + continuity controller are additive (remove them
+  from `extra_output_stages` → byte-for-byte M2.4); the voice response
+  policy is additive too (`ResponseMode.TEXT` → byte-for-byte pre-B.3.3
+  wire prompt). `gemma4:e4b` remains the ADR-0002 frozen production model.
 
 ---
 
