@@ -61,6 +61,7 @@ from nexa.voice_tts import (  # noqa: E402
     ActivityFlags,
     AssistantSpeechBridge,
     MetricsCollector,
+    NexaSpeechPlanner,
     ResourceSampler,
     TimedPiperHttpTTSService,
     TtsStatusObserver,
@@ -351,6 +352,13 @@ async def main() -> None:
             print(f"M2.4B.1 JSONL: {args.report_json}")
 
     bridge = AssistantSpeechBridge(en_voice=EN_VOICE, pl_voice=PL_VOICE, gate=_gate)
+    # M2.4B.2 — NeXa speech planner: TTS-only Markdown/list normalization +
+    # Polish-aware phrase boundaries. One natural phrase per AggregatedTextFrame;
+    # NO pacing / buffer control / CPU scheduling (that is B.3). Never mutates
+    # canonical assistant text or history.
+    speech_planner = NexaSpeechPlanner(
+        en_voice=EN_VOICE, pl_voice=PL_VOICE, default_language=language.value
+    )
     adapter_ref: list[VoiceConversationAdapter] = []
     (
         on_tts_started,
@@ -413,7 +421,7 @@ async def main() -> None:
         language=language,
         on_transcription=on_transcription,
         on_transcription_error=on_transcription_error,
-        extra_output_stages=[bridge, tts_service, tts_observer],
+        extra_output_stages=[bridge, speech_planner, tts_service, tts_observer],
         half_duplex_gate=_gate,
     )
 

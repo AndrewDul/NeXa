@@ -387,6 +387,31 @@ class TestCollectorCorrelation(unittest.TestCase):
         self.assertFalse(tm.text_chunks[0].after_assistant_complete)
         self.assertTrue(tm.text_chunks[2].after_assistant_complete)
 
+    def test_tiny_text_chunk_count_and_mean(self) -> None:
+        """M2.4B.2: pathological tiny TTSTextFrame chunks are counted for the
+        speech-planner baseline comparison."""
+        c = MetricsCollector()
+        c.start_turn(stt_result=0.0, stt_text="q")
+        c.tts_text("np.")  # 3 chars — pathological
+        c.tts_text("1.")  # 2 chars — pathological
+        big = "A full natural phrase that a listener can follow."
+        c.tts_text(big)
+        tm = c._queue[0]
+        self.assertEqual(tm.tiny_text_chunk_count, 2)
+        self.assertAlmostEqual(tm.mean_text_chunk_chars, (3 + 2 + len(big)) / 3)
+        d = tm.to_dict()
+        self.assertEqual(d["text_to_tts"]["tiny_chunk_count"], 2)
+        self.assertEqual(d["text_to_tts"]["chunk_count"], 3)
+
+    def test_tiny_text_chunk_count_zero_when_all_phrases_are_natural(self) -> None:
+        c = MetricsCollector()
+        c.start_turn(stt_result=0.0, stt_text="q")
+        c.tts_text("Czarna dziura to obszar w przestrzeni.")
+        c.tts_text("Grawitacja jest tam ogromna.")
+        tm = c._queue[0]
+        self.assertEqual(tm.tiny_text_chunk_count, 0)
+        self.assertIsNone(_mk_turn().mean_text_chunk_chars)
+
 
 # 7. BotStarted/BotStopped span correlation  8. silence gap calculation
 class TestPlaybackGaps(unittest.TestCase):

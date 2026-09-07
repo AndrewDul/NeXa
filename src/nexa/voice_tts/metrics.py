@@ -45,6 +45,12 @@ from .timing import TurnTiming
 # Pipecat local audio + Piper medium are s16le; 2 bytes per sample per channel.
 _BYTES_PER_SAMPLE = 2
 
+# M2.4B.2: a TTSTextFrame shorter than this many characters is a "pathological
+# tiny chunk" — the fragmented-speech symptom the speech planner exists to
+# remove (e.g. "1.", "np.", "tzw."). Reported per turn for the B.2 baseline
+# comparison; not a control signal.
+TINY_TEXT_CHUNK_CHARS = 12
+
 BUFFER_ESTIMATE_NOTE = (
     "ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * "
     "channels) minus wall-clock since this turn's first audio. Ignores the "
@@ -336,6 +342,21 @@ class TurnMetrics:
             return None
         return self.assistant_text_chars / dur
 
+    # -- Text -> TTS (post speech-planner) ----------------------------- #
+
+    @property
+    def tiny_text_chunk_count(self) -> int:
+        """How many ``TTSTextFrame`` chunks this turn were shorter than
+        :data:`TINY_TEXT_CHUNK_CHARS` — the fragmented-speech symptom
+        M2.4B.2's planner targets. 0 is the goal."""
+        return sum(1 for c in self.text_chunks if c.text_len < TINY_TEXT_CHUNK_CHARS)
+
+    @property
+    def mean_text_chunk_chars(self) -> float | None:
+        if not self.text_chunks:
+            return None
+        return sum(c.text_len for c in self.text_chunks) / len(self.text_chunks)
+
     # -- Playback / gaps ------------------------------------------------- #
 
     @property
@@ -495,6 +516,12 @@ class TurnMetrics:
                 }
                 for c in self.text_chunks
             ],
+            "text_to_tts": {
+                "chunk_count": len(self.text_chunks),
+                "mean_chunk_chars": _round(self.mean_text_chunk_chars, 1),
+                "tiny_chunk_count": self.tiny_text_chunk_count,
+                "tiny_chunk_threshold_chars": TINY_TEXT_CHUNK_CHARS,
+            },
             "tts_http_synthesis": {
                 "true_request_count": len(self.http_calls),
                 "mean_http_wall_s": _round(self.mean_http_synthesis_s),
@@ -897,8 +924,10 @@ def render_turn_report(tm: TurnMetrics) -> str:
     if tm.error:
         L.append(f"  ERROR:               {tm.error}")
 
-    L.append("\nTEXT -> TTS")
-    L.append(f"  text chunks (TTSTextFrame): {len(tm.text_chunks)}")
+    L.append("\nTEXT -> TTS  (post speech-planner — M2.4B.2)")
+    L.append(f"  text chunks (TTSTextFrame): {len(tm.text_chunks)}  "
+             f"mean chars {_fmt(tm.mean_text_chunk_chars, '', 1)}  "
+             f"tiny (<{TINY_TEXT_CHUNK_CHARS}): {tm.tiny_text_chunk_count}")
     for c in tm.text_chunks:
         L.append(f"    #{c.index}  chars={c.text_len:<4} "
                  f"since_prev={_fmt(c.since_prev_s, 's')}  "

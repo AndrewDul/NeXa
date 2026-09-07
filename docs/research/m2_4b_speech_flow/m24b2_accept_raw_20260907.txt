@@ -1,0 +1,61 @@
+# M2.4B.2 scripted hardware acceptance — 2026-09-07
+# real gemma4:e4b (Ollama) + real Piper HTTP + real LocalAudioOutputTransport;
+# only mic/whisper.cpp replaced by the 3 scripted operator transcripts.
+# 'Generating TTS [...]' = the exact phrase handed to Piper AFTER NexaSpeechPlanner.
+# '[assistant canonical text]' = what ConversationSession stored (must stay raw/clean).
+# (run reached all 3 turns; the trailing render_turn_report summary was cut by the
+#  600 s harness timeout during turn-3 playback drain — the phrase + transcript
+#  evidence below is complete.)
+
+2026-09-07 04:50:39.470 | INFO     | nexa.tts.server:prewarm:109 - nexa.tts: prewarmed voice 'en_GB-jenny_dioco-medium' in 0.24s
+2026-09-07 04:50:39.800 | INFO     | nexa.tts.server:prewarm:109 - nexa.tts: prewarmed voice 'pl_PL-gosia-medium' in 0.33s
+  [audio out] matched 'respeaker' -> index 1
+USER: Wyjaśnij, czym jest tak zwany horyzont zdarzeń.
+2026-09-07 04:51:35.680 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Horyzont zdarzeń to granica wokół bardzo masywnej obiektywu, jak czarna dziura.]
+2026-09-07 04:51:36.992 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 04:51:39.820 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Jest to punkt bez powrotu.]
+2026-09-07 04:51:43.790 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 04:51:43.790 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 04:51:51.789 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Jeśli cokolwiek – czy to światło, czy materię – przekroczy ten horyzont,]
+2026-09-07 04:51:53.184 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 04:51:58.068 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 04:51:58.068 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 04:52:00.161 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [nie ma już żadnej siły, nawet ta najsilniejsza, która byłaby w stanie temu zapobiec i sprawić, że wróci do obserwatora.]
+2026-09-07 04:52:02.025 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 04:52:09.788 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 04:52:09.788 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+  [assistant canonical text] 'Horyzont zdarzeń to granica wokół bardzo masywnej obiektywu, jak czarna dziura. Jest to punkt bez powrotu.\n\nJeśli cokolwiek – czy to światło, czy materię – przekroczy ten horyzont, nie ma już żadnej siły, nawet ta najsilniejsza, która byłaby w stanie temu zapobiec i sprawić, że wróci do obserwatora. Z perspektywy zewnętrznego obserwatora, wszystko, co za nim zniknie, nigdy nie dotrze do niego.'
+2026-09-07 04:52:10.537 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Z perspektywy zewnętrznego obserwatora, wszystko, co za nim zniknie, nigdy nie dotrze do niego.]
+2026-09-07 04:52:11.372 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 04:52:17.615 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 04:52:17.615 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+USER: Podaj mi dwa przykłady strzelanek i jedną grę RPG.
+2026-09-07 04:52:31.675 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Dwa przykłady strzelanek:]
+2026-09-07 04:52:32.152 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 04:52:35.162 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 04:52:35.162 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 04:52:51.876 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Call of Duty: Seria znana z dynamicznej rozgrywki FPS (First-Person Shooter) oraz Battlefield:]
+2026-09-07 04:52:53.526 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Często kojarzony z większymi bitwami i pojazdami, również jest strzelanką.]
+2026-09-07 04:52:53.529 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 04:53:04.577 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 04:53:04.578 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+  [assistant canonical text] 'Dwa przykłady strzelanek:\n\n1.  **Call of Duty:** Seria znana z dynamicznej rozgrywki FPS (First-Person Shooter).\n2.  **Battlefield:** Często kojarzony z większymi bitwami i pojazdami, również jest strzelanką.\n\nGra RPG:\n\n*   **The Witcher 3: Wild Hunt:** Świetnie napisana gra fabularna z otwartym światem, gdzie wcielasz się w Geralta z Rivii.'
+2026-09-07 04:53:10.616 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Gra RPG: The Witcher 3: Wild Hunt: Świetnie napisana gra fabularna z otwartym światem, gdzie wcielasz się w Geralta z Rivii.]
+2026-09-07 04:53:11.767 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+USER: Podaj przykład, na przykład czarnej dziury, i wyjaśnij to prosto.
+2026-09-07 04:53:19.838 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Przykładem jest czarna dziura.]
+2026-09-07 04:53:20.084 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 04:53:20.084 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 04:53:20.551 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 04:53:23.562 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 04:53:23.562 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 04:53:33.462 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Wyjaślenie proste: To obszar w kosmosie, gdzie grawitacja jest tak niesamowicie silna,]
+2026-09-07 04:53:35.157 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 04:53:38.883 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [że nic – nawet światło – nie jest w stanie się z niej wydostać.]
+2026-09-07 04:53:40.878 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 04:53:40.878 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 04:53:40.879 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 04:53:45.236 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 04:53:45.236 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+  [assistant canonical text] 'Przykładem jest **czarna dziura**.\n\nWyjaślenie proste: To obszar w kosmosie, gdzie grawitacja jest tak niesamowicie silna, że nic – nawet światło – nie jest w stanie się z niej wydostać. Wyobraź sobie, że to kosmiczny "próżnia" o ekstremalnie potężnej sile przyciągania.'
+2026-09-07 04:53:49.876 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Wyobraź sobie, że to kosmiczny "próżnia" o ekstremalnie potężnej sile przyciągania.]

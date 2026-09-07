@@ -30,6 +30,7 @@ from .metrics import (
     render_turn_report,
 )
 from .preflight import ensure_sentence_tokenizer_data
+from .speech_planner import NexaSpeechPlanner, find_phrase_cut, normalize_for_speech
 from .timed_tts import HttpSynthCall, TimedPiperHttpTTSService
 from .timing import TurnTiming, TurnTimingTracker
 
@@ -53,4 +54,8 @@ __all__ = [
     # M2.4B.1A — true HTTP synthesis timing (measure-only wrapper)
     "TimedPiperHttpTTSService",
     "HttpSynthCall",
+    # M2.4B.2 — Polish-aware speech planner / TTS-only normalization
+    "NexaSpeechPlanner",
+    "normalize_for_speech",
+    "find_phrase_cut",
 ]

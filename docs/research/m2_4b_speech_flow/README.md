@@ -78,6 +78,21 @@ report and recommendation.
   = 0`, `diagnosis = LLM TEXT PRODUCTION`, real gaps `[6.5, 3.5] s`,
   `context-span RTF 0.60` vs true synthesis ~0.24 (metric bug visible).
 
+## M2.4B.2 additions (2026-09-07 — see R0015, speech planner)
+
+- `m24b2_accept.py` + `m24b2_accept_raw_20260907.txt` — scripted
+  hardware-acceptance harness for the `NexaSpeechPlanner`. Real
+  `gemma4:e4b` (Ollama) + real Piper HTTP + real
+  `LocalAudioOutputTransport` + `ConversationSession`; only the
+  microphone/whisper.cpp is replaced by the three scripted operator
+  transcripts from the B.2 brief. Captures the exact phrase text handed to
+  Piper *after* the planner (`_push_tts_frames` "Generating TTS […]") and
+  the assistant text `ConversationSession` stored (transcript invariant).
+  Result: `1.`/`2.`/`*` list markers and every `**` gone; list → prose
+  with `oraz`; abbreviations never isolated; canonical history
+  byte-identical to the raw model output. Long intra-response silence
+  still present — the B.3 target.
+
 ## One-line conclusion
 
 Synthesis is ~7× faster than real-time and is **not** the bottleneck. The

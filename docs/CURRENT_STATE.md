@@ -5,12 +5,14 @@ Runtime / test evidence outranks anything else in this repo.
 
 ---
 
-- **Last verified:** 2026-09-06
+- **Last verified:** 2026-09-07
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0013_m2_4b_1_gap_profiler_20260906.md`
-  (M2.4B.1 instrumentation; `R0012` = M2.4B research; `R0011` = M2.4)
+- **Latest report:** `docs/reports/R0015_m2_4b_2_speech_planner_20260907.md`
+  (M2.4B.2 Polish-aware speech planner / TTS-only normalisation;
+  `R0014` = M2.4B.1A CPU spike + metric fixes; `R0013` = M2.4B.1
+  instrumentation; `R0012` = M2.4B research; `R0011` = M2.4)
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
   **M2 — Realtime Voice — IN PROGRESS (M2.1, M2.2, M2.3, M2.4 COMPLETE, `OPERATOR-CONFIRMED`)**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
@@ -53,16 +55,27 @@ Runtime / test evidence outranks anything else in this repo.
 - **Next substage:** **M2.4B — Natural Speech Flow / Streaming Pacing**
   (**IN PROGRESS**). Research/design frozen at `f8c3964` (`R0012`).
   **M2.4B.1 — realtime speech-flow instrumentation / gap profiler:
-  IMPLEMENTED** (`R0013`): `src/nexa/voice_tts/metrics.py` +
-  `apps/nexa_voice_tts_probe.py --report` — measure-only, no speech
-  behaviour change; buffered-audio estimate validated; first-token stalls
-  found = Ollama model eviction (~31 s reload) + prompt-eval contention
-  under concurrent Piper synth (both LLM-layer). M2.4B.2 (Polish phrase
-  segmentation + TTS-only normalisation) is next. Then **M2.5 — barge-in /
-  interruption** (replaces the temporary half-duplex gate). **M2.4B is NOT
-  complete.**
-- **Current objective:** M2.4B.2 — see "Exact next recommended task".
-  M2.4's functional baseline is frozen by the M2.4 commit and unchanged.
+  IMPLEMENTED** (`R0013`, `509da2d`): `src/nexa/voice_tts/metrics.py` +
+  `apps/nexa_voice_tts_probe.py --report` — measure-only. **M2.4B.1A —
+  CPU contention spike + metric-accuracy fixes: DONE** (`R0014`,
+  `42591f5` + `24d88ee`): intra-response silence is primarily LLM text
+  starvation under CPU contention; Piper on 1 Pi 5 core stays ~2× realtime;
+  `renice +10` on the Piper process is the recommended (not-yet-shipped)
+  scheduling fix; true Piper HTTP timing + `buffer_drain_to_stop_lag_s`
+  corrected. **M2.4B.2 — Polish-aware speech planner + TTS-only
+  normalisation: IMPLEMENTED** (`R0015`): `src/nexa/voice_tts/speech_planner.py`
+  (`NexaSpeechPlanner` between the bridge and `PiperHttpTTSService`,
+  emitting one natural-phrase `AggregatedTextFrame` at a time; Polish/EN
+  abbreviation-aware boundaries; Markdown/list → prose; conservative
+  abbreviation expansion; `tzw.` deliberately not expanded). No pacing yet.
+  Transcript invariant proven (`ast` + behaviour). **M2.4B.3 (look-ahead /
+  buffered-audio refill controller — where the long intra-response silence
+  is actually addressed) is next.** Then **M2.5 — barge-in / interruption**
+  (replaces the temporary half-duplex gate). **M2.4B is NOT complete.**
+- **Current objective:** M2.4B.3 — see "Exact next recommended task".
+  M2.4's functional baseline is frozen by the M2.4 commit and unchanged;
+  the speech planner is additive (remove it from `extra_output_stages` →
+  byte-for-byte M2.4).
 
 ---
 
@@ -485,20 +498,26 @@ Runtime / test evidence outranks anything else in this repo.
   M2.2 (`src/nexa/stt/`, `apps/nexa_stt_probe.py`), M2.3
   (`src/nexa/voice_conversation/`, `apps/nexa_voice_chat_probe.py`), and
   M2.4 (`src/nexa/tts/`, `src/nexa/voice_tts/`, `src/nexa/voice/gate.py`,
-  `apps/nexa_voice_tts_probe.py`, `scripts/setup_piper_http.py`). M2.4B
-  (natural speech flow) and M2.5 (barge-in) have no product code yet.
+  `apps/nexa_voice_tts_probe.py`, `scripts/setup_piper_http.py`). **M2.4B
+  has product code now:** `src/nexa/voice_tts/metrics.py` +
+  `timed_tts.py` (B.1 / B.1A, measure-only) and
+  `src/nexa/voice_tts/speech_planner.py` (B.2 — `NexaSpeechPlanner`,
+  `normalize_for_speech`, `find_phrase_cut`; wired into the probe's
+  `extra_output_stages` between the bridge and the TTS service). B.3
+  (look-ahead / pacing) and M2.5 (barge-in) still have no product code.
 
 ## Current test status
 
 - Repo-local `./.venv` (system Python 3.13.5, **not** the legacy repo's venv)
   with `dev` extras (`pytest`, `ruff`) and `pipecat-ai[local]==1.8.1`
   installed.
-- `python -m unittest discover -s tests` and `pytest`: **303 passed, 7
-  intentionally skipped, 14 subtests passed**. The 7 skips are all opt-in /
-  environment-gated: 1 live Ollama, 2 live whisper.cpp, 3 live Piper HTTP
-  (`NEXA_RUN_LIVE_TTS_TEST=1`), 1 reSpeaker hardware probe.
-  `ruff check src tests apps scripts/setup_piper_http.py`: clean.
-  (+57 in `tests/test_voice_tts_metrics.py` for M2.4B.1 — `R0013`.)
+- `python -m unittest discover -s tests`: **367 OK, 7 skipped**;
+  `pytest`: **360 passed, 7 skipped, 14 subtests passed** (2026-09-07).
+  The 7 skips are all opt-in / environment-gated: 1 live Ollama, 2 live
+  whisper.cpp, 3 live Piper HTTP (`NEXA_RUN_LIVE_TTS_TEST=1`), 1 reSpeaker
+  hardware probe. `ruff check src tests apps scripts/setup_piper_http.py`:
+  clean. (`tests/test_voice_tts_metrics.py` 69 tests — B.1/B.1A/B.2;
+  `tests/test_voice_tts_speech_planner.py` 45 tests — B.2.)
   (Pre-existing unrelated `ruff` findings in `scripts/m1_bench/` — M1
   benchmark tooling, committed in `b79a752`, untouched.)
 - Live Ollama integration test (`NEXA_RUN_LIVE_TESTS=1 python -m unittest
@@ -575,21 +594,35 @@ Runtime / test evidence outranks anything else in this repo.
   (`R0007`) → M2.2 (`R0008`) → M2.3 (`R0009`) → M2.4A spike (`R0010`) →
   M2.4 (`R0011`) implementations, all operator-confirmed on real hardware,
   are now complete. The M2.4 functional baseline is frozen by its commit.
-  **M2.4B is in progress** — research frozen (`f8c3964`/`R0012`), M2.4B.1
-  instrumentation implemented (`R0013`). **M2.4B.2 is next.**
+  **M2.4B is in progress** — research frozen (`f8c3964`/`R0012`); M2.4B.1
+  instrumentation (`R0013`), M2.4B.1A CPU spike + metric fixes (`R0014`),
+  and M2.4B.2 Polish-aware speech planner (`R0015`) implemented. **M2.4B.3
+  (look-ahead / buffered-audio pacing) is next.**
 
 ## Exact next recommended task
 
-**M2.4B.2 — TTS-only Polish-aware phrase segmentation + markdown/abbreviation
-normalisation** (`NexaSpeechPlanner`, emitting `AggregatedTextFrame`; one
-phrase per boundary, no pacing yet). Judge it against turns D/E of the
-M2.4B.1 `--report` baseline JSONL; re-assert "assistant transcript
-unchanged" with the ast+behaviour test pattern from
-`tests/test_voice_tts_metrics.py`. Then M2.4B.3 (look-ahead / batching /
-pacing) using the validated buffer estimate, and — on a parallel track —
-the first-token latency work (`keep_alive` for model eviction; TTS/LLM
-sequencing for prompt-eval contention). Run the operator's 5-turn
-`--report` baseline first (`R0013` "REAL HARDWARE BASELINE").
+**M2.4B.3 — look-ahead / buffered-audio refill controller** (R0012
+"LOOK-AHEAD", R0014 recommendation). This is where the **long
+intra-response silence** is addressed (B.2 fixed phrasing, not arrival
+rate). Key synthesis off `buffered_audio_seconds`: emit phrase 1
+immediately (protect first-audio latency), batch-and-hold phrases 2..N
+(concat up to a char cap), release a batch when
+`buffered_audio_s ≤ target` **or** generation is done — never speed speech
+up, never insert silence. Also: (a) `renice -n 10` the NeXa-spawned Piper
+process at startup (R0014 — no sudo, no PID supervisor); (b) raise
+`PiperHttpTTSService(stop_frame_timeout_s=…)` 3 s → ~8–10 s so an LLM
+inter-sentence stall no longer fragments the audio context; (c) FIRST
+re-validate the buffered-audio estimate as a *control* signal on a real
+bursty `gemma4:e4b` turn with `TimedPiperHttpTTSService` wired in
+(`buffer_drain_to_stop_lag_s` within a few s, `underruns_without_following_stop`
+= 0); (d) sweep `target ∈ {0.5,1,1.5,2,3}` s with the `--report` profiler,
+operator A/B picks it. Parallel track: Ollama `keep_alive` for the
+first-token eviction stalls. The B.2 planner tunables
+(`MIN_SENTENCE_CHARS` etc., connector words) are CANDIDATE and may be
+adjusted here.
+
+Then **M2.5 — barge-in / interruption / own-TTS suppression / echo
+handling**, replacing the temporary half-duplex gate.
 
 Original M2.4B goals (from `R0012`), for reference — build on M2.4, do not
 destabilise it:
