@@ -137,6 +137,23 @@ is good if we ignore the pauses"*; `$\text{H}$` never reached Piper;
   phrase buys ~4 s of audio while the next phrase's text takes ~14 s to
   generate. **B.3.2 (buffer-aware look-ahead / refill) is still needed.**
 
+## M2.4B.3.2A additions (2026-09-07 — see R0018, rate budget)
+
+- `rate_budget_sim.py` + `rate_budget_sim_raw_20260907.txt` — **offline
+  deterministic** production/consumption budget over already-measured
+  per-phrase data (operator JSONL + B.3.1 raw). No runtime component;
+  self-checks against the measured gaps (CONTROL `[10.87, 7.03]` s;
+  operator star `39.4` s).
+- **`realtime_text_ratio ≈ 0.53`** — `gemma4:e4b` produces spoken text at
+  ~53 % of the rate `pl_PL-gosia-medium` consumes it (8.5 vs 15.5
+  chars/s). Below 1.0 → **no finite steady-state buffer makes an
+  arbitrarily long reply continuous.** A prebuffer only relocates silence
+  to the front (`wall_to_finish` invariant); batching cannot move the
+  first underrun (can't synthesize non-existent text). `length_scale ≤
+  1.10` closes ≤ 11 % of the deficit. Asymptotic fix = ~2× faster
+  generation (~15.9 chars/s). B.3.2 = small controller **scoped to short
+  conversational replies** + reply-length shaping (separate track).
+
 ## One-line conclusion
 
 Synthesis is ~7× faster than real-time and is **not** the bottleneck. The

@@ -1,0 +1,120 @@
+==============================================================================
+M2.4B.3.2A — SPEECH PRODUCTION / CONSUMPTION RATE BUDGET  (offline)
+==============================================================================
+(self-check: simulated gaps match the measured B.3.1 / operator gaps)
+
+### PER-TURN RATES
+turn                                         LLM ch/s speech ch/s   ratio
+-------------------------------------------------------------------------
+operator star question (turn 5)                  8.53       15.00   0.547
+operator turn 2 (list reply)                     8.51       16.62   0.496
+B.3.1 CONTROL measured turn (nice 0 / 3 s)       8.19       15.57   0.523
+B.3.1 nice+10 measured turn                      8.55       14.68   0.579
+
+  weighted gosia speech rate :  15.50 spoken chars/s
+  weighted gemma4:e4b rate   :   8.47 generated chars/s
+  weighted realtime_text_ratio (spoken basis) : 0.531
+
+### PER-PHRASE TABLE
+
+  operator star question (turn 5)   (/tmp/nexa_m24b2_operator.jsonl)
+     #  chars   ready@s  http_wall  audio_s    ch/s audio_ready@s
+     0     82      0.00       1.43     4.99   16.43          1.43
+     1     33      4.18       0.80     2.27   14.54          4.98
+     2     98     46.29       1.84     6.96   14.08         48.13
+     3    132     48.72       2.43     8.55   15.44         51.15
+     4     49     49.75       1.03     3.25   15.08         52.18
+     5     59     50.99       1.24     3.63   16.25         53.42
+     6    128     65.16       2.35     9.23   13.87         67.51
+     7     61     69.50       0.56     3.93   15.52         70.06
+    turn: spoken 642 ch / 42.81 audio-s = 15.00 ch/s;  min prebuffer for 0 underrun = 39.4 s
+
+  operator turn 2 (list reply)   (/tmp/nexa_m24b2_operator.jsonl)
+     #  chars   ready@s  http_wall  audio_s    ch/s audio_ready@s
+     0     87      0.00       1.52     5.52   15.76          1.52
+     1     67      8.12       1.12     4.08   16.42          9.23
+     2     57     13.75       1.08     3.40   16.76         14.83
+     3    166     36.78       2.53     9.68   17.15         39.31
+     4     78     45.53       0.66     4.69   16.63         46.19
+    turn: spoken 455 ch / 27.37 audio-s = 16.62 ch/s;  min prebuffer for 0 underrun = 24.8 s
+
+  B.3.1 CONTROL measured turn (nice 0 / 3 s)   (b31_compare_raw_20260907.txt)
+     #  chars   ready@s  http_wall  audio_s    ch/s audio_ready@s
+     0     52      0.00       1.24     3.56   14.61          1.24
+     1    110     13.78       1.89     6.51   16.90         15.67
+     2    116     28.13       1.08     7.79   14.89         29.21
+    turn: spoken 278 ch / 17.86 audio-s = 15.57 ch/s;  min prebuffer for 0 underrun = 17.9 s
+
+  B.3.1 nice+10 measured turn   (b31_compare_raw_20260907.txt)
+     #  chars   ready@s  http_wall  audio_s    ch/s audio_ready@s
+     0     54      0.00       1.40     3.86   13.99          1.40
+     1    127     15.11       1.25     8.47   14.99         16.36
+    turn: spoken 181 ch / 12.33 audio-s = 14.68 ch/s;  min prebuffer for 0 underrun = 11.1 s
+
+### BUFFER-DRAIN SIMULATION  (prebuffer sweep A=0 B=1 C=2 D=3 E=5 s)
+
+  operator star question (turn 5)
+     pb_s  +1st_audio  1st_underrun@  underruns  tot_silence  max_silence  finish_wall
+      0.0         0.0           7.26          1        39.44        39.44        82.25
+      1.0         1.0           7.26          1        38.44        38.44        82.25
+      2.0         2.0           7.26          1        37.44        37.44        82.25
+      3.0         3.0           7.26          1        36.44        36.44        82.25
+      5.0         5.0           7.26          1        34.44        34.44        82.25
+    -> min prebuffer for ZERO underruns this turn: 39.4 s (first audio then at +39.4 s)
+
+  operator turn 2 (list reply)
+     pb_s  +1st_audio  1st_underrun@  underruns  tot_silence  max_silence  finish_wall
+      0.0         0.0           5.52          3        24.80        21.08        52.16
+      1.0         1.0           5.52          3        23.80        21.08        52.16
+      2.0         2.0           5.52          3        22.80        21.08        52.16
+      3.0         3.0           9.60          2        21.80        21.08        52.16
+      5.0         5.0          13.00          1        19.79        19.79        52.16
+    -> min prebuffer for ZERO underruns this turn: 24.8 s (first audio then at +24.8 s)
+
+  B.3.1 CONTROL measured turn (nice 0 / 3 s)
+     pb_s  +1st_audio  1st_underrun@  underruns  tot_silence  max_silence  finish_wall
+      0.0         0.0           3.56          2        17.90        10.87        35.76
+      1.0         1.0           3.56          2        16.90         9.87        35.76
+      2.0         2.0           3.56          2        15.90         8.87        35.76
+      3.0         3.0           3.56          2        14.90         7.87        35.76
+      5.0         5.0           3.56          2        12.90         7.03        35.76
+    -> min prebuffer for ZERO underruns this turn: 17.9 s (first audio then at +17.9 s)
+
+  B.3.1 nice+10 measured turn
+     pb_s  +1st_audio  1st_underrun@  underruns  tot_silence  max_silence  finish_wall
+      0.0         0.0           3.86          1        11.10        11.10        23.43
+      1.0         1.0           3.86          1        10.10        10.10        23.43
+      2.0         2.0           3.86          1         9.10         9.10        23.43
+      3.0         3.0           3.86          1         8.10         8.10        23.43
+      5.0         5.0           3.86          1         6.10         6.10        23.43
+    -> min prebuffer for ZERO underruns this turn: 11.1 s (first audio then at +11.1 s)
+
+### STEADY-STATE DRAIN MODEL
+  realtime_text_ratio r = 0.531  =>  while speaking, the audio
+  buffer drains at (1 - r) = 0.469 audio-seconds per second of speech.
+  continuous speech time before starve, given B0 audio-s of initial buffer
+  (beyond the first phrase):  t_starve = B0 / 0.469
+     B0 = 0 s  ->  ~  0.0 s of extra continuous speech
+     B0 = 1 s  ->  ~  2.1 s of extra continuous speech
+     B0 = 2 s  ->  ~  4.3 s of extra continuous speech
+     B0 = 3 s  ->  ~  6.4 s of extra continuous speech
+     B0 = 5 s  ->  ~ 10.7 s of extra continuous speech
+  to sustain an N-second reply with 0 underruns: B0 >= N * 0.469
+     N =  4 s reply  ->  need B0 >=   1.9 s initial buffer
+     N =  8 s reply  ->  need B0 >=   3.8 s initial buffer
+     N = 12 s reply  ->  need B0 >=   5.6 s initial buffer
+     N = 20 s reply  ->  need B0 >=   9.4 s initial buffer
+     N = 40 s reply  ->  need B0 >=  18.8 s initial buffer
+
+### MINIMUM REQUIRED LLM RATE  (to reach ratio targets)
+  spoken/generated char fraction = 0.973 (planner strips ~3%)
+  asymptotic / unbounded speech, 0 buffer : LLM >=  15.9 gen ch/s  (~1.88x current 8.5)
+  15 s reply, 2 s initial buffer          : LLM >=  13.8 gen ch/s  (~1.63x current 8.5)
+  15 s reply, 3 s initial buffer          : LLM >=  12.8 gen ch/s  (~1.51x current 8.5)
+
+### LENGTH_SCALE SENSITIVITY  (analysis only; Piper length_scale NOT changed)
+  gosia baseline (length_scale 1.00): 15.50 spoken ch/s consumed
+  length_scale 1.00: consume 15.50 ch/s  ->  ratio 0.531  deficit 0.469  (closes  0.0% of the 0.469 deficit)
+  length_scale 1.05: consume 14.76 ch/s  ->  ratio 0.558  deficit 0.442  (closes  5.7% of the 0.469 deficit)
+  length_scale 1.10: consume 14.09 ch/s  ->  ratio 0.584  deficit 0.416  (closes 11.3% of the 0.469 deficit)
+  length_scale needed to reach ratio 1.0 by itself: 1.88 (operator ceiling is ~1.10 -> cannot close the deficit alone)

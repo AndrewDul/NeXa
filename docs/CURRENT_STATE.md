@@ -9,12 +9,13 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0017_m2_4b_3_1_piper_priority_context_continuity_20260907.md`
-  (M2.4B.3.1 — Piper `nice +10` + TTS context timeout 8 s; B.2/B.2A
-  operator-confirmed; `R0016` = M2.4B.2A LaTeX/truncation fix;
-  `R0015` = M2.4B.2 speech planner; `R0014` = M2.4B.1A CPU spike + metric
-  fixes; `R0013` = M2.4B.1 instrumentation; `R0012` = M2.4B research;
-  `R0011` = M2.4)
+- **Latest report:** `docs/reports/R0018_m2_4b_3_2a_speech_rate_budget_20260907.md`
+  (M2.4B.3.2A — speech production/consumption rate budget, research only:
+  `realtime_text_ratio ≈ 0.53`, a hard constraint; `R0017` = M2.4B.3.1
+  Piper `nice +10` + TTS context timeout 8 s; `R0016` = M2.4B.2A
+  LaTeX/truncation fix; `R0015` = M2.4B.2 speech planner; `R0014` =
+  M2.4B.1A CPU spike + metric fixes; `R0013` = M2.4B.1 instrumentation;
+  `R0012` = M2.4B research; `R0011` = M2.4)
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
   **M2 — Realtime Voice — IN PROGRESS (M2.1, M2.2, M2.3, M2.4 COMPLETE, `OPERATOR-CONFIRMED`)**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
@@ -82,13 +83,24 @@ Runtime / test evidence outranks anything else in this repo.
   `nice +10` (`PiperHttpConfig.nice`, no sudo, NeXa's own process untouched,
   `llama-server` untouched); Pipecat `stop_frame_timeout_s` raised 3 s → 8 s
   (`DEFAULT_TTS_CONTEXT_TIMEOUT_S`) so a short inter-phrase stall keeps one
-  speaking context. No refill controller. **M2.4B.3.2 (buffer-aware
-  look-ahead / refill) is STILL needed** — the B.3.1 hardware comparison
-  still shows ~8–11 s intra-response gaps (`audio-s per wall-s ~0.5`,
-  `diagnose = LLM TEXT PRODUCTION`): the first phrase buys ~4 s of audio
-  while `gemma4:e4b` needs ~14 s to produce the next phrase's text; CPU
-  priority alone cannot close that 3–4× deficit. Then **M2.5 — barge-in /
-  interruption** (replaces the temporary half-duplex gate).
+  speaking context. No refill controller. **M2.4B.3.2A — speech rate
+  budget: RESEARCH DONE** (`R0018`, offline sim
+  `docs/research/m2_4b_speech_flow/rate_budget_sim.py`):
+  **`realtime_text_ratio ≈ 0.53`** — `gemma4:e4b` produces spoken text at
+  ~53 % of the rate `pl_PL-gosia-medium` consumes it (8.5 vs 15.5
+  chars/s). This is a hard constraint: no finite steady-state buffer makes
+  an arbitrarily long reply continuous; a prebuffer only relocates silence
+  to the front (`wall_to_finish` invariant); batching cannot move the
+  first underrun (can't synthesize text the LLM hasn't generated);
+  `length_scale ≤ 1.10` closes ≤ 11 % of the deficit. **M2.4B.3.2 =
+  conclusion C**: build a *small* look-ahead controller **scoped to
+  short conversational replies** (phrase 0 immediate; hold 1..N to a
+  ~1.5–2.5 s `buffered_audio_seconds` target; no batching-to-grow, no
+  speed change, no silence) and document the continuity ceiling
+  (~8–10 s of speech with a 2–3 s buffer); pair with reply-length shaping
+  (persona/prompt — separate, highest-leverage) and record the ~2×
+  faster-generation target (~15.9 chars/s, ~≥5 tok/s). Then **M2.5 —
+  barge-in / interruption** (replaces the temporary half-duplex gate).
   **M2.4B is NOT complete.** Separate flagged tracks: STT quality
   (whisper.cpp mistranscribed "horyzont zdarzeń" as "chory zęzdarzyń"
   etc.); `GenerationOptions.num_predict = 200` truncating long replies.
@@ -624,42 +636,51 @@ Runtime / test evidence outranks anything else in this repo.
   **M2.4B is in progress** — research frozen (`f8c3964`/`R0012`); M2.4B.1
   instrumentation (`R0013`), M2.4B.1A CPU spike + metric fixes (`R0014`),
   M2.4B.2 speech planner (`R0015`) + M2.4B.2A LaTeX/truncation-tail fix
-  (`R0016`, `OPERATOR-CONFIRMED` 2026-09-07), and M2.4B.3.1 Piper `nice
-  +10` + TTS context-timeout 8 s (`R0017`) implemented. **M2.4B.3.2
-  (buffer-aware look-ahead / refill controller) is next.**
+  (`R0016`, `OPERATOR-CONFIRMED` 2026-09-07), M2.4B.3.1 Piper `nice +10` +
+  TTS context-timeout 8 s (`R0017`), and M2.4B.3.2A speech rate-budget
+  research (`R0018`: `realtime_text_ratio ≈ 0.53`) done. **M2.4B.3.2 — a
+  small look-ahead controller scoped to short replies (R0018 conclusion C)
+  — is next.**
 
 ## Exact next recommended task
 
-**M2.4B.3.2 — buffer-aware look-ahead / refill controller** (R0012
-"LOOK-AHEAD"). B.3.1 (Piper `nice +10` + `stop_frame_timeout_s = 8`)
-shipped and helps (Piper never the bottleneck; less BotStopped/BotStarted
-churn) but the B.3.1 hardware comparison still shows **~8-11 s
-intra-response gaps**, `audio-s per wall-s ~0.5`, `diagnose = LLM TEXT
-PRODUCTION`. Root ratio: the first phrase buys ~4 s of audio;
-`gemma4:e4b` needs ~14 s to produce the next phrase's text. CPU priority
-cannot close a 3-4x deficit - look-ahead batching can.
+**M2.4B.3.2 — small look-ahead / refill controller, scoped to short
+conversational replies** (R0018 conclusion C). R0018 measured the hard
+constraint: `realtime_text_ratio ~= 0.53` (gemma4:e4b produces spoken
+text at ~53% of the rate pl_PL-gosia-medium consumes it, 8.5 vs 15.5
+chars/s). A finite buffer CANNOT make an arbitrarily long reply
+continuous - a prebuffer only relocates silence to the front
+(`wall_to_finish` invariant); batching cannot move the first underrun
+(can't synthesize non-existent text); `length_scale <= 1.10` closes <=
+11% of the deficit. So the controller is bounded in what it can do.
 
-Policy (R0012 + the B.3.2 rule in R0017): emit phrase 1 immediately
-(protect first-audio latency); then key off `buffered_audio_seconds` -
-**BUFFER HEALTHY** -> may wait briefly for a larger natural batch;
-**BUFFER LOW** -> immediately synthesize the next already-complete natural
-phrase; **BUFFER NEAR EMPTY** -> refill has priority. Never hold a ready
-phrase just to grow a batch while the buffer is low. Never accelerate the
-voice, never insert artificial silence - the controller reduces latency,
-never creates it. FIRST re-validate the buffered-audio estimate as a
-*control* signal on a real bursty `gemma4:e4b` turn with
-`TimedPiperHttpTTSService` wired in (`buffer_drain_to_stop_lag_s` within a
-few s, `underruns_without_following_stop = 0`); then sweep the `target`
-with the `--report` profiler, operator A/B picks it.
+Build: phrase 0 released immediately (protect first-audio latency);
+phrases 1..N held only until `buffered_audio_seconds` reaches a small
+target (~1.5-2.5 s candidate; operator A/B), then release the next
+ALREADY-COMPLETE natural phrase. Never hold a ready phrase to grow a
+batch while the buffer is low. Never accelerate the voice, never insert
+silence - reduce latency, never create it. Batch only phrases whose text
+already exists when the buffer is low (overhead/churn only). Document the
+continuity ceiling in the product: continuity is guaranteed only up to
+~`target/0.47 + first_phrase_audio` seconds of speech (~8-10 s with a
+2-3 s buffer); longer replies WILL gap - expected, not a bug. FIRST
+re-validate `buffered_audio_seconds` as a control signal on a real bursty
+turn with `TimedPiperHttpTTSService` wired in
+(`buffer_drain_to_stop_lag_s` within a few s,
+`underruns_without_following_stop = 0`).
 
-Parallel tracks (not blocking B.3.2): Ollama `keep_alive` for first-token
-eviction stalls; **STT quality** - whisper.cpp mistranscribed "horyzont
-zdarzen" as "chory zezdarzyn" / "choryzat zdarzen" / "choryzac dazem"
-(R0016); `GenerationOptions.num_predict = 200` truncating long replies
-mid-word. The B.2 planner tunables (`MIN_SENTENCE_CHARS` etc., connector
-words, `_LIST_PROSE_MAX_ITEM_CHARS`) and the B.3.1 values
-(`DEFAULT_PIPER_NICE`, `DEFAULT_TTS_CONTEXT_TIMEOUT_S`) are CANDIDATE and
-may be adjusted here.
+Parallel tracks (not blocking, but needed for continuity of longer
+replies): reply-length shaping via persona/prompt so gemma4:e4b gives
+1-3 sentence spoken answers (highest leverage - makes the controller
+sufficient for the common case); and a ~2x faster-generation / model-
+serving track (target ~15.9 generated chars/s, ~>=5 tok/s sustained, for
+unbounded continuity). Also non-blocking: Ollama `keep_alive` for
+first-token eviction; STT quality (whisper.cpp "horyzont zdarzen" ->
+"chory zezdarzyn" etc., R0016); `GenerationOptions.num_predict = 200`
+truncation. The B.2 planner tunables and the B.3.1 values
+(`DEFAULT_PIPER_NICE`, `DEFAULT_TTS_CONTEXT_TIMEOUT_S`) plus the new
+B.3.2 target are CANDIDATE and may be adjusted here. `length_scale`
+1.05-1.10 is an optional minor assist (analysis only in R0018).
 
 Then **M2.5 — barge-in / interruption / own-TTS suppression / echo
 handling**, replacing the temporary half-duplex gate.
