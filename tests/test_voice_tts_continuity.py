@@ -324,6 +324,67 @@ class TestArchitectureAndReset(_Harness):
         self.assertIs(pushed[-1], marker)
 
 
+class TestHoldTaskLifecycle(_Harness):
+    """R0021 (M2.4B.3.4): a real Polish operator session logged
+    ``NexaSpeechContinuityController#0::_hold_then_release: ignoring attempt
+    to cancel the running task``. Root cause: when the bounded hold expired
+    naturally, ``_hold_then_release`` called ``_release_held``, which asked
+    the task manager to cancel ``self._hold_task`` — i.e. the task it was
+    running inside. Harmless (Pipecat ignores it) but noisy. These tests use
+    a REAL ``asyncio.sleep`` for the hold (the rest of the suite patches it
+    to a no-op) so the hold task is genuinely running when it releases."""
+
+    async def _real_sleep_ctl(self, **kw):
+        c, pushed, rel, clock = self._ctl(**kw)
+        C._sleep = asyncio.sleep  # undo the _Harness no-op patch; real wait
+        cancelled: list = []
+        inner = c.cancel_task
+
+        async def recording_cancel(task, timeout=None):
+            cancelled.append(task)
+            await inner(task, timeout)
+
+        c.cancel_task = recording_cancel
+        return c, pushed, rel, clock, cancelled
+
+    async def test_natural_hold_expiry_does_not_cancel_its_own_task(self) -> None:
+        c, pushed, rel, clock, cancelled = await self._real_sleep_ctl(
+            target_reserve_s=2.0, max_hold_s=0.02
+        )
+        await self._start(c)
+        await self._phrase_frame(c, "One.")          # phrase 0 -> immediate
+        await self._feed_audio(c, 4.0, clock)         # reserve ~4 s -> healthy
+        await self._phrase_frame(c, "Two.")          # phrase 1 -> HELD (hold = 0.02 s)
+        hold_task = c._hold_task
+        self.assertIsNotNone(hold_task)
+
+        await asyncio.sleep(0.1)                      # let the real hold elapse
+
+        self.assertEqual(_spoken(pushed), ["One.", "Two."])
+        self.assertEqual(rel[-1].reason, ReleaseReason.HOLD_EXPIRED)
+        self.assertNotIn(hold_task, cancelled,
+                         "the hold task must not be cancelled from inside itself")
+        self.assertIsNone(c._hold_task)
+        self.assertIsNone(c._held)
+
+    async def test_later_phrase_during_hold_still_cancels_the_hold_task(self) -> None:
+        c, pushed, rel, clock, cancelled = await self._real_sleep_ctl(
+            target_reserve_s=2.0, max_hold_s=5.0
+        )
+        await self._start(c)
+        await self._phrase_frame(c, "One.")          # phrase 0 -> immediate
+        await self._feed_audio(c, 8.0, clock)         # reserve ~8 s -> healthy
+        await self._phrase_frame(c, "Two.")          # phrase 1 -> HELD (5 s hold, still sleeping)
+        hold_task = c._hold_task
+        self.assertIsNotNone(hold_task)
+
+        await self._phrase_frame(c, "Three.")        # flushes "Two." via NEXT_PHRASE
+
+        self.assertIn("Two.", _spoken(pushed))
+        self.assertIn(hold_task, cancelled,
+                      "a still-sleeping hold task must be cancelled when flushed early")
+
+
 class TestSourceArchitectureGuards(unittest.TestCase):
     def _imports(self) -> set[str]:
         tree = ast.parse(CONTINUITY_SRC.read_text(encoding="utf-8"))

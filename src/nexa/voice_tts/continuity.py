@@ -35,7 +35,7 @@ offline replay and hardware A/B re-check it in this exact path.
 
 from __future__ import annotations
 
-from asyncio import CancelledError, Task
+from asyncio import CancelledError, Task, current_task
 from asyncio import sleep as _sleep
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -240,7 +240,15 @@ class NexaSpeechContinuityController(FrameProcessor):
         self._held_received_at = None
         self._held_reserve_at_receive = None
         task, self._hold_task = self._hold_task, None
-        if task is not None and not task.done():
+        # Never ask the task manager to cancel the task we are *running
+        # inside* — that happens when the bounded hold expires naturally and
+        # ``_hold_then_release`` calls this method. Pipecat's task manager
+        # logs "ignoring attempt to cancel the running task" for that and
+        # does nothing; the guard makes the intent explicit and keeps the
+        # log clean. (``_hold_then_release`` also clears ``_hold_task``
+        # before calling here, so ``task`` is normally already ``None`` on
+        # that path — this is belt-and-braces.)
+        if task is not None and not task.done() and task is not current_task():
             try:
                 await self.cancel_task(task)
             except Exception:  # pragma: no cover
@@ -258,6 +266,10 @@ class NexaSpeechContinuityController(FrameProcessor):
             await _sleep(delay)
         except CancelledError:  # pragma: no cover
             return
+        # We *are* ``self._hold_task``. Drop the reference before releasing
+        # so ``_release_held`` does not try to cancel the running task
+        # (Pipecat's task manager logs a warning and ignores that).
+        self._hold_task = None
         await self._release_held(ReleaseReason.HOLD_EXPIRED)
 
     # -- Pipecat entry point ------------------------------------------- #
