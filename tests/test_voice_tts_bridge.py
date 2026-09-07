@@ -252,5 +252,59 @@ class TestFinalUnpunctuatedFragmentFlush(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "This is the final fragment")
 
 
+class TestTtsContextTimeout(unittest.IsolatedAsyncioTestCase):
+    """M2.4B.3.1 — the speaking (audio) context is kept alive across a
+    normal inter-phrase LLM stall instead of Pipecat's 3 s default, so a
+    short stall no longer produces a premature TTSStopped /
+    BotStopped->BotStarted cycle. This only extends the context lifetime;
+    it adds no silence and does not change what the speech planner emits."""
+
+    def test_default_constant_is_a_sane_positive_float_above_pipecat_default(self) -> None:
+        import nexa.voice_tts as vt
+
+        self.assertIsInstance(vt.DEFAULT_TTS_CONTEXT_TIMEOUT_S, float)
+        self.assertGreater(vt.DEFAULT_TTS_CONTEXT_TIMEOUT_S, 3.0)  # > Pipecat default
+        self.assertLessEqual(vt.DEFAULT_TTS_CONTEXT_TIMEOUT_S, 15.0)
+
+    async def test_piper_service_honours_stop_frame_timeout_kwarg(self) -> None:
+        import aiohttp
+        from pipecat.services.piper.tts import PiperHttpTTSService
+
+        from nexa.voice_tts import DEFAULT_TTS_CONTEXT_TIMEOUT_S
+
+        session = aiohttp.ClientSession()
+        try:
+            svc = PiperHttpTTSService(
+                base_url="http://127.0.0.1:5001",
+                aiohttp_session=session,
+                stop_frame_timeout_s=DEFAULT_TTS_CONTEXT_TIMEOUT_S,
+            )
+            self.assertEqual(svc._stop_frame_timeout_s, DEFAULT_TTS_CONTEXT_TIMEOUT_S)
+            self.assertTrue(svc._push_stop_frames)  # the timeout only matters when this is on
+
+            default_svc = PiperHttpTTSService(
+                base_url="http://127.0.0.1:5001", aiohttp_session=session
+            )
+            self.assertEqual(default_svc._stop_frame_timeout_s, 3.0)  # unchanged Pipecat default
+        finally:
+            await session.close()
+
+    async def test_timed_wrapper_forwards_stop_frame_timeout(self) -> None:
+        import aiohttp
+
+        from nexa.voice_tts import TimedPiperHttpTTSService
+
+        session = aiohttp.ClientSession()
+        try:
+            svc = TimedPiperHttpTTSService(
+                base_url="http://127.0.0.1:5001",
+                aiohttp_session=session,
+                stop_frame_timeout_s=8.0,
+            )
+            self.assertEqual(svc._stop_frame_timeout_s, 8.0)
+        finally:
+            await session.close()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,7 @@ established for whisper.cpp.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Pinned exactly to the version verified working in R0010's spike (2026-09-06,
@@ -43,6 +43,27 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5001
 DEFAULT_STARTUP_TIMEOUT_S = 30.0
 DEFAULT_REQUEST_TIMEOUT_S = 15.0
+
+# M2.4B.3.1: the external Piper HTTP process is started at this POSIX nice
+# value so `llama-server` (which stays at nice 0) wins the CPU while
+# gemma4:e4b is generating the next speech phrase. Benchmark-backed on this
+# Pi 5 (R0014 §"CPU STRATEGY BENCHMARK", strategy C): with Piper niced +10,
+# gemma4:e4b prompt_eval recovered ~24 s -> ~0.9 s and generation ~1.3 ->
+# ~3.1 tok/s while Piper stayed true-RTF ~0.44 (still >2x real time).
+# Positive nice needs no privilege; NeXa's own process is never reniced;
+# `llama-server` is never touched. 0 disables it. Override with
+# `NEXA_PIPER_NICE`.
+DEFAULT_PIPER_NICE = 10
+
+
+def default_piper_nice() -> int:
+    """Piper's start-up nice value: ``NEXA_PIPER_NICE`` if set to an integer,
+    else ``DEFAULT_PIPER_NICE``. Negative values are clamped to 0 (positive
+    niceness needs no privilege; NeXa must never require ``sudo`` here)."""
+    raw = os.environ.get("NEXA_PIPER_NICE")
+    if raw is not None and raw.strip().lstrip("-").isdigit():
+        return max(0, int(raw))
+    return DEFAULT_PIPER_NICE
 
 
 def data_dir() -> Path:
@@ -87,6 +108,12 @@ class PiperHttpConfig:
     pl_voice: str = PL_VOICE
     startup_timeout_s: float = DEFAULT_STARTUP_TIMEOUT_S
     request_timeout_s: float = DEFAULT_REQUEST_TIMEOUT_S
+    #: POSIX nice value the external Piper process is started at (M2.4B.3.1).
+    #: See ``DEFAULT_PIPER_NICE`` / ``default_piper_nice()``. An explicit
+    #: value passed here wins over the env var; negatives are clamped to 0
+    #: in ``__post_init__`` so Piper can never need privilege or fail to
+    #: start over this.
+    nice: int = field(default_factory=default_piper_nice)
     venv_python: Path | None = None
     voices_dir: Path | None = None
 
@@ -95,6 +122,8 @@ class PiperHttpConfig:
             object.__setattr__(self, "venv_python", piper_venv_python())
         if self.voices_dir is None:
             object.__setattr__(self, "voices_dir", voices_dir())
+        if self.nice < 0:
+            object.__setattr__(self, "nice", 0)
 
     @property
     def base_url(self) -> str:

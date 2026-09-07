@@ -55,8 +55,12 @@ text / history are unchanged — proven again.**
    B.2A). Full suite **`pytest` 374 passed / 7 skipped / 14 subtests**;
    **`unittest discover` 381 OK**; `ruff` clean; `git diff --check` clean.
 
-**B.2 is NOT yet marked `OPERATOR-CONFIRMED`** — it waits on a fresh
-microphone run confirming these corrections.
+**M2.4B.2 + M2.4B.2A are `OPERATOR-CONFIRMED` (2026-09-07)** — the fresh
+microphone run confirmed these corrections (canonical `$\text{H}$` /
+`$\text{He}$` → Piper heard *"wodoru (H) i helu (He)"* / *"Wodór (H): …"*;
+`tiny_text_chunk_count = 0`; true Piper RTF 0.268). Operator verdict:
+*"the spoken response itself is good if we ignore the pauses."* The pauses
+are M2.4B.3 (see `R0017`).
 
 ## ROOT CAUSE OF LATEX LEAK
 

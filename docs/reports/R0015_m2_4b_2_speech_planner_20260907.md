@@ -25,8 +25,10 @@ model output / response-language authority are all unchanged.**
 > Piper, and a dangling trailing `"("` on a reply the model truncated at
 > its 200-token cap. Both are fixed in **M2.4B.2A** —
 > `docs/reports/R0016_m2_4b_2a_tts_normalization_edge_cases_20260907.md`.
-> **B.2 is not yet `OPERATOR-CONFIRMED`**; it waits on a fresh mic run
-> after the B.2A corrections.
+> **M2.4B.2 + M2.4B.2A are `OPERATOR-CONFIRMED` (2026-09-07)** — fresh mic
+> run, operator verdict *"the spoken response itself is good if we ignore
+> the pauses"*; `$\text{H}$` never reached Piper, `tiny_text_chunk_count =
+> 0`. The remaining intra-response pauses are M2.4B.3 (see `R0017`).
 
 ---
 

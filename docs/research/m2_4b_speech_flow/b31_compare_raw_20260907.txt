@@ -1,0 +1,157 @@
+# M2.4B.3.1 hardware comparison — 2026-09-07
+# scripted (no mic/STT): real gemma4:e4b + real Piper + real LocalAudioOutputTransport.
+# warm-up 'Ile jest osiem razy siedem?' (NOT measured) then measured 'Powiedz mi, z czego
+# składa się gwiazda.' Two configs, one process each:
+#   CONTROL  : Piper nice 0,  stop_frame_timeout_s 3.0
+#   B.3.1    : Piper nice 10, stop_frame_timeout_s 8.0
+
+########################## CONTROL (nice 0, timeout 3s) ##########################
+########## MEASURED ##########
+==================================================
+M2.4B.1 TURN REPORT  (turn #2)
+==================================================
+
+USER
+  stt text:      Powiedz mi, z czego składa się gwiazda.  (39 chars)
+  stt latency:   -
+
+LLM
+  first token:         3.06s  (base: stt_result)
+  generation duration: 34.17s
+  chars:               280
+  chars/s:             8.2
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 3  mean chars 92.7  tiny (<12): 0
+    #0  chars=52   since_prev=-  
+    #1  chars=110  since_prev=14.43s  
+    #2  chars=116  since_prev=13.54s  (after gen complete)
+  TRUE Piper HTTP synthesis (one request per sentence): 3 requests
+    #0  http_wall=1.24s  ttfb=1.23s  audio=3.56s  RTF=0.348
+    #1  http_wall=1.89s  ttfb=1.87s  audio=6.51s  RTF=0.290
+    #2  http_wall=1.08s  ttfb=1.07s  audio=7.79s  RTF=0.139
+  mean TRUE synthesis RTF: 0.259  (mean http wall 1.40s)
+  tts context spans (TTSStarted->Stopped): 3  -- context-span 'RTF' mean 0.694 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=4.24s  first_audio=1.23s  audio=3.56s
+    #1  context_span=4.89s  first_audio=1.88s  audio=6.51s
+    #2  context_span=1.08s  first_audio=1.07s  audio=7.79s
+
+PLAYBACK
+  first audio:      10.33s
+  final stop:       46.09s
+  BotStarted count: 3
+  BotStopped count: 3
+  silence gaps ms:  [10888.0, 7032.0]
+  max gap:          10888.0ms
+  mean gap:         8960.0ms
+  underruns (est):  1
+  audio-s per wall-s: 0.50  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              0.55s
+  min:              -17.91s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 1  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 3.51s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 83.1%  peak 100.0%
+  llama-server CPU: mean 284.0%  peak 387.1%
+  temperature:      65.5C max
+  throttled:        0x0
+  MemAvailable min: 3843MB
+  swap used max:    128MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.654ms/sample (115 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: LLM TEXT PRODUCTION
+==================================================
+
+# phrases to Piper on the MEASURED turn:
+  [0] 'Gwiazda to ogromna kula gazu, głównie wodoru i helu.'
+  [1] 'Reakcje termojądrowe zachodzące w jej jądrze (fuzja jądrowa) są dla niej źródłem energii, dzięki czemu świeci.'
+  [2] 'Z czasem, gdy paliwo się wyczerpuje, gwiazda przechodzi przez różne etapy ewolucji, co wpływa na jej skład i wygląd.'
+
+# ConversationSession history:
+
+########################## B.3.1 (nice 10, timeout 8s) ##########################
+########## MEASURED ##########
+==================================================
+M2.4B.1 TURN REPORT  (turn #2)
+==================================================
+
+USER
+  stt text:      Powiedz mi, z czego składa się gwiazda.  (39 chars)
+  stt latency:   -
+
+LLM
+  first token:         3.02s  (base: stt_result)
+  generation duration: 21.29s
+  chars:               182
+  chars/s:             8.5
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 2  mean chars 90.5  tiny (<12): 0
+    #0  chars=54   since_prev=-  
+    #1  chars=127  since_prev=14.96s  (after gen complete)
+  TRUE Piper HTTP synthesis (one request per sentence): 2 requests
+    #0  http_wall=1.40s  ttfb=1.39s  audio=3.86s  RTF=0.363
+    #1  http_wall=1.25s  ttfb=1.23s  audio=8.47s  RTF=0.147
+  mean TRUE synthesis RTF: 0.255  (mean http wall 1.33s)
+  tts context spans (TTSStarted->Stopped): 2  -- context-span 'RTF' mean 1.292 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=9.40s  first_audio=1.39s  audio=3.86s
+    #1  context_span=1.25s  first_audio=1.23s  audio=8.47s
+
+PLAYBACK
+  first audio:      10.60s
+  final stop:       34.01s
+  BotStarted count: 2
+  BotStopped count: 2
+  silence gaps ms:  [8115.9]
+  max gap:          8115.9ms
+  mean gap:         8115.9ms
+  underruns (est):  1
+  audio-s per wall-s: 0.53  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              0.30s
+  min:              -11.08s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 1  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.00s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 75.2%  peak 100.0%
+  llama-server CPU: mean -  peak -
+  temperature:      66.1C max
+  throttled:        0x0
+  MemAvailable min: 3816MB
+  swap used max:    173MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.655ms/sample (85 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: LLM TEXT PRODUCTION
+==================================================
+
+# phrases to Piper on the MEASURED turn:
+  [0] 'Gwiazda to ogromna kula gazu, głównie z wodoru i helu.'
+  [1] 'Energia, która sprawia, że świeci, pochodzi z procesów termojądrowych zachodzących w jej jądrze – tam wodór łączy się z heliem.'
+
+# ConversationSession history:
+
+# NOTE: the two measured replies differ (gemma4:e4b is non-deterministic) —
+# CONTROL 280 chars / 3 phrases, B.3.1 182 chars / 2 phrases. Compare structurally,
+# not gap-magnitude-for-gap-magnitude. Both diagnose LLM TEXT PRODUCTION; Piper RTF
+# unchanged (~0.26); a multi-second inter-phrase gap remains in both.

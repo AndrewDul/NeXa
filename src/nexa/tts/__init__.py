@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from .config import (
     DEFAULT_HOST,
+    DEFAULT_PIPER_NICE,
     DEFAULT_PORT,
     EN_VOICE,
     PIPER_TTS_VERSION,
@@ -40,6 +41,7 @@ __all__ = [
     "PL_VOICE",
     "DEFAULT_HOST",
     "DEFAULT_PORT",
+    "DEFAULT_PIPER_NICE",
     "PiperHttpConfig",
     "PiperHttpServer",
     "TtsError",

@@ -119,6 +119,24 @@ Also recorded: long intra-response silence persists (≈ 19.6 / 13.5 /
 B.3 target. And a **separate STT-quality issue** ("horyzont zdarzeń"
 mistranscribed as "chory zęzdarzyń" etc.) — flagged, not fixed here.
 
+## M2.4B.3.1 additions (2026-09-07 — see R0017, Piper priority + context continuity)
+
+B.2/B.2A `OPERATOR-CONFIRMED` (fresh mic run: *"the spoken response itself
+is good if we ignore the pauses"*; `$\text{H}$` never reached Piper;
+`tiny_text_chunk_count = 0`; true Piper RTF ~0.27).
+
+- `b31_compare.py` + `b31_compare_raw_20260907.txt` — scripted before/after
+  for B.3.1: warm-up (`"Ile jest osiem razy siedem?"`, not measured) then
+  measured (`"Powiedz mi, z czego składa się gwiazda."`), CONTROL (Piper
+  nice 0 / `stop_frame_timeout_s` 3 s) vs B.3.1 (nice 10 / 8 s). Real
+  gemma4:e4b + Piper + audio transport; mic/STT scripted.
+- B.3.1 result: Piper RTF unchanged at nice +10 (~0.26, still ~4× real
+  time); `gemma4:e4b` chars/s unchanged (~8.5) in this low-contention
+  scripted workload; **a multi-second inter-phrase gap remains** (~8–11 s;
+  `audio-s per wall-s ~0.5`; `diagnose = LLM TEXT PRODUCTION`). The first
+  phrase buys ~4 s of audio while the next phrase's text takes ~14 s to
+  generate. **B.3.2 (buffer-aware look-ahead / refill) is still needed.**
+
 ## One-line conclusion
 
 Synthesis is ~7× faster than real-time and is **not** the bottleneck. The

@@ -34,12 +34,24 @@ from .speech_planner import NexaSpeechPlanner, find_phrase_cut, normalize_for_sp
 from .timed_tts import HttpSynthCall, TimedPiperHttpTTSService
 from .timing import TurnTiming, TurnTimingTracker
 
+# M2.4B.3.1: Pipecat's `PiperHttpTTSService(stop_frame_timeout_s=…)` — how
+# long the speaking (audio) context stays alive with no new phrase text
+# before it is torn down and a premature `TTSStoppedFrame` /
+# `BotStopped`→`BotStarted` cycle is emitted. Pipecat's default is 3.0 s,
+# which turns every normal inter-phrase `gemma4:e4b` stall into visible
+# stop/start churn (R0012 §F, R0014). Raised so a short stall keeps one
+# continuous speaking context. This ONLY keeps the context alive — it never
+# adds silence; playback of already-queued audio is unaffected, and the
+# real end of a turn is still driven by `LLMFullResponseEndFrame`.
+DEFAULT_TTS_CONTEXT_TIMEOUT_S = 8.0
+
 __all__ = [
     "AssistantSpeechBridge",
     "HalfDuplexGate",
     "TtsStatusObserver",
     "voice_for_language",
     "ensure_sentence_tokenizer_data",
+    "DEFAULT_TTS_CONTEXT_TIMEOUT_S",
     "TurnTiming",
     "TurnTimingTracker",
     # M2.4B.1 — measure-only instrumentation

@@ -16,6 +16,8 @@ the process cleanly. No Pipecat dependency here — that lives in
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 import time
 
 import aiohttp
@@ -53,6 +55,35 @@ class PiperHttpServer:
         self._process: asyncio.subprocess.Process | None = None
         self._session: aiohttp.ClientSession | None = None
 
+    def _launch_prefix(self) -> tuple[list[str], object | None]:
+        """M2.4B.3.1: start the external Piper process at ``config.nice``.
+
+        Preferred mechanism is the coreutils ``nice`` binary
+        (``nice -n N <python> …``) — it ``exec``s the target in place, so the
+        child's PID *is* the Python process, just at the requested priority;
+        no ``preexec_fn`` thread-safety caveat. If ``nice`` is somehow not on
+        ``PATH`` we fall back to a ``preexec_fn`` that makes a single
+        ``os.setpriority`` syscall in the forked child (no locks, no
+        allocation — the canonical safe use of ``preexec_fn``). Positive
+        niceness needs no privilege; NeXa's own process is never reniced and
+        ``llama-server`` is never touched. ``nice == 0`` -> no change.
+        """
+        n = self.config.nice
+        if n <= 0:
+            return [], None
+        nice_bin = shutil.which("nice")
+        if nice_bin is not None:
+            return [nice_bin, "-n", str(n)], None
+
+        def _apply_child_priority() -> None:  # runs in the forked child, pre-exec
+            os.setpriority(os.PRIO_PROCESS, 0, n)
+
+        logger.warning(
+            "nexa.tts: 'nice' not found on PATH; using a preexec_fn to set "
+            f"Piper priority to nice {n}"
+        )
+        return [], _apply_child_priority
+
     async def start(self) -> None:
         """Launch the external Piper HTTP server subprocess and wait until
         it responds to requests. Raises `PiperServerStartError` if it never
@@ -61,7 +92,9 @@ class PiperHttpServer:
             return  # idempotent
 
         self._session = aiohttp.ClientSession()
+        prefix, preexec = self._launch_prefix()
         self._process = await asyncio.create_subprocess_exec(
+            *prefix,
             str(self.config.venv_python),
             "-m", "piper.http_server",
             "-m", self.config.en_voice,
@@ -70,7 +103,10 @@ class PiperHttpServer:
             "--port", str(self.config.port),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            preexec_fn=preexec,
         )
+        if self.config.nice > 0:
+            logger.info(f"nexa.tts: Piper HTTP server started at nice {self.config.nice}")
 
         deadline = time.monotonic() + self.config.startup_timeout_s
         while time.monotonic() < deadline:

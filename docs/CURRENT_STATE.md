@@ -9,11 +9,12 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0016_m2_4b_2a_tts_normalization_edge_cases_20260907.md`
-  (M2.4B.2A — LaTeX-math + truncation-tail fix on the speech planner, from
-  the real operator mic run; `R0015` = M2.4B.2 speech planner;
-  `R0014` = M2.4B.1A CPU spike + metric fixes; `R0013` = M2.4B.1
-  instrumentation; `R0012` = M2.4B research; `R0011` = M2.4)
+- **Latest report:** `docs/reports/R0017_m2_4b_3_1_piper_priority_context_continuity_20260907.md`
+  (M2.4B.3.1 — Piper `nice +10` + TTS context timeout 8 s; B.2/B.2A
+  operator-confirmed; `R0016` = M2.4B.2A LaTeX/truncation fix;
+  `R0015` = M2.4B.2 speech planner; `R0014` = M2.4B.1A CPU spike + metric
+  fixes; `R0013` = M2.4B.1 instrumentation; `R0012` = M2.4B research;
+  `R0011` = M2.4)
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
   **M2 — Realtime Voice — IN PROGRESS (M2.1, M2.2, M2.3, M2.4 COMPLETE, `OPERATOR-CONFIRMED`)**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
@@ -64,31 +65,37 @@ Runtime / test evidence outranks anything else in this repo.
   `renice +10` on the Piper process is the recommended (not-yet-shipped)
   scheduling fix; true Piper HTTP timing + `buffer_drain_to_stop_lag_s`
   corrected. **M2.4B.2 — Polish-aware speech planner + TTS-only
-  normalisation: IMPLEMENTED** (`R0015`): `src/nexa/voice_tts/speech_planner.py`
-  (`NexaSpeechPlanner` between the bridge and `PiperHttpTTSService`,
-  emitting one natural-phrase `AggregatedTextFrame` at a time; Polish/EN
-  abbreviation-aware boundaries; Markdown/list → prose; conservative
-  abbreviation expansion; `tzw.` deliberately not expanded). No pacing yet.
-  Transcript invariant proven (`ast` + behaviour). **M2.4B.2A — edge-case
-  fix: DONE** (`R0016`): the real operator mic run showed B.2 removed the
-  fragmentation (`tiny_text_chunk_count = 0` all turns; `np. → na
-  przykład`; no isolated `tzw.`) but leaked inline LaTeX math
-  (`$\text{H}$`) to Piper and emitted a dangling trailing `"("` on a reply
-  `gemma4:e4b` truncated at its `num_predict = 200` cap. Fixed:
-  `_strip_math` in `normalize_for_speech`; `_tidy_spoken` trims dangling
-  openers from the spoken copy only (mid-word truncations kept =
-  transcript truth); multi-sentence list items joined as plain sentences
-  not "oraz". **B.2 is NOT yet `OPERATOR-CONFIRMED`** — needs a fresh mic
-  run after B.2A. **M2.4B.3 (look-ahead / buffered-audio refill
-  controller — where the long ~19.6/13.5/39.1 s intra-response gaps
-  confirmed in the mic run are actually addressed) is next.** Then **M2.5
-  — barge-in / interruption** (replaces the temporary half-duplex gate).
-  **M2.4B is NOT complete.** Separate future track flagged: STT quality —
-  whisper.cpp mistranscribed "horyzont zdarzeń" as "chory zęzdarzyń" etc.
-- **Current objective:** M2.4B.3 — see "Exact next recommended task".
-  M2.4's functional baseline is frozen by the M2.4 commit and unchanged;
-  the speech planner is additive (remove it from `extra_output_stages` →
-  byte-for-byte M2.4).
+  normalisation + M2.4B.2A LaTeX/truncation-tail fix: COMPLETE,
+  `OPERATOR-CONFIRMED` (2026-09-07)** — `R0015` + `R0016`.
+  `src/nexa/voice_tts/speech_planner.py` (`NexaSpeechPlanner` between the
+  bridge and `PiperHttpTTSService`, one natural-phrase `AggregatedTextFrame`
+  at a time; Polish/EN abbreviation-aware boundaries; Markdown/list → prose;
+  conservative abbreviation expansion; `tzw.` not expanded; `_strip_math`
+  for inline LaTeX; `_tidy_spoken` trims a dangling `"("` from a
+  `num_predict`-truncated reply, mid-word partials kept = transcript
+  truth). No pacing. Transcript invariant proven (`ast` + behaviour).
+  Operator verdict on the fresh mic run: *"The spoken response itself is
+  good if we ignore the pauses"* — B.2/B.2A confirmed; `$\text{H}$` never
+  reached Piper (`"wodoru (H) i helu (He)"`), `tiny_text_chunk_count = 0`,
+  true Piper RTF ~0.27. **M2.4B.3.1 — Piper CPU priority + TTS context
+  continuity: IMPLEMENTED** (`R0017`): the external Piper process starts at
+  `nice +10` (`PiperHttpConfig.nice`, no sudo, NeXa's own process untouched,
+  `llama-server` untouched); Pipecat `stop_frame_timeout_s` raised 3 s → 8 s
+  (`DEFAULT_TTS_CONTEXT_TIMEOUT_S`) so a short inter-phrase stall keeps one
+  speaking context. No refill controller. **M2.4B.3.2 (buffer-aware
+  look-ahead / refill) is STILL needed** — the B.3.1 hardware comparison
+  still shows ~8–11 s intra-response gaps (`audio-s per wall-s ~0.5`,
+  `diagnose = LLM TEXT PRODUCTION`): the first phrase buys ~4 s of audio
+  while `gemma4:e4b` needs ~14 s to produce the next phrase's text; CPU
+  priority alone cannot close that 3–4× deficit. Then **M2.5 — barge-in /
+  interruption** (replaces the temporary half-duplex gate).
+  **M2.4B is NOT complete.** Separate flagged tracks: STT quality
+  (whisper.cpp mistranscribed "horyzont zdarzeń" as "chory zęzdarzyń"
+  etc.); `GenerationOptions.num_predict = 200` truncating long replies.
+- **Current objective:** M2.4B.3.2 — buffer-aware look-ahead / refill
+  controller — see "Exact next recommended task". M2.4's functional
+  baseline is frozen by the M2.4 commit and unchanged; the speech planner
+  is additive (remove it from `extra_output_stages` → byte-for-byte M2.4).
 
 ---
 
@@ -513,24 +520,31 @@ Runtime / test evidence outranks anything else in this repo.
   M2.4 (`src/nexa/tts/`, `src/nexa/voice_tts/`, `src/nexa/voice/gate.py`,
   `apps/nexa_voice_tts_probe.py`, `scripts/setup_piper_http.py`). **M2.4B
   has product code now:** `src/nexa/voice_tts/metrics.py` +
-  `timed_tts.py` (B.1 / B.1A, measure-only) and
-  `src/nexa/voice_tts/speech_planner.py` (B.2 — `NexaSpeechPlanner`,
-  `normalize_for_speech`, `find_phrase_cut`; wired into the probe's
-  `extra_output_stages` between the bridge and the TTS service). B.3
-  (look-ahead / pacing) and M2.5 (barge-in) still have no product code.
+  `timed_tts.py` (B.1 / B.1A, measure-only), `src/nexa/voice_tts/speech_planner.py`
+  (B.2/B.2A — `NexaSpeechPlanner`, `normalize_for_speech`,
+  `find_phrase_cut`; wired into the probe's `extra_output_stages` between
+  the bridge and the TTS service), and B.3.1 CPU/context tuning:
+  `PiperHttpConfig.nice` (+ `DEFAULT_PIPER_NICE = 10`, `default_piper_nice()`)
+  applied in `nexa/tts/server.py` via a `nice -n N` exec prefix, and
+  `nexa/voice_tts.DEFAULT_TTS_CONTEXT_TIMEOUT_S = 8.0` passed to
+  `PiperHttpTTSService(stop_frame_timeout_s=…)` by the probe. **B.3.2**
+  (buffer-aware look-ahead / refill) and M2.5 (barge-in) still have no
+  product code.
 
 ## Current test status
 
 - Repo-local `./.venv` (system Python 3.13.5, **not** the legacy repo's venv)
   with `dev` extras (`pytest`, `ruff`) and `pipecat-ai[local]==1.8.1`
   installed.
-- `python -m unittest discover -s tests`: **381 OK, 7 skipped**;
-  `pytest`: **374 passed, 7 skipped, 14 subtests passed** (2026-09-07).
+- `python -m unittest discover -s tests`: **394 OK, 7 skipped**;
+  `pytest`: **387 passed, 7 skipped, 14 subtests passed** (2026-09-07).
   The 7 skips are all opt-in / environment-gated: 1 live Ollama, 2 live
   whisper.cpp, 3 live Piper HTTP (`NEXA_RUN_LIVE_TTS_TEST=1`), 1 reSpeaker
   hardware probe. `ruff check src tests apps scripts/setup_piper_http.py`:
   clean. (`tests/test_voice_tts_metrics.py` 69 tests — B.1/B.1A/B.2;
-  `tests/test_voice_tts_speech_planner.py` 59 tests — B.2 + B.2A.)
+  `tests/test_voice_tts_speech_planner.py` 59 tests — B.2 + B.2A;
+  `tests/test_tts_server.py` — B.3.1 Piper `nice`;
+  `tests/test_voice_tts_bridge.py` — B.3.1 TTS context timeout.)
   (Pre-existing unrelated `ruff` findings in `scripts/m1_bench/` — M1
   benchmark tooling, committed in `b79a752`, untouched.)
 - Live Ollama integration test (`NEXA_RUN_LIVE_TESTS=1 python -m unittest
@@ -609,39 +623,43 @@ Runtime / test evidence outranks anything else in this repo.
   are now complete. The M2.4 functional baseline is frozen by its commit.
   **M2.4B is in progress** — research frozen (`f8c3964`/`R0012`); M2.4B.1
   instrumentation (`R0013`), M2.4B.1A CPU spike + metric fixes (`R0014`),
-  M2.4B.2 Polish-aware speech planner (`R0015`), and M2.4B.2A LaTeX/
-  truncation-tail edge-case fix (`R0016`) implemented. **M2.4B.3
-  (look-ahead / buffered-audio pacing) is next.**
+  M2.4B.2 speech planner (`R0015`) + M2.4B.2A LaTeX/truncation-tail fix
+  (`R0016`, `OPERATOR-CONFIRMED` 2026-09-07), and M2.4B.3.1 Piper `nice
+  +10` + TTS context-timeout 8 s (`R0017`) implemented. **M2.4B.3.2
+  (buffer-aware look-ahead / refill controller) is next.**
 
 ## Exact next recommended task
 
-**M2.4B.3 — look-ahead / buffered-audio refill controller** (R0012
-"LOOK-AHEAD", R0014 recommendation). This is where the **long
-intra-response silence** is addressed (B.2 fixed phrasing, not arrival
-rate). Key synthesis off `buffered_audio_seconds`: emit phrase 1
-immediately (protect first-audio latency), batch-and-hold phrases 2..N
-(concat up to a char cap), release a batch when
-`buffered_audio_s ≤ target` **or** generation is done — never speed speech
-up, never insert silence. Also: (a) `renice -n 10` the NeXa-spawned Piper
-process at startup (R0014 — no sudo, no PID supervisor); (b) raise
-`PiperHttpTTSService(stop_frame_timeout_s=…)` 3 s → ~8–10 s so an LLM
-inter-sentence stall no longer fragments the audio context; (c) FIRST
-re-validate the buffered-audio estimate as a *control* signal on a real
-bursty `gemma4:e4b` turn with `TimedPiperHttpTTSService` wired in
-(`buffer_drain_to_stop_lag_s` within a few s, `underruns_without_following_stop`
-= 0); (d) sweep `target ∈ {0.5,1,1.5,2,3}` s with the `--report` profiler,
-operator A/B picks it. Parallel tracks (not blocking B.3): Ollama
-`keep_alive` for first-token eviction stalls; **STT quality** —
-whisper.cpp mistranscribed "horyzont zdarzeń" as "chory zęzdarzyń" /
-"choryząt zdarzeń" / "choryząc dażem" in the B.2 mic run (R0016); and, if
-the operator wants replies to finish rather than truncate mid-word, a
-`GenerationOptions.num_predict` (=200) review. The B.2 planner tunables
-(`MIN_SENTENCE_CHARS` etc., connector words, `_LIST_PROSE_MAX_ITEM_CHARS`)
-are CANDIDATE and may be adjusted here.
+**M2.4B.3.2 — buffer-aware look-ahead / refill controller** (R0012
+"LOOK-AHEAD"). B.3.1 (Piper `nice +10` + `stop_frame_timeout_s = 8`)
+shipped and helps (Piper never the bottleneck; less BotStopped/BotStarted
+churn) but the B.3.1 hardware comparison still shows **~8-11 s
+intra-response gaps**, `audio-s per wall-s ~0.5`, `diagnose = LLM TEXT
+PRODUCTION`. Root ratio: the first phrase buys ~4 s of audio;
+`gemma4:e4b` needs ~14 s to produce the next phrase's text. CPU priority
+cannot close a 3-4x deficit - look-ahead batching can.
 
-Before B.3: a fresh operator mic run to confirm the B.2A corrections
-(no `$\text{...}` reaches Piper, no dangling `"("` chunk) and mark B.2
-`OPERATOR-CONFIRMED`.
+Policy (R0012 + the B.3.2 rule in R0017): emit phrase 1 immediately
+(protect first-audio latency); then key off `buffered_audio_seconds` -
+**BUFFER HEALTHY** -> may wait briefly for a larger natural batch;
+**BUFFER LOW** -> immediately synthesize the next already-complete natural
+phrase; **BUFFER NEAR EMPTY** -> refill has priority. Never hold a ready
+phrase just to grow a batch while the buffer is low. Never accelerate the
+voice, never insert artificial silence - the controller reduces latency,
+never creates it. FIRST re-validate the buffered-audio estimate as a
+*control* signal on a real bursty `gemma4:e4b` turn with
+`TimedPiperHttpTTSService` wired in (`buffer_drain_to_stop_lag_s` within a
+few s, `underruns_without_following_stop = 0`); then sweep the `target`
+with the `--report` profiler, operator A/B picks it.
+
+Parallel tracks (not blocking B.3.2): Ollama `keep_alive` for first-token
+eviction stalls; **STT quality** - whisper.cpp mistranscribed "horyzont
+zdarzen" as "chory zezdarzyn" / "choryzat zdarzen" / "choryzac dazem"
+(R0016); `GenerationOptions.num_predict = 200` truncating long replies
+mid-word. The B.2 planner tunables (`MIN_SENTENCE_CHARS` etc., connector
+words, `_LIST_PROSE_MAX_ITEM_CHARS`) and the B.3.1 values
+(`DEFAULT_PIPER_NICE`, `DEFAULT_TTS_CONTEXT_TIMEOUT_S`) are CANDIDATE and
+may be adjusted here.
 
 Then **M2.5 — barge-in / interruption / own-TTS suppression / echo
 handling**, replacing the temporary half-duplex gate.

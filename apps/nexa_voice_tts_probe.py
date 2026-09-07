@@ -45,8 +45,10 @@ from nexa.stt import (  # noqa: E402
     WhisperCppTranscriber,
 )
 from nexa.tts import (  # noqa: E402
+    DEFAULT_PIPER_NICE,
     EN_VOICE,
     PL_VOICE,
+    PiperHttpConfig,
     PiperHttpError,
     PiperHttpServer,
     PiperServerStartError,
@@ -58,6 +60,7 @@ from nexa.voice import HalfDuplexGate, LocalAudioConfig, VoiceRuntime  # noqa: E
 from nexa.voice.state import VoiceEvent, VoiceState  # noqa: E402
 from nexa.voice_conversation import VoiceConversationAdapter  # noqa: E402
 from nexa.voice_tts import (  # noqa: E402
+    DEFAULT_TTS_CONTEXT_TIMEOUT_S,
     ActivityFlags,
     AssistantSpeechBridge,
     MetricsCollector,
@@ -288,6 +291,25 @@ def parse_args() -> argparse.Namespace:
         default=400,
         help="resource-sampler period in ms (--report only; default 400).",
     )
+    parser.add_argument(
+        "--piper-nice",
+        type=int,
+        default=DEFAULT_PIPER_NICE,
+        help=f"M2.4B.3.1: POSIX nice value for the external Piper process so "
+        f"gemma4:e4b wins CPU while generating the next phrase (R0014). "
+        f"Default {DEFAULT_PIPER_NICE}; 0 disables. No sudo, NeXa's own "
+        f"process is never reniced, llama-server is never touched.",
+    )
+    parser.add_argument(
+        "--tts-context-timeout-s",
+        type=float,
+        default=DEFAULT_TTS_CONTEXT_TIMEOUT_S,
+        help=f"M2.4B.3.1: Pipecat stop_frame_timeout_s — idle time before the "
+        f"speaking context is torn down (Pipecat default 3.0). Raised to "
+        f"{DEFAULT_TTS_CONTEXT_TIMEOUT_S} so a normal inter-phrase LLM stall "
+        f"no longer causes BotStopped/BotStarted churn. Keeps the context "
+        f"alive only — adds no silence.",
+    )
     return parser.parse_args()
 
 
@@ -313,13 +335,13 @@ async def main() -> None:
     print(f"language: {language.value}")
     print("starting external Piper HTTP server...")
     try:
-        piper_server = PiperHttpServer()
+        piper_server = PiperHttpServer(PiperHttpConfig(nice=args.piper_nice))
         await piper_server.start()
         prewarm_times = await piper_server.prewarm()
     except (PiperVenvNotFoundError, PiperVoiceNotFoundError, PiperServerStartError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
-    print(f"Piper ready. Prewarm timings: {prewarm_times}")
+    print(f"Piper ready (nice {args.piper_nice}). Prewarm timings: {prewarm_times}")
 
     session = build_default_session()
     description = session.provider.describe()
@@ -386,19 +408,24 @@ async def main() -> None:
     )
 
     aiohttp_session = aiohttp.ClientSession()
+    # M2.4B.3.1: keep one speaking context alive across a normal inter-phrase
+    # LLM stall (Pipecat default 3.0 s -> BotStopped/BotStarted churn).
+    tts_kwargs = dict(
+        base_url=piper_server.config.synthesize_url,
+        aiohttp_session=aiohttp_session,
+        stop_frame_timeout_s=args.tts_context_timeout_s,
+    )
     if report_mode:
         # Measure-only subclass: times each run_tts HTTP request (true Piper
         # synthesis speed) — yields an identical frame stream, no behaviour
         # change. M2.4B.1A metric correction (R0013/R0014).
         tts_service = TimedPiperHttpTTSService(
-            base_url=piper_server.config.synthesize_url,
-            aiohttp_session=aiohttp_session,
-            on_http_call=(lambda call: _metrics.http_synthesis(call)),
+            on_http_call=(lambda call: _metrics.http_synthesis(call)), **tts_kwargs
         )
     else:
-        tts_service = PiperHttpTTSService(
-            base_url=piper_server.config.synthesize_url, aiohttp_session=aiohttp_session
-        )
+        tts_service = PiperHttpTTSService(**tts_kwargs)
+    print(f"TTS context timeout: {args.tts_context_timeout_s}s "
+          f"(Pipecat default 3.0; M2.4B.3.1)")
 
     on_user_transcript, on_assistant_token, on_assistant_complete, on_conversation_error = (
         make_conversation_handlers(bridge)
