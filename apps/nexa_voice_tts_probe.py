@@ -37,6 +37,7 @@ import aiohttp  # noqa: E402
 from pipecat.services.piper.tts import PiperHttpTTSService  # noqa: E402
 
 from nexa.bootstrap import build_default_session  # noqa: E402
+from nexa.conversation import ResponseMode  # noqa: E402
 from nexa.stt import (  # noqa: E402
     Language,
     SttBinaryNotFoundError,
@@ -329,6 +330,17 @@ def parse_args() -> argparse.Namespace:
         help="M2.4B.3.2: disable the continuity controller (pure pass-through) "
         "— for the A/B 'off' baseline.",
     )
+    parser.add_argument(
+        "--response-mode",
+        choices=[m.value for m in ResponseMode],
+        default=ResponseMode.VOICE.value,
+        help="M2.4B.3.3: 'voice' (default) adds a transient 'speak "
+        "conversationally, 1–3 sentences, short first sentence, honour "
+        "explicit detail requests' system instruction to the SAME "
+        "ConversationSession request. 'text' runs the voice path with the "
+        "plain typed-chat policy — the A/B baseline. Never stored in "
+        "history; does not change the response language.",
+    )
     return parser.parse_args()
 
 
@@ -466,6 +478,10 @@ async def main() -> None:
     _cc = ("OFF (pass-through)" if args.no_continuity
            else f"target reserve {args.continuity_target_s}s (ESTIMATE)")
     print(f"continuity controller: {_cc}  (M2.4B.3.2)")
+    response_mode = ResponseMode(args.response_mode)
+    _rm = ("VOICE (conversational reply policy)" if response_mode == ResponseMode.VOICE
+           else "TEXT (plain typed-chat policy — A/B baseline)")
+    print(f"response mode: {_rm}  (M2.4B.3.3)")
 
     on_user_transcript, on_assistant_token, on_assistant_complete, on_conversation_error = (
         make_conversation_handlers(bridge)
@@ -476,6 +492,7 @@ async def main() -> None:
         on_assistant_token=on_assistant_token,
         on_assistant_complete=on_assistant_complete,
         on_conversation_error=on_conversation_error,
+        response_mode=response_mode,
     )
     adapter_ref.append(adapter)
     adapter.start()

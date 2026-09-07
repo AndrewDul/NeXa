@@ -38,6 +38,7 @@ from dataclasses import dataclass
 
 from ..providers.base import ProviderMessage
 from .language import detect_response_language, language_directive
+from .response_mode import ResponseMode, voice_response_directive
 from .turn import ConversationTurn, Role
 
 DEFAULT_MAX_TURNS = 20
@@ -71,8 +72,18 @@ class ConversationContext:
         selected.reverse()
         return cls(system_prompt=system_prompt, turns=tuple(selected))
 
-    def to_provider_messages(self) -> list[ProviderMessage]:
+    def to_provider_messages(
+        self, *, response_mode: ResponseMode = ResponseMode.TEXT
+    ) -> list[ProviderMessage]:
         messages = [ProviderMessage(role="system", content=self.system_prompt)]
+        # M2.4B.3.3: a transient, constant, fixed-position voice-mode
+        # instruction. ResponseMode.TEXT (default) adds nothing — the typed
+        # sequence is unchanged. Never stored in history; does not decide
+        # the response language (the per-turn directive below still does).
+        if response_mode == ResponseMode.VOICE:
+            messages.append(
+                ProviderMessage(role="system", content=voice_response_directive())
+            )
         for turn in self.turns:
             messages.append(ProviderMessage(role=turn.role.value, content=turn.content))
             if turn.role == Role.USER:

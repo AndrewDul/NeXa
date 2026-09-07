@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 
 from ..providers.base import CancelToken, GenerationOptions, ModelProvider
 from .context import DEFAULT_MAX_CHARS, DEFAULT_MAX_TURNS, ConversationContext
+from .response_mode import ResponseMode
 from .streaming import StreamingResponse
 from .turn import ConversationTurn, Role
 
@@ -51,12 +52,21 @@ class ConversationSession:
         )
 
     async def send(
-        self, user_text: str, *, cancel_token: CancelToken | None = None
+        self,
+        user_text: str,
+        *,
+        cancel_token: CancelToken | None = None,
+        response_mode: ResponseMode = ResponseMode.TEXT,
     ) -> AsyncIterator[str]:
+        """``response_mode`` (M2.4B.3.3) is a transient presentation hint —
+        ``VOICE`` adds one constant "speak conversationally" system message
+        to the wire prompt. It is never stored in history and does not
+        change the response language. ``TEXT`` (default) is byte-for-byte
+        the pre-B.3.3 path."""
         self._history.append(ConversationTurn(role=Role.USER, content=user_text))
 
         context = self.build_context()
-        messages = context.to_provider_messages()
+        messages = context.to_provider_messages(response_mode=response_mode)
 
         raw_stream = self.provider.generate(messages, self.options, cancel_token=cancel_token)
         response = StreamingResponse(raw_stream)

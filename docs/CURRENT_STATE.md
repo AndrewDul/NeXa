@@ -9,16 +9,23 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0019_m2_4b_3_2_speech_continuity_controller_20260907.md`
-  (M2.4B.3.2 — `NexaSpeechContinuityController`: phrase 0 immediate,
-  phrases 1..N released when the ESTIMATED audio reserve is low, held
-  ≤ 0.4 s only while healthy; proven no-regression; cannot fix the
-  `realtime_text_ratio ≈ 0.53` rate deficit. `R0018` = the rate-budget
-  math authority; `R0017` = M2.4B.3.1 Piper `nice +10` + TTS context
-  timeout 8 s; `R0016` = M2.4B.2A LaTeX/truncation fix; `R0015` =
-  M2.4B.2 speech planner; `R0014` = M2.4B.1A CPU spike + metric fixes;
-  `R0013` = M2.4B.1 instrumentation; `R0012` = M2.4B research; `R0011` =
-  M2.4)
+- **Latest report:** `docs/reports/R0020_m2_4b_3_3_conversational_voice_response_policy_20260907.md`
+  (M2.4B.3.3 — `ResponseMode.{TEXT,VOICE}`: one constant, fixed-position
+  `system` message (`voice_response_directive()`) added to the SAME
+  `ConversationSession` wire prompt when a reply will be spoken — "answer
+  directly, 1–3 sentences for an ordinary question, short first sentence,
+  honour explicit detail requests". Never stored in history; does not
+  decide the response language; `TEXT` (default) = byte-for-byte
+  pre-B.3.3. Hardware A/B: ordinary voice answers 1–3 sentences
+  (mean chars 395→186, two markdown lectures/lists became prose), detail
+  override uncut, first-audio equal-or-better on 4 of 5, ordinary gaps
+  41.6 s→≤5 s. `realtime_text_ratio ≈ 0.53` unchanged — shape, not rate.
+  `R0019` = M2.4B.3.2 continuity controller (no-op on today's rate);
+  `R0018` = the rate-budget math authority; `R0017` = M2.4B.3.1 Piper
+  `nice +10` + TTS context timeout 8 s; `R0016` = M2.4B.2A
+  LaTeX/truncation fix; `R0015` = M2.4B.2 speech planner; `R0014` =
+  M2.4B.1A CPU spike + metric fixes; `R0013` = M2.4B.1 instrumentation;
+  `R0012` = M2.4B research; `R0011` = M2.4)
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
   **M2 — Realtime Voice — IN PROGRESS (M2.1, M2.2, M2.3, M2.4 COMPLETE, `OPERATOR-CONFIRMED`)**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
@@ -110,18 +117,44 @@ Runtime / test evidence outranks anything else in this repo.
   silence higher, and on those (LLM-behind) turns it changes nothing —
   it CANNOT fix the 0.53 rate deficit.** Its value is proven
   no-regression + the metrics seam + correct bounded behaviour for the
-  genuinely short-and-fast reply. **M2.4B is NOT complete** — the
-  remaining continuity work is the SEPARATE reply-length-shaping track
-  (persona/prompt, highest leverage) and/or ~2× faster generation
-  (~15.9 chars/s). Then **M2.5 — barge-in / interruption** (replaces the
-  temporary half-duplex gate). Separate flagged tracks: STT quality
-  (whisper.cpp "horyzont zdarzeń" → "chory zęzdarzyń" etc.);
-  `GenerationOptions.num_predict = 200` truncating long replies.
-- **Current objective:** reply-length shaping (persona/prompt) and/or the
-  faster-generation track — see "Exact next recommended task". M2.4's
-  functional baseline is frozen by the M2.4 commit and unchanged; the
-  speech planner + continuity controller are additive (remove them from
-  `extra_output_stages` → byte-for-byte M2.4).
+  genuinely short-and-fast reply. **M2.4B.3.3 — conversational voice
+  response policy: IMPLEMENTED** (`R0020`,
+  `src/nexa/conversation/response_mode.py`): new `ResponseMode.{TEXT,
+  VOICE}` `StrEnum` + `voice_response_directive()`. `ConversationSession.
+  send(..., response_mode=TEXT)` threads it to
+  `ConversationContext.to_provider_messages(..., response_mode=…)`, which
+  for `VOICE` inserts ONE constant bilingual `system` message at a fixed
+  index (right after the persona) — "answer directly, ~1–3 sentences for
+  an ordinary question, short first sentence, no lecture/list by default,
+  BUT honour an explicit request for detail/steps/list/comparison/more".
+  `VoiceConversationAdapter` defaults to `VOICE`; typed chat stays `TEXT`
+  = byte-for-byte pre-B.3.3. Same session/history/persona/model; the
+  directive is NEVER stored in history; it does NOT decide the response
+  language (the per-turn `language_directive` still does); it is a
+  generation policy, not truncation (`num_predict` unchanged). Follows the
+  R0009 KV-cache discipline (constant string, fixed position). Hardware
+  A/B (`b33_ab.py`): the four ordinary questions asked *without* "krótko"
+  → `2/2/3/2` sentences under `VOICE` (was `2/2/5/11` under `TEXT`; two
+  markdown lectures/lists became flat prose), mean answer chars 395→186;
+  "wyjaśnij dokładnie" still answered in 5 sentences/522 chars, uncut;
+  first-audio equal-or-better on 4 of 5 (Q-B −8.0 s, Q-E −16.4 s);
+  ordinary intra-response gaps 41.6 s→≤5 s. **`realtime_text_ratio ≈
+  0.53` is unchanged** — a long answer still gaps; this stage is reply
+  *shape*, not rate. **M2.4B is NOT complete** — the remaining continuity
+  work is ~2× faster generation (~15.9 chars/s). Then **M2.5 — barge-in /
+  interruption** (replaces the temporary half-duplex gate). Separate
+  flagged tracks: STT quality (whisper.cpp "horyzont zdarzeń" → "chory
+  zęzdarzyń" etc.); `GenerationOptions.num_predict = 200` truncating long
+  replies (it truncated both `TEXT`-mode long answers mid-word in the
+  B.3.3 A/B).
+- **Current objective:** operator voice-session confirmation of B.3.3
+  (incl. an English turn + a "rozwiń"/"tell me more" follow-up), then the
+  faster-generation / model-serving track — see "Exact next recommended
+  task". M2.4's functional baseline is frozen by the M2.4 commit and
+  unchanged; the speech planner + continuity controller are additive
+  (remove them from `extra_output_stages` → byte-for-byte M2.4); the
+  voice response policy is additive too (`ResponseMode.TEXT` → byte-for-
+  byte pre-B.3.3 wire prompt).
 
 ---
 
@@ -553,17 +586,25 @@ Runtime / test evidence outranks anything else in this repo.
   `PiperHttpConfig.nice` (+ `DEFAULT_PIPER_NICE = 10`, `default_piper_nice()`)
   applied in `nexa/tts/server.py` via a `nice -n N` exec prefix, and
   `nexa/voice_tts.DEFAULT_TTS_CONTEXT_TIMEOUT_S = 8.0` passed to
-  `PiperHttpTTSService(stop_frame_timeout_s=…)` by the probe. **B.3.2**
-  (buffer-aware look-ahead / refill) and M2.5 (barge-in) still have no
-  product code.
+  `PiperHttpTTSService(stop_frame_timeout_s=…)` by the probe. **B.3.2** —
+  `src/nexa/voice_tts/continuity.py` (`NexaSpeechContinuityController`,
+  `decide_release`; wired into `extra_output_stages` between the planner
+  and the TTS service; `--continuity-target-s` / `--no-continuity`).
+  **B.3.3** — `src/nexa/conversation/response_mode.py` (`ResponseMode`
+  `StrEnum` + `voice_response_directive()`); `ConversationSession.send`
+  and `ConversationContext.to_provider_messages` take a `response_mode`
+  keyword (default `TEXT` = unchanged); `VoiceConversationAdapter`
+  defaults to `VOICE`; probe flag `--response-mode {text,voice}`. M2.5
+  (barge-in) still has no product code.
 
 ## Current test status
 
 - Repo-local `./.venv` (system Python 3.13.5, **not** the legacy repo's venv)
   with `dev` extras (`pytest`, `ruff`) and `pipecat-ai[local]==1.8.1`
   installed.
-- `python -m unittest discover -s tests`: **394 OK, 7 skipped**;
-  `pytest`: **387 passed, 7 skipped, 14 subtests passed** (2026-09-07).
+- `python -m unittest discover -s tests`: **440 OK, 7 skipped**;
+  `pytest`: **433 passed, 7 skipped, 14 subtests passed** (2026-09-07,
+  after M2.4B.3.3 — `+17` `tests/test_conversation_response_mode.py`).
   The 7 skips are all opt-in / environment-gated: 1 live Ollama, 2 live
   whisper.cpp, 3 live Piper HTTP (`NEXA_RUN_LIVE_TTS_TEST=1`), 1 reSpeaker
   hardware probe. `ruff check src tests apps scripts/setup_piper_http.py`:
@@ -651,50 +692,42 @@ Runtime / test evidence outranks anything else in this repo.
   instrumentation (`R0013`), M2.4B.1A CPU spike + metric fixes (`R0014`),
   M2.4B.2 speech planner (`R0015`) + M2.4B.2A LaTeX/truncation-tail fix
   (`R0016`, `OPERATOR-CONFIRMED` 2026-09-07), M2.4B.3.1 Piper `nice +10` +
-  TTS context-timeout 8 s (`R0017`), and M2.4B.3.2A speech rate-budget
-  research (`R0018`: `realtime_text_ratio ≈ 0.53`) done. **M2.4B.3.2 — a
-  small look-ahead controller scoped to short replies (R0018 conclusion C)
-  — is next.**
+  TTS context-timeout 8 s (`R0017`), M2.4B.3.2A speech rate-budget
+  research (`R0018`: `realtime_text_ratio ≈ 0.53`), M2.4B.3.2 continuity
+  controller (`R0019` — no-op on today's rate), and M2.4B.3.3
+  conversational voice response policy (`R0020` — `ResponseMode`) done.
+  **Operator voice-session confirmation of B.3.3, then the ~2×
+  faster-generation / model-serving track — is next.**
 
 ## Exact next recommended task
 
-**M2.4B.3.2 — small look-ahead / refill controller, scoped to short
-conversational replies** (R0018 conclusion C). R0018 measured the hard
-constraint: `realtime_text_ratio ~= 0.53` (gemma4:e4b produces spoken
-text at ~53% of the rate pl_PL-gosia-medium consumes it, 8.5 vs 15.5
-chars/s). A finite buffer CANNOT make an arbitrarily long reply
-continuous - a prebuffer only relocates silence to the front
-(`wall_to_finish` invariant); batching cannot move the first underrun
-(can't synthesize non-existent text); `length_scale <= 1.10` closes <=
-11% of the deficit. So the controller is bounded in what it can do.
+**Operator voice-session confirmation of M2.4B.3.3** (an ordinary voice
+question with no "krótko"; an English turn; a "rozwiń" / "tell me more"
+follow-up to check the explicit-detail override live). Then the **~2×
+faster-generation / model-serving track** — R0018's asymptotic fix
+(target ~15.9 generated chars/s, ~≥5 tok/s sustained). At today's
+`realtime_text_ratio ≈ 0.53` (gemma4:e4b produces spoken text at ~53% of
+the rate pl_PL-gosia-medium consumes it, 8.5 vs 15.5 chars/s) a finite
+buffer CANNOT make an arbitrarily long reply continuous — a prebuffer
+only relocates silence to the front (`wall_to_finish` invariant);
+batching cannot move the first underrun (can't synthesize non-existent
+text); `length_scale <= 1.10` closes <= 11% of the deficit. B.3.3
+reduced the *number* of long spoken replies (ordinary voice answers are
+now 1–3 sentences — `R0020`), but faster generation is the only path to
+continuity on a genuinely long answer.
 
-Build: phrase 0 released immediately (protect first-audio latency);
-phrases 1..N held only until `buffered_audio_seconds` reaches a small
-target (~1.5-2.5 s candidate; operator A/B), then release the next
-ALREADY-COMPLETE natural phrase. Never hold a ready phrase to grow a
-batch while the buffer is low. Never accelerate the voice, never insert
-silence - reduce latency, never create it. Batch only phrases whose text
-already exists when the buffer is low (overhead/churn only). Document the
-continuity ceiling in the product: continuity is guaranteed only up to
-~`target/0.47 + first_phrase_audio` seconds of speech (~8-10 s with a
-2-3 s buffer); longer replies WILL gap - expected, not a bug. FIRST
-re-validate `buffered_audio_seconds` as a control signal on a real bursty
-turn with `TimedPiperHttpTTSService` wired in
-(`buffer_drain_to_stop_lag_s` within a few s,
-`underruns_without_following_stop = 0`).
-
-Parallel tracks (not blocking, but needed for continuity of longer
-replies): reply-length shaping via persona/prompt so gemma4:e4b gives
-1-3 sentence spoken answers (highest leverage - makes the controller
-sufficient for the common case); and a ~2x faster-generation / model-
-serving track (target ~15.9 generated chars/s, ~>=5 tok/s sustained, for
-unbounded continuity). Also non-blocking: Ollama `keep_alive` for
+The B.3.2 continuity controller (`src/nexa/voice_tts/continuity.py`) is
+shipped and correct for when the LLM gets faster (phrase 0 immediate;
+phrases 1..N held ≤ 0.4 s only while the estimated reserve is healthy);
+it makes 0 holds at today's rate. Non-blocking: Ollama `keep_alive` for
 first-token eviction; STT quality (whisper.cpp "horyzont zdarzen" ->
 "chory zezdarzyn" etc., R0016); `GenerationOptions.num_predict = 200`
-truncation. The B.2 planner tunables and the B.3.1 values
-(`DEFAULT_PIPER_NICE`, `DEFAULT_TTS_CONTEXT_TIMEOUT_S`) plus the new
-B.3.2 target are CANDIDATE and may be adjusted here. `length_scale`
-1.05-1.10 is an optional minor assist (analysis only in R0018).
+truncation (it truncated both TEXT-mode long answers mid-word in the
+B.3.3 A/B). The B.2 planner tunables, the B.3.1 values
+(`DEFAULT_PIPER_NICE`, `DEFAULT_TTS_CONTEXT_TIMEOUT_S`), the B.3.2 target
+and the B.3.3 `voice_response_directive()` wording are CANDIDATE and may
+be adjusted here. `length_scale` 1.05-1.10 is an optional minor assist
+(analysis only in R0018).
 
 Then **M2.5 — barge-in / interruption / own-TTS suppression / echo
 handling**, replacing the temporary half-duplex gate.

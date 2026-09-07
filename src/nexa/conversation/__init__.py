@@ -8,6 +8,7 @@ answer" pipeline, no MAS in the simple turn.
 from __future__ import annotations
 
 from .context import ConversationContext
+from .response_mode import ResponseMode, voice_response_directive
 from .session import ConversationSession
 from .streaming import StreamingResponse
 from .turn import ConversationTurn, Role
@@ -17,5 +18,7 @@ __all__ = [
     "ConversationSession",
     "ConversationTurn",
     "Role",
+    "ResponseMode",
+    "voice_response_directive",
     "StreamingResponse",
 ]

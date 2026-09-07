@@ -27,6 +27,7 @@ from collections.abc import Callable, Coroutine
 
 from loguru import logger
 
+from nexa.conversation.response_mode import ResponseMode
 from nexa.conversation.session import ConversationSession
 from nexa.stt.transcriber import TranscriptionResult
 
@@ -50,8 +51,15 @@ class VoiceConversationAdapter:
         on_assistant_complete: Callable[[str], None] | None = None,
         on_conversation_error: Callable[[Exception], None] | None = None,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
+        response_mode: ResponseMode = ResponseMode.VOICE,
     ) -> None:
+        # M2.4B.3.3: this adapter *is* the voice surface, so it defaults to
+        # ``ResponseMode.VOICE`` — a transient per-request hint the same
+        # canonical ``ConversationSession`` receives. It never changes
+        # history/persona/model/language authority. Pass ``ResponseMode.TEXT``
+        # to run the voice path with the plain typed-chat policy (A/B).
         self._session = session
+        self._response_mode = response_mode
         self._on_user_transcript = on_user_transcript
         self._on_assistant_token = on_assistant_token
         self._on_assistant_complete = on_assistant_complete
@@ -99,7 +107,7 @@ class VoiceConversationAdapter:
             self._on_user_transcript(text)
         chunks: list[str] = []
         try:
-            async for chunk in self._session.send(text):
+            async for chunk in self._session.send(text, response_mode=self._response_mode):
                 chunks.append(chunk)
                 if self._on_assistant_token is not None:
                     self._on_assistant_token(chunk)

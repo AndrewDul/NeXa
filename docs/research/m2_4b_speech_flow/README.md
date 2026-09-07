@@ -171,6 +171,28 @@ is good if we ignore the pauses"*; `$\text{H}$` never reached Piper;
 - `b32_ab_raw_20260907.txt` — scripted hardware A/B (CONTROL vs targets
   1.5 / 2.0 / 2.5) on the short-answer prompts.
 
+## M2.4B.3.3 additions (2026-09-07 — see R0020, conversational voice response policy)
+
+- `b33_ab.py` + `b33_ab_raw_20260907.txt` — scripted hardware A/B
+  (`ResponseMode.TEXT` baseline vs `ResponseMode.VOICE`) on four ORDINARY
+  questions asked **without** "krótko" (A czarna dziura / B gwiazda /
+  C hel / D sen) plus one explicit detail-override ("Wyjaśnij dokładnie
+  …"). Real `gemma4:e4b` + real Piper (`nice +10`) + real audio out +
+  real `ConversationSession`; only mic/STT scripted. B.3.2 continuity
+  controller kept at its shipped default (`target_reserve_s = 2.0`,
+  `enabled`).
+- Result: `ResponseMode.VOICE` adds one constant `system` message
+  (`voice_response_directive()`) at a fixed position after the persona —
+  a transient per-request hint the SAME session receives; never stored in
+  history; does not decide the response language. Ordinary answers
+  1–3 sentences (mean chars 395 → 186, ‑53 %; the two markdown lecture/
+  list replies became flat prose); the detail-override still answered in
+  5 sentences / 522 chars, technical, uncut. First-audio equal-or-better
+  on 4 of 5 (Q-B ‑8.0 s, Q-E ‑16.4 s); intra-response gaps on the
+  ordinary questions fell from up to 41.6 s (TEXT list) to ≤ 5 s. The
+  `realtime_text_ratio ≈ 0.53` deficit is unchanged — this stage attacks
+  reply *shape*, not the rate.
+
 ## One-line conclusion
 
 Synthesis is ~7× faster than real-time and is **not** the bottleneck. The
