@@ -1,0 +1,29 @@
+==================================================================================
+M2.4B.3.2 — CONTROLLER OFFLINE REPLAY  (real decide_release policy)
+  near_empty=0.5s  max_hold=0.4s  targets=(1.5, 2.0, 2.5)
+==================================================================================
+
+### B.3.1 nice+10 measured turn   (b31_compare_raw_20260907.txt)
+  baseline (no controller): first_audio=1.4s  1st_underrun@=3.86  underruns=1  gaps=[11.1]  total_silence=11.1s
+  target 1.5s: first_audio=1.4s  1st_underrun@=3.86  underruns=1  gaps=[11.1]  total_silence=11.1s  holds=[]
+  target 2.0s: first_audio=1.4s  1st_underrun@=3.86  underruns=1  gaps=[11.1]  total_silence=11.1s  holds=[]
+  target 2.5s: first_audio=1.4s  1st_underrun@=3.86  underruns=1  gaps=[11.1]  total_silence=11.1s  holds=[]
+
+### B.3.1 CONTROL measured turn (nice 0 / 3 s)   (b31_compare_raw_20260907.txt)
+  baseline (no controller): first_audio=1.24s  1st_underrun@=3.56  underruns=2  gaps=[10.87, 7.03]  total_silence=17.9s
+  target 1.5s: first_audio=1.24s  1st_underrun@=3.56  underruns=2  gaps=[10.87, 7.03]  total_silence=17.9s  holds=[]
+  target 2.0s: first_audio=1.24s  1st_underrun@=3.56  underruns=2  gaps=[10.87, 7.03]  total_silence=17.9s  holds=[]
+  target 2.5s: first_audio=1.24s  1st_underrun@=3.56  underruns=2  gaps=[10.87, 7.03]  total_silence=17.9s  holds=[]
+
+### operator star question (turn 5)   (/tmp/nexa_m24b2_operator.jsonl)
+  baseline (no controller): first_audio=1.43s  1st_underrun@=7.26  underruns=1  gaps=[39.44]  total_silence=39.44s
+  target 1.5s: first_audio=1.43s  1st_underrun@=7.26  underruns=1  gaps=[39.44]  total_silence=39.44s  holds=[0.4]
+  target 2.0s: first_audio=1.43s  1st_underrun@=7.26  underruns=1  gaps=[39.44]  total_silence=39.44s  holds=[0.24]
+  target 2.5s: first_audio=1.43s  1st_underrun@=7.26  underruns=1  gaps=[39.44]  total_silence=39.44s  holds=[]
+  -> operator-star 42 s LLM stall before phrase 2 is UNCHANGED by the controller: max_silence 39.44s -> 39.44s (the controller cannot create text the LLM has not generated — R0018).
+
+### synthetic 2-sentence reply, LLM keeps up   (synthetic (rates from R0018))
+  baseline (no controller): first_audio=1.3s  1st_underrun@=None  underruns=0  gaps=[]  total_silence=0s
+  target 1.5s: first_audio=1.3s  1st_underrun@=None  underruns=0  gaps=[]  total_silence=0s  holds=[0.4]
+  target 2.0s: first_audio=1.3s  1st_underrun@=None  underruns=0  gaps=[]  total_silence=0s  holds=[0.4]
+  target 2.5s: first_audio=1.3s  1st_underrun@=None  underruns=0  gaps=[]  total_silence=0s  holds=[0.4]

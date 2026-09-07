@@ -60,10 +60,12 @@ from nexa.voice import HalfDuplexGate, LocalAudioConfig, VoiceRuntime  # noqa: E
 from nexa.voice.state import VoiceEvent, VoiceState  # noqa: E402
 from nexa.voice_conversation import VoiceConversationAdapter  # noqa: E402
 from nexa.voice_tts import (  # noqa: E402
+    DEFAULT_CONTINUITY_TARGET_S,
     DEFAULT_TTS_CONTEXT_TIMEOUT_S,
     ActivityFlags,
     AssistantSpeechBridge,
     MetricsCollector,
+    NexaSpeechContinuityController,
     NexaSpeechPlanner,
     ResourceSampler,
     TimedPiperHttpTTSService,
@@ -310,6 +312,23 @@ def parse_args() -> argparse.Namespace:
         f"no longer causes BotStopped/BotStarted churn. Keeps the context "
         f"alive only — adds no silence.",
     )
+    parser.add_argument(
+        "--continuity-target-s",
+        type=float,
+        default=DEFAULT_CONTINUITY_TARGET_S,
+        help=f"M2.4B.3.2: NexaSpeechContinuityController target audio reserve "
+        f"(estimate, seconds). Phrase 0 always immediate; phrases 1..N are "
+        f"held only while the estimated reserve is >= this, and released "
+        f"immediately below it. Candidate A/B: 1.5 / 2.0 / 2.5 "
+        f"(default {DEFAULT_CONTINUITY_TARGET_S}). Never grows a batch, "
+        f"never adds silence.",
+    )
+    parser.add_argument(
+        "--no-continuity",
+        action="store_true",
+        help="M2.4B.3.2: disable the continuity controller (pure pass-through) "
+        "— for the A/B 'off' baseline.",
+    )
     return parser.parse_args()
 
 
@@ -381,6 +400,17 @@ async def main() -> None:
     speech_planner = NexaSpeechPlanner(
         en_voice=EN_VOICE, pl_voice=PL_VOICE, default_language=language.value
     )
+    # M2.4B.3.2 — short-reply speech continuity controller. Phrase 0 always
+    # immediate (no prebuffer); phrases 1..N released as soon as the ESTIMATED
+    # audio reserve is low, held only briefly while it is healthy. Never grows
+    # a batch, never inserts silence, never changes speech rate or text.
+    continuity_controller = NexaSpeechContinuityController(
+        target_reserve_s=args.continuity_target_s,
+        enabled=not args.no_continuity,
+        on_release=(
+            (lambda rel: _metrics.controller_release(rel)) if report_mode else None
+        ),
+    )
     adapter_ref: list[VoiceConversationAdapter] = []
     (
         on_tts_started,
@@ -391,12 +421,19 @@ async def main() -> None:
         on_tts_text,
         on_tts_response_end,
     ) = make_tts_handlers(adapter_ref)
+    def _fan_out_tts_audio(nbytes: int, sample_rate: int, num_channels: int) -> None:
+        # Always feed the continuity controller its buffer-estimate signal;
+        # additionally feed the B.1 metrics in report mode.
+        continuity_controller.note_tts_audio(nbytes, sample_rate, num_channels)
+        if report_mode:
+            on_tts_audio(nbytes, sample_rate, num_channels)
+
     tts_observer = TtsStatusObserver(
         on_tts_started=on_tts_started,
         on_tts_first_audio=on_tts_first_audio,
         on_tts_stopped=on_tts_stopped,
         on_tts_error=on_tts_error,
-        on_tts_audio=(on_tts_audio if report_mode else None),
+        on_tts_audio=_fan_out_tts_audio,
         on_tts_text=(on_tts_text if report_mode else None),
         on_tts_response_end=(on_tts_response_end if report_mode else None),
         on_bot_started_speaking=(
@@ -426,6 +463,9 @@ async def main() -> None:
         tts_service = PiperHttpTTSService(**tts_kwargs)
     print(f"TTS context timeout: {args.tts_context_timeout_s}s "
           f"(Pipecat default 3.0; M2.4B.3.1)")
+    _cc = ("OFF (pass-through)" if args.no_continuity
+           else f"target reserve {args.continuity_target_s}s (ESTIMATE)")
+    print(f"continuity controller: {_cc}  (M2.4B.3.2)")
 
     on_user_transcript, on_assistant_token, on_assistant_complete, on_conversation_error = (
         make_conversation_handlers(bridge)
@@ -448,7 +488,9 @@ async def main() -> None:
         language=language,
         on_transcription=on_transcription,
         on_transcription_error=on_transcription_error,
-        extra_output_stages=[bridge, speech_planner, tts_service, tts_observer],
+        extra_output_stages=[
+            bridge, speech_planner, continuity_controller, tts_service, tts_observer
+        ],
         half_duplex_gate=_gate,
     )
 

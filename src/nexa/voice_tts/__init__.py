@@ -19,6 +19,13 @@ from __future__ import annotations
 from nexa.voice import HalfDuplexGate
 
 from .bridge import AssistantSpeechBridge, TtsStatusObserver, voice_for_language
+from .continuity import (
+    DEFAULT_CONTINUITY_TARGET_S,
+    ControllerRelease,
+    NexaSpeechContinuityController,
+    ReleaseReason,
+    decide_release,
+)
 from .metrics import (
     ActivityFlags,
     BufferEstimate,
@@ -70,4 +77,10 @@ __all__ = [
     "NexaSpeechPlanner",
     "normalize_for_speech",
     "find_phrase_cut",
+    # M2.4B.3.2 — short-reply speech continuity controller
+    "NexaSpeechContinuityController",
+    "ControllerRelease",
+    "ReleaseReason",
+    "decide_release",
+    "DEFAULT_CONTINUITY_TARGET_S",
 ]

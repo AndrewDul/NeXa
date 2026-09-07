@@ -1,0 +1,976 @@
+2026-09-07 17:01:40.359 | INFO     | pipecat:<module>:54 - ᓚᘏᗢ Pipecat 1.8.1 (Python 3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]) ᓚᘏᗢ
+[0;93m2026-09-07 17:01:40.726187778 [W:onnxruntime:Default, device_discovery.cc:325 DiscoverDevicesForPlatform] GPU device discovery failed: device_discovery.cc:92 ReadFileContents Failed to open file: "/sys/class/drm/card1/device/vendor"[m
+2026-09-07 17:01:40.772 | INFO     | nexa.tts.server:start:109 - nexa.tts: Piper HTTP server started at nice 10
+2026-09-07 17:01:43.186 | INFO     | nexa.tts.server:start:124 - nexa.tts: Piper HTTP server ready at http://127.0.0.1:5001
+2026-09-07 17:01:43.290 | INFO     | nexa.tts.server:prewarm:145 - nexa.tts: prewarmed voice 'en_GB-jenny_dioco-medium' in 0.10s
+2026-09-07 17:01:45.461 | INFO     | nexa.tts.server:prewarm:145 - nexa.tts: prewarmed voice 'pl_PL-gosia-medium' in 2.17s
+[audio out] 'usb_speaker' -> 2
+
+##############################################################################
+# CONTROL (no continuity)
+##############################################################################
+
+  --- WARM-UP (excl.): Ile jest osiem razy siedem?
+    [canonical] 'Pięćdziesiąt sześć.'
+2026-09-07 17:02:36.745 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Pięćdziesiąt sześć.]
+2026-09-07 17:02:36.961 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#0 cleaning up TTS context 8da18109-86f9-4ea8-860d-fdbc00a85c3e
+2026-09-07 17:02:36.962 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:02:38.270 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:02:38.270 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+  --- Q1: Co to jest czarna dziura? Odpowiedz krótko.
+    [canonical] 'Czarna dziura to obszar czasoprzestrzeni o tak silnej grawitacji, że nic, nawet światło, nie może się z niego wydostać.'
+2026-09-07 17:02:53.983 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Czarna dziura to obszar czasoprzestrzeni o tak silnej grawitacji, że nic, nawet światło, nie może się z niego wydostać.]
+2026-09-07 17:02:55.036 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#0 cleaning up TTS context 5b63ba4a-c7d6-44f3-83ad-e95ec5ce7c10
+2026-09-07 17:02:55.038 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+
+  --- Q2: Z czego głównie składa się gwiazda? Odpowiedz w dwóch zdaniach.
+2026-09-07 17:03:02.543 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:03:02.543 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 17:03:08.224 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Gwiazda składa się głównie ze zjonizowanego gazu, czyli plazmy.]
+2026-09-07 17:03:09.497 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+    [canonical] 'Gwiazda składa się głównie ze zjonizowanego gazu, czyli plazmy. Najważniejsze elementy tworzące tę plazmę to wodór i hel.'
+2026-09-07 17:03:15.587 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Najważniejsze elementy tworzące tę plazmę to wodór i hel.]
+2026-09-07 17:03:16.166 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#0 cleaning up TTS context c4557b91-2d55-4926-b641-cfebbd35213a
+2026-09-07 17:03:19.992 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:03:19.992 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+  --- Q3: A jak powstaje hel w gwieździe? Krótko.
+2026-09-07 17:03:34.832 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [Hel powstaje w wyniku termojądrowego syntezy, która ma miejsce w jądrze gwiazdy.]
+2026-09-07 17:03:36.414 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:03:44.281 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 17:03:44.415 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#0 cleaning up TTS context 134f2154-96f2-43cd-8ae8-951499be195c
+    [canonical] 'Hel powstaje w wyniku termojądrowego syntezy, która ma miejsce w jądrze gwiazdy. W procesie fuzji jądrowej wodór łączy się z sobą, tworząc cięższe pierwiastki, w tym hel.'
+2026-09-07 17:03:47.483 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#0: Generating TTS [W procesie fuzji jądrowej wodór łączy się z sobą, tworząc cięższe pierwiastki, w tym hel.]
+2026-09-07 17:03:48.344 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#0 cleaning up TTS context 134f2154-96f2-43cd-8ae8-951499be195c
+2026-09-07 17:03:48.345 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:03:54.250 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:03:54.250 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+===== CONTROL (no continuity)  Q1 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #2)
+==================================================
+
+USER
+  stt text:      Co to jest czarna dziura? Odpowiedz krótko.  (43 chars)
+  stt latency:   -
+
+LLM
+  first token:         3.01s  (base: stt_result)
+  generation duration: 12.24s
+  chars:               119
+  chars/s:             9.7
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 1  mean chars 119.0  tiny (<12): 0
+    #0  chars=119  since_prev=-  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 1 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=CONTROLLER_DISABLED  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 1 requests
+    #0  http_wall=1.05s  ttfb=1.05s  audio=7.49s  RTF=0.141
+  mean TRUE synthesis RTF: 0.141  (mean http wall 1.05s)
+  tts context spans (TTSStarted->Stopped): 1  -- context-span 'RTF' mean 0.141 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=1.05s  first_audio=1.05s  audio=7.49s
+
+PLAYBACK
+  first audio:      16.30s
+  final stop:       -
+  BotStarted count: 0
+  BotStopped count: 0
+  silence gaps ms:  -
+  max gap:          -
+  mean gap:         -
+  underruns (est):  0
+  audio-s per wall-s: -  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              7.49s
+  min:              0.30s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 0  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: -  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 98.4%  peak 100.0%
+  llama-server CPU: mean -  peak -
+  temperature:      65.0C max
+  throttled:        0x0
+  MemAvailable min: 3863MB
+  swap used max:    89MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.721ms/sample (40 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: FIRST TOKEN
+==================================================
+
+===== CONTROL (no continuity)  Q2 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #3)
+==================================================
+
+USER
+  stt text:      Z czego głównie składa się gwiazda? Odpowiedz w dwóch zdani…  (63 chars)
+  stt latency:   -
+
+LLM
+  first token:         5.11s  (base: stt_result)
+  generation duration: 13.80s
+  chars:               121
+  chars/s:             8.8
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 2  mean chars 60.0  tiny (<12): 0
+    #0  chars=63   since_prev=-  
+    #1  chars=57   since_prev=6.67s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 2 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=CONTROLLER_DISABLED  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=CONTROLLER_DISABLED  hold=0.00s  reserve@recv=-1.85s  reserve@rel=-1.85s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 2 requests
+    #0  http_wall=1.27s  ttfb=1.27s  audio=4.24s  RTF=0.300
+    #1  http_wall=0.58s  ttfb=0.57s  audio=3.78s  RTF=0.153
+  mean TRUE synthesis RTF: 0.227  (mean http wall 0.93s)
+  tts context spans (TTSStarted->Stopped): 1  -- context-span 'RTF' mean 0.991 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=7.94s  first_audio=1.27s  audio=8.02s
+
+PLAYBACK
+  first audio:      12.82s
+  final stop:       23.31s
+  BotStarted count: 1
+  BotStopped count: 1
+  silence gaps ms:  -
+  max gap:          -
+  mean gap:         -
+  underruns (est):  1
+  audio-s per wall-s: 0.76  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              1.35s
+  min:              -2.48s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 1  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.00s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 84.0%  peak 100.0%
+  llama-server CPU: mean -  peak -
+  temperature:      66.1C max
+  throttled:        0x0
+  MemAvailable min: 3739MB
+  swap used max:    89MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.493ms/sample (58 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: UNKNOWN
+==================================================
+
+===== CONTROL (no continuity)  Q3 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #4)
+==================================================
+
+USER
+  stt text:      A jak powstaje hel w gwieździe? Krótko.  (39 chars)
+  stt latency:   -
+
+LLM
+  first token:         4.75s  (base: stt_result)
+  generation duration: 20.90s
+  chars:               170
+  chars/s:             8.1
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 2  mean chars 84.5  tiny (<12): 0
+    #0  chars=80   since_prev=-  
+    #1  chars=89   since_prev=11.93s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 2 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=CONTROLLER_DISABLED  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=CONTROLLER_DISABLED  hold=0.00s  reserve@recv=-6.15s  reserve@rel=-6.15s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 2 requests
+    #0  http_wall=1.58s  ttfb=1.58s  audio=4.92s  RTF=0.321
+    #1  http_wall=0.86s  ttfb=0.85s  audio=5.90s  RTF=0.146
+  mean TRUE synthesis RTF: 0.234  (mean http wall 1.22s)
+  tts context spans (TTSStarted->Stopped): 2  -- context-span 'RTF' mean 1.047 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=9.58s  first_audio=1.58s  audio=4.92s
+    #1  context_span=0.86s  first_audio=0.86s  audio=5.90s
+
+PLAYBACK
+  first audio:      14.57s
+  final stop:       22.44s
+  BotStarted count: 1
+  BotStopped count: 1
+  silence gaps ms:  -
+  max gap:          -
+  mean gap:         -
+  underruns (est):  1
+  audio-s per wall-s: 1.38  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              0.30s
+  min:              -3.09s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 1  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.00s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 98.4%  peak 100.0%
+  llama-server CPU: mean -  peak -
+  temperature:      66.1C max
+  throttled:        0x0
+  MemAvailable min: 3767MB
+  swap used max:    89MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.821ms/sample (66 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: UNKNOWN
+==================================================
+
+##############################################################################
+# continuity target 1.5s
+##############################################################################
+
+  --- WARM-UP (excl.): Ile jest osiem razy siedem?
+    [canonical] 'Pięćdziesiąt sześć.'
+2026-09-07 17:04:02.195 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#1: Generating TTS [Pięćdziesiąt sześć.]
+2026-09-07 17:04:02.391 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:04:02.397 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#1 cleaning up TTS context 61a658a2-fda7-4156-9b3f-fda8a9a235c8
+2026-09-07 17:04:03.698 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:04:03.698 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+  --- Q1: Co to jest czarna dziura? Odpowiedz krótko.
+    [canonical] 'Czarna dziura to obszar czasoprzestrzeni o tak silnej grawitacji, że nic, nawet światło, nie może z niego uciec.'
+2026-09-07 17:04:20.303 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#1: Generating TTS [Czarna dziura to obszar czasoprzestrzeni o tak silnej grawitacji, że nic, nawet światło, nie może z niego uciec.]
+2026-09-07 17:04:21.263 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:04:21.272 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#1 cleaning up TTS context 48901de9-33bd-404a-8665-a2576aab6180
+2026-09-07 17:04:28.290 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:04:28.290 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+  --- Q2: Z czego głównie składa się gwiazda? Odpowiedz w dwóch zdaniach.
+2026-09-07 17:04:41.449 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#1: Generating TTS [Gwiazdy składają się głównie ze zjonizowanego gazu, czyli plazmy.]
+2026-09-07 17:04:43.240 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:04:50.427 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 17:04:51.248 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#1 cleaning up TTS context 65bb23fe-623b-4129-b9b4-bd8142d93096
+    [canonical] 'Gwiazdy składają się głównie ze zjonizowanego gazu, czyli plazmy. Najczęściej spotykane pierwiastki to wodór i hel, które są paliwem napędzającym reakcje termojądrowe w jądrze gwiazdy.'
+2026-09-07 17:04:54.932 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#1: Generating TTS [Najczęściej spotykane pierwiastki to wodór i hel, które są paliwem napędzającym reakcje termojądrowe w jądrze gwiazdy.]
+2026-09-07 17:04:55.965 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:04:55.975 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#1 cleaning up TTS context 65bb23fe-623b-4129-b9b4-bd8142d93096
+2026-09-07 17:05:03.629 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:05:03.629 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+  --- Q3: A jak powstaje hel w gwieździe? Krótko.
+2026-09-07 17:05:22.131 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#1: Generating TTS [Hel nie "powstaje" w gwiazdzie, ale jest pierwiastkiem, który powstaje w wyniku fuzji wodoru.]
+2026-09-07 17:05:23.877 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:05:31.875 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#1 cleaning up TTS context b3687434-4a9e-4dc5-8814-74c5001c1331
+2026-09-07 17:05:31.900 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:05:31.900 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+    [canonical] 'Hel nie "powstaje" w gwiazdzie, ale jest pierwiastkiem, który powstaje w wyniku fuzji wodoru. W jądrze gwiazdy wodór łączy się pod wpływem ekstremalnego ciśnienia i temperatury, przekształcając się w hel.'
+2026-09-07 17:05:35.589 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#1: Generating TTS [W jądrze gwiazdy wodór łączy się pod wpływem ekstremalnego ciśnienia i temperatury, przekształcając się w hel.]
+2026-09-07 17:05:36.521 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:05:36.530 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#1 cleaning up TTS context b3687434-4a9e-4dc5-8814-74c5001c1331
+2026-09-07 17:05:43.425 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:05:43.425 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+===== continuity target 1.5s  Q1 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #2)
+==================================================
+
+USER
+  stt text:      Co to jest czarna dziura? Odpowiedz krótko.  (43 chars)
+  stt latency:   -
+
+LLM
+  first token:         2.92s  (base: stt_result)
+  generation duration: 12.03s
+  chars:               112
+  chars/s:             9.3
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 1  mean chars 112.0  tiny (<12): 0
+    #0  chars=112  since_prev=-  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 1 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 1 requests
+    #0  http_wall=0.97s  ttfb=0.96s  audio=7.03s  RTF=0.138
+  mean TRUE synthesis RTF: 0.138  (mean http wall 0.97s)
+  tts context spans (TTSStarted->Stopped): 1  -- context-span 'RTF' mean 0.138 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=0.97s  first_audio=0.96s  audio=7.03s
+
+PLAYBACK
+  first audio:      15.91s
+  final stop:       22.94s
+  BotStarted count: 1
+  BotStopped count: 1
+  silence gaps ms:  -
+  max gap:          -
+  mean gap:         -
+  underruns (est):  0
+  audio-s per wall-s: 1.00  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              7.02s
+  min:              0.01s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 0  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: -  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 70.0%  peak 100.0%
+  llama-server CPU: mean 246.7%  peak 391.4%
+  temperature:      66.1C max
+  throttled:        0x0
+  MemAvailable min: 3780MB
+  swap used max:    89MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.689ms/sample (57 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: UNKNOWN
+==================================================
+
+===== continuity target 1.5s  Q2 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #3)
+==================================================
+
+USER
+  stt text:      Z czego głównie składa się gwiazda? Odpowiedz w dwóch zdani…  (63 chars)
+  stt latency:   -
+
+LLM
+  first token:         4.77s  (base: stt_result)
+  generation duration: 20.05s
+  chars:               184
+  chars/s:             9.2
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 2  mean chars 91.5  tiny (<12): 0
+    #0  chars=65   since_prev=-  
+    #1  chars=118  since_prev=12.73s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 2 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=BUFFER_NEAR_EMPTY  hold=0.00s  reserve@recv=-7.46s  reserve@rel=-7.46s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 2 requests
+    #0  http_wall=1.80s  ttfb=1.79s  audio=4.24s  RTF=0.424
+    #1  http_wall=1.04s  ttfb=1.03s  audio=7.64s  RTF=0.136
+  mean TRUE synthesis RTF: 0.280  (mean http wall 1.42s)
+  tts context spans (TTSStarted->Stopped): 2  -- context-span 'RTF' mean 1.225 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=9.80s  first_audio=1.79s  audio=4.24s
+    #1  context_span=1.04s  first_audio=1.03s  audio=7.64s
+
+PLAYBACK
+  first audio:      13.13s
+  final stop:       33.52s
+  BotStarted count: 2
+  BotStopped count: 2
+  silence gaps ms:  [5537.9]
+  max gap:          5537.9ms
+  mean gap:         5537.9ms
+  underruns (est):  1
+  audio-s per wall-s: 0.58  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              0.30s
+  min:              -8.51s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 1  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.00s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 77.9%  peak 100.0%
+  llama-server CPU: mean 272.2%  peak 399.2%
+  temperature:      67.2C max
+  throttled:        0x0
+  MemAvailable min: 3798MB
+  swap used max:    89MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.773ms/sample (83 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: LLM TEXT PRODUCTION
+==================================================
+
+===== continuity target 1.5s  Q3 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #4)
+==================================================
+
+USER
+  stt text:      A jak powstaje hel w gwieździe? Krótko.  (39 chars)
+  stt latency:   -
+
+LLM
+  first token:         6.01s  (base: stt_result)
+  generation duration: 24.29s
+  chars:               204
+  chars/s:             8.4
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 2  mean chars 101.5  tiny (<12): 0
+    #0  chars=93   since_prev=-  
+    #1  chars=110  since_prev=12.66s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 2 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=BUFFER_NEAR_EMPTY  hold=0.00s  reserve@recv=-6.19s  reserve@rel=-6.19s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 2 requests
+    #0  http_wall=1.74s  ttfb=1.73s  audio=5.52s  RTF=0.315
+    #1  http_wall=0.94s  ttfb=0.93s  audio=6.88s  RTF=0.137
+  mean TRUE synthesis RTF: 0.226  (mean http wall 1.34s)
+  tts context spans (TTSStarted->Stopped): 2  -- context-span 'RTF' mean 0.951 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=9.74s  first_audio=1.74s  audio=5.52s
+    #1  context_span=0.94s  first_audio=0.93s  audio=6.88s
+
+PLAYBACK
+  first audio:      18.58s
+  final stop:       38.14s
+  BotStarted count: 2
+  BotStopped count: 2
+  silence gaps ms:  [4620.8]
+  max gap:          4620.8ms
+  mean gap:         4620.8ms
+  underruns (est):  1
+  audio-s per wall-s: 0.63  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              0.30s
+  min:              -7.15s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 1  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.02s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 82.2%  peak 100.0%
+  llama-server CPU: mean 284.5%  peak 391.6%
+  temperature:      67.2C max
+  throttled:        0x0
+  MemAvailable min: 3714MB
+  swap used max:    89MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.544ms/sample (95 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: LLM TEXT PRODUCTION
+==================================================
+
+##############################################################################
+# continuity target 2.0s
+##############################################################################
+
+  --- WARM-UP (excl.): Ile jest osiem razy siedem?
+    [canonical] 'Pięćdziesiąt sześć.'
+2026-09-07 17:05:54.120 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#2: Generating TTS [Pięćdziesiąt sześć.]
+2026-09-07 17:05:54.303 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:05:54.305 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#2 cleaning up TTS context 0d95d52c-b4cb-420c-a434-a84c74bbc715
+2026-09-07 17:05:55.607 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:05:55.607 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+  --- Q1: Co to jest czarna dziura? Odpowiedz krótko.
+2026-09-07 17:06:12.318 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#2: Generating TTS [Czarna dziura to obszar czasoprzestrzeni o tak silnej grawitacji,]
+2026-09-07 17:06:13.779 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+    [canonical] 'Czarna dziura to obszar czasoprzestrzeni o tak silnej grawitacji, że nic, nawet światło, nie jest w stanie się z niej wydostać.'
+2026-09-07 17:06:15.092 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#2: Generating TTS [że nic, nawet światło, nie jest w stanie się z niej wydostać.]
+2026-09-07 17:06:15.702 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#2 cleaning up TTS context b957ecbc-26ee-4d3e-b2d3-83e444fe772e
+2026-09-07 17:06:21.643 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:06:21.643 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+  --- Q2: Z czego głównie składa się gwiazda? Odpowiedz w dwóch zdaniach.
+2026-09-07 17:06:34.780 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#2: Generating TTS [Gwiazdy składają się głównie z gazów, przede wszystkim wodoru i helu.]
+2026-09-07 17:06:36.190 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:06:43.540 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 17:06:44.191 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#2 cleaning up TTS context c9f24e9e-4337-48fe-8e20-3e517c43d37e
+    [canonical] 'Gwiazdy składają się głównie z gazów, przede wszystkim wodoru i helu. To właśnie reakcje termojądrowe zachodzące w ich wnętrzu napędzają je i nadają światło.'
+2026-09-07 17:06:44.858 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#2: Generating TTS [To właśnie reakcje termojądrowe zachodzące w ich wnętrzu napędzają je i nadają światło.]
+2026-09-07 17:06:45.572 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:06:45.579 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#2 cleaning up TTS context c9f24e9e-4337-48fe-8e20-3e517c43d37e
+2026-09-07 17:06:50.796 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:06:50.796 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+  --- Q3: A jak powstaje hel w gwieździe? Krótko.
+2026-09-07 17:07:04.011 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#2: Generating TTS [Hel powstaje w gwiazdach w wyniku fuzji jądrowej wodoru.]
+2026-09-07 17:07:05.156 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:07:11.581 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 17:07:13.156 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#2 cleaning up TTS context 89254253-e3eb-4a91-8646-ce20ec1ff384
+2026-09-07 17:07:18.987 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#2: Generating TTS [W procesie tym, pod ogromnym ciśnieniem i temperaturą w jądrze gwiazdy,]
+2026-09-07 17:07:20.373 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+    [canonical] 'Hel powstaje w gwiazdach w wyniku fuzji jądrowej wodoru. W procesie tym, pod ogromnym ciśnieniem i temperaturą w jądrze gwiazdy, cząstki wodoru łączą się, tworząc cięższe jądra, z których głównym produktem jest hel.'
+2026-09-07 17:07:24.019 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#2: Generating TTS [cząstki wodoru łączą się, tworząc cięższe jądra, z których głównym produktem jest hel.]
+2026-09-07 17:07:24.840 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#2 cleaning up TTS context 89254253-e3eb-4a91-8646-ce20ec1ff384
+2026-09-07 17:07:30.696 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:07:30.696 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+===== continuity target 2.0s  Q1 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #2)
+==================================================
+
+USER
+  stt text:      Co to jest czarna dziura? Odpowiedz krótko.  (43 chars)
+  stt latency:   -
+
+LLM
+  first token:         2.97s  (base: stt_result)
+  generation duration: 14.64s
+  chars:               127
+  chars/s:             8.7
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 2  mean chars 63.0  tiny (<12): 0
+    #0  chars=65   since_prev=-  
+    #1  chars=61   since_prev=1.92s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 2 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=TURN_COMPLETE  hold=0.00s  reserve@recv=2.39s  reserve@rel=2.39s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 2 requests
+    #0  http_wall=1.46s  ttfb=1.45s  audio=3.71s  RTF=0.394
+    #1  http_wall=0.61s  ttfb=0.60s  audio=4.16s  RTF=0.146
+  mean TRUE synthesis RTF: 0.270  (mean http wall 1.03s)
+  tts context spans (TTSStarted->Stopped): 1  -- context-span 'RTF' mean 0.430 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=3.38s  first_audio=1.46s  audio=7.87s
+
+PLAYBACK
+  first audio:      16.29s
+  final stop:       24.16s
+  BotStarted count: 1
+  BotStopped count: 1
+  silence gaps ms:  -
+  max gap:          -
+  mean gap:         -
+  underruns (est):  0
+  audio-s per wall-s: 1.00  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              5.94s
+  min:              0.00s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 0  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: -  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 75.9%  peak 100.0%
+  llama-server CPU: mean 262.9%  peak 388.4%
+  temperature:      66.7C max
+  throttled:        0x0
+  MemAvailable min: 3793MB
+  swap used max:    88MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.574ms/sample (60 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: UNKNOWN
+==================================================
+
+===== continuity target 2.0s  Q2 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #3)
+==================================================
+
+USER
+  stt text:      Z czego głównie składa się gwiazda? Odpowiedz w dwóch zdani…  (63 chars)
+  stt latency:   -
+
+LLM
+  first token:         4.88s  (base: stt_result)
+  generation duration: 16.53s
+  chars:               157
+  chars/s:             9.5
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 2  mean chars 78.0  tiny (<12): 0
+    #0  chars=69   since_prev=-  
+    #1  chars=87   since_prev=9.39s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 2 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=BUFFER_NEAR_EMPTY  hold=0.00s  reserve@recv=-4.28s  reserve@rel=-4.28s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 2 requests
+    #0  http_wall=1.41s  ttfb=1.40s  audio=4.39s  RTF=0.321
+    #1  http_wall=0.72s  ttfb=0.71s  audio=5.22s  RTF=0.138
+  mean TRUE synthesis RTF: 0.230  (mean http wall 1.06s)
+  tts context spans (TTSStarted->Stopped): 2  -- context-span 'RTF' mean 1.142 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=9.41s  first_audio=1.41s  audio=4.39s
+    #1  context_span=0.72s  first_audio=0.71s  audio=5.22s
+
+PLAYBACK
+  first audio:      12.75s
+  final stop:       27.35s
+  BotStarted count: 2
+  BotStopped count: 2
+  silence gaps ms:  [2031.4]
+  max gap:          2031.4ms
+  mean gap:         2031.4ms
+  underruns (est):  2
+  audio-s per wall-s: 0.66  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              0.30s
+  min:              -5.00s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 2  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.00s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 81.7%  peak 100.0%
+  llama-server CPU: mean 283.8%  peak 387.0%
+  temperature:      67.2C max
+  throttled:        0x0
+  MemAvailable min: 3797MB
+  swap used max:    88MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.860ms/sample (68 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: LLM TEXT PRODUCTION
+==================================================
+
+===== continuity target 2.0s  Q3 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #4)
+==================================================
+
+USER
+  stt text:      A jak powstaje hel w gwieździe? Krótko.  (39 chars)
+  stt latency:   -
+
+LLM
+  first token:         5.23s  (base: stt_result)
+  generation duration: 26.16s
+  chars:               215
+  chars/s:             8.2
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 3  mean chars 71.0  tiny (<12): 0
+    #0  chars=56   since_prev=-  
+    #1  chars=71   since_prev=15.22s  
+    #2  chars=86   since_prev=4.47s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 3 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=BUFFER_NEAR_EMPTY  hold=0.00s  reserve@recv=-10.35s  reserve@rel=-10.35s  (reserve = ESTIMATE)
+    #2  reason=BUFFER_NEAR_EMPTY  hold=0.00s  reserve@recv=-11.15s  reserve@rel=-11.15s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 3 requests
+    #0  http_wall=1.14s  ttfb=1.14s  audio=3.48s  RTF=0.328
+    #1  http_wall=1.38s  ttfb=1.38s  audio=4.24s  RTF=0.327
+    #2  http_wall=0.82s  ttfb=0.81s  audio=5.82s  RTF=0.141
+  mean TRUE synthesis RTF: 0.265  (mean http wall 1.12s)
+  tts context spans (TTSStarted->Stopped): 2  -- context-span 'RTF' mean 1.605 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=9.15s  first_audio=1.14s  audio=3.48s
+    #1  context_span=5.85s  first_audio=1.38s  audio=10.06s
+
+PLAYBACK
+  first audio:      12.53s
+  final stop:       38.08s
+  BotStarted count: 2
+  BotStopped count: 2
+  silence gaps ms:  [8791.7]
+  max gap:          8791.7ms
+  mean gap:         8791.7ms
+  underruns (est):  1
+  audio-s per wall-s: 0.53  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              0.30s
+  min:              -12.00s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 1  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.00s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 84.7%  peak 100.0%
+  llama-server CPU: mean 293.5%  peak 384.2%
+  temperature:      67.8C max
+  throttled:        0x0
+  MemAvailable min: 3812MB
+  swap used max:    88MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.755ms/sample (95 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: LLM TEXT PRODUCTION
+==================================================
+
+##############################################################################
+# continuity target 2.5s
+##############################################################################
+
+  --- WARM-UP (excl.): Ile jest osiem razy siedem?
+    [canonical] 'Pięćdziesiąt sześć.'
+2026-09-07 17:07:41.212 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#3: Generating TTS [Pięćdziesiąt sześć.]
+2026-09-07 17:07:41.407 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:07:41.413 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#3 cleaning up TTS context 4e375e88-e05b-46de-a5f6-a46eb89cad6f
+2026-09-07 17:07:42.713 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:07:42.713 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+  --- Q1: Co to jest czarna dziura? Odpowiedz krótko.
+    [canonical] 'To obszar czasoprzestrzeni o tak silnej grawitacji, że nic, nawet światło, nie jest w stanie się z niego wydostać.'
+2026-09-07 17:08:00.391 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#3: Generating TTS [To obszar czasoprzestrzeni o tak silnej grawitacji, że nic, nawet światło, nie jest w stanie się z niego wydostać.]
+2026-09-07 17:08:01.362 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:08:01.370 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#3 cleaning up TTS context 4ce6cb2a-c158-420e-8325-c391c521571b
+2026-09-07 17:08:08.390 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:08:08.390 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+  --- Q2: Z czego głównie składa się gwiazda? Odpowiedz w dwóch zdaniach.
+2026-09-07 17:08:21.421 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#3: Generating TTS [Gwiazdy składają się głównie z gazów, przede wszystkim wodoru i helu.]
+2026-09-07 17:08:23.058 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:08:30.404 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 17:08:31.065 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#3 cleaning up TTS context ec0bc86a-a1c2-4e9e-a3f5-a2b88e740ab4
+    [canonical] 'Gwiazdy składają się głównie z gazów, przede wszystkim wodoru i helu. W ich jądrze zachodzą procesy fuzji termojądrowej, które generują ogromną energię.'
+2026-09-07 17:08:33.233 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#3: Generating TTS [W ich jądrze zachodzą procesy fuzji termojądrowej, które generują ogromną energię.]
+2026-09-07 17:08:33.995 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#3 cleaning up TTS context ec0bc86a-a1c2-4e9e-a3f5-a2b88e740ab4
+2026-09-07 17:08:33.996 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+
+  --- Q3: A jak powstaje hel w gwieździe? Krótko.
+2026-09-07 17:08:39.301 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:08:39.301 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 17:08:47.742 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#3: Generating TTS [Hel powstaje w gwiazdach w wyniku fuzji jądrowej wodoru.]
+2026-09-07 17:08:49.016 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:08:55.523 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+2026-09-07 17:08:57.016 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#3 cleaning up TTS context 98f4fa1b-e544-4ba7-85dc-2b8073eccc9e
+    [canonical] 'Hel powstaje w gwiazdach w wyniku fuzji jądrowej wodoru. W jądrze gwiazda pod wpływem ekstremalnej temperatury i ciśnienia przekształca wodór w hel.'
+2026-09-07 17:08:58.284 | DEBUG    | pipecat.services.tts_service:_push_tts_frames:1307 - TimedPiperHttpTTSService#3: Generating TTS [W jądrze gwiazda pod wpływem ekstremalnej temperatury i ciśnienia przekształca wodór w hel.]
+2026-09-07 17:08:59.068 | DEBUG    | pipecat.services.tts_service:push_frame:935 - TimedPiperHttpTTSService#3 cleaning up TTS context 98f4fa1b-e544-4ba7-85dc-2b8073eccc9e
+2026-09-07 17:08:59.069 | DEBUG    | pipecat.transports.base_output:_bot_started_speaking:706 - Bot started speaking
+2026-09-07 17:09:04.813 | DEBUG    | pipecat.transports.base_output:_handle_frame:824 - Bot stopped speaking based on TTSStoppedFrame
+2026-09-07 17:09:04.813 | DEBUG    | pipecat.transports.base_output:_bot_stopped_speaking:758 - Bot stopped speaking
+
+===== continuity target 2.5s  Q1 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #2)
+==================================================
+
+USER
+  stt text:      Co to jest czarna dziura? Odpowiedz krótko.  (43 chars)
+  stt latency:   -
+
+LLM
+  first token:         2.98s  (base: stt_result)
+  generation duration: 13.18s
+  chars:               114
+  chars/s:             8.6
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 1  mean chars 114.0  tiny (<12): 0
+    #0  chars=114  since_prev=-  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 1 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 1 requests
+    #0  http_wall=0.98s  ttfb=0.97s  audio=7.03s  RTF=0.139
+  mean TRUE synthesis RTF: 0.139  (mean http wall 0.98s)
+  tts context spans (TTSStarted->Stopped): 1  -- context-span 'RTF' mean 0.139 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=0.98s  first_audio=0.97s  audio=7.03s
+
+PLAYBACK
+  first audio:      17.14s
+  final stop:       24.16s
+  BotStarted count: 1
+  BotStopped count: 1
+  silence gaps ms:  -
+  max gap:          -
+  mean gap:         -
+  underruns (est):  0
+  audio-s per wall-s: 1.00  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              7.02s
+  min:              0.01s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 0  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: -  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 72.6%  peak 100.0%
+  llama-server CPU: mean 246.6%  peak 394.3%
+  temperature:      67.2C max
+  throttled:        0x0
+  MemAvailable min: 3715MB
+  swap used max:    88MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.543ms/sample (60 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: UNKNOWN
+==================================================
+
+===== continuity target 2.5s  Q2 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #3)
+==================================================
+
+USER
+  stt text:      Z czego głównie składa się gwiazda? Odpowiedz w dwóch zdani…  (63 chars)
+  stt latency:   -
+
+LLM
+  first token:         4.62s  (base: stt_result)
+  generation duration: 18.43s
+  chars:               152
+  chars/s:             8.2
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 2  mean chars 75.5  tiny (<12): 0
+    #0  chars=69   since_prev=-  
+    #1  chars=82   since_prev=10.93s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 2 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=BUFFER_NEAR_EMPTY  hold=0.00s  reserve@recv=-5.79s  reserve@rel=-5.79s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 2 requests
+    #0  http_wall=1.64s  ttfb=1.64s  audio=4.39s  RTF=0.374
+    #1  http_wall=0.76s  ttfb=0.75s  audio=5.30s  RTF=0.144
+  mean TRUE synthesis RTF: 0.259  (mean http wall 1.20s)
+  tts context spans (TTSStarted->Stopped): 2  -- context-span 'RTF' mean 1.171 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=9.64s  first_audio=1.64s  audio=4.39s
+    #1  context_span=0.76s  first_audio=0.76s  audio=5.30s
+
+PLAYBACK
+  first audio:      12.87s
+  final stop:       20.22s
+  BotStarted count: 1
+  BotStopped count: 1
+  silence gaps ms:  -
+  max gap:          -
+  mean gap:         -
+  underruns (est):  1
+  audio-s per wall-s: 1.32  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              0.30s
+  min:              -3.62s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 1  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.00s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 99.1%  peak 100.0%
+  llama-server CPU: mean 347.2%  peak 389.4%
+  temperature:      67.8C max
+  throttled:        0x0
+  MemAvailable min: 3740MB
+  swap used max:    88MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.879ms/sample (59 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: UNKNOWN
+==================================================
+
+===== continuity target 2.5s  Q3 =====
+==================================================
+M2.4B.1 TURN REPORT  (turn #4)
+==================================================
+
+USER
+  stt text:      A jak powstaje hel w gwieździe? Krótko.  (39 chars)
+  stt latency:   -
+
+LLM
+  first token:         5.50s  (base: stt_result)
+  generation duration: 17.03s
+  chars:               148
+  chars/s:             8.7
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 2  mean chars 73.5  tiny (<12): 0
+    #0  chars=56   since_prev=-  
+    #1  chars=91   since_prev=10.05s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 2 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=BUFFER_NEAR_EMPTY  hold=0.00s  reserve@recv=-5.71s  reserve@rel=-5.71s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 2 requests
+    #0  http_wall=1.27s  ttfb=1.27s  audio=3.56s  RTF=0.358
+    #1  http_wall=0.78s  ttfb=0.78s  audio=5.75s  RTF=0.136
+  mean TRUE synthesis RTF: 0.247  (mean http wall 1.03s)
+  tts context spans (TTSStarted->Stopped): 2  -- context-span 'RTF' mean 1.372 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=9.27s  first_audio=1.27s  audio=3.56s
+    #1  context_span=0.78s  first_audio=0.78s  audio=5.75s
+
+PLAYBACK
+  first audio:      13.26s
+  final stop:       19.77s
+  BotStarted count: 1
+  BotStopped count: 1
+  silence gaps ms:  -
+  max gap:          -
+  mean gap:         -
+  underruns (est):  1
+  audio-s per wall-s: 1.43  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              0.30s
+  min:              -4.45s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 1  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.00s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 98.6%  peak 100.0%
+  llama-server CPU: mean 348.5%  peak 391.9%
+  temperature:      69.4C max
+  throttled:        0x0
+  MemAvailable min: 3756MB
+  swap used max:    88MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.684ms/sample (58 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: UNKNOWN
+==================================================

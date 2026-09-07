@@ -9,13 +9,16 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0018_m2_4b_3_2a_speech_rate_budget_20260907.md`
-  (M2.4B.3.2A — speech production/consumption rate budget, research only:
-  `realtime_text_ratio ≈ 0.53`, a hard constraint; `R0017` = M2.4B.3.1
-  Piper `nice +10` + TTS context timeout 8 s; `R0016` = M2.4B.2A
-  LaTeX/truncation fix; `R0015` = M2.4B.2 speech planner; `R0014` =
-  M2.4B.1A CPU spike + metric fixes; `R0013` = M2.4B.1 instrumentation;
-  `R0012` = M2.4B research; `R0011` = M2.4)
+- **Latest report:** `docs/reports/R0019_m2_4b_3_2_speech_continuity_controller_20260907.md`
+  (M2.4B.3.2 — `NexaSpeechContinuityController`: phrase 0 immediate,
+  phrases 1..N released when the ESTIMATED audio reserve is low, held
+  ≤ 0.4 s only while healthy; proven no-regression; cannot fix the
+  `realtime_text_ratio ≈ 0.53` rate deficit. `R0018` = the rate-budget
+  math authority; `R0017` = M2.4B.3.1 Piper `nice +10` + TTS context
+  timeout 8 s; `R0016` = M2.4B.2A LaTeX/truncation fix; `R0015` =
+  M2.4B.2 speech planner; `R0014` = M2.4B.1A CPU spike + metric fixes;
+  `R0013` = M2.4B.1 instrumentation; `R0012` = M2.4B research; `R0011` =
+  M2.4)
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
   **M2 — Realtime Voice — IN PROGRESS (M2.1, M2.2, M2.3, M2.4 COMPLETE, `OPERATOR-CONFIRMED`)**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
@@ -92,22 +95,33 @@ Runtime / test evidence outranks anything else in this repo.
   an arbitrarily long reply continuous; a prebuffer only relocates silence
   to the front (`wall_to_finish` invariant); batching cannot move the
   first underrun (can't synthesize text the LLM hasn't generated);
-  `length_scale ≤ 1.10` closes ≤ 11 % of the deficit. **M2.4B.3.2 =
-  conclusion C**: build a *small* look-ahead controller **scoped to
-  short conversational replies** (phrase 0 immediate; hold 1..N to a
-  ~1.5–2.5 s `buffered_audio_seconds` target; no batching-to-grow, no
-  speed change, no silence) and document the continuity ceiling
-  (~8–10 s of speech with a 2–3 s buffer); pair with reply-length shaping
-  (persona/prompt — separate, highest-leverage) and record the ~2×
-  faster-generation target (~15.9 chars/s, ~≥5 tok/s). Then **M2.5 —
-  barge-in / interruption** (replaces the temporary half-duplex gate).
-  **M2.4B is NOT complete.** Separate flagged tracks: STT quality
-  (whisper.cpp mistranscribed "horyzont zdarzeń" as "chory zęzdarzyń"
-  etc.); `GenerationOptions.num_predict = 200` truncating long replies.
-- **Current objective:** M2.4B.3.2 — buffer-aware look-ahead / refill
-  controller — see "Exact next recommended task". M2.4's functional
-  baseline is frozen by the M2.4 commit and unchanged; the speech planner
-  is additive (remove it from `extra_output_stages` → byte-for-byte M2.4).
+  `length_scale ≤ 1.10` closes ≤ 11 % of the deficit. **M2.4B.3.2 —
+  small speech continuity controller: IMPLEMENTED** (`R0019`,
+  `src/nexa/voice_tts/continuity.py`): `NexaSpeechContinuityController`
+  between the planner and `PiperHttpTTSService` — phrase 0 always
+  immediate (no prebuffer); phrases 1..N released the moment the
+  ESTIMATED audio reserve (`Σ produced-audio-s − wall-since-first-audio`,
+  fed by the downstream observer's real byte counts) is below a target
+  (`DEFAULT_CONTINUITY_TARGET_S = 2.0`, candidate A/B 1.5/2.0/2.5), held
+  ≤ 0.4 s only while healthy; never batches-to-grow, never adds silence,
+  never touches text/speech-rate. B.3.1's `nice +10` + `stop_frame_timeout_s
+  = 8` unchanged. **Offline replay of the R0018 timelines: the controller
+  never makes first-audio later / the first underrun earlier / total
+  silence higher, and on those (LLM-behind) turns it changes nothing —
+  it CANNOT fix the 0.53 rate deficit.** Its value is proven
+  no-regression + the metrics seam + correct bounded behaviour for the
+  genuinely short-and-fast reply. **M2.4B is NOT complete** — the
+  remaining continuity work is the SEPARATE reply-length-shaping track
+  (persona/prompt, highest leverage) and/or ~2× faster generation
+  (~15.9 chars/s). Then **M2.5 — barge-in / interruption** (replaces the
+  temporary half-duplex gate). Separate flagged tracks: STT quality
+  (whisper.cpp "horyzont zdarzeń" → "chory zęzdarzyń" etc.);
+  `GenerationOptions.num_predict = 200` truncating long replies.
+- **Current objective:** reply-length shaping (persona/prompt) and/or the
+  faster-generation track — see "Exact next recommended task". M2.4's
+  functional baseline is frozen by the M2.4 commit and unchanged; the
+  speech planner + continuity controller are additive (remove them from
+  `extra_output_stages` → byte-for-byte M2.4).
 
 ---
 

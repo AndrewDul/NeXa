@@ -292,6 +292,7 @@ class TurnMetrics:
     tts_segments: list[TtsSegment] = field(default_factory=list)
     text_chunks: list[TtsTextChunk] = field(default_factory=list)
     http_calls: list = field(default_factory=list)  # list[HttpSynthCall] (M2.4B.1A)
+    controller_releases: list = field(default_factory=list)  # list[ControllerRelease] (M2.4B.3.2)
     playback_spans: list[PlaybackSpan] = field(default_factory=list)
     buffer: BufferEstimate = field(default_factory=BufferEstimate)
     resources: ResourceWindowSummary | None = None
@@ -356,6 +357,25 @@ class TurnMetrics:
         if not self.text_chunks:
             return None
         return sum(c.text_len for c in self.text_chunks) / len(self.text_chunks)
+
+    # -- Speech continuity controller (M2.4B.3.2) --------------------- #
+
+    @property
+    def controller_held_count(self) -> int:
+        """Phrases the continuity controller actually held (hold > 50 ms).
+        The controller must add no *avoidable* latency — this and
+        ``controller_max_hold_s`` are how we prove it."""
+        return sum(1 for c in self.controller_releases if getattr(c, "hold_s", 0.0) > 0.05)
+
+    @property
+    def controller_max_hold_s(self) -> float | None:
+        holds = [getattr(c, "hold_s", 0.0) for c in self.controller_releases]
+        return max(holds) if holds else None
+
+    @property
+    def controller_mean_hold_s(self) -> float | None:
+        holds = [getattr(c, "hold_s", 0.0) for c in self.controller_releases]
+        return (sum(holds) / len(holds)) if holds else None
 
     # -- Playback / gaps ------------------------------------------------- #
 
@@ -535,6 +555,23 @@ class TurnMetrics:
                         "http_rtf": _round(getattr(c, "http_rtf", None), 3),
                     }
                     for c in self.http_calls
+                ],
+            },
+            "speech_continuity_controller": {
+                "release_count": len(self.controller_releases),
+                "held_count": self.controller_held_count,
+                "max_hold_s": _round(self.controller_max_hold_s),
+                "mean_hold_s": _round(self.controller_mean_hold_s),
+                "releases": [
+                    {
+                        "phrase_index": getattr(c, "phrase_index", None),
+                        "text_len": getattr(c, "text_len", None),
+                        "hold_s": _round(getattr(c, "hold_s", None)),
+                        "reserve_at_receive_s": _round(getattr(c, "reserve_at_receive_s", None)),
+                        "reserve_at_release_s": _round(getattr(c, "reserve_at_release_s", None)),
+                        "reason": getattr(c, "reason", None),
+                    }
+                    for c in self.controller_releases
                 ],
             },
             "tts_segments": [s.to_dict() for s in self.tts_segments],
@@ -735,6 +772,14 @@ class MetricsCollector:
         if tm is not None:
             tm.http_calls.append(call)
 
+    def controller_release(self, rel) -> None:
+        """One phrase released by ``NexaSpeechContinuityController``
+        (:class:`~nexa.voice_tts.continuity.ControllerRelease`). Attributed
+        FIFO like the other TTS-side events (M2.4B.3.2)."""
+        tm = self._head()
+        if tm is not None:
+            tm.controller_releases.append(rel)
+
     def tts_started(self) -> None:
         tm = self._head()
         if tm is None:
@@ -932,6 +977,18 @@ def render_turn_report(tm: TurnMetrics) -> str:
         L.append(f"    #{c.index}  chars={c.text_len:<4} "
                  f"since_prev={_fmt(c.since_prev_s, 's')}  "
                  f"{'(after gen complete)' if c.after_assistant_complete else ''}")
+    if tm.controller_releases:
+        L.append(f"  CONTINUITY CONTROLLER (M2.4B.3.2): {len(tm.controller_releases)} releases  "
+                 f"held {tm.controller_held_count}  "
+                 f"max hold {_fmt(tm.controller_max_hold_s, 's')}  "
+                 f"mean hold {_fmt(tm.controller_mean_hold_s, 's')}")
+        for c in tm.controller_releases:
+            L.append(f"    #{getattr(c, 'phrase_index', '?')}  "
+                     f"reason={getattr(c, 'reason', '?')}  "
+                     f"hold={_fmt(getattr(c, 'hold_s', None), 's')}  "
+                     f"reserve@recv={_fmt(getattr(c, 'reserve_at_receive_s', None), 's')}  "
+                     f"reserve@rel={_fmt(getattr(c, 'reserve_at_release_s', None), 's')}  "
+                     f"(reserve = ESTIMATE)")
     L.append(f"  TRUE Piper HTTP synthesis (one request per sentence): "
              f"{len(tm.http_calls)} requests")
     for i, c in enumerate(tm.http_calls):

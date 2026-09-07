@@ -154,6 +154,23 @@ is good if we ignore the pauses"*; `$\text{H}$` never reached Piper;
   generation (~15.9 chars/s). B.3.2 = small controller **scoped to short
   conversational replies** + reply-length shaping (separate track).
 
+## M2.4B.3.2 additions (2026-09-07 — see R0019, continuity controller)
+
+- `NexaSpeechContinuityController` (`src/nexa/voice_tts/continuity.py`):
+  phrase 0 immediate; phrases 1..N released as soon as the ESTIMATED audio
+  reserve is low, held ≤ 0.4 s only while it is healthy. Never batches to
+  grow, never adds silence, never changes text or speech rate. B.3.1's
+  Piper `nice +10` + `stop_frame_timeout_s = 8` unchanged.
+- `b32_replay.py` + `b32_replay_raw_20260907.txt` — offline replay of the
+  R0018 timelines through the REAL `decide_release` policy. Result: the
+  controller **never** makes first audio later / the first underrun
+  earlier / total silence higher; on the R0018 timelines (LLM behind) it
+  changes **nothing** (reserve already low → immediate release); its
+  holds only engage when the LLM is *ahead*, then ≤ 0.4 s. It **cannot**
+  eliminate the operator-star ~39 s stall — R0018's rate constraint.
+- `b32_ab_raw_20260907.txt` — scripted hardware A/B (CONTROL vs targets
+  1.5 / 2.0 / 2.5) on the short-answer prompts.
+
 ## One-line conclusion
 
 Synthesis is ~7× faster than real-time and is **not** the bottleneck. The
