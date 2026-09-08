@@ -301,9 +301,10 @@ Production (`src/`): `nexa/config.py`, `nexa/providers/ollama.py`,
 
 ## COMMIT HASH
 
-To be filled by the commit that lands this stage (`git log -1` after
-commit). Closes R0022 + implements B.3.6 in one coherent local commit on
-`main`. Not pushed.
+`0dc98a6` — `feat: freeze production local model serving (B.3.6) + close
+model A/B` (tip of `main`). One coherent local commit closing R0022 +
+implementing B.3.6. Not pushed. (This report's own text-only tweak of the
+hash lands in the next commit.)
 
 ## GIT STATUS
 
