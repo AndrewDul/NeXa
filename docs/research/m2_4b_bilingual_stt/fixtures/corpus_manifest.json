@@ -1,0 +1,462 @@
+{
+ "purpose": "M2.4B.4 bilingual voice-input evaluation corpus — ground truth",
+ "sample_rate": 16000,
+ "channels": 1,
+ "sample_width_bytes": 2,
+ "items": [
+  {
+   "uid": "001_pl_co_to_jest_czarna_dziura",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Co to jest czarna dziura?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "002_pl_jak_ona_powstaje",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Jak ona powstaje?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "003_pl_z_czego_sklada_sie_gwiazda",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Z czego składa się gwiazda?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "004_pl_po_co_czlowiekowi_sen",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Po co człowiekowi sen?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "005_pl_jaki_jest_rzeczywisty_kolor_slonca",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Jaki jest rzeczywisty kolor Słońca?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "006_pl_co_jest_ciezsze_kilogram_zelaza_czy_kilo",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Co jest cięższe, kilogram żelaza czy kilogram piór?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "007_pl_powiedz_mi_to_troche_prosciej",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Powiedz mi to trochę prościej.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "008_pl_nie_rozumiem_wyjasnij_jeszcze_raz",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Nie rozumiem, wyjaśnij jeszcze raz.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "009_pl_zapamietaj_ze_kupilem_make_pszenna_i_zyt",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Zapamiętaj, że kupiłem mąkę pszenną i żytnią.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "010_pl_ktora_bedzie_godzina_za_dziewiecdziesiat",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Która będzie godzina za dziewięćdziesiąt pięć minut?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "011_pl_co_dzisiaj_mozemy_zrobic",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Co dzisiaj możemy zrobić?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "012_pl_powiedz_mi_cos_ciekawego",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Powiedz mi coś ciekawego.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "013_pl_jak_dziala_komputer",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Jak działa komputer?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "014_pl_dlaczego_niebo_jest_niebieskie",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Dlaczego niebo jest niebieskie?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "015_pl_wrocmy_do_poprzedniego_tematu",
+   "group": "pl",
+   "expected_language": "pl",
+   "text": "Wróćmy do poprzedniego tematu.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "016_en_what_is_a_black_hole",
+   "group": "en",
+   "expected_language": "en",
+   "text": "What is a black hole?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "017_en_how_does_it_form",
+   "group": "en",
+   "expected_language": "en",
+   "text": "How does it form?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "018_en_what_is_a_star_made_of",
+   "group": "en",
+   "expected_language": "en",
+   "text": "What is a star made of?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "019_en_why_do_humans_need_sleep",
+   "group": "en",
+   "expected_language": "en",
+   "text": "Why do humans need sleep?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "020_en_what_is_the_actual_colour_of_the_sun",
+   "group": "en",
+   "expected_language": "en",
+   "text": "What is the actual colour of the Sun?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": [
+    "What is the actual color of the Sun?"
+   ]
+  },
+  {
+   "uid": "021_en_what_is_heavier_one_kilogram_of_iron_or_",
+   "group": "en",
+   "expected_language": "en",
+   "text": "What is heavier, one kilogram of iron or one kilogram of feathers?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "022_en_explain_it_more_simply",
+   "group": "en",
+   "expected_language": "en",
+   "text": "Explain it more simply.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "023_en_i_still_don_t_understand_explain_it_agai",
+   "group": "en",
+   "expected_language": "en",
+   "text": "I still don't understand, explain it again.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": [
+    "I still dont understand, explain it again."
+   ]
+  },
+  {
+   "uid": "024_en_remember_that_i_bought_bread_flour_and_r",
+   "group": "en",
+   "expected_language": "en",
+   "text": "Remember that I bought bread flour and rye flour.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "025_en_what_time_will_it_be_in_ninety_five_minu",
+   "group": "en",
+   "expected_language": "en",
+   "text": "What time will it be in ninety-five minutes?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "026_en_what_can_we_do_today",
+   "group": "en",
+   "expected_language": "en",
+   "text": "What can we do today?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "027_en_tell_me_something_interesting",
+   "group": "en",
+   "expected_language": "en",
+   "text": "Tell me something interesting.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "028_en_how_does_a_computer_work",
+   "group": "en",
+   "expected_language": "en",
+   "text": "How does a computer work?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "029_en_why_is_the_sky_blue",
+   "group": "en",
+   "expected_language": "en",
+   "text": "Why is the sky blue?",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "030_en_let_s_go_back_to_the_previous_topic",
+   "group": "en",
+   "expected_language": "en",
+   "text": "Let's go back to the previous topic.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "031_short_tak",
+   "group": "short",
+   "expected_language": "ambiguous",
+   "text": "Tak.",
+   "leans": "pl",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "032_short_nie",
+   "group": "short",
+   "expected_language": "ambiguous",
+   "text": "Nie.",
+   "leans": "pl",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "033_short_dobra",
+   "group": "short",
+   "expected_language": "ambiguous",
+   "text": "Dobra.",
+   "leans": "pl",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "034_short_okej",
+   "group": "short",
+   "expected_language": "ambiguous",
+   "text": "Okej.",
+   "leans": "pl",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "035_short_super",
+   "group": "short",
+   "expected_language": "ambiguous",
+   "text": "Super.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "036_short_yeah",
+   "group": "short",
+   "expected_language": "ambiguous",
+   "text": "Yeah.",
+   "leans": "en",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "037_short_no",
+   "group": "short",
+   "expected_language": "ambiguous",
+   "text": "No.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "038_short_right",
+   "group": "short",
+   "expected_language": "ambiguous",
+   "text": "Right.",
+   "leans": "en",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "039_short_okay",
+   "group": "short",
+   "expected_language": "ambiguous",
+   "text": "Okay.",
+   "leans": "none",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "040_short_sure",
+   "group": "short",
+   "expected_language": "ambiguous",
+   "text": "Sure.",
+   "leans": "en",
+   "primary": "",
+   "acceptable": []
+  },
+  {
+   "uid": "041_mixed_dobra_tell_me_more",
+   "group": "mixed",
+   "expected_language": "mixed",
+   "text": "Dobra, tell me more.",
+   "leans": "none",
+   "primary": "pl",
+   "acceptable": []
+  },
+  {
+   "uid": "042_mixed_okay_wrocmy_do_polskiego",
+   "group": "mixed",
+   "expected_language": "mixed",
+   "text": "Okay, wróćmy do polskiego.",
+   "leans": "none",
+   "primary": "en",
+   "acceptable": []
+  },
+  {
+   "uid": "043_mixed_powiedz_mi_what_a_black_hole_is",
+   "group": "mixed",
+   "expected_language": "mixed",
+   "text": "Powiedz mi what a black hole is.",
+   "leans": "none",
+   "primary": "pl",
+   "acceptable": []
+  },
+  {
+   "uid": "044_mixed_can_you_wyjasnic_to_prosciej",
+   "group": "mixed",
+   "expected_language": "mixed",
+   "text": "Can you wyjaśnić to prościej?",
+   "leans": "none",
+   "primary": "en",
+   "acceptable": []
+  },
+  {
+   "uid": "045_mixed_no_dobra_let_s_continue",
+   "group": "mixed",
+   "expected_language": "mixed",
+   "text": "No dobra, let's continue.",
+   "leans": "none",
+   "primary": "pl",
+   "acceptable": []
+  },
+  {
+   "uid": "046_mixed_tell_me_wiecej_o_gwiazdach",
+   "group": "mixed",
+   "expected_language": "mixed",
+   "text": "Tell me więcej o gwiazdach.",
+   "leans": "none",
+   "primary": "en",
+   "acceptable": []
+  },
+  {
+   "uid": "047_mixed_okay_ale_dlaczego",
+   "group": "mixed",
+   "expected_language": "mixed",
+   "text": "Okay, ale dlaczego?",
+   "leans": "none",
+   "primary": "en",
+   "acceptable": []
+  },
+  {
+   "uid": "048_mixed_let_s_wrocic_do_tego",
+   "group": "mixed",
+   "expected_language": "mixed",
+   "text": "Let's wrócić do tego.",
+   "leans": "none",
+   "primary": "en",
+   "acceptable": []
+  },
+  {
+   "uid": "049_mixed_explain_mi_to_jeszcze_raz",
+   "group": "mixed",
+   "expected_language": "mixed",
+   "text": "Explain mi to jeszcze raz.",
+   "leans": "none",
+   "primary": "en",
+   "acceptable": []
+  },
+  {
+   "uid": "050_mixed_super_now_powiedz_to_po_polsku",
+   "group": "mixed",
+   "expected_language": "mixed",
+   "text": "Super, now powiedz to po polsku.",
+   "leans": "none",
+   "primary": "en",
+   "acceptable": []
+  }
+ ]
+}
