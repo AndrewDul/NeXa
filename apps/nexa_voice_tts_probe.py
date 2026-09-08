@@ -36,8 +36,9 @@ if str(SRC) not in sys.path:
 import aiohttp  # noqa: E402
 from pipecat.services.piper.tts import PiperHttpTTSService  # noqa: E402
 
-from nexa.bootstrap import build_default_session  # noqa: E402
+from nexa.bootstrap import build_default_session, warm_up_session  # noqa: E402
 from nexa.conversation import ResponseMode  # noqa: E402
+from nexa.providers.base import ModelUnavailableError  # noqa: E402
 from nexa.stt import (  # noqa: E402
     Language,
     SttBinaryNotFoundError,
@@ -377,6 +378,20 @@ async def main() -> None:
     session = build_default_session()
     description = session.provider.describe()
     print(f"model: {description.model}")
+
+    # M2.4B.3.6: infrastructure-only model + persona-prefix warm-up so the
+    # first real voice turn does not pay the cold model-load + prefix cost.
+    # Does not enter history. Fails visibly if Ollama is unavailable.
+    try:
+        warm = await warm_up_session(session)
+        print(
+            f"warm-up: model loaded + {warm.prefix_message_count}-message "
+            f"persona/VOICE prefix primed in {warm.duration_s}s "
+            f"(first token {warm.first_token_latency_s}s)"
+        )
+    except ModelUnavailableError as exc:
+        print(f"error: model warm-up failed — {exc}", file=sys.stderr)
+        sys.exit(1)
 
     # --- M2.4B.1: measure-only instrumentation (only when --report) --------
     sampler: ResourceSampler | None = None

@@ -241,8 +241,13 @@ class TestProductionUntouched(unittest.TestCase):
         from nexa.bootstrap import build_default_session
         s = build_default_session()
         self.assertEqual(s.provider.describe().model, "gemma4:e4b")
-        # production provider has NO num_thread override
-        self.assertFalse(hasattr(s.provider, "_num_thread"))
+        # M2.4B.3.6 (R0023) productionised the serving policy on this same
+        # canonical provider: num_thread=2, keep_alive=30m. Still one model,
+        # one provider, no e2b routing. (Was "no num_thread override" during
+        # the B.3.5 blind-prep freeze; B.3.6 is the approved follow-up that
+        # ships it — see tests/test_production_serving_freeze.py.)
+        self.assertEqual(s.provider._num_thread, 2)
+        self.assertEqual(s.provider._keep_alive, "30m")
 
     def test_harness_lives_only_under_docs_research(self) -> None:
         # the blind harness adds no file under src/ or apps/

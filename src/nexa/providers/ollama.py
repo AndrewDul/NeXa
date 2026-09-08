@@ -40,11 +40,19 @@ class LocalModelProvider(ModelProvider):
         model: str,
         base_url: str = "http://127.0.0.1:11434",
         keep_alive: str | None = "5m",
+        num_thread: int | None = None,
         timeout: float = 600.0,
     ) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._keep_alive = keep_alive
+        # ``num_thread``: an Ollama decode-thread count sent as a request
+        # option. ``None`` = let Ollama choose (the pre-M2.4B.3.6 behaviour).
+        # NeXa's canonical value comes from ``nexa.config`` via
+        # ``build_default_session`` (R0021/R0022 serving finding). This class
+        # stays a generic Ollama driver — it does not know the number's
+        # provenance.
+        self._num_thread = num_thread
         self._timeout = timeout
 
     def describe(self) -> ProviderDescription:
@@ -57,18 +65,21 @@ class LocalModelProvider(ModelProvider):
         *,
         cancel_token: CancelToken | None = None,
     ) -> AsyncIterator[str]:
+        request_options: dict[str, object] = {
+            "num_ctx": options.num_ctx,
+            "temperature": options.temperature,
+            "top_p": options.top_p,
+            "top_k": options.top_k,
+            "repeat_penalty": options.repeat_penalty,
+            "num_predict": options.num_predict,
+        }
+        if self._num_thread is not None:
+            request_options["num_thread"] = self._num_thread
         body: dict[str, object] = {
             "model": self._model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "stream": True,
-            "options": {
-                "num_ctx": options.num_ctx,
-                "temperature": options.temperature,
-                "top_p": options.top_p,
-                "top_k": options.top_k,
-                "repeat_penalty": options.repeat_penalty,
-                "num_predict": options.num_predict,
-            },
+            "options": request_options,
         }
         if self._keep_alive is not None:
             body["keep_alive"] = self._keep_alive

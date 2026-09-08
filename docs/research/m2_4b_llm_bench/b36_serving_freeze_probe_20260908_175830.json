@@ -1,0 +1,175 @@
+{
+ "model": "gemma4:e4b",
+ "keep_alive": "30m",
+ "num_thread": 2,
+ "ts": "2026-09-08T16:58:30.867807+00:00",
+ "warmup_benefit": {
+  "prefix_message_count": 2,
+  "cold_no_warmup": {
+   "text": "Czarna dziura to obszar czasoprzestrzeni, z którego nic, nawet światło, nie może uciec. Powstaje ona zazwyczaj w wyniku kolapsu bardzo masywnej gwiazdy.",
+   "gen_chars": 152,
+   "ttft_s": 76.687,
+   "wall_s": 89.282,
+   "load_duration_s": 33.386,
+   "prompt_eval_count": 535,
+   "prompt_eval_duration_s": 43.28,
+   "prompt_eval_tok_s": 12.36,
+   "eval_count": 46,
+   "eval_duration_s": 12.595,
+   "tok_s": 3.65,
+   "gen_chars_s": 12.07,
+   "done_reason": "stop",
+   "truncated_num_predict": false
+  },
+  "warmup_call": {
+   "text": "C",
+   "gen_chars": 1,
+   "ttft_s": 72.638,
+   "wall_s": 72.638,
+   "load_duration_s": 31.65,
+   "prompt_eval_count": 507,
+   "prompt_eval_duration_s": 40.977,
+   "prompt_eval_tok_s": 12.37,
+   "eval_count": 1,
+   "eval_duration_s": 0.0,
+   "tok_s": 1000000.0,
+   "gen_chars_s": 1000000.0,
+   "done_reason": "length",
+   "truncated_num_predict": true
+  },
+  "warm_after_warmup": {
+   "text": "Czarna dziura to obszar czasoprzestrzeni, z którego nic, nawet światło, nie może uciec. Jest to obiekt o ekstremalnie silnej grawitacji, często powstający w wyniku załamania się masywnej gwiazdy.",
+   "gen_chars": 195,
+   "ttft_s": 3.198,
+   "wall_s": 20.009,
+   "load_duration_s": 0.002,
+   "prompt_eval_count": 535,
+   "prompt_eval_duration_s": 3.185,
+   "prompt_eval_tok_s": 167.96,
+   "eval_count": 58,
+   "eval_duration_s": 16.811,
+   "tok_s": 3.45,
+   "gen_chars_s": 11.6,
+   "done_reason": "stop",
+   "truncated_num_predict": false
+  },
+  "ttft_cold_s": 76.687,
+  "ttft_warm_s": 3.198,
+  "ttft_saved_s": 73.49,
+  "prompt_eval_cold_s": 43.28,
+  "prompt_eval_warm_s": 3.185,
+  "persona_id": "nexa_persona_v1"
+ },
+ "piper_active": {
+  "num_thread_reconfirm": {
+   "default": {
+    "tok_s_mean": 1.74,
+    "chars_s_mean": 5.73
+   },
+   "num_thread=2": {
+    "tok_s_mean": 2.845,
+    "chars_s_mean": 9.665
+   }
+  },
+  "acceptance": {
+   "pl": {
+    "turns": [
+     {
+      "q": "Co to jest czarna dziura?",
+      "ttft_s": 3.523,
+      "gen_chars": 137,
+      "gen_chars_s": 8.37,
+      "tok_s": 2.57,
+      "prompt_eval_s": 3.506,
+      "prompt_eval_count": 535,
+      "truncated": false,
+      "temp_c": 65.0,
+      "throttled": "0x0",
+      "mem_avail_mb": 3496.5
+     },
+     {
+      "q": "Jak ona powstaje?",
+      "ttft_s": 3.59,
+      "gen_chars": 200,
+      "gen_chars_s": 9.44,
+      "tok_s": 2.79,
+      "prompt_eval_s": 3.576,
+      "prompt_eval_count": 606,
+      "truncated": false,
+      "temp_c": 65.55,
+      "throttled": "0x0",
+      "mem_avail_mb": 3517.2
+     },
+     {
+      "q": "Po co człowiekowi sen?",
+      "ttft_s": 4.188,
+      "gen_chars": 157,
+      "gen_chars_s": 10.72,
+      "tok_s": 2.8,
+      "prompt_eval_s": 4.175,
+      "prompt_eval_count": 696,
+      "truncated": false,
+      "temp_c": 65.55,
+      "throttled": "0x0",
+      "mem_avail_mb": 3447.3
+     }
+    ],
+    "warm_ttft_s_mean": 3.889,
+    "gen_chars_s_mean": 9.51,
+    "tok_s_mean": 2.72
+   },
+   "en": {
+    "turns": [
+     {
+      "q": "What is a black hole?",
+      "ttft_s": 3.589,
+      "gen_chars": 178,
+      "gen_chars_s": 12.66,
+      "tok_s": 2.85,
+      "prompt_eval_s": 3.579,
+      "prompt_eval_count": 530,
+      "truncated": false,
+      "temp_c": 65.55,
+      "throttled": "0x0",
+      "mem_avail_mb": 3484.2
+     },
+     {
+      "q": "How does it form?",
+      "ttft_s": 4.053,
+      "gen_chars": 217,
+      "gen_chars_s": 17.09,
+      "tok_s": 2.76,
+      "prompt_eval_s": 4.042,
+      "prompt_eval_count": 596,
+      "truncated": false,
+      "temp_c": 67.75,
+      "throttled": "0x0",
+      "mem_avail_mb": 3435.7
+     },
+     {
+      "q": "Why do humans need sleep?",
+      "ttft_s": 2.889,
+      "gen_chars": 160,
+      "gen_chars_s": 15.05,
+      "tok_s": 2.63,
+      "prompt_eval_s": 2.878,
+      "prompt_eval_count": 658,
+      "truncated": false,
+      "temp_c": 65.55,
+      "throttled": "0x0",
+      "mem_avail_mb": 3439.0
+     }
+    ],
+    "warm_ttft_s_mean": 3.471,
+    "gen_chars_s_mean": 14.933,
+    "tok_s_mean": 2.747
+   }
+  },
+  "piper": {
+   "rtf_n": 66,
+   "rtf_mean": 0.336,
+   "rtf_max": 0.521,
+   "synth_errors": 0
+  }
+ }
+}

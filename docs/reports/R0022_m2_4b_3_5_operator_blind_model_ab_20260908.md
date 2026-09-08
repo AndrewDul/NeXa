@@ -3,7 +3,8 @@
 - **Date:** 2026-09-08
 - **Author:** Claude Code (agent), for Andrzej Dul
 - **Milestone:** M2 — Realtime Voice · **Substage M2.4B.3.5 — operator
-  blind A/B decision (preparation)**
+  blind A/B model decision** · **CLOSED 2026-09-08** (prepared + run +
+  revealed + decided; serving productionisation is R0023)
 - **Related:** `docs/reports/R0021_…` (**the objective benchmark** —
   `gemma4:e4b` PL ~9.4 chars/s / best PL quality vs `gemma4:e2b` PL
   ~18.7 chars/s / repeatable factual regressions; `num_thread=2` = +12–14 %
@@ -12,33 +13,156 @@
   (the M1.0B blind-test instrument this reuses), `docs/research/m2_4b_llm_bench/`
   (harness, sealed mapping, results dir).
 
-**Preparation only. No production default changed: `gemma4:e4b` remains
-the ADR-0002 frozen model, `num_thread` / `keep_alive` unchanged in
-production config, bilingual auto-STT not implemented, M2.5 not started.
-Not pushed. The A/B mapping is NOT in this report and NOT revealed.**
+**CLOSED 2026-09-08.** The operator ran the blind A/B (Candidate A PL+EN,
+Candidate B PL+EN) on the full NeXa realtime voice path, gave his
+observations, and stated a preference. The sealed mapping is now revealed
+below and the model decision is final: **`gemma4:e4b` is the canonical
+local production conversation model.** The serving improvements
+(`num_thread=2`, longer `keep_alive`, startup warm-up) are productionised
+in the follow-up stage **M2.4B.3.6 — see R0023**; this report is the A/B
+record only. Not pushed.
 
 ---
 
 ## TASK RESULT
 
-**PREPARED — AWAITING OPERATOR BLIND TEST.**
+**COMPLETE — BLIND A/B RUN, MAPPING REVEALED, MODEL DECIDED.**
 
-A real, operator-blind A/B of `gemma4:e4b` vs `gemma4:e2b` on the full
-NeXa realtime voice path is built, self-tested, and ready to run. The
-operator has not yet done the listening test, so there is **no verdict,
-no winner, and no model decision** in this report. Once the operator
-returns Candidate A / Candidate B scorecards and a preference, this report
-is updated with the reveal, the objective comparison, and the final call.
+The operator completed the listening test. Mapping: **Candidate A =
+`gemma4:e2b`, Candidate B = `gemma4:e4b`** (see BLIND A/B CLOSED below).
+**Operator decision: `gemma4:e4b`** — reliability / quality over the
+~1.6–2× raw-speed advantage of `gemma4:e2b`; English with the stronger
+model is already good enough for this milestone; Polish is slower but
+Polish latency + STT are explicitly separate later tracks. NeXa stays
+bilingual (PL + EN) — this is a *model* decision, not a language-removal
+decision. `gemma4:e2b` is rejected as the production conversation model
+and stays documented only as a possible future speed/fallback candidate;
+normal NeXa conversations are not routed to it.
+
+No 1–5 subjective scorecard numbers are recorded — the operator gave
+qualitative observations, not axis scores, and none are invented on his
+behalf.
 
 Also done this stage:
 
 - **B.3.3 operator evidence recorded** — the operator has now run real
   Polish *and* English voice sessions on the post-B.3.3 build (see B.3.3
   OPERATOR EVIDENCE). No subjective verdict is invented on his behalf; the
-  live A/B session is where he gives it.
+  live A/B session is where he gave it.
 - **`num_thread=2` validated under a concurrent Piper load** (see that
-  section) so it can be used for BOTH candidates without giving either an
-  unfair serving advantage. Still not shipped to production.
+  section) so it could be used for BOTH candidates without giving either
+  an unfair serving advantage. Shipped to production in B.3.6 (R0023).
+
+---
+
+## BLIND A/B CLOSED — MAPPING REVEAL
+
+The operator finished the four blind runs and stated a preference on
+2026-09-08. Only then was `operator_blind_ab_mapping_20260908.txt`
+opened. The sealed payload (`salt dc48ecc7…`, created `2026-09-08T16:29`):
+
+| blind label | actual model |
+|---|---|
+| **Candidate A** | **`gemma4:e2b`** (the ~1.6–2× faster MatFormer sibling) |
+| **Candidate B** | **`gemma4:e4b`** (the ADR-0002 frozen baseline) |
+
+The operator **chose Candidate B → `gemma4:e4b`**.
+
+### Why `gemma4:e4b` won
+
+- **Reliability / quality over speed.** The operator judged the stronger
+  model's answers good enough to keep, and did not consider `e2b`'s raw
+  responsiveness advantage worth its known factual-reliability regression
+  (R0021: relativity / iron-vs-feathers self-contradictions, a "pink Sun"
+  hallucination, one EN→PL mirroring break, thinner reasoning).
+- **English is already sufficient** with `e4b` for the current milestone —
+  the operator's word for the `e4b` English run was *"idealny"* / ideal.
+- **Polish is accepted as slower for now.** `e4b` Polish text throughput
+  (~11 chars/s here) and local Polish STT accuracy are known deficits;
+  both become dedicated later stages, not reasons to switch the model or
+  drop the language.
+- NeXa stays **bilingual PL + EN**. This is a model decision only.
+
+`gemma4:e2b` is **rejected** as the production conversation model. It may
+stay documented as a future speed / fallback candidate, but normal NeXa
+conversations are not routed to it, and no automatic `e2b` routing and no
+separate per-language model authority are introduced.
+
+## OPERATOR OBSERVATIONS (recorded verbatim, not scored)
+
+The operator did not fill in the 1–5 ten-axis scorecard; he gave
+free-form observations. Recorded as given, no numbers invented:
+
+**Candidate A — `gemma4:e2b` — Polish**
+- Generally good and conversational.
+- One long apparent stall near the end.
+- The later part of the session had queued / overlapping utterances, so it
+  **must not** be treated as a clean model-latency measurement.
+- The conversation felt good overall.
+
+**Candidate A — `gemma4:e2b` — English**
+- After an initial language anomaly at the start, the subsequent English
+  conversation felt much smoother.
+- The operator described the improvement as *very large* and said it was
+  good to talk with.
+
+**Candidate B — `gemma4:e4b` — Polish**
+- The operator initially felt it understood him better.
+- Still some STT misses; needed occasional slower / repeated speech.
+- Overall quality good.
+- The distinction between **STT accuracy** (whisper.cpp mishearing) and
+  **model interpretation of an already-damaged transcript** must be kept
+  separate — a Polish miss here is first an STT-track issue.
+
+**Candidate B — `gemma4:e4b` — English**
+- The operator described it as *"idealny"* / ideal.
+
+**Final operator decision (verbatim intent):** choose `gemma4:e4b` as the
+production model; accept current Polish latency for now; improve Polish
+separately later.
+
+## OBJECTIVE METRICS FROM `blind_results/`
+
+From the completed per-turn files (`candidate_*_{pl,en}_2026*.jsonl`).
+"Warm" = excluding each run's cold turn 1 (fresh-process prefix reprocess)
+and, for A-PL, the operator-flagged queued/overlapping turns 11–14 (not a
+clean latency measurement). `num_thread=2` + `keep_alive=30m` for both.
+
+| metric (warm turns) | A = `e2b` PL | A = `e2b` EN | B = `e4b` PL | B = `e4b` EN |
+|---|---|---|---|---|
+| turns scored | 9 (t2–10) | 8 (t2–9) | 6 (t2–7) | 2 (t2–3)¹ |
+| generated **chars/s** mean | **18.4** | **~29** | **11.2** | **16.5** |
+| warm **TTFT** mean (STT-result → 1st token) | 1.71 s | 1.48 s | 3.50 s | 3.04 s |
+| **END_OF_TURN → first audio** mean | 8.2 s | 7.3 s | 13.2 s | 10.6 s |
+| generation duration mean | 5.6 s | 6.6 s | 12.9 s | 15.1 s |
+| cold turn-1 TTFT (excluded above) | 21.6 s | 15.3 s | 43.2 s | 43.7 s |
+| CPU total mean / peak | 49 % / 100 % | 43 % / 100 % | 50 % / 100 % | 51 % / 100 % |
+| `llama-server` CPU mean | 137 % | 106 % | 152 % | 151 % |
+| temp max | 67.2 °C | 63.4 °C | 65.0 °C | 64.5 °C |
+| `throttled` | `0x0` | `0x0` | `0x0` | `0x0` |
+| MemAvailable min | ~6.2 GB | ~6.2 GB | ~3.8 GB | ~3.9 GB |
+| swap used max | 86 MB | 85 MB | 0 MB | 0 MB |
+
+¹ The operator ended the Candidate B English block after two warm turns,
+having already judged it *"idealny"*.
+
+**Reading of the numbers.** `e2b` generated spoken text ~1.6× faster in
+Polish (18.4 vs 11.2 chars/s) and ~1.7× faster in English (~29 vs 16.5),
+with roughly half the warm TTFT (~1.7 s vs ~3.5 s PL). `e4b` holds ~2.4 GB
+more RAM resident (≈3.8 GB free vs ≈6.2 GB during `e2b`). Neither model
+throttled; both stayed thermally comfortable (≤ 67 °C). This is
+consistent with R0021's directional finding; the operator weighed the
+`e2b` speed against its reliability cost and chose `e4b`.
+
+**The Candidate B Polish Pi reset.** The first Candidate B Polish attempt
+(`candidate_B_pl_20260908_170608.txt`, 0 bytes, no `.jsonl`) produced no
+completed turns and the Pi was reset before the successful run
+(`…_171115`, used above). Nothing in the captured data isolates a cause.
+The only recorded environmental difference from the `e2b` runs is the
+~2.4 GB smaller free-RAM headroom while `e4b` (~10.2 GB) is resident.
+**Not attributed to the model** — flagged as an observation only; the
+successful B-PL run that followed showed no instability, no throttling and
+`0` swap.
 
 ## BLIND A/B STATUS
 
@@ -49,8 +173,10 @@ Also done this stage:
 | fairness controls | **in place** (see FAIRNESS CONFIGURATION) |
 | `num_thread=2` Piper-active check | **PASS** — +68 % decode under Piper load, RTF unchanged, no throttle |
 | harness safety tests | **25 pass** (`tests/test_operator_blind_ab.py`) |
-| operator listening test | **NOT STARTED** — awaiting the operator |
-| production default | **unchanged** (`gemma4:e4b`) |
+| operator listening test | **DONE 2026-09-08** — A pl+en, B pl+en |
+| mapping | **REVEALED** — A = `gemma4:e2b`, B = `gemma4:e4b` |
+| operator decision | **`gemma4:e4b`** (Candidate B) — quality over speed |
+| production default | **`gemma4:e4b`** — confirmed; serving policy shipped in R0023 |
 
 ## CANDIDATES
 
@@ -324,31 +450,33 @@ reports.
 
 ## PRODUCTION MODEL
 
-**`gemma4:e4b` — unchanged.** `nexa.config.DEFAULT_LOCAL_MODEL` is
-`gemma4:e4b`; `build_default_session()` builds it with the stock provider
-(no `num_thread`, `keep_alive` `5m`). Nothing in this stage edits the
-canonical model, `num_thread`, or `keep_alive` in production config. The
-blind harness builds a throwaway session only.
+**`gemma4:e4b` — confirmed by operator blind A/B, remains
+`nexa.config.DEFAULT_LOCAL_MODEL`.** As of this report the production
+config was still the stock provider (no `num_thread`, `keep_alive` `5m`).
+The serving changes the operator approved alongside the model decision —
+`num_thread=2`, `keep_alive` 30m, a startup persona-prefix warm-up — are
+implemented in **M2.4B.3.6 (R0023)**, still on this one canonical model
+and one provider. `gemma4:e2b` is **not** wired anywhere: no automatic
+routing, no per-language model authority, no fallback model.
 
 ## NEXT STEP
 
-Operator runs the four commands above (Candidate A pl/en, Candidate B
-pl/en), scores each candidate on the ten axes, states a preference. Then
-this report is updated with: A scores, B scores, preference, the mapping
-reveal, the objective per-turn comparison from `blind_results/`, and the
-final model decision under R0021's decision rule (switch only on a
-meaningful product improvement; otherwise keep `e4b`, optionally take the
-`num_thread=2` + warm-keep serving wins). Only if the operator approves
-does a production model / config change follow — as its own stage.
-
-**Do not switch the production default. Do not ship `num_thread=2` /
-`keep_alive`. Do not implement bilingual auto-STT. Do not start M2.5. Do
-not push. Do not reveal the mapping.**
+**Done in R0023 (M2.4B.3.6 — Production Local Model Serving Freeze):**
+`num_thread=2` + `keep_alive` 30m productionised in the canonical
+`LocalModelProvider` via `nexa.config`; an infrastructure-only startup
+warm-up that primes the persona / `ResponseMode.VOICE` KV prefix without
+writing `ConversationSession` history; real-Pi + Piper acceptance
+measurement. Explicitly deferred: Polish latency, Polish STT quality
+(R0016), bilingual auto-STT / code-switch. `gemma4:e4b` frozen; no `e2b`
+routing.
 
 ## AGENTS.md: REVIEWED — NO CHANGE REQUIRED
 
-The decision is handed to the operator, not pre-empted: no winner is
-declared, the `e2b` quality caveat from R0021 is carried in full, the
-comparison is genuinely fair (one variable), the blind is real
-(`secrets`-random, never printed, tested), and the production model is
-untouched. No gap exposed.
+The decision was handed to the operator, not pre-empted: no winner was
+declared before the run, the `e2b` quality caveat from R0021 was carried
+in full, the comparison was genuinely fair (one variable — the model tag),
+the blind was real (`secrets`-random, never printed, tested), and the
+mapping stayed sealed until the operator stated a preference. The reveal,
+the verbatim operator observations (no invented scores), the objective
+`blind_results/` metrics, and the Candidate B Polish Pi-reset (recorded,
+not attributed to the model) are all above. No gap exposed.

@@ -31,7 +31,8 @@ SRC = REPO_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from nexa.bootstrap import build_default_session  # noqa: E402
+from nexa.bootstrap import build_default_session, warm_up_session  # noqa: E402
+from nexa.providers.base import ModelUnavailableError  # noqa: E402
 from nexa.stt import (  # noqa: E402
     Language,
     SttBinaryNotFoundError,
@@ -147,6 +148,14 @@ async def main() -> None:
 
     session = build_default_session()
     description = session.provider.describe()
+
+    # M2.4B.3.6: infrastructure-only model + persona-prefix warm-up (does not
+    # enter history). Fails visibly if Ollama is unavailable.
+    try:
+        await warm_up_session(session)
+    except ModelUnavailableError as exc:
+        print(f"error: model warm-up failed — {exc}", file=sys.stderr)
+        sys.exit(1)
 
     adapter_ref: list[VoiceConversationAdapter] = []
     adapter = VoiceConversationAdapter(

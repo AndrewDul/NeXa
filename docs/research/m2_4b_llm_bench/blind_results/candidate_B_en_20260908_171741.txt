@@ -1,0 +1,212 @@
+# blind candidate B  language en  started 20260908_171741
+# num_thread=2 keep_alive=30m response_mode=VOICE  (model tag intentionally omitted)
+
+------------------------------------------------------------
+TURN 1   (WARM-UP — exclude from scoring)
+==================================================
+M2.4B.1 TURN REPORT  (turn #1)
+==================================================
+
+USER
+  stt text:      What is the actual color of the sun?  (36 chars)
+  stt latency:   1.75s
+
+LLM
+  first token:         43.68s  (base: stt_result)
+  generation duration: 8.44s
+  chars:               140
+  chars/s:             16.6
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 2  mean chars 69.5  tiny (<12): 0
+    #0  chars=32   since_prev=-  
+    #1  chars=107  since_prev=5.41s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 2 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=BUFFER_NEAR_EMPTY  hold=0.00s  reserve@recv=-2.95s  reserve@rel=-2.95s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 2 requests
+    #0  http_wall=1.20s  ttfb=1.20s  audio=1.74s  RTF=0.692
+    #1  http_wall=0.72s  ttfb=0.71s  audio=5.67s  RTF=0.127
+  mean TRUE synthesis RTF: 0.409  (mean http wall 0.96s)
+  tts context spans (TTSStarted->Stopped): 1  -- context-span 'RTF' mean 0.891 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=6.61s  first_audio=1.20s  audio=7.41s
+
+PLAYBACK
+  first audio:      49.17s
+  final stop:       60.28s
+  BotStarted count: 1
+  BotStopped count: 1
+  silence gaps ms:  -
+  max gap:          -
+  mean gap:         -
+  underruns (est):  1
+  audio-s per wall-s: 0.67  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              2.01s
+  min:              -3.69s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 1  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.00s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 50.5%  peak 98.7%
+  llama-server CPU: mean 177.0%  peak 204.3%
+  temperature:      63.9C max
+  throttled:        0x0
+  MemAvailable min: 3894MB
+  swap used max:    0MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.157ms/sample (146 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: FIRST TOKEN
+==================================================
+
+------------------------------------------------------------
+TURN 2
+==================================================
+M2.4B.1 TURN REPORT  (turn #2)
+==================================================
+
+USER
+  stt text:      Why can't an object with Mars exceed the speed of light?  (56 chars)
+  stt latency:   1.89s
+
+LLM
+  first token:         3.37s  (base: stt_result)
+  generation duration: 19.29s
+  chars:               322
+  chars/s:             16.7
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 4  mean chars 79.8  tiny (<12): 0
+    #0  chars=57   since_prev=-  
+    #1  chars=55   since_prev=7.23s  
+    #2  chars=107  since_prev=3.75s  
+    #3  chars=100  since_prev=4.33s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 4 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=BUFFER_NEAR_EMPTY  hold=0.00s  reserve@recv=-3.20s  reserve@rel=-3.20s  (reserve = ESTIMATE)
+    #2  reason=BUFFER_NEAR_EMPTY  hold=0.00s  reserve@recv=-2.44s  reserve@rel=-2.44s  (reserve = ESTIMATE)
+    #3  reason=BUFFER_NEAR_EMPTY  hold=0.00s  reserve@recv=-2.78s  reserve@rel=-2.78s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 4 requests
+    #0  http_wall=1.29s  ttfb=1.28s  audio=2.72s  RTF=0.474
+    #1  http_wall=1.30s  ttfb=1.29s  audio=3.03s  RTF=0.429
+    #2  http_wall=2.79s  ttfb=2.78s  audio=6.05s  RTF=0.461
+    #3  http_wall=0.73s  ttfb=0.72s  audio=5.75s  RTF=0.127
+  mean TRUE synthesis RTF: 0.373  (mean http wall 1.53s)
+  tts context spans (TTSStarted->Stopped): 1  -- context-span 'RTF' mean 0.946 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=16.60s  first_audio=1.29s  audio=17.55s
+
+PLAYBACK
+  first audio:      9.96s
+  final stop:       32.76s
+  BotStarted count: 2
+  BotStopped count: 2
+  silence gaps ms:  [1510.3]
+  max gap:          1510.3ms
+  mean gap:         1510.3ms
+  underruns (est):  2
+  audio-s per wall-s: 0.77  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              2.24s
+  min:              -5.25s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 2  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.00s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 52.3%  peak 100.0%
+  llama-server CPU: mean 139.6%  peak 202.3%
+  temperature:      64.5C max
+  throttled:        0x0
+  MemAvailable min: 3907MB
+  swap used max:    0MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.544ms/sample (77 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: LLM TEXT PRODUCTION
+==================================================
+
+------------------------------------------------------------
+TURN 3
+==================================================
+M2.4B.1 TURN REPORT  (turn #3)
+==================================================
+
+USER
+  stt text:      what we were talking about.  (27 chars)
+  stt latency:   1.57s
+
+LLM
+  first token:         2.71s  (base: stt_result)
+  generation duration: 10.90s
+  chars:               178
+  chars/s:             16.3
+  prompt eval:         n/a  (Ollama done-chunk metadata not exposed — R0013)
+  generation tok/s:    n/a  (same)
+  load duration:       n/a  (same)
+
+TEXT -> TTS  (post speech-planner — M2.4B.2)
+  text chunks (TTSTextFrame): 3  mean chars 58.7  tiny (<12): 0
+    #0  chars=53   since_prev=-  
+    #1  chars=68   since_prev=1.67s  
+    #2  chars=55   since_prev=2.66s  (after gen complete)
+  CONTINUITY CONTROLLER (M2.4B.3.2): 3 releases  held 0  max hold 0.00s  mean hold 0.00s
+    #0  reason=FIRST_PHRASE  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #1  reason=BUFFER_LOW  hold=0.00s  reserve@recv=-  reserve@rel=-  (reserve = ESTIMATE)
+    #2  reason=TURN_COMPLETE  hold=0.00s  reserve@recv=2.46s  reserve@rel=2.46s  (reserve = ESTIMATE)
+  TRUE Piper HTTP synthesis (one request per sentence): 3 requests
+    #0  http_wall=1.53s  ttfb=1.51s  audio=2.72s  RTF=0.563
+    #1  http_wall=1.67s  ttfb=1.66s  audio=3.71s  RTF=0.451
+    #2  http_wall=0.38s  ttfb=0.38s  audio=2.80s  RTF=0.136
+  mean TRUE synthesis RTF: 0.383  (mean http wall 1.19s)
+  tts context spans (TTSStarted->Stopped): 1  -- context-span 'RTF' mean 0.635 (NOT synthesis speed; inflated by playback drain + 3s timeout)
+    #0  context_span=5.86s  first_audio=1.51s  audio=9.23s
+
+PLAYBACK
+  first audio:      11.21s
+  final stop:       20.44s
+  BotStarted count: 1
+  BotStopped count: 1
+  silence gaps ms:  -
+  max gap:          -
+  mean gap:         -
+  underruns (est):  1
+  audio-s per wall-s: 1.00  (~1.0 = kept up; <1.0 = ran dry)
+
+BUFFER ESTIMATE
+  ESTIMATE (R0012 INFERENCE): sum(TTS audio bytes seen) / (sample_rate * 2 * channels) minus wall-clock since this turn's first audio. Ignores the output transport's own small internal buffering and resample rounding. Validated against real BotStoppedSpeaking in R0013; NOT a control signal.
+  max:              4.88s
+  min:              -0.00s
+  at chunk arrivals:[0.3]
+  underrun estimate events: 1  (without a following BotStopped: 0)
+  buffer-drain -> BotStopped lag: 0.00s  (healthy ~= 3 s transport fallback; large => estimate & reality disagree)
+
+RESOURCES
+  CPU total:        mean 51.1%  peak 98.8%
+  llama-server CPU: mean 137.0%  peak 204.5%
+  temperature:      63.4C max
+  throttled:        0x0
+  MemAvailable min: 3874MB
+  swap used max:    0MB
+  STT overlap:      False
+  TTS overlap:      True
+  sampler overhead: 1.520ms/sample (47 samples)
+
+DIAGNOSIS
+  Dominant wait for this turn: UNKNOWN
+==================================================

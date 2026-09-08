@@ -1,0 +1,21 @@
+M2.4B.3.6 serving-freeze probe — gemma4:e4b, keep_alive=30m, num_thread=2
+start: 2026-09-08T16:49:12.387683+00:00  temp=52.9C thr=0x0 mem=4018.3MB
+
+===== 1. WARM-UP KV BENEFIT (eviction-controlled, Piper idle) =====
+  COLD  (no warm-up)  turn1 PL: ttft=76.687s  load=33.386s  prompt_eval=43.28s (535 tok)  tok/s=3.65
+  warm-up call        : ttft=72.638s  load=31.65s  prompt_eval=40.977s (507 tok)  discarded_chars=1
+  WARM  (after warm-up) turn1 PL: ttft=3.198s  load=0.002s  prompt_eval=3.185s (535 tok)  tok/s=3.45
+  => first real turn TTFT: cold 76.687s -> warm 3.198s  (saved 73.49s);  prompt_eval 43.28s -> 3.185s
+
+===== 2+3. PIPER-ACTIVE (num_thread=2, keep_alive=30m) =====
+  [default] PL 'Co to jest czarna dziura?': tok/s=1.81 ch/s=5.75 ttft=4.308s temp=66.1C thr=0x0
+  [default] PL 'Jak ona powstaje?': tok/s=1.67 ch/s=5.71 ttft=4.497s temp=65.55C thr=0x0
+  [num_thread=2] PL 'Co to jest czarna dziura?': tok/s=2.71 ch/s=8.71 ttft=3.184s temp=66.1C thr=0x0
+  [num_thread=2] PL 'Jak ona powstaje?': tok/s=2.98 ch/s=10.62 ttft=3.727s temp=66.1C thr=0x0
+  [pl] 'Co to jest czarna dziura?': ttft=3.523s chars=137 ch/s=8.37 tok/s=2.57 temp=65.0C thr=0x0 mem=3496.5MB trunc=False
+  [pl] 'Jak ona powstaje?': ttft=3.59s chars=200 ch/s=9.44 tok/s=2.79 temp=65.55C thr=0x0 mem=3517.2MB trunc=False
+  [pl] 'Po co człowiekowi sen?': ttft=4.188s chars=157 ch/s=10.72 tok/s=2.8 temp=65.55C thr=0x0 mem=3447.3MB trunc=False
+  [en] 'What is a black hole?': ttft=3.589s chars=178 ch/s=12.66 tok/s=2.85 temp=65.55C thr=0x0 mem=3484.2MB trunc=False
+  [en] 'How does it form?': ttft=4.053s chars=217 ch/s=17.09 tok/s=2.76 temp=67.75C thr=0x0 mem=3435.7MB trunc=False
+  [en] 'Why do humans need sleep?': ttft=2.889s chars=160 ch/s=15.05 tok/s=2.63 temp=65.55C thr=0x0 mem=3439.0MB trunc=False
+  Piper (whole Piper-active phase): RTF mean 0.336 max 0.521 (n=66, err=0)

@@ -5,33 +5,58 @@ Runtime / test evidence outranks anything else in this repo.
 
 ---
 
-- **Last verified:** 2026-09-07
+- **Last verified:** 2026-09-08
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0022_m2_4b_3_5_operator_blind_model_ab_20260908.md`
-  (M2.4B.3.5 — operator-blind local voice model A/B, **PREPARATION**.
-  Status: **PREPARED — AWAITING OPERATOR BLIND TEST**. A real blind A/B of
-  `gemma4:e4b` vs `gemma4:e2b` on the full realtime voice path is built +
-  self-tested (`docs/research/m2_4b_llm_bench/operator_blind_ab.py`
-  `--candidate {A,B} --language {pl,en}`). Sealed random mapping
-  (`secrets.SystemRandom`) in
-  `docs/research/m2_4b_llm_bench/operator_blind_ab_mapping_20260908.txt` —
-  never printed, not in any report; the operator scores Candidate A then
-  Candidate B (10-axis scorecard, PL+EN blocks each) then states a
-  preference, and only then is the mapping revealed. Fairness: identical
-  `ConversationSession` / persona / `GenerationOptions` / `ResponseMode.VOICE`
-  / SpeechPlanner / continuity controller / Piper voices+`nice +10` / STT /
-  VAD / mic; `num_thread=2` + `keep_alive=30m` applied to BOTH; only the
-  model tag differs. `num_thread=2` re-validated under a concurrent Piper
-  load first (`nt2_piper_validation.py`). 25 harness-safety tests. **B.3.3
-  now has real operator PL + EN voice evidence** (its subjective verdict
-  is collected in this A/B session). **No production default changed** —
-  `gemma4:e4b` stays frozen; `num_thread`/`keep_alive` unchanged in
-  production; no model switch. `R0021` = M2.4B.3.4 LLM serving & voice
-  benchmark (`gemma4:e4b` PL ~9.4 chars/s / best PL quality; `gemma4:e2b`
-  ~2× / repeatable factual regressions; `num_thread=2` +12–14 % decode);
-  `R0020` = M2.4B.3.3 `ResponseMode` voice reply policy;
+- **Latest report:** `docs/reports/R0023_m2_4b_3_6_production_local_model_serving_freeze_20260908.md`
+  (M2.4B.3.6 — **Production Local Model Serving Freeze — PASS**. The
+  R0021/R0022 serving findings are productionised on the one canonical
+  conversation path with `gemma4:e4b` kept as `DEFAULT_LOCAL_MODEL`:
+  (1) **`num_thread=2`** — one-time provider policy in `nexa.config`
+  (`DEFAULT_LOCAL_NUM_THREAD`), sent as an Ollama request option by
+  `LocalModelProvider` (no `taskset` / LLM `renice` / RT sched; Piper
+  stays `nice +10`); (2) **`keep_alive = 30m`** (`DEFAULT_LOCAL_KEEP_ALIVE`,
+  was stock `5m`; not infinite — ~10 GB resident model, deferred
+  resource-policy decision); (3) **startup warm-up** —
+  `nexa.bootstrap.warm_up_session()` sends the canonical persona +
+  `ResponseMode.VOICE` prefix with EMPTY history (`num_predict=1`,
+  discarded) so Ollama loads the model and fills the ~507-token KV
+  prefix. **Never writes `ConversationSession` history, never creates a
+  turn, no second session/provider/persona; raises `ModelUnavailableError`
+  visibly if Ollama is down.** Measured (`b36_serving_freeze_probe.py`,
+  eviction-controlled, real Pi): cold first real voice turn TTFT ~76.7 s
+  (load 33.4 s + 507-tok prefix reprocess 43.3 s) → with warm-up ~3.2 s
+  (`prompt_eval` 43.3 s → 3.2 s; prefix served from KV cache) — **~73 s
+  saved on turn 1, warm-up is not a no-op.** `num_thread=2` Piper-active
+  re-confirm: decode ~1.74 → ~2.85 tok/s (+64 %), Piper unaffected, no
+  throttle. `ResponseMode.TEXT` byte-for-byte unchanged, `VOICE` policy
+  unchanged, PL/EN language mechanism unchanged, **no `e2b` routing / no
+  per-language model / no fallback model**. `pytest` 480 passed / 7
+  skipped / 14 subtests; `unittest` 487 OK; +20
+  `tests/test_production_serving_freeze.py`; `test_operator_blind_ab.py`
+  `TestProductionUntouched` updated for the approved change. Not pushed.)
+- **Prior report — R0022** (`docs/reports/R0022_m2_4b_3_5_operator_blind_model_ab_20260908.md`,
+  M2.4B.3.5 — **operator-blind local voice model A/B — CLOSED 2026-09-08**.
+  Sealed `secrets.SystemRandom` mapping **revealed**: Candidate A =
+  `gemma4:e2b`, Candidate B = `gemma4:e4b`. The operator ran A pl+en and
+  B pl+en on the full realtime voice path and **chose `gemma4:e4b`** —
+  reliability/quality over `e2b`'s ~1.6–2× speed; EN with `e4b` "idealny";
+  PL slower but accepted (Polish latency + Polish STT are separate later
+  tracks); NeXa stays bilingual; this is a model decision only, `e2b` not
+  routed to. Operator gave verbatim qualitative observations, no 1–5
+  scores (none invented). Objective `blind_results/` metrics (warm turns,
+  `num_thread=2` + `keep_alive=30m` both): `e2b` PL ~18.4 / EN ~29
+  chars/s, warm TTFT ~1.7 s; `e4b` PL ~11.2 / EN ~16.5 chars/s, warm
+  TTFT ~3.0–3.5 s, END_OF_TURN→first-audio ~10–13 s; neither throttled,
+  ≤ 67 °C; `e4b` holds ~2.4 GB more RAM. One Candidate B Polish attempt
+  produced a 0-byte result and needed a Pi reset before the successful
+  run — recorded, **not** attributed to the model. **B.3.3 now has real
+  operator PL + EN voice evidence.** `R0021` = M2.4B.3.4 LLM serving &
+  voice benchmark (`gemma4:e4b` PL ~9.4 chars/s / best PL quality;
+  `gemma4:e2b` ~2× / repeatable factual regressions; `num_thread=2`
+  +12–14 % decode); `R0020` = M2.4B.3.3 `ResponseMode` voice reply
+  policy;
   `R0019` = M2.4B.3.2 continuity controller (no-op on today's rate);
   `R0018` = the rate-budget math authority; `R0017` … `R0011` as before.)
 - **Prior report — R0021** (`docs/reports/R0021_m2_4b_3_4_local_llm_serving_voice_benchmark_20260907.md`,
@@ -194,37 +219,45 @@ Runtime / test evidence outranks anything else in this repo.
   recommend operator A/B blind `e4b` vs `e2b`; `num_thread=2` + warm-keep
   are free wins regardless. Also fixed separately (`c64b66b`): continuity
   `_hold_then_release` self-cancel log warning + 2 regression tests.
-  **M2.4B.3.5 — operator-blind model A/B: PREPARED, awaiting the operator**
-  (`R0022`, `docs/research/m2_4b_llm_bench/operator_blind_ab.py`).
-  Sealed `secrets.SystemRandom` A/B mapping of `gemma4:e4b` / `gemma4:e2b`
-  (`operator_blind_ab_mapping_20260908.txt`, never printed). Fair blind
-  launcher: identical `ConversationSession` / persona / `GenerationOptions`
-  / `ResponseMode.VOICE` / SpeechPlanner / continuity / Piper voices +
-  `nice +10` / STT / VAD / mic; `num_thread=2` + `keep_alive=30m` for
-  BOTH; only the model tag differs and is hidden. Operator terminal shows
-  only "Candidate A/B", metrics go to `blind_results/` files.
-  `num_thread=2` re-validated under a concurrent Piper load first
-  (`nt2_piper_validation.py`). 25 harness-safety tests
-  (`tests/test_operator_blind_ab.py`). **B.3.3 now has real operator PL +
-  EN voice evidence** — its subjective verdict is collected during this
-  A/B session (not yet given). NO production model / config change.
-  **M2.4B is NOT complete** — the remaining continuity work is faster
-  generation, now benchmarked; the operator's blind A/B is the pending
-  decision. Then **M2.5 — barge-in / interruption** (replaces the
-  temporary half-duplex gate). Separate flagged tracks: STT quality
-  (whisper.cpp "horyzont zdarzeń" → "chory zęzdarzyń" etc.);
-  `GenerationOptions.num_predict = 200` truncating long replies.
-- **Current objective:** the operator runs the prepared blind A/B
-  (`docs/research/m2_4b_llm_bench/operator_blind_ab.py --candidate {A,B}
-  --language {pl,en}`), scores Candidate A then Candidate B, states a
-  preference; only then is the mapping revealed and R0022 updated with the
-  decision (switch only on a meaningful product improvement per R0021's
-  rule; otherwise keep `e4b`, optionally take `num_thread=2` + warm-keep).
-  M2.4's functional baseline is frozen by the M2.4 commit and unchanged;
-  the speech planner + continuity controller are additive (remove them
-  from `extra_output_stages` → byte-for-byte M2.4); the voice response
-  policy is additive too (`ResponseMode.TEXT` → byte-for-byte pre-B.3.3
-  wire prompt). `gemma4:e4b` remains the ADR-0002 frozen production model.
+  **M2.4B.3.5 — operator-blind model A/B: COMPLETE, CLOSED 2026-09-08**
+  (`R0022`). Mapping revealed — A = `gemma4:e2b`, B = `gemma4:e4b`; the
+  operator ran A pl+en / B pl+en and **chose `gemma4:e4b`** (quality over
+  `e2b`'s ~1.6–2× speed; EN "idealny"; PL slower but accepted; bilingual
+  kept; `e2b` not routed to). Verbatim operator observations only, no 1–5
+  scores. **M2.4B.3.6 — Production Local Model Serving Freeze: COMPLETE,
+  PASS** (`R0023`). On the ONE canonical path, `gemma4:e4b` kept as
+  `DEFAULT_LOCAL_MODEL`: `num_thread=2` + `keep_alive=30m` are now
+  one-time provider policy in `nexa.config`
+  (`DEFAULT_LOCAL_NUM_THREAD` / `DEFAULT_LOCAL_KEEP_ALIVE`, env-overridable)
+  wired through `LocalModelProvider` (extra Ollama option only; no
+  `taskset` / LLM `renice` / RT sched — Piper stays `nice +10`) +
+  `build_default_session()`; new `nexa.bootstrap.warm_up_session()` primes
+  the persona/`ResponseMode.VOICE` KV prefix at startup (empty history,
+  `num_predict=1`, output discarded — never enters history, no second
+  authority, `ModelUnavailableError` visible). Measured
+  (`b36_serving_freeze_probe.py`, eviction-controlled): cold first real
+  voice turn TTFT ~76.7 s → with warm-up ~3.2 s (`prompt_eval` 43.3 s →
+  3.2 s; 507-tok prefix from KV cache) — **~73 s saved, not a no-op**;
+  `num_thread=2` Piper-active decode ~1.74 → ~2.85 tok/s (+64 %), Piper
+  unaffected, no throttle. `ResponseMode.TEXT` byte-for-byte unchanged,
+  `VOICE` policy unchanged, PL/EN language mechanism unchanged, no `e2b`
+  routing / per-language model / fallback model. +20
+  `tests/test_production_serving_freeze.py`. Separate flagged tracks
+  (deferred, NOT in B.3.6): Polish throughput (~11 vs 15.9 chars/s target);
+  Polish STT accuracy (whisper.cpp `base`/`q8_0`); bilingual auto-STT /
+  code-switch; `keep_alive` = infinite residency (resource-policy
+  decision). **M2.4B is NOT complete** — the remaining continuity work is
+  faster Polish generation. Then **M2.5 — barge-in / interruption**
+  (replaces the temporary half-duplex gate).
+- **Current objective:** operator runs a short live voice session on the
+  B.3.6 build (PL + EN, a "rozwiń" / "tell me more" follow-up) to confirm
+  B.3.3 `VOICE` live and capture STT latency + END_OF_TURN→first-audio for
+  the `num_thread=2` / `keep_alive=30m` / warm-up config (the headless
+  `b36` probe cannot produce mic-dependent metrics). M2.4's functional
+  baseline is frozen by the M2.4 commit and unchanged; the speech planner
+  + continuity controller are additive; the voice response policy is
+  additive (`ResponseMode.TEXT` → byte-for-byte pre-B.3.3 wire prompt).
+  `gemma4:e4b` is the operator-confirmed canonical production model.
 
 ---
 
