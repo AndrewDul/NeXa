@@ -4,10 +4,19 @@
 - **Author:** Claude Code (agent), for Andrzej Dul
 - **Milestone:** M2 — Realtime Voice · **Substage M2.4B.5A — live voice
   backlog / false-turn / contention investigation (root cause + fix)**
-- **Status:** **ROOT CAUSE FOUND + FIX IMPLEMENTED + deterministic
-  regression tests + headless contention proof. Live TV-stress operator
-  acceptance PENDING** (a human must play TV / speak near the mic while
-  NeXa answers — the deterministic + headless evidence is complete).
+- **Status:** **OPERATOR-CONFIRMED (2026-09-08) for normal post-fix live
+  stability.** The operator ran the post-fix bilingual session: automatic
+  PL↔EN switching worked, normal speaking voice transcribed correctly, STT
+  stayed ~2.89–3.21 s, **no progressive 7–10 s slowdown, no hang/backlog**,
+  max concurrent STT = 1, max concurrent turns = 1, final STT queue depth
+  = 0, final conversation queue depth = 0. **TV-stress test: NOT PERFORMED
+  / OPERATOR WAIVED** — the deterministic (`tests/test_bilingual_voice_stability.py`)
+  + headless (`b5a_contention_probe.py`) busy-drop / contention evidence
+  in this report stands as the proof for busy-period behaviour; the
+  TV-stress pass is **not** claimed. The few poor transcripts that session
+  were the operator speaking too quietly; at normal volume the same
+  utterances were understood — **not** an STT regression, no
+  SpeechQualityGuard track opened.
 - **Related:** `R0025` (M2.4B.5 — the bilingual voice input this session
   exercised), `R0024`, `R0023` (`gemma4:e4b` + `num_thread=2` +
   `keep_alive=30m` — unchanged), `ADR-0003` D8 (barge-in is M2.5, not
@@ -19,8 +28,12 @@
 
 ## TASK RESULT
 
-**PASS (root cause + fix + tests + headless proof). Live spoken TV-stress
-acceptance PENDING (operator).**
+**PASS.** Root cause found (measured), fixed, deterministic regression
+tests + headless contention/leak proof, and **operator-confirmed for
+normal post-fix live operation** (2026-09-08 — STT ~2.89–3.21 s, no
+slowdown/hang, queue depths 0). **TV-stress test NOT PERFORMED / operator
+waived** — the deterministic + headless busy-drop evidence below is the
+proof for busy-period behaviour; a TV-stress *pass* is not claimed.
 
 There **was a bug** — a real defect, present since M2.4, exposed by the
 first B.5 live session because that session had TV audio in the room while
@@ -309,9 +322,12 @@ covered by the pre-existing `_bot_speaking` path.
   half-duplex), so the operator never experiences it; and TV can no longer
   manufacture that load.
 
-**The live spoken TV-stress test** (operator plays TV / talks near the mic
-*while NeXa is answering*, then asks a real question after she finishes)
-is the remaining acceptance step — see NEXT STEP.
+**The live spoken TV-stress test was operator-waived.** The operator ran
+the normal post-fix session (clean PL↔EN, no TV) and accepted it as
+sufficient evidence for normal operation (STT ~2.89–3.21 s, no
+slowdown/hang, max concurrent STT/turns = 1, queue depths 0). The
+busy-period drop behaviour is proven deterministically + headlessly (this
+report); a TV-stress *pass* is not claimed and is not required.
 
 ## REGRESSION TESTS
 
@@ -345,27 +361,30 @@ Updated (behaviour this stage deliberately changes):
   still overflows; added `next_real_turn_admitted_after_response_finishes`
   and `busy_period_burst_produces_no_conversation_queue_backlog`.
 
-Suite: **`pytest` 569 passed / 7 skipped / 14 subtests**; **`unittest`
-576 OK / 7 skipped**; `ruff check src tests apps
-docs/research/m2_4b_bilingual_stt` clean; `git diff --check` clean.
+Suite (at this stage's commit): **`pytest` 569 passed / 7 skipped / 14
+subtests**; **`unittest` 576 OK**; `ruff` clean; `git diff --check`
+clean. (After R0027: 587 / 594.)
 
 ## UNRESOLVED
 
-- **Live spoken TV-stress acceptance** — needs the operator (below).
+- **Live spoken TV-stress test** — NOT PERFORMED / operator waived. The
+  deterministic + headless busy-drop evidence is accepted as sufficient;
+  the harness remains available if a future session wants to exercise it.
 - **Idle-period TV** — while NeXa is *not* answering, TV can still trigger
   VAD → a turn. Out of scope here (no wake word / speaker-ID this stage);
   recorded as a future *attention / speaker-attribution* track.
+- **Low-volume speech** — recognition quality can degrade when the
+  operator speaks too quietly; normal speaking volume was accepted by the
+  operator. **Not** a new STT-quality task, **not** a SpeechQualityGuard
+  track (per operator instruction).
 - **Low-confidence / garbage transcripts** ("Co to jest, ta noba wola.",
-  "for your own good guys.") — `LanguageIdGuard` is a *language* guard,
-  deliberately **not** overloaded. whisper.cpp *does* expose usable
-  turn-quality signals — `no_speech_prob`, per-segment `avg_logprob`,
-  token probabilities, `temperature` — via `whisper-cli --output-json-full`
-  (`-ojf`) or the library (`whisper_full_get_segment_no_speech_prob`, etc.).
-  A future **`SpeechQualityGuard` / `TurnAdmission`** responsibility could
-  reject a turn whose `no_speech_prob` is high or `avg_logprob` very low
-  *before* it reaches `ConversationSession`. **Not implemented here** —
-  recorded as a separate deferred responsibility, to be designed with its
-  own evidence.
+  "for your own good guys.") — the operator clarified these came from
+  speaking too quietly; at normal volume the same utterances were
+  understood. **No SpeechQualityGuard track is opened.** For the record
+  only: whisper.cpp does expose `no_speech_prob` / per-segment
+  `avg_logprob` via `whisper-cli --output-json-full` or the library, if a
+  future stage ever needs a `SpeechQualityGuard` / `TurnAdmission`
+  responsibility (kept distinct from `LanguageIdGuard`) — not now.
 - **A hung LLM stream** (no tokens, no error, no completion) would keep
   `_turn_in_flight` / `response_in_flight` latched until the provider's
   600 s timeout. Acceptable for now; a shorter in-flight watchdog is a
@@ -409,23 +428,11 @@ model. No `nexa.config` / `nexa.bootstrap` change. M2.5 not started.
 Branch `main`, not pushed. `ruff` clean for this stage's scope;
 `git diff --check` clean.
 
-## NEXT STEP
+## NEXT STEP  *(closed)*
 
-**Operator runs the live TV-stress acceptance:**
-
-```
-./.venv/bin/python apps/nexa_bilingual_voice_probe.py
-```
-
-1. **Clean sequence** — ask 4 questions PL → EN → PL → EN. Confirm each
-   turn's `STT latency` line stays ~2.8–3.1 s.
-2. **TV stress** — while NeXa is answering one of those questions,
-   deliberately play TV / talk near the mic. Confirm the terminal prints
-   `⨯ DROP_BUSY_RESPONSE_IN_FLIGHT` lines, `final STT queue depth: 0`,
-   `final conversation queue depth: 0`, and **no** 7–10 s degradation.
-3. **Recovery** — after NeXa finishes, ask one more real question.
-   Confirm it is heard and answered normally, STT back to ~2.8–3.1 s, no
-   stale TV transcript replayed.
-
-If clean → mark **M2.4B.5 + M2.4B.5A `OPERATOR-CONFIRMED`**, then
-**M2.5 — barge-in**. If not clean → report the numbers, do not confirm.
+**Operator-confirmed for normal post-fix operation** (2026-09-08). The
+TV-stress test was operator-waived; the deterministic + headless
+busy-drop / contention evidence in this report is accepted.
+**M2.4B.5A → OPERATOR-CONFIRMED.** The response-language one-turn-vs-sticky
+correction is **M2.4B.5B / R0027**. Then **M2.5 — barge-in / interruption**
+(replaces the temporary half-duplex gate). Not started here.

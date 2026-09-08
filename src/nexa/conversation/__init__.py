@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from .context import ConversationContext
 from .response_language import (
+    LanguageRequest,
     ResponseLanguageDecision,
     ResponseLanguageResolver,
     ResponsePreference,
     detect_explicit_language_request,
+    detect_language_request,
 )
 from .response_mode import ResponseMode, voice_response_directive
 from .session import ConversationSession
@@ -29,6 +31,8 @@ __all__ = [
     "ResponseLanguageResolver",
     "ResponseLanguageDecision",
     "ResponsePreference",
+    "LanguageRequest",
+    "detect_language_request",
     "detect_explicit_language_request",
     "StreamingResponse",
 ]

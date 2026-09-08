@@ -4,10 +4,20 @@
 - **Author:** Claude Code (agent), for Andrzej Dul
 - **Milestone:** M2 — Realtime Voice · **Substage M2.4B.5 — automatic
   bilingual PL/EN voice input (implementation)**
-- **Status:** **IMPLEMENTED + deterministic tests + headless latency
-  measured. Live operator voice acceptance PENDING** — the one-command
-  harness is ready (`apps/nexa_bilingual_voice_probe.py`); the 10-utterance
-  same-session PL↔EN + sticky-preference run needs the operator's mic.
+- **Status:** **OPERATOR-CONFIRMED (2026-09-08) for normal bilingual
+  PL/EN live voice operation.** The operator ran the live session: automatic
+  PL↔EN switching worked, normal speaking voice transcribed correctly, STT
+  stayed ~2.89–3.21 s, no progressive slowdown, max concurrent STT = 1,
+  max concurrent turns = 1, final queue depths = 0. A stability bug the
+  session also surfaced (mic open during the LLM-generate window → backlog
+  under CPU contention) was root-caused and fixed in **M2.4B.5A / R0026**
+  and re-confirmed. The TV-stress test was **not performed / operator
+  waived** — deterministic + headless busy-drop regression evidence stands
+  in R0026. The **one-turn-vs-sticky** response-language semantics were
+  corrected in **M2.4B.5B / R0027** (a one-turn override no longer sets a
+  sticky preference). Recognition quality can degrade when the operator
+  speaks too quietly; normal speaking volume was accepted by the operator.
+  Not pushed.
 - **Related:** `R0024` (the evidence authority — 50-utterance real corpus
   benchmark, architecture decision), `ADR-0003` D5 + **Amendment 1**
   (added this stage), `R0009` (per-turn response-language directive +
@@ -97,7 +107,8 @@ mic → VAD → utterance audio (16 kHz mono PCM16, unchanged pipeline)
    VoiceConversationAdapter._run_turn
         ├─ ResponseLanguageResolver.resolve(transcript, input_language=selected)
         │     no request, no sticky → ResponseLanguage = InputSpeechLanguage
-        │     explicit request      → ResponseLanguage = requested ; sticky := requested
+        │     one-turn override     → ResponseLanguage = requested (this turn) ; sticky UNCHANGED   [R0027]
+        │     sticky command/switch → ResponseLanguage = requested ; sticky := requested            [R0027]
         │     sticky set            → ResponseLanguage = sticky
         ├─ on_turn_language(TurnLanguage{...})   → terminal debug + bridge.select_voice(ResponseLanguage)
         └─ ConversationSession.send(transcript, response_mode=VOICE, response_language=ResponseLanguage)
@@ -199,16 +210,24 @@ language.
 `nexa.conversation.response_language.ResponseLanguageResolver` — one
 deterministic authority, separate from STT.
 
+> **Superseded by R0027.** This section originally made *every* explicit
+> request sticky. R0027 corrected it to a strict one-turn-vs-sticky
+> distinction — see `docs/reports/R0027_…md` and the EXPLICIT / STICKY
+> table below (updated).
+
 - **No request, no sticky** → `ResponseLanguage = InputSpeechLanguage`
   (spoken PL → answer PL, spoken EN → answer EN).
-- **Explicit request in the transcript** → answer in the requested
-  language **and** set the sticky `ResponsePreference` (`pl`|`en`|`None`).
-  A one-turn-only override is a possible later refinement; the accepted
-  behaviour (and what the acceptance script needs) is sticky.
+- **One-turn override** ("Answer in English.", "Odpowiedz po polsku.") →
+  answer in the requested language **this turn only**;
+  `ResponsePreference` is **not** mutated.
+- **Sticky command / switch** ("From now on speak English.", "Od teraz mów
+  po angielsku.", "Wracamy do polskiego.", "Switch to English.") → **set**
+  `ResponsePreference.sticky` and use it for this and future turns.
 - **Sticky set, no new request** → answer in the sticky language,
   regardless of what was spoken.
 
-`detect_explicit_language_request(text)` is a narrow regex set requiring an
+`detect_language_request(text)` (R0027; `detect_explicit_language_request`
+kept as a thin back-compat wrapper) is a narrow regex set requiring an
 imperative *about how NeXa answers* ("answer/reply/speak/… in
 English/Polish", "od teraz … po angielsku", "wracamy do polskiego", …),
 with a content-question deny-list ("how do you say … in English", "what is
@@ -222,19 +241,20 @@ the current turn; historical turns keep their **stored** resolved language
 the rebuilt prompt is byte-stable for KV-cache reuse (R0009). `None`
 (always for typed chat) = unchanged R0009 text detection.
 
-## EXPLICIT / STICKY LANGUAGE REQUESTS
+## EXPLICIT / STICKY LANGUAGE REQUESTS  *(corrected — R0027)*
 
-| utterance | effect | `ResponsePreference.sticky` after |
-|---|---|---|
-| "Answer in English." / "Odpowiedz po angielsku." | reply EN this turn onward | `en` |
-| "Odpowiedz po polsku." / "Answer in Polish." | reply PL this turn onward | `pl` |
-| "Od teraz mów po angielsku." | reply EN from now on | `en` |
-| "Wracamy do polskiego." / "Let's go back to Polish." | reply PL from now on | `pl` |
-| "Tell me about Polish history." | **no change** — content mention | (unchanged) |
-| "What is the English word for kot?" | **no change** | (unchanged) |
-| (any ordinary PL/EN question) | mirror `InputSpeechLanguage`, unless a sticky is set | (unchanged) |
+| utterance | kind | this turn | `ResponsePreference.sticky` after |
+|---|---|---|---|
+| "Answer in English." / "Reply in English." / "Odpowiedz po angielsku." | **one-turn** | EN | **unchanged** |
+| "Odpowiedz po polsku." / "Answer in Polish." | **one-turn** | PL | **unchanged** |
+| "From now on speak English." / "Od teraz mów po angielsku." / "Od teraz odpowiadaj po angielsku." | **sticky** | EN | `en` |
+| "Wracamy do polskiego." / "Let's go back to Polish." / "Switch (back) to Polish." | **sticky (switch)** | PL | `pl` |
+| "Tell me about Polish history." / "What is the English word for kot?" / "Why is Polish difficult?" / "Translate this English sentence." | **content mention** | mirror input | **unchanged** |
+| (any ordinary PL/EN question) | normal | sticky if set, else mirror input | **unchanged** |
 
-Deterministic tests cover every row.
+Deterministic tests cover every row —
+`tests/test_response_language_override_vs_sticky.py` (R0027) +
+`tests/test_bilingual_voice_input.py`.
 
 ## TTS LANGUAGE MAPPING
 
@@ -447,22 +467,24 @@ Branch `main`, not pushed. `ruff` clean for this stage's scope;
 `git diff --check` clean. No model weights / `.so` blobs staged (the
 ctypes binding loads the already-installed pinned lib by path).
 
-## NEXT STEP
+## NEXT STEP  *(closed)*
 
-**Operator runs the live acceptance harness** — one command, one
-continuous `ConversationSession`, the 10 utterances below. Confirm from
-the concise per-turn debug that: PL↔EN alternate with no restart; short
-"Dobra." inherits the surrounding language; "Odpowiedz po polsku." makes
-later EN input answered in PL; "Answer in English." makes later PL input
-answered in EN; the voice matches the response language each turn.
+**Operator confirmed** normal bilingual live operation on 2026-09-08
+(automatic PL↔EN switching, normal voice transcribed, STT ~2.89–3.21 s,
+no slowdown, queue depths 0). The stability defect that session also
+surfaced is fixed in **M2.4B.5A / R0026**; the one-turn-vs-sticky
+semantics are corrected in **M2.4B.5B / R0027**. TV-stress test operator-
+waived (deterministic + headless busy-drop evidence stands in R0026).
 
-After operator confirmation: mark M2.4B.5 `OPERATOR-CONFIRMED`, then
-**M2.5 — barge-in**. Separate/optional later: Polish transcript-quality
+**Next: M2.5 — barge-in / interruption** (replaces the temporary
+half-duplex gate). Separate/optional later: Polish transcript-quality
 model track (`large-v3-turbo-q5_0`, approval before download); a real
 within-utterance code-switch stage if it proves to matter; tune the guard
-threshold from accumulated telemetry.
+threshold from accumulated telemetry. Recognition quality can degrade
+when the operator speaks too quietly; normal speaking volume was accepted
+by the operator — **not** a new STT-quality task.
 
-### Live harness
+### Live harness (kept for regression use)
 
 ```
 ./.venv/bin/python apps/nexa_bilingual_voice_probe.py

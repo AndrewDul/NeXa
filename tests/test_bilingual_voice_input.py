@@ -241,12 +241,18 @@ class TestResponseLanguageResolver(unittest.TestCase):
         self.assertEqual(r.resolve("Co to?", input_language="pl").response_language, "pl")
         self.assertEqual(r.resolve("What?", input_language="en").response_language, "en")
 
-    def test_explicit_one_turn_request_switches_and_sets_sticky(self) -> None:
+    def test_one_turn_override_switches_this_turn_only_no_sticky(self) -> None:
+        # R0027: "Answer in English." is a ONE-TURN override — this reply
+        # only; ResponseLanguagePreference is NOT mutated.
         r = ResponseLanguageResolver()
         d = r.resolve("Answer in English.", input_language="pl")
         self.assertEqual(d.response_language, "en")
-        self.assertTrue(d.preference_changed)
-        self.assertEqual(r.preference.sticky, "en")
+        self.assertEqual(d.request_kind, "one_turn")
+        self.assertFalse(d.preference_changed)
+        self.assertIsNone(r.preference.sticky)
+        # next normal PL turn resumes mirroring
+        nxt = r.resolve("Jak działa komputer?", input_language="pl")
+        self.assertEqual(nxt.response_language, "pl")
 
     def test_sticky_en_holds_while_speaking_pl(self) -> None:
         r = ResponseLanguageResolver(ResponsePreference(sticky="en"))
@@ -378,7 +384,7 @@ class TestAdapterBilingualWiring(unittest.IsolatedAsyncioTestCase):
             on_turn_language=seen.append,
         )
         await self._run_one(adapter, TranscriptionResult(
-            text="Answer in English.", language=Language.PL,
+            text="Od teraz mów po angielsku.", language=Language.PL,
             audio_duration_s=2.5, wall_latency_s=0.1))
         await self._run_one(adapter, TranscriptionResult(
             text="Po co człowiekowi sen?", language=Language.PL,
