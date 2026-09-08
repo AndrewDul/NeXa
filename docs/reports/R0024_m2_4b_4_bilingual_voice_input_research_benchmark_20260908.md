@@ -204,10 +204,16 @@ produces the evidence. No production change in this stage.
 - No `src/`, `apps/`, `configs/`, or ADR change.
 
 ## COMMIT HASH
-_To be recorded on commit._
+`d633f11` — `research: bilingual voice-input corpus + operator recorder
+(M2.4B.4)` (tip of `main`). Research tooling only; not pushed. (This
+hash-record line lands in the next commit.)
 
 ## GIT STATUS
-Branch `main`, not pushed.
+Branch `main`, not pushed. `ruff check src tests apps
+docs/research/m2_4b_bilingual_stt` clean; `git diff --check` clean.
+Pre-existing (unrelated, untouched) `ruff` E501s remain in
+`docs/research/m2_1_vad_calibration/vad_offline_calibration.py` from
+commit `e2201ca` — outside this stage's scope.
 
 ## NEXT STEP
 1. Operator records the corpus (one command — see RETURN / the research
