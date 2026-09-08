@@ -108,12 +108,15 @@ class TestNoSecondConversationAuthority(unittest.TestCase):
         self.assertEqual(offenders, [], f"must not build its own session/config: {offenders}")
 
     def test_package_owns_no_language_policy_of_its_own(self) -> None:
-        """M2.3/R0009: response-language mirroring is canonical
-        `ConversationSession` policy (`nexa.conversation.language`) — the
-        voice adapter must never import it directly or otherwise decide a
-        response language itself; it only ever calls `session.send(text)`,
-        exactly like typed chat, and the session decides the language the
-        same way for both."""
+        """M2.3/R0009 + M2.4B.5 (ADR-0003 Amendment 1): the low-level
+        PL/EN detection primitives (`nexa.conversation.language` —
+        `detect_response_language` / `language_directive`) stay canonical
+        `ConversationSession` policy; the voice adapter must never import
+        that module or call those primitives. It MAY invoke the dedicated
+        `nexa.conversation.response_language.ResponseLanguageResolver`
+        authority (B.5) and pass its result to
+        `session.send(response_language=…)` — that resolver is defined in
+        `nexa.conversation`, not reimplemented here."""
         py_files = sorted(VOICE_CONVERSATION_PKG_DIR.glob("*.py"))
         offenders = []
         for path in py_files:
@@ -123,10 +126,23 @@ class TestNoSecondConversationAuthority(unittest.TestCase):
             for name in _called_names(path):
                 if name in ("detect_response_language", "language_directive"):
                     offenders.append((path.name, name))
-        # `nexa.conversation.session` (for the `ConversationSession` type
-        # hint) is allowed and expected — only the *language* module/calls
-        # above are forbidden.
+        # `nexa.conversation.session` (ConversationSession type hint) and
+        # `nexa.conversation.response_language` (the B.5 resolver authority)
+        # are allowed — only the low-level *language* module/calls above are
+        # forbidden.
         self.assertEqual(offenders, [], f"voice adapter must not own language policy: {offenders}")
+
+    def test_response_language_resolver_is_a_conversation_authority(self) -> None:
+        """B.5: the adapter invokes the resolver but the resolver itself
+        lives in `nexa.conversation` (one authority), not in this package."""
+        self.assertFalse(
+            (VOICE_CONVERSATION_PKG_DIR / "response_language.py").exists(),
+            "ResponseLanguageResolver must be defined in nexa.conversation, not duplicated here",
+        )
+        from nexa.conversation.response_language import ResponseLanguageResolver
+        self.assertEqual(
+            ResponseLanguageResolver.__module__, "nexa.conversation.response_language"
+        )
 
 
 if __name__ == "__main__":
