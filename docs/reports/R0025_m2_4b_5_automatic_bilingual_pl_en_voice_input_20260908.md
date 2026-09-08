@@ -439,7 +439,7 @@ voices/speed, `ggml-base-q8_0` / `-t 4`, one `ConversationSession`. No
 
 ## COMMIT HASH
 
-_Recorded on commit (this stage's implementation commit)._
+`55ae9b3` — `feat: automatic bilingual PL/EN voice input (M2.4B.5 / R0025)` (tip of `main`). One coherent local implementation commit. Not pushed. (This hash-record edit lands in the next commit.)
 
 ## GIT STATUS
 
