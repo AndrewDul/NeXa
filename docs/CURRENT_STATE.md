@@ -9,8 +9,47 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0025_m2_4b_5_automatic_bilingual_pl_en_voice_input_20260908.md`
-  (M2.4B.5 — **Automatic Bilingual PL/EN Voice Input — IMPLEMENTED + tests;
+- **Latest report:** `docs/reports/R0026_m2_4b_5a_live_voice_stability_backlog_investigation_20260908.md`
+  (M2.4B.5A — **Live Voice Stability / Backlog Investigation — ROOT CAUSE
+  FOUND + FIXED + regression tests + headless contention proof; live
+  spoken TV-stress operator acceptance PENDING**. The B.5 operator session
+  degraded from ~2.8 s STT to 7–10 s and "hung" after the mic picked up TV
+  while NeXa was answering. **Root cause (measured, not inferred):** the
+  `HalfDuplexGate` only closed the mic once TTS *audio was playing* — it
+  left the mic OPEN through the ~10–25 s think/LLM-generate/TTS-synth
+  window. TV audio in that window was captured on END_OF_TURN and
+  submitted **unconditionally** to `SerialTranscriptionQueue` (`_UtteranceCaptureFrameProcessor`)
+  → `SerialConversationQueue` (`VoiceConversationAdapter`) → real
+  `ConversationSession.send()` + TTS. Bounded (8 STT / 4 conv, overflow
+  raises — not silent) but the backlog under CPU contention snowballed.
+  Contention measured (`b5a_contention_probe.py`): STT total mean **3.19 s
+  isolated → 13.16 s** with `gemma4:e4b` generating + Piper synthesising
+  (+9.97 s, ~4.1×; CPU 89 %→99.4 %; `llama-server` the dominant consumer;
+  **max concurrent `whisper-cli` = 1 in both phases** — no overlap).
+  Detector: no leak (200 `detect()` calls → +58 MB one-time then flat;
+  `close()` frees it). Half-duplex was **wired correctly** (identical to
+  the canonical `nexa_voice_tts_probe.py`) — the bug was the gate's
+  *contract*. **Fix (strict pre-M2.5 half-duplex, not barge-in):**
+  `HalfDuplexGate.response_in_flight` (dispatch → generation + playback
+  done); `mic_suppressed` covers it; `_UtteranceCaptureFrameProcessor`
+  drops a busy-period utterance at capture with
+  `DROP_BUSY_RESPONSE_IN_FLIGHT` telemetry (never queued);
+  `VoiceConversationAdapter` `_turn_in_flight` drops a busy-period STT
+  result at the adapter (never enqueued); `ConversationSession` history
+  untouched. New `stt_queue_depth` / `conversation_queue_depth` /
+  `dropped_busy_*` telemetry, printed live in
+  `apps/nexa_bilingual_voice_probe.py`. Post-fix clean PL↔EN sequence:
+  **2.81 s mean** (no regression). +14 `tests/test_bilingual_voice_stability.py`;
+  `test_voice_half_duplex_gate.py` + `test_voice_conversation_adapter.py`
+  updated for the intended change. `pytest` 569 / `unittest` 576; `ruff`
+  clean; `git diff --check` clean. `gemma4:e4b` / `num_thread=2` /
+  `keep_alive=30m` / warm-up / `ResponseMode` / `ResponseLanguageResolver`
+  / Piper / `SpeechPlanner` / continuity / whisper model / guard
+  thresholds all **unchanged**. **Do NOT mark B.5 OPERATOR-CONFIRMED** —
+  the live spoken TV-stress test is the pending step. M2.5 not started.
+  Not pushed.)
+- **Prior report — R0025** (`docs/reports/R0025_m2_4b_5_automatic_bilingual_pl_en_voice_input_20260908.md`,
+  M2.4B.5 — **Automatic Bilingual PL/EN Voice Input — IMPLEMENTED + tests;
   live operator voice acceptance PENDING**. R0024's accepted architecture
   is built behind the existing STT boundary (ADR-0003 D11), on the ONE
   canonical `ConversationSession`; `gemma4:e4b` / `num_thread=2` /
@@ -351,18 +390,38 @@ Runtime / test evidence outranks anything else in this repo.
   `ConversationSession.send(response_language=…)` (replay-stable, R0009;
   TEXT unchanged); TTS voice from ResponseLanguage. Headless latency
   ~2.83 s mean / ~+1.13 s vs explicit, flat. Mixed = BEST EFFORT /
-  DEFERRED. +39 tests; `pytest` 552 / `unittest` 559. **M2.4B is NOT
-  complete.** Then **M2.5 — barge-in / interruption** (replaces the
-  temporary half-duplex gate).
-- **Current objective:** **operator runs the live bilingual acceptance
-  harness** — `./.venv/bin/python apps/nexa_bilingual_voice_probe.py`, one
-  continuous `ConversationSession`, the R0025 10-utterance PL↔EN + sticky
-  sequence — to confirm live: per-utterance PL↔EN switching with no
-  restart; "Dobra." inherits the surrounding language; "Odpowiedz po
-  polsku." → later EN input answered PL; "Answer in English." → later PL
-  input answered EN; the Piper voice follows the response language. On
-  confirmation, mark M2.4B.5 `OPERATOR-CONFIRMED`, then **M2.5**. Also
-  still owed: the B.3.6 operator live-voice confirmation (STT latency +
+  DEFERRED. +39 tests. **NOT OPERATOR-CONFIRMED** — the B.5 live session
+  exposed a stability bug, fixed in **M2.4B.5A**.
+  **M2.4B.5A — Live Voice Stability / Backlog Investigation: ROOT CAUSE
+  FOUND + FIXED, regression-tested; live TV-stress acceptance PENDING** —
+  `R0026`. `HalfDuplexGate` left the mic OPEN through the
+  think/generate/TTS-synth window (~10–25 s); TV audio there backlogged
+  `SerialTranscriptionQueue` + `SerialConversationQueue` and, under
+  `gemma4:e4b`+Piper CPU contention (STT 3.19 s→13.16 s measured, ~4.1×;
+  `whisper-cli` max concurrency 1, no overlap; no detector leak), NeXa
+  "hung". Fix (strict pre-M2.5 half-duplex, NOT barge-in):
+  `HalfDuplexGate.response_in_flight` covers the whole response;
+  `_UtteranceCaptureFrameProcessor` + `VoiceConversationAdapter` DROP
+  busy-period audio/results with `DROP_BUSY_RESPONSE_IN_FLIGHT` telemetry
+  (never queued, history untouched); new `stt_queue_depth` /
+  `conversation_queue_depth` / `dropped_busy_*` telemetry. Post-fix clean
+  PL↔EN: 2.81 s mean (no regression). +14
+  `tests/test_bilingual_voice_stability.py`; 2 existing test files updated
+  for the intended change. `pytest` 569 / `unittest` 576. `gemma4:e4b` /
+  `num_thread=2` / `keep_alive=30m` / warm-up / `ResponseMode` / resolver
+  semantics / Piper / planner / continuity / whisper model / guard
+  thresholds **unchanged**. **M2.4B is NOT complete.** Then **M2.5 —
+  barge-in / interruption** (replaces the temporary half-duplex gate).
+- **Current objective:** **operator runs the live TV-stress acceptance** —
+  `./.venv/bin/python apps/nexa_bilingual_voice_probe.py`: (1) clean
+  PL→EN→PL→EN, STT stays ~2.8–3.1 s; (2) play TV / talk near the mic
+  **while NeXa is answering** — expect `⨯ DROP_BUSY_RESPONSE_IN_FLIGHT`
+  lines, `final STT queue depth: 0`, `final conversation queue depth: 0`,
+  **no 7–10 s degradation**; (3) after she finishes, ask one more real
+  question — heard + answered normally, no stale TV transcript replayed.
+  Plus the R0025 10-utterance PL↔EN + sticky sequence. If clean → mark
+  **M2.4B.5 + M2.4B.5A `OPERATOR-CONFIRMED`**, then **M2.5**. Also still
+  owed: the B.3.6 operator live-voice confirmation (STT latency +
   END_OF_TURN→first-audio). `gemma4:e4b` + `num_thread=2` +
   `keep_alive=30m` + warm-up + `ggml-base-q8_0` / `-t 4` unchanged; the
   plain explicit `WhisperCppTranscriber` path (`--language pl|en`) is

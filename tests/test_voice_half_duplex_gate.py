@@ -38,12 +38,16 @@ class TestClosedOnlyWhileNexaSpeaks(unittest.TestCase):
     def test_fresh_gate_is_open(self) -> None:
         self.assertFalse(HalfDuplexGate().mic_suppressed)
 
-    def test_dispatch_alone_keeps_mic_open_during_think_window(self) -> None:
-        """Committing to answer does not by itself close the mic — capture
-        stays open through generation until real audio actually plays."""
+    def test_dispatch_closes_the_mic_for_the_whole_response(self) -> None:
+        """M2.4B.5A (R0026): committing to answer closes the mic
+        immediately and keeps it closed through the think / generation /
+        TTS-synth window — not just during playback. Strict pre-M2.5
+        half-duplex: TV / ambient noise during that window must not create
+        STT or conversation work. (Before B.5A this window was left open.)"""
         gate = HalfDuplexGate()
         gate.notify_response_dispatched()
-        self.assertFalse(gate.mic_suppressed)
+        self.assertTrue(gate.mic_suppressed)
+        self.assertTrue(gate.response_in_flight)
 
     def test_bot_started_speaking_closes_the_mic(self) -> None:
         gate = HalfDuplexGate()
@@ -130,7 +134,7 @@ class TestMultiSentenceSafety(unittest.TestCase):
         self.assertFalse(gate.mic_suppressed)
         # turn 2 must behave exactly like a fresh reply
         gate.notify_response_dispatched()
-        self.assertFalse(gate.mic_suppressed)
+        self.assertTrue(gate.mic_suppressed)  # B.5A: closed from dispatch
         gate.observe_frame(BotStartedSpeakingFrame())
         self.assertTrue(gate.mic_suppressed)
         gate.observe_frame(BotStoppedSpeakingFrame())

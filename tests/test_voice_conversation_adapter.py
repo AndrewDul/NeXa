@@ -303,24 +303,50 @@ class TestConversationFifoAndConcurrency(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider.max_in_flight, 1)
         self.assertEqual(adapter.max_observed_conversation_concurrency, 1)
 
-    async def test_second_transcription_can_arrive_while_first_turn_is_active(self) -> None:
+    async def test_second_transcription_while_first_turn_active_is_dropped(self) -> None:
+        """M2.4B.5A (R0026): strict pre-M2.5 half-duplex — an STT result
+        that arrives while a turn is in flight is DROPPED with telemetry,
+        never enqueued. It is not an interruption (that is M2.5)."""
         provider = _SlowProvider(delay_s=0.2)
         session = ConversationSession(provider=provider, system_prompt=SYSTEM_PROMPT)
-        adapter = VoiceConversationAdapter(session)
+        drops = []
+        adapter = VoiceConversationAdapter(session, on_turn_dropped=drops.append)
         adapter.start()
 
         adapter.handle_transcription(_fake_transcription("first"))
         await asyncio.sleep(0.02)  # first turn is definitely still running
         self.assertEqual(provider.in_flight, 1)
+        self.assertTrue(adapter.turn_in_flight)
 
         t0 = asyncio.get_running_loop().time()
         adapter.handle_transcription(_fake_transcription("second"))  # must not block
         elapsed = asyncio.get_running_loop().time() - t0
-        self.assertLess(elapsed, 0.05, "submitting a second turn must not block on the first")
+        self.assertLess(elapsed, 0.05, "a dropped turn must not block")
 
         await asyncio.sleep(1.0)
         await _settle(adapter)
-        self.assertEqual(provider.calls, ["first", "second"])
+        self.assertEqual(provider.calls, ["first"])  # "second" was dropped, not queued
+        self.assertEqual(adapter.dropped_busy_turns, 1)
+        self.assertEqual(len(drops), 1)
+        self.assertEqual(drops[0].reason, "DROP_BUSY_RESPONSE_IN_FLIGHT")
+        self.assertEqual(drops[0].transcript, "second")
+        self.assertEqual(len(session.history), 2)  # only first user + first assistant
+
+    async def test_next_real_turn_admitted_after_response_finishes(self) -> None:
+        provider = _SlowProvider(delay_s=0.05)
+        session = ConversationSession(provider=provider, system_prompt=SYSTEM_PROMPT)
+        adapter = VoiceConversationAdapter(session)
+        adapter.start()
+
+        adapter.handle_transcription(_fake_transcription("one"))
+        await asyncio.sleep(0.3)
+        self.assertFalse(adapter.turn_in_flight)  # response finished, gate reopened
+
+        adapter.handle_transcription(_fake_transcription("two"))  # busy flag cleared
+        await asyncio.sleep(0.3)
+        await _settle(adapter)
+        self.assertEqual(provider.calls, ["one", "two"])
+        self.assertEqual(adapter.dropped_busy_turns, 0)
 
     async def test_assistant_streams_do_not_interleave(self) -> None:
         provider = _SlowProvider(delay_s=0.05)
@@ -359,7 +385,12 @@ class TestConversationFifoAndConcurrency(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(provider.calls, [f"msg{i}" for i in range(5)])
 
-    async def test_bounded_overflow_raises_explicit_error_not_silent_drop(self) -> None:
+    async def test_bounded_overflow_still_raises_explicit_error_not_silent_drop(self) -> None:
+        """The `ConversationQueueOverflowError` path still exists for a
+        synchronous burst that fills the bounded queue *before* the worker
+        picks up the first item (so `turn_in_flight` is still False and the
+        B.5A busy-drop has not engaged) — it must be an explicit error, not
+        a silent drop."""
         provider = _SlowProvider(delay_s=0.1)
         session = ConversationSession(provider=provider, system_prompt=SYSTEM_PROMPT)
         errors: list[Exception] = []
@@ -368,15 +399,38 @@ class TestConversationFifoAndConcurrency(unittest.IsolatedAsyncioTestCase):
         )
         adapter.start()
 
-        adapter.handle_transcription(_fake_transcription("a"))  # picked up immediately
-        await asyncio.sleep(0.01)
-        adapter.handle_transcription(_fake_transcription("b"))  # fills the one slot
-        adapter.handle_transcription(_fake_transcription("c"))  # overflow
+        # three synchronous submits, no await between them -> the worker has
+        # not run, turn_in_flight is still False, so all hit the queue: 1st
+        # queued, 2nd overflows.
+        adapter.handle_transcription(_fake_transcription("a"))
+        adapter.handle_transcription(_fake_transcription("b"))
+        adapter.handle_transcription(_fake_transcription("c"))
 
         await asyncio.sleep(0.05)
-        self.assertEqual(len(errors), 1)
+        self.assertGreaterEqual(len(errors), 1)
         self.assertIsInstance(errors[0], ConversationQueueOverflowError)
         await _settle(adapter)
+
+    async def test_busy_period_burst_produces_no_conversation_queue_backlog(self) -> None:
+        """R0026: while a turn is in flight, a flood of STT results must not
+        build any conversation-queue backlog — each is dropped."""
+        provider = _SlowProvider(delay_s=0.3)
+        session = ConversationSession(provider=provider, system_prompt=SYSTEM_PROMPT)
+        drops = []
+        adapter = VoiceConversationAdapter(session, on_turn_dropped=drops.append)
+        adapter.start()
+
+        adapter.handle_transcription(_fake_transcription("real"))
+        await asyncio.sleep(0.02)
+        for i in range(20):
+            adapter.handle_transcription(_fake_transcription(f"tv-{i}"))
+        await asyncio.sleep(0.02)
+        self.assertEqual(adapter.conversation_queue_depth, 0)
+        self.assertEqual(adapter.dropped_busy_turns, 20)
+
+        await asyncio.sleep(0.5)
+        await _settle(adapter)
+        self.assertEqual(provider.calls, ["real"])
 
 
 class TestShutdown(unittest.IsolatedAsyncioTestCase):

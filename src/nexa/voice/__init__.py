@@ -12,7 +12,7 @@ from __future__ import annotations
 from .config import LocalAudioConfig
 from .device import AudioDeviceNotFoundError, find_device_index
 from .gate import HalfDuplexGate
-from .runtime import VoiceRuntime
+from .runtime import DROP_BUSY_RESPONSE_IN_FLIGHT, DroppedUtterance, VoiceRuntime
 from .state import VoiceEvent, VoiceState, VoiceStateMachine
 
 __all__ = [
@@ -23,5 +23,7 @@ __all__ = [
     "VoiceRuntime",
     "VoiceState",
     "VoiceStateMachine",
+    "DroppedUtterance",
+    "DROP_BUSY_RESPONSE_IN_FLIGHT",
     "find_device_index",
 ]

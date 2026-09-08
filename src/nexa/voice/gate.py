@@ -77,24 +77,43 @@ class HalfDuplexGate:
         self._response_playback_done = False
 
     @property
-    def mic_suppressed(self) -> bool:
-        """Whether microphone audio must not be allowed to start a new
-        STT/conversation turn right now."""
-        if self._bot_speaking:
+    def response_in_flight(self) -> bool:
+        """M2.4B.5A: True from the moment a user turn is dispatched for a
+        reply (``notify_response_dispatched``) until that reply is fully
+        finished — generation complete **and**, if it produced audio,
+        playback done. The strict pre-M2.5 half-duplex rule: while this is
+        True no new utterance may become an STT or conversation turn (TV /
+        ambient noise during the think/generate/synthesize window must not
+        create work — root cause, R0026). This is NOT barge-in: nothing is
+        cancelled; the user simply cannot start a new turn while NeXa is
+        answering."""
+        if self._response_generating:
             return True
-        # Between sentence chunks of the same reply (bot_speaking momentarily
-        # False) keep the mic closed until the whole reply is done and its
-        # audio has been declared finished.
         if self._spoke_this_response and not self._response_playback_done:
             return True
         return False
 
+    @property
+    def mic_suppressed(self) -> bool:
+        """Whether microphone audio must not be allowed to start a new
+        STT/conversation turn right now.
+
+        M2.4B.5A: this now covers the **whole** response, not just
+        playback. Before B.5A the mic stayed open through the
+        think/generation/TTS-synth window (see
+        ``notify_response_dispatched``'s original contract) — a 10–25 s
+        hole on ``gemma4:e4b`` during which TV audio backlogged the STT and
+        conversation queues (R0026). ``response_in_flight`` closes it."""
+        return self._bot_speaking or self.response_in_flight
+
     # -- response lifecycle (from nexa.voice_tts.AssistantSpeechBridge) ------
 
     def notify_response_dispatched(self) -> None:
-        """A user turn has started generating an assistant reply. Does *not*
-        by itself close the mic — capture stays open through the
-        think/generation window until real audio plays."""
+        """A user turn has started generating an assistant reply. M2.4B.5A:
+        this now **closes the mic immediately** (via ``response_in_flight``)
+        and keeps it closed through generation, TTS synthesis and playback,
+        until ``notify_response_finished`` + playback-done. (Before B.5A it
+        left the think/generation window open — R0026.)"""
         self._response_generating = True
         self._spoke_this_response = False
         self._response_playback_done = False

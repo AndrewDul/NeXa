@@ -210,6 +210,19 @@ async def main() -> None:
         print(f"\n[error] {exc}")
         bridge.on_conversation_error(exc)
 
+    # M2.4B.5A: strict pre-M2.5 half-duplex — utterances captured / STT
+    # results that arrive while NeXa is answering are DROPPED (not queued,
+    # not replayed). Print them so the operator sees the protection working.
+    def on_utterance_dropped(rec) -> None:
+        print(f"  ⨯ {rec.reason}: dropped {rec.audio_ms}ms of audio captured while "
+              f"NeXa is answering (session total {rec.dropped_count_this_session}, "
+              f"stt_queue_depth {rec.stt_queue_depth})")
+
+    def on_turn_dropped(rec) -> None:
+        print(f"  ⨯ {rec.reason}: dropped STT result {rec.transcript[:40]!r} that "
+              f"arrived mid-response (session total {rec.dropped_count_this_session}, "
+              f"conv_queue_depth {rec.conversation_queue_depth})")
+
     adapter = VoiceConversationAdapter(
         session,
         response_language_resolver=resolver,
@@ -218,6 +231,7 @@ async def main() -> None:
         on_assistant_token=on_assistant_token,
         on_assistant_complete=on_assistant_complete,
         on_conversation_error=on_conversation_error,
+        on_turn_dropped=on_turn_dropped,
         response_mode=ResponseMode.VOICE,
     )
     adapter_ref = [adapter]
@@ -236,6 +250,7 @@ async def main() -> None:
         language=bootstrap,  # BilingualSpeechTranscriber treats this as bootstrap only
         on_transcription=on_transcription,
         on_transcription_error=on_transcription_error,
+        on_utterance_dropped=on_utterance_dropped,
         extra_output_stages=[bridge, planner, continuity, tts_service, tts_observer],
         half_duplex_gate=_gate,
     )
@@ -256,6 +271,10 @@ async def main() -> None:
     print(f"sticky response preference: {resolver.preference.sticky}")
     print(f"max concurrent STT: {runtime.max_observed_stt_concurrency}  "
           f"max concurrent turns: {adapter.max_observed_conversation_concurrency}")
+    print(f"busy-drop (utterances at capture): {runtime.dropped_busy_utterances}  "
+          f"busy-drop (STT results at adapter): {adapter.dropped_busy_turns}")
+    print(f"final STT queue depth: {runtime.stt_queue_depth}  "
+          f"final conversation queue depth: {adapter.conversation_queue_depth}")
 
 
 if __name__ == "__main__":

@@ -32,8 +32,10 @@ already-resolved ``TranscriptionResult.language`` and its
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from loguru import logger
 
@@ -44,6 +46,25 @@ from nexa.stt.bilingual import LanguageDecision
 from nexa.stt.transcriber import TranscriptionResult
 
 from .queue import DEFAULT_MAX_QUEUE_SIZE, ConversationQueueOverflowError, SerialConversationQueue
+
+#: M2.4B.5A: reason logged when an STT result arrives while a conversation
+#: turn is already in flight and is therefore dropped (not enqueued).
+DROP_BUSY_RESPONSE_IN_FLIGHT = "DROP_BUSY_RESPONSE_IN_FLIGHT"
+
+
+@dataclass(frozen=True, slots=True)
+class DroppedTurn:
+    """Telemetry for an STT result dropped because a response was already in
+    flight. It never became a `ConversationSession.send()` call; history is
+    untouched."""
+
+    reason: str
+    at: float  # time.monotonic()
+    at_wall: str  # ISO-8601 UTC
+    transcript: str
+    input_speech_language: str | None
+    conversation_queue_depth: int
+    dropped_count_this_session: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +99,7 @@ class VoiceConversationAdapter:
         on_assistant_complete: Callable[[str], None] | None = None,
         on_conversation_error: Callable[[Exception], None] | None = None,
         on_turn_language: Callable[[TurnLanguage], None] | None = None,
+        on_turn_dropped: Callable[[DroppedTurn], None] | None = None,
         response_language_resolver: ResponseLanguageResolver | None = None,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
         response_mode: ResponseMode = ResponseMode.VOICE,
@@ -94,16 +116,39 @@ class VoiceConversationAdapter:
         self._on_assistant_complete = on_assistant_complete
         self._on_conversation_error = on_conversation_error
         self._on_turn_language = on_turn_language
+        self._on_turn_dropped = on_turn_dropped
         # M2.4B.5: optional. Without it, the response language stays the
         # pre-B.5 R0009 per-turn text detection (byte-for-byte).
         self._resolver = response_language_resolver
         self._queue = SerialConversationQueue(self._run_turn, max_queue_size=max_queue_size)
+        # M2.4B.5A: strict pre-M2.5 half-duplex — True from the instant a
+        # turn starts being handled until its assistant reply's generation
+        # is complete. While True, an incoming STT result is DROPPED (with
+        # telemetry), never enqueued — no conversation-queue backlog can
+        # form from busy-period audio (R0026). TTS playback after generation
+        # is still covered by the HalfDuplexGate upstream.
+        self._turn_in_flight = False
+        self._dropped_busy = 0
 
     @property
     def max_observed_conversation_concurrency(self) -> int:
         """Peak number of simultaneous ``ConversationSession`` turns ever
         observed this session. Must never exceed 1."""
         return self._queue.max_observed_concurrency
+
+    @property
+    def conversation_queue_depth(self) -> int:
+        return self._queue.queue_size
+
+    @property
+    def turn_in_flight(self) -> bool:
+        return self._turn_in_flight
+
+    @property
+    def dropped_busy_turns(self) -> int:
+        """STT results dropped this session because a turn was already in
+        flight (R0026 / strict pre-M2.5 half-duplex)."""
+        return self._dropped_busy
 
     def start(self, task_factory: Callable[[Coroutine], object] | None = None) -> None:
         self._queue.start(task_factory)
@@ -119,12 +164,22 @@ class VoiceConversationAdapter:
         """
         if isinstance(result, TranscriptionResult):
             text = result.text.strip()
+            input_language = result.language.value
         else:
             text = str(result).strip()
+            input_language = None
         if not text:
             logger.debug(
                 "nexa.voice_conversation: empty/whitespace transcript — no conversation turn"
             )
+            return
+        # M2.4B.5A: strict pre-M2.5 half-duplex — if a turn is already in
+        # flight, DROP this result explicitly (telemetry) rather than
+        # enqueue it. This is the belt for an STT job that was already
+        # running when the previous turn dispatched; the upstream mic gate
+        # normally stops such audio ever being captured. No barge-in.
+        if self._turn_in_flight:
+            self._drop_busy(text, input_language)
             return
         try:
             self._queue.submit(result)
@@ -133,12 +188,42 @@ class VoiceConversationAdapter:
             if self._on_conversation_error is not None:
                 self._on_conversation_error(exc)
 
+    def _drop_busy(self, text: str, input_language: str | None) -> None:
+        self._dropped_busy += 1
+        record = DroppedTurn(
+            reason=DROP_BUSY_RESPONSE_IN_FLIGHT,
+            at=time.monotonic(),
+            at_wall=datetime.now(UTC).isoformat(timespec="milliseconds"),
+            transcript=text,
+            input_speech_language=input_language,
+            conversation_queue_depth=self._queue.queue_size,
+            dropped_count_this_session=self._dropped_busy,
+        )
+        logger.info(
+            f"nexa.voice_conversation: {DROP_BUSY_RESPONSE_IN_FLIGHT} — dropped an STT "
+            f"result ({text[:40]!r}) that arrived while a turn is in flight "
+            f"(session total {self._dropped_busy}); conversation_queue_depth="
+            f"{record.conversation_queue_depth}"
+        )
+        if self._on_turn_dropped is not None:
+            self._on_turn_dropped(record)
+
     def handle_transcription_error(self, exc: Exception) -> None:
         """Pass directly as ``VoiceRuntime(on_transcription_error=...)`` —
         an STT failure must never produce a fabricated conversation turn."""
         logger.error(f"nexa.voice_conversation: STT failed, no conversation turn: {exc}")
 
     async def _run_turn(self, item: object) -> None:
+        # M2.4B.5A: from here until this reply's generation completes, any
+        # further STT result is dropped by handle_transcription (strict
+        # pre-M2.5 half-duplex). Cleared in the finally below.
+        self._turn_in_flight = True
+        try:
+            await self._run_turn_inner(item)
+        finally:
+            self._turn_in_flight = False
+
+    async def _run_turn_inner(self, item: object) -> None:
         if isinstance(item, TranscriptionResult):
             text = item.text.strip()
             input_language = item.language.value

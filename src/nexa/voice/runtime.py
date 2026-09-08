@@ -14,7 +14,9 @@ deprecated since 1.3.0. This module uses the current, non-deprecated
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import pyaudio
 from loguru import logger
@@ -84,6 +86,25 @@ from .state import VoiceEvent, VoiceStateMachine
 # requires changing it.
 DEFAULT_VAD_PARAMS = VADParams(stop_secs=1.0)
 
+#: M2.4B.5A: the reason logged when an utterance captured while NeXa is
+#: still answering a previous turn is dropped instead of transcribed. The
+#: strict pre-M2.5 half-duplex rule — no barge-in, no "interruption".
+DROP_BUSY_RESPONSE_IN_FLIGHT = "DROP_BUSY_RESPONSE_IN_FLIGHT"
+
+
+@dataclass(frozen=True, slots=True)
+class DroppedUtterance:
+    """Telemetry for an utterance dropped at capture (never enqueued for
+    STT). Not a conversation turn; ``ConversationSession`` history is
+    untouched."""
+
+    reason: str
+    at: float  # time.monotonic()
+    at_wall: str  # ISO-8601 UTC, human-readable
+    audio_ms: int
+    stt_queue_depth: int
+    dropped_count_this_session: int
+
 
 def apply_frame_to_state_machine(frame: Frame, machine: VoiceStateMachine) -> None:
     """Map one Pipecat frame to a ``VoiceStateMachine`` call, if relevant.
@@ -151,12 +172,21 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
         language: Language,
         on_transcription: Callable[[TranscriptionResult], None] | None,
         on_transcription_error: Callable[[Exception], None] | None,
+        half_duplex_gate: HalfDuplexGate | None = None,
+        on_utterance_dropped: Callable[[DroppedUtterance], None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self._sample_rate = sample_rate
         self._buffer = UtteranceBuffer(sample_rate=sample_rate)
         self._language = language
         self._on_transcription_error = on_transcription_error
+        # M2.4B.5A: an utterance captured while a previous response is still
+        # in flight is DROPPED here — it never reaches the STT queue,
+        # `ConversationSession`, or history. Not barge-in (M2.5).
+        self._gate = half_duplex_gate
+        self._on_utterance_dropped = on_utterance_dropped
+        self._dropped_busy = 0
         self._queue = SerialTranscriptionQueue(
             transcriber,
             on_result=on_transcription,
@@ -167,10 +197,42 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
     def max_observed_stt_concurrency(self) -> int:
         return self._queue.max_observed_concurrency
 
+    @property
+    def stt_queue_depth(self) -> int:
+        return self._queue.queue_size
+
+    @property
+    def dropped_busy_utterances(self) -> int:
+        """How many captured utterances this session were dropped because a
+        response was in flight (R0026 / the strict pre-M2.5 half-duplex
+        rule)."""
+        return self._dropped_busy
+
     def _handle_stt_error(self, exc: Exception) -> None:
         logger.error(f"nexa.stt: transcription failed: {exc}")
         if self._on_transcription_error is not None:
             self._on_transcription_error(exc)
+
+    def _drop_busy(self, audio: bytes) -> None:
+        from datetime import UTC, datetime
+
+        self._dropped_busy += 1
+        audio_ms = int(1000 * len(audio) / (self._sample_rate * 2))
+        record = DroppedUtterance(
+            reason=DROP_BUSY_RESPONSE_IN_FLIGHT,
+            at=time.monotonic(),
+            at_wall=datetime.now(UTC).isoformat(timespec="milliseconds"),
+            audio_ms=audio_ms,
+            stt_queue_depth=self._queue.queue_size,
+            dropped_count_this_session=self._dropped_busy,
+        )
+        logger.info(
+            f"nexa.voice: {DROP_BUSY_RESPONSE_IN_FLIGHT} — dropped {audio_ms}ms utterance "
+            f"captured while a response is in flight (session total {self._dropped_busy}); "
+            f"stt_queue_depth={record.stt_queue_depth}"
+        )
+        if self._on_utterance_dropped is not None:
+            self._on_utterance_dropped(record)
 
     async def setup(self, setup: FrameProcessorSetup) -> None:
         await super().setup(setup)
@@ -190,10 +252,20 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
         elif isinstance(frame, VADUserStoppedSpeakingFrame):
             audio = self._buffer.mark_speech_stopped()
             if audio:
-                try:
-                    self._queue.submit(audio, self._language)
-                except SttQueueOverflowError as exc:
-                    self._handle_stt_error(exc)
+                # M2.4B.5A: strict pre-M2.5 half-duplex — if NeXa is still
+                # answering the previous turn, DROP this utterance
+                # explicitly (with telemetry). It is never transcribed,
+                # never queued for later, never a conversation turn. This
+                # is the belt for the edge where an utterance ends just as
+                # a response dispatches; the mic gate normally withholds
+                # the audio before it ever reaches here.
+                if self._gate is not None and self._gate.response_in_flight:
+                    self._drop_busy(audio)
+                else:
+                    try:
+                        self._queue.submit(audio, self._language)
+                    except SttQueueOverflowError as exc:
+                        self._handle_stt_error(exc)
         elif isinstance(frame, (ErrorFrame, EndFrame, CancelFrame)):
             self._buffer.reset()
 
@@ -290,6 +362,7 @@ class VoiceRuntime:
         language: Language | None = None,
         on_transcription: Callable[[TranscriptionResult], None] | None = None,
         on_transcription_error: Callable[[Exception], None] | None = None,
+        on_utterance_dropped: Callable[[DroppedUtterance], None] | None = None,
         extra_output_stages: list[FrameProcessor] | None = None,
         half_duplex_gate: HalfDuplexGate | None = None,
     ) -> None:
@@ -306,6 +379,7 @@ class VoiceRuntime:
         self._language = language
         self._on_transcription = on_transcription
         self._on_transcription_error = on_transcription_error
+        self._on_utterance_dropped = on_utterance_dropped
         self._capture_processor: _UtteranceCaptureFrameProcessor | None = None
         self._extra_output_stages = extra_output_stages or []
         # M2.4 half-duplex safety gate (optional). When present, a
@@ -332,6 +406,22 @@ class VoiceRuntime:
         if self._mic_gate_processor is None:
             return None
         return self._mic_gate_processor.suppressed_frame_count
+
+    @property
+    def stt_queue_depth(self) -> int | None:
+        """Current `SerialTranscriptionQueue` depth (pending utterances).
+        ``None`` before the pipeline is built / with no transcriber."""
+        if self._capture_processor is None:
+            return None
+        return self._capture_processor.stt_queue_depth
+
+    @property
+    def dropped_busy_utterances(self) -> int | None:
+        """Utterances dropped at capture this session because a response was
+        in flight (R0026). ``None`` if no transcriber was configured."""
+        if self._capture_processor is None:
+            return None
+        return self._capture_processor.dropped_busy_utterances
 
     def _build_pipeline(self) -> Pipeline:
         pa = pyaudio.PyAudio()
@@ -373,6 +463,8 @@ class VoiceRuntime:
                 language=self._language,
                 on_transcription=self._on_transcription,
                 on_transcription_error=self._on_transcription_error,
+                half_duplex_gate=self._half_duplex_gate,
+                on_utterance_dropped=self._on_utterance_dropped,
             )
             stages.append(self._capture_processor)
         stages.append(state_processor)
