@@ -9,8 +9,55 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0024_m2_4b_4_bilingual_voice_input_research_benchmark_20260908.md`
-  (M2.4B.4 — **Bilingual Voice Input Research & Benchmark — COMPLETE,
+- **Latest report:** `docs/reports/R0025_m2_4b_5_automatic_bilingual_pl_en_voice_input_20260908.md`
+  (M2.4B.5 — **Automatic Bilingual PL/EN Voice Input — IMPLEMENTED + tests;
+  live operator voice acceptance PENDING**. R0024's accepted architecture
+  is built behind the existing STT boundary (ADR-0003 D11), on the ONE
+  canonical `ConversationSession`; `gemma4:e4b` / `num_thread=2` /
+  `keep_alive=30m` / warm-up / persona / SpeechPlanner / continuity / Piper
+  voices+speed / `ggml-base-q8_0` / `-t 4` all **unchanged**.
+  (1) `nexa.stt.WhisperCppLanguageDetector` — `ctypes` binding to the
+  **pinned, already-installed** `libwhisper.so` (`v1.9.3`; no fork, no
+  version change, `ctypes` is stdlib) → `p_pl`, `p_en`, raw top-1 lang.
+  (2) `nexa.stt.LanguageIdGuard` — one authority: AUTO_ACCEPT vs
+  FALLBACK_REDECODE from constrained `argmax(p_pl,p_en)` + raw lang +
+  configurable confidence threshold (**0.60 = R0024 initial calibration,
+  documented, telemetered**) + 2.0 s duration floor.
+  (3) `nexa.stt.BilingualSpeechTranscriber` (implements `SpeechTranscriber`)
+  — LID → guard → **exactly one** explicit `whisper-cli` decode in the
+  guard-selected PL/EN language; the wrong-language transcript is never
+  generated, so nothing unsafe reaches `ConversationSession`. Holds the
+  transient `last_input_language` (`pl`|`en`|`None`; not a turn, not
+  memory).
+  (4) `nexa.conversation.ResponseLanguageResolver` — SEPARATE authority:
+  mirror `InputSpeechLanguage` by default; explicit request ("Answer in
+  English." / "Odpowiedz po polsku." / "Od teraz mów po angielsku." /
+  "Wracamy do polskiego.") switches + sets a transient sticky session
+  preference; a narrow deterministic detector with a content-question
+  deny-list so ordinary mentions of a language don't switch. Threaded via
+  `ConversationSession.send(response_language=…)` → per-turn
+  `language_directive`, replay-stable (R0009); `None`/TEXT unchanged.
+  (5) TTS voice maps from **ResponseLanguage** (`bridge.select_voice`),
+  not the transcript/STT-decode language. `InputSpeechLanguage ≠
+  ResponseLanguage ≠ TTSVoice` — 3 owners.
+  **Headless latency** (`b5_latency_probe.py`, real ctypes LID + real CLI
+  decode over the R0024 corpus): total **~2.83 s mean / 2.80 s median /
+  3.00 s p90** per utterance = **≈ +1.13 s** vs the ~1.7 s explicit
+  baseline (matches R0024 `-l auto`), **flat** — LID + one decode always;
+  FALLBACK adds no extra pass. Guard replay over all 50 R0024 fixtures:
+  30/30 monolingual AUTO_ACCEPT correct (incl. `ru`/`ko`/`he` third-lang
+  recovery); 10/10 shorts FALLBACK → inherit (Tak.→"Tak." not "Talk.").
+  Mixed/code-switch: **BEST EFFORT / DEFERRED (not guaranteed)** — no
+  dual-decode; guard picks the same language `-l auto` would, so not worse
+  than R0024. **ADR-0003 Amendment 1 added** (guarded `-l auto` accepted;
+  code-switch not guaranteed; shorts inherit; input≠response language;
+  R0024 = evidence authority; no unrelated decision rewritten).
+  +39 `tests/test_bilingual_voice_input.py`; `pytest` 552 / `unittest`
+  559; `ruff` clean; `git diff --check` clean. Live harness ready:
+  `apps/nexa_bilingual_voice_probe.py` (one command, 10 utterances). Not
+  pushed.)
+- **Prior report — R0024** (`docs/reports/R0024_m2_4b_4_bilingual_voice_input_research_benchmark_20260908.md`,
+  M2.4B.4 — **Bilingual Voice Input Research & Benchmark — COMPLETE,
   research + decision only, NO production change**. Operator recorded a
   50-utterance real-voice corpus (15 PL / 15 EN / 10 short-ambiguous /
   10 mixed-code-switch, `docs/research/m2_4b_bilingual_stt/`); benchmark
@@ -291,22 +338,35 @@ Runtime / test evidence outranks anything else in this repo.
   proposed D5 amendment recorded, ADR not edited. No stronger-model
   download (PL S2 rate 13 %/20 % is a pre-existing `base/q8_0` issue —
   separate track, candidate `large-v3-turbo-q5_0` named for a future
-  approved benchmark). **M2.4B is NOT complete** — remaining continuity
-  work is faster Polish generation. Then **M2.5 — barge-in / interruption**
-  (replaces the temporary half-duplex gate).
-- **Current objective:** operator reviews the R0024 recommendation
-  (guarded `-l auto` bilingual-input architecture + the proposed ADR-0003
-  D5 amendment). If accepted, a dedicated implementation stage adds a
-  library-level `{p_pl,p_en}` constrained detector + `LanguageIdGuard` +
-  `ResponseLanguageResolver` behind the amended D5 (keeping
-  `ggml-base-q8_0` / `-t 4`). Separately still owed: the B.3.6 operator
-  live-voice confirmation (PL + EN, "rozwiń" / "tell me more", capture STT
-  latency + END_OF_TURN→first-audio). M2.4's functional baseline is frozen
-  by the M2.4 commit and unchanged; planner + continuity controller +
-  voice response policy are additive. `gemma4:e4b` + `num_thread=2` +
-  `keep_alive=30m` + startup warm-up are the operator-confirmed canonical
-  production serving config; production `VoiceRuntime` still uses explicit
-  per-run `--language pl|en` (ADR-0003 D5, unchanged).
+  approved benchmark). **M2.4B.5 — Automatic Bilingual PL/EN Voice Input:
+  IMPLEMENTED, live operator acceptance PENDING** — `R0025`, `ADR-0003
+  Amendment 1`. `nexa.stt.{WhisperCppLanguageDetector (ctypes → pinned
+  libwhisper.so, p_pl/p_en), LanguageIdGuard (threshold 0.60 = R0024
+  calibration, configurable; 2.0 s duration floor), BilingualSpeechTranscriber
+  (LID→guard→ONE explicit PL/EN decode; wrong-lang transcript never
+  generated; holds transient last_input_language)}` +
+  `nexa.conversation.ResponseLanguageResolver` (separate authority; mirror
+  input by default; explicit request → sticky pref; narrow detector, no
+  false-switch on content mentions) threaded via
+  `ConversationSession.send(response_language=…)` (replay-stable, R0009;
+  TEXT unchanged); TTS voice from ResponseLanguage. Headless latency
+  ~2.83 s mean / ~+1.13 s vs explicit, flat. Mixed = BEST EFFORT /
+  DEFERRED. +39 tests; `pytest` 552 / `unittest` 559. **M2.4B is NOT
+  complete.** Then **M2.5 — barge-in / interruption** (replaces the
+  temporary half-duplex gate).
+- **Current objective:** **operator runs the live bilingual acceptance
+  harness** — `./.venv/bin/python apps/nexa_bilingual_voice_probe.py`, one
+  continuous `ConversationSession`, the R0025 10-utterance PL↔EN + sticky
+  sequence — to confirm live: per-utterance PL↔EN switching with no
+  restart; "Dobra." inherits the surrounding language; "Odpowiedz po
+  polsku." → later EN input answered PL; "Answer in English." → later PL
+  input answered EN; the Piper voice follows the response language. On
+  confirmation, mark M2.4B.5 `OPERATOR-CONFIRMED`, then **M2.5**. Also
+  still owed: the B.3.6 operator live-voice confirmation (STT latency +
+  END_OF_TURN→first-audio). `gemma4:e4b` + `num_thread=2` +
+  `keep_alive=30m` + warm-up + `ggml-base-q8_0` / `-t 4` unchanged; the
+  plain explicit `WhisperCppTranscriber` path (`--language pl|en`) is
+  still fully supported alongside the new bilingual one.
 
 ---
 

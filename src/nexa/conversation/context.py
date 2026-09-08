@@ -49,6 +49,16 @@ DEFAULT_MAX_CHARS = 12_000
 class ConversationContext:
     system_prompt: str
     turns: tuple[ConversationTurn, ...]
+    # M2.4B.5: per-turn *resolved* response language, index-aligned with
+    # ``turns``. ``None`` for an entry means "fall back to
+    # ``detect_response_language(turn.content)``" — the pre-B.5 (R0009)
+    # behaviour. Only set for turns that went through the voice
+    # ``ResponseLanguageResolver`` (explicit request / sticky preference).
+    # It is a per-request wire-level hint — never stored in
+    # ``ConversationTurn`` / ``session.history`` — and, like the R0009
+    # directive, it is a deterministic value replayed identically on every
+    # rebuild so the prompt prefix stays byte-stable for KV-cache reuse.
+    turn_response_languages: tuple[str | None, ...] = ()
 
     @classmethod
     def build(
@@ -58,19 +68,34 @@ class ConversationContext:
         *,
         max_turns: int = DEFAULT_MAX_TURNS,
         max_chars: int = DEFAULT_MAX_CHARS,
+        response_languages: Sequence[str | None] | None = None,
     ) -> ConversationContext:
+        langs: Sequence[str | None] = (
+            response_languages if response_languages is not None else [None] * len(history)
+        )
+        if len(langs) != len(history):
+            raise ValueError(
+                f"response_languages length {len(langs)} != history length {len(history)}"
+            )
         selected: list[ConversationTurn] = []
+        selected_langs: list[str | None] = []
         total_chars = 0
-        for turn in reversed(history):
+        for turn, lang in zip(reversed(history), reversed(langs), strict=True):
             if len(selected) >= max_turns:
                 break
             turn_chars = len(turn.content)
             if selected and total_chars + turn_chars > max_chars:
                 break
             selected.append(turn)
+            selected_langs.append(lang)
             total_chars += turn_chars
         selected.reverse()
-        return cls(system_prompt=system_prompt, turns=tuple(selected))
+        selected_langs.reverse()
+        return cls(
+            system_prompt=system_prompt,
+            turns=tuple(selected),
+            turn_response_languages=tuple(selected_langs),
+        )
 
     def to_provider_messages(
         self, *, response_mode: ResponseMode = ResponseMode.TEXT
@@ -84,10 +109,15 @@ class ConversationContext:
             messages.append(
                 ProviderMessage(role="system", content=voice_response_directive())
             )
-        for turn in self.turns:
+        langs = self.turn_response_languages or ((None,) * len(self.turns))
+        for turn, resolved in zip(self.turns, langs, strict=True):
             messages.append(ProviderMessage(role=turn.role.value, content=turn.content))
             if turn.role == Role.USER:
-                language = detect_response_language(turn.content)
+                # M2.4B.5: a resolved response language (explicit request /
+                # sticky preference) wins; otherwise the R0009 per-turn
+                # text detection. Same directive string, same fixed
+                # position — only the language argument can differ.
+                language = resolved or detect_response_language(turn.content)
                 if language is not None:
                     messages.append(
                         ProviderMessage(role="system", content=language_directive(language))

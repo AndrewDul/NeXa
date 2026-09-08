@@ -19,19 +19,46 @@ context, no persona, no model/provider choice. It receives one
 ``nexa.stt.TranscriptionResult`` at a time and calls the exact same
 ``ConversationSession.send()`` typed chat (`apps/nexa_chat.py`) already
 uses — literally the same session instance, not a second one.
+
+M2.4B.5: when constructed with a ``ResponseLanguageResolver``, the adapter
+also resolves the *response* language for each turn (mirror the spoken
+input language by default; honour an explicit request / sticky session
+preference) and passes it to ``ConversationSession.send(response_language=…)``.
+Input-language detection + the re-decode guard live entirely in
+``nexa.stt`` (``BilingualSpeechTranscriber``); the adapter only reads the
+already-resolved ``TranscriptionResult.language`` and its
+``language_decision`` telemetry.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 
 from loguru import logger
 
+from nexa.conversation.response_language import ResponseLanguageResolver
 from nexa.conversation.response_mode import ResponseMode
 from nexa.conversation.session import ConversationSession
+from nexa.stt.bilingual import LanguageDecision
 from nexa.stt.transcriber import TranscriptionResult
 
 from .queue import DEFAULT_MAX_QUEUE_SIZE, ConversationQueueOverflowError, SerialConversationQueue
+
+
+@dataclass(frozen=True, slots=True)
+class TurnLanguage:
+    """Per-turn language summary handed to ``on_turn_language`` — for
+    terminal debug + downstream TTS voice selection. Keeps the five
+    concepts distinct."""
+
+    transcript: str
+    input_speech_language: str | None  # what the user spoke (STT-decoded)
+    response_language: str  # what NeXa will reply in
+    response_reason: str
+    preference_changed: bool
+    sticky_preference: str | None
+    language_decision: LanguageDecision | None  # full STT/guard telemetry
 
 
 class VoiceConversationAdapter:
@@ -50,6 +77,8 @@ class VoiceConversationAdapter:
         on_assistant_token: Callable[[str], None] | None = None,
         on_assistant_complete: Callable[[str], None] | None = None,
         on_conversation_error: Callable[[Exception], None] | None = None,
+        on_turn_language: Callable[[TurnLanguage], None] | None = None,
+        response_language_resolver: ResponseLanguageResolver | None = None,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
         response_mode: ResponseMode = ResponseMode.VOICE,
     ) -> None:
@@ -64,6 +93,10 @@ class VoiceConversationAdapter:
         self._on_assistant_token = on_assistant_token
         self._on_assistant_complete = on_assistant_complete
         self._on_conversation_error = on_conversation_error
+        self._on_turn_language = on_turn_language
+        # M2.4B.5: optional. Without it, the response language stays the
+        # pre-B.5 R0009 per-turn text detection (byte-for-byte).
+        self._resolver = response_language_resolver
         self._queue = SerialConversationQueue(self._run_turn, max_queue_size=max_queue_size)
 
     @property
@@ -84,14 +117,17 @@ class VoiceConversationAdapter:
         An empty/whitespace-only transcript never becomes a conversation
         turn — explicit, not a silently-ignored edge case.
         """
-        text = result.text.strip()
+        if isinstance(result, TranscriptionResult):
+            text = result.text.strip()
+        else:
+            text = str(result).strip()
         if not text:
             logger.debug(
                 "nexa.voice_conversation: empty/whitespace transcript — no conversation turn"
             )
             return
         try:
-            self._queue.submit(text)
+            self._queue.submit(result)
         except ConversationQueueOverflowError as exc:
             logger.error(f"nexa.voice_conversation: {exc}")
             if self._on_conversation_error is not None:
@@ -102,12 +138,55 @@ class VoiceConversationAdapter:
         an STT failure must never produce a fabricated conversation turn."""
         logger.error(f"nexa.voice_conversation: STT failed, no conversation turn: {exc}")
 
-    async def _run_turn(self, text: str) -> None:
+    async def _run_turn(self, item: object) -> None:
+        if isinstance(item, TranscriptionResult):
+            text = item.text.strip()
+            input_language = item.language.value
+            decision_telemetry = item.language_decision
+        else:  # a bare transcript string (M2.3-style callers / tests)
+            text = str(item).strip()
+            input_language = None
+            decision_telemetry = None
+
+        response_language: str | None = None
+        turn_lang: TurnLanguage | None = None
+        if self._resolver is not None:
+            decision = self._resolver.resolve(
+                text, input_language=input_language or "en"
+            )
+            response_language = decision.response_language
+            turn_lang = TurnLanguage(
+                transcript=text,
+                input_speech_language=input_language,
+                response_language=response_language,
+                response_reason=decision.reason,
+                preference_changed=decision.preference_changed,
+                sticky_preference=decision.sticky_after,
+                language_decision=decision_telemetry,
+            )
+        elif decision_telemetry is not None:
+            turn_lang = TurnLanguage(
+                transcript=text,
+                input_speech_language=input_language,
+                response_language=input_language or "en",
+                response_reason="mirror input speech language (no resolver)",
+                preference_changed=False,
+                sticky_preference=None,
+                language_decision=decision_telemetry,
+            )
+
+        if turn_lang is not None and self._on_turn_language is not None:
+            self._on_turn_language(turn_lang)
         if self._on_user_transcript is not None:
             self._on_user_transcript(text)
+
         chunks: list[str] = []
         try:
-            async for chunk in self._session.send(text, response_mode=self._response_mode):
+            async for chunk in self._session.send(
+                text,
+                response_mode=self._response_mode,
+                response_language=response_language,
+            ):
                 chunks.append(chunk)
                 if self._on_assistant_token is not None:
                     self._on_assistant_token(chunk)

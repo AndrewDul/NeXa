@@ -100,6 +100,11 @@ class AssistantSpeechBridge(FrameProcessor):
         self._pl_voice = pl_voice
         self._gate = gate
         self._current_voice: str | None = None
+        # M2.4B.5: set True by ``select_voice`` (driven by the voice
+        # adapter's ``ResponseLanguageResolver``); when True, ``on_user_transcript``
+        # does NOT re-derive the voice from the transcript text. Reset at
+        # the end of each response.
+        self._explicit_voice_this_turn = False
         self._queue: asyncio.Queue = asyncio.Queue()
         self._worker_task: asyncio.Task | None = None
 
@@ -131,17 +136,38 @@ class AssistantSpeechBridge(FrameProcessor):
                 # worker loop for the rest of the session.
                 logger.exception("nexa.voice_tts: unexpected error pushing a frame")
 
-    def on_user_transcript(self, text: str) -> None:
-        """Pass directly as `VoiceConversationAdapter(on_user_transcript=...)`."""
-        if self._gate is not None:
-            self._gate.notify_response_dispatched()
-        language = detect_response_language(text)
-        voice = voice_for_language(language, en_voice=self._en_voice, pl_voice=self._pl_voice)
+    def select_voice(self, response_language: str | None) -> None:
+        """M2.4B.5: choose the Piper voice from the **ResponseLanguage** the
+        voice adapter's ``ResponseLanguageResolver`` resolved — *not* from
+        the transcript text and *not* from the STT decode language. Call
+        before ``on_user_transcript`` for the turn. Idempotent."""
+        self._explicit_voice_this_turn = True
+        self._apply_voice(
+            voice_for_language(
+                response_language, en_voice=self._en_voice, pl_voice=self._pl_voice
+            )
+        )
+
+    def _apply_voice(self, voice: str) -> None:
         if voice != self._current_voice:
             self._queue.put_nowait(
                 TTSUpdateSettingsFrame(delta=PiperHttpTTSService.Settings(voice=voice))
             )
             self._current_voice = voice
+
+    def on_user_transcript(self, text: str) -> None:
+        """Pass directly as `VoiceConversationAdapter(on_user_transcript=...)`."""
+        if self._gate is not None:
+            self._gate.notify_response_dispatched()
+        if not self._explicit_voice_this_turn:
+            # pre-B.5 fallback: no ResponseLanguageResolver is driving voice
+            # selection, so derive it from the transcript text (R0009).
+            language = detect_response_language(text)
+            self._apply_voice(
+                voice_for_language(
+                    language, en_voice=self._en_voice, pl_voice=self._pl_voice
+                )
+            )
         self._queue.put_nowait(LLMFullResponseStartFrame())
 
     def on_assistant_token(self, token: str) -> None:
@@ -154,6 +180,7 @@ class AssistantSpeechBridge(FrameProcessor):
         any sentence-less trailing text still gets synthesized."""
         if self._gate is not None:
             self._gate.notify_response_finished()
+        self._explicit_voice_this_turn = False
         self._queue.put_nowait(LLMFullResponseEndFrame())
 
     def on_conversation_error(self, _exc: Exception) -> None:
@@ -163,6 +190,7 @@ class AssistantSpeechBridge(FrameProcessor):
         the next turn."""
         if self._gate is not None:
             self._gate.notify_response_finished()
+        self._explicit_voice_this_turn = False
         self._queue.put_nowait(LLMFullResponseEndFrame())
 
 

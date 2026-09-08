@@ -46,3 +46,15 @@ class SttQueueOverflowError(SttError):
     """`SerialTranscriptionQueue`'s bounded FIFO was full when a new
     utterance was submitted. Raised explicitly to the caller — an utterance
     is never silently dropped."""
+
+
+class SttLibraryNotFoundError(SttError):
+    """The pinned whisper.cpp shared library (`libwhisper.so`) needed for
+    library-level language detection (M2.4B.5) is missing. Run
+    `scripts/setup_whisper_cpp.py`."""
+
+
+class LanguageDetectionError(SttError):
+    """Library-level whisper.cpp language detection failed (bad audio,
+    mel-spectrogram error, or an unexpected library return). Explicit — a
+    detection failure never yields a fabricated language or probability."""

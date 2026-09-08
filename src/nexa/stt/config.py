@@ -67,6 +67,13 @@ def default_whisper_cli_path() -> Path:
     return whisper_cpp_dir() / "build" / "bin" / "whisper-cli"
 
 
+def default_whisper_lib_path() -> Path:
+    """The pinned ``libwhisper.so`` next to ``whisper-cli`` — used by
+    M2.4B.5's library-level (ctypes) language detector. Same build tree as
+    the CLI, so it is the exact same pinned ``v1.9.3`` engine."""
+    return whisper_cpp_dir() / "build" / "bin" / "libwhisper.so"
+
+
 def default_model_path(quant: str = MODEL_QUANT) -> Path:
     return data_dir() / "models" / f"ggml-{MODEL_NAME}-{quant}.bin"
 

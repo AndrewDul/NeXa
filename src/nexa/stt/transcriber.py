@@ -17,9 +17,12 @@ import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .config import Language, WhisperCppConfig
+
+if TYPE_CHECKING:
+    from .bilingual import LanguageDecision
 from .errors import (
     NoUsableAudioError,
     SttBinaryNotFoundError,
@@ -40,6 +43,12 @@ class TranscriptionResult:
     language: Language
     audio_duration_s: float
     wall_latency_s: float
+    # M2.4B.5: present only when produced by ``BilingualSpeechTranscriber``
+    # — the full per-utterance language-decision telemetry (raw detected
+    # language, p_pl/p_en, guard decision, whether an explicit re-decode
+    # happened, latencies). ``None`` for the plain ``WhisperCppTranscriber``
+    # (explicit-language path, ADR-0003 D5).
+    language_decision: LanguageDecision | None = None
 
 
 class SpeechTranscriber(Protocol):

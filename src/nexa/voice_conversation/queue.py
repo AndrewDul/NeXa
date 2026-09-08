@@ -5,14 +5,17 @@ STT results can keep arriving (audio/VAD/STT continue independently), but
 only one `ConversationSession.send()` call may be in flight at a time —
 concurrent turns against the same session could corrupt turn ordering,
 history, and streamed-output ordering. Pure asyncio; this module has no
-`ConversationSession` import — it only knows "process one string, await
-it" (the handler passed in owns everything conversation-shaped).
+`ConversationSession` import — it only knows "process one item, await it"
+(the handler passed in owns everything conversation-shaped). The item is
+opaque: M2.3 submitted a plain transcript string; M2.4B.5 submits a small
+turn record carrying the transcript plus its resolved language info.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine
+from typing import Any
 
 from loguru import logger
 
@@ -37,7 +40,7 @@ class SerialConversationQueue:
 
     def __init__(
         self,
-        handler: Callable[[str], Awaitable[None]],
+        handler: Callable[[Any], Awaitable[None]],
         *,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
     ) -> None:
@@ -66,13 +69,14 @@ class SerialConversationQueue:
         factory = task_factory or asyncio.ensure_future
         self._worker_task = factory(self._run())
 
-    def submit(self, text: str) -> None:
-        """Enqueue one user turn's text. Synchronous and non-blocking —
-        never waits on the LLM, so voice/STT capture is never slowed down
-        by this call. Raises `ConversationQueueOverflowError` immediately
-        if the bounded queue is full; a turn is never dropped silently."""
+    def submit(self, item: Any) -> None:
+        """Enqueue one user turn (a transcript string, or a turn record).
+        Synchronous and non-blocking — never waits on the LLM, so voice/STT
+        capture is never slowed down by this call. Raises
+        `ConversationQueueOverflowError` immediately if the bounded queue is
+        full; a turn is never dropped silently."""
         try:
-            self._queue.put_nowait(text)
+            self._queue.put_nowait(item)
         except asyncio.QueueFull as exc:
             raise ConversationQueueOverflowError(
                 f"conversation queue is full ({self._queue.maxsize} turns pending) — "

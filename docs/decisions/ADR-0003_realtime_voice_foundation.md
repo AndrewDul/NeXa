@@ -463,3 +463,75 @@ naively requesting 4 threads each with no coordination from the start.
 M2.6 remains the stage for *systematic, measured* tuning once the full
 pipeline exists, but M2.1–M2.5 should not build in the naive pattern and then
 need to unlearn it.
+
+---
+
+## Amendment 1 — M2.4B.5: guarded automatic PL/EN voice input (2026-09-08)
+
+**Status: Accepted.** Supersedes **part of D5** ("M2 must not call STT in
+`auto` language mode as its normal path"). D5's *requirement* — never let a
+raw multilingual auto-detect decide the decode language unchecked — stands;
+its *mechanism* ("explicit per-session `--language`") is no longer the only
+accepted production path. Evidence authority: **`R0024`** (50-utterance
+real-operator corpus benchmark) and **`R0025`** (this implementation).
+
+### What changes
+
+- **Explicit fixed per-session language is still fully supported** and
+  remains the plain `WhisperCppTranscriber` path (`apps/nexa_stt_probe.py`,
+  the M2.2/M2.4 probes). Nothing about it changes.
+- **Guarded automatic per-utterance PL↔EN is now accepted production
+  behaviour**, via `nexa.stt.BilingualSpeechTranscriber` behind the
+  existing `SpeechTranscriber` boundary (D11):
+  1. library-level detection (`WhisperCppLanguageDetector`, a `ctypes`
+     binding to the **pinned** `libwhisper.so` — no fork, no version
+     change) yields `p_pl` / `p_en` plus whisper's raw top-1 language;
+  2. one `LanguageIdGuard` authority decides **AUTO_ACCEPT** (trust the
+     detector's PL/EN call) or **FALLBACK_REDECODE** (do not), using the
+     constrained `argmax(p_pl, p_en)`, the raw language, a configurable
+     confidence threshold (**0.60 — R0024 initial calibration, not a
+     universal constant**), and a duration floor;
+  3. exactly **one** explicit whisper.cpp decode runs, in the
+     guard-selected PL/EN language. The wrong-language transcript is never
+     generated, so there is nothing unsafe to reject.
+  R0024: whisper.cpp `v1.9.3` had **0 PL↔EN confusion** in 30 monolingual
+  utterances; the constrained `argmax` classified all 30 correctly.
+- **Ambiguous / very short utterances** (R0024: sub-2 s, acoustically
+  unreliable — "Tak." → `en` "Talk.") take the FALLBACK path: the decode
+  language is the **session-local `last_input_language`** (`pl` | `en` |
+  `None`), or a documented deterministic bootstrap on turn 1 — never a
+  guess, never a third language. `last_input_language` is transient
+  session state, **not** a conversation turn and **not** long-term memory.
+- **`InputSpeechLanguage` ≠ `ResponseLanguage`.** A separate authority,
+  `nexa.conversation.ResponseLanguageResolver`, decides the reply
+  language: mirror the spoken language by default; an explicit request
+  ("Answer in English.", "Odpowiedz po polsku.", "Od teraz mów po
+  angielsku.", "Wracamy do polskiego.") switches it and sets a transient
+  sticky session preference. The Piper voice maps from `ResponseLanguage`,
+  not from the STT decode language. The LLM is never the sole
+  language-routing authority.
+
+### What does NOT change
+
+- **True within-utterance code-switch is NOT guaranteed.** R0024: `-l
+  auto` was 6/10 USABLE, 0 BROKEN on real mixed utterances — tolerable as
+  a side-effect. B.5 adds no dual-decode merging and only guarantees mixed
+  input is **not worse** than the R0024 single-language-per-utterance
+  baseline. A real solution is a separate future stage.
+- One `ConversationSession` / history / persona / model / provider
+  (D2) — unchanged. `gemma4:e4b`, `num_thread=2`, `keep_alive=30m`, the
+  B.3.6 warm-up — unchanged. No second Polish/English session, no
+  per-language or fallback LLM.
+- D4 (`base/q8_0` STT model, `-t 4`) — unchanged. B.5 uses the same model
+  and thread count; the Polish *transcript-quality* deficit (R0024: PL S2
+  ~13 %) remains its own separate track (`R0016`).
+- No cloud STT. Local-first.
+
+### Revisit triggers
+
+- Tune the guard's `confidence_threshold` / duration floor from
+  accumulated per-turn telemetry (`TranscriptionResult.language_decision`)
+  once real multi-session operator evidence exists — a config change, not
+  an ADR revision.
+- Open a dedicated within-utterance code-switch stage if mixed input
+  proves to matter in real use.

@@ -38,6 +38,14 @@ class ConversationSession:
     max_chars: int = DEFAULT_MAX_CHARS
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     _history: list[ConversationTurn] = field(default_factory=list, init=False, repr=False)
+    # M2.4B.5: per-history-entry resolved response language, index-aligned
+    # with ``_history`` (``None`` for assistant entries and for user turns
+    # that used no explicit request / sticky preference — those fall back
+    # to R0009 text detection). Transient wire-level metadata: NOT part of
+    # ``history`` (the real transcript), NOT long-term memory.
+    _response_languages: list[str | None] = field(
+        default_factory=list, init=False, repr=False
+    )
 
     @property
     def history(self) -> tuple[ConversationTurn, ...]:
@@ -49,6 +57,7 @@ class ConversationSession:
             self._history,
             max_turns=self.max_turns,
             max_chars=self.max_chars,
+            response_languages=self._response_languages,
         )
 
     async def send(
@@ -57,13 +66,24 @@ class ConversationSession:
         *,
         cancel_token: CancelToken | None = None,
         response_mode: ResponseMode = ResponseMode.TEXT,
+        response_language: str | None = None,
     ) -> AsyncIterator[str]:
         """``response_mode`` (M2.4B.3.3) is a transient presentation hint —
         ``VOICE`` adds one constant "speak conversationally" system message
-        to the wire prompt. It is never stored in history and does not
-        change the response language. ``TEXT`` (default) is byte-for-byte
-        the pre-B.3.3 path."""
+        to the wire prompt.
+
+        ``response_language`` (M2.4B.5) is the language NeXa should reply in
+        for *this* turn, as resolved by the voice
+        ``ResponseLanguageResolver`` (explicit user request / sticky
+        session preference). ``None`` (the default, and always for typed
+        chat) keeps the pre-B.5 behaviour: the response language is the
+        R0009 per-turn detection of the user's own text. Either way it is
+        wire-level only — never stored in history.
+
+        ``TEXT`` + no ``response_language`` is byte-for-byte the pre-B.3.3
+        path."""
         self._history.append(ConversationTurn(role=Role.USER, content=user_text))
+        self._response_languages.append(response_language)
 
         context = self.build_context()
         messages = context.to_provider_messages(response_mode=response_mode)
@@ -74,3 +94,4 @@ class ConversationSession:
             yield chunk
 
         self._history.append(ConversationTurn(role=Role.ASSISTANT, content=response.text))
+        self._response_languages.append(None)

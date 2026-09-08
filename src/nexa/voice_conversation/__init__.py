@@ -15,11 +15,12 @@ already built by ``nexa.bootstrap``, exactly like ``apps/nexa_chat.py``.
 
 from __future__ import annotations
 
-from .adapter import VoiceConversationAdapter
+from .adapter import TurnLanguage, VoiceConversationAdapter
 from .queue import DEFAULT_MAX_QUEUE_SIZE, ConversationQueueOverflowError, SerialConversationQueue
 
 __all__ = [
     "VoiceConversationAdapter",
+    "TurnLanguage",
     "SerialConversationQueue",
     "ConversationQueueOverflowError",
     "DEFAULT_MAX_QUEUE_SIZE",

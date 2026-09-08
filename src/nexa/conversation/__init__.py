@@ -8,6 +8,12 @@ answer" pipeline, no MAS in the simple turn.
 from __future__ import annotations
 
 from .context import ConversationContext
+from .response_language import (
+    ResponseLanguageDecision,
+    ResponseLanguageResolver,
+    ResponsePreference,
+    detect_explicit_language_request,
+)
 from .response_mode import ResponseMode, voice_response_directive
 from .session import ConversationSession
 from .streaming import StreamingResponse
@@ -20,5 +26,9 @@ __all__ = [
     "Role",
     "ResponseMode",
     "voice_response_directive",
+    "ResponseLanguageResolver",
+    "ResponseLanguageDecision",
+    "ResponsePreference",
+    "detect_explicit_language_request",
     "StreamingResponse",
 ]
