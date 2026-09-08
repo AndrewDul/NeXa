@@ -1,0 +1,31 @@
+M2.4B.3.5 num_thread=2 Piper-active validation (gemma4:e4b)
+
+  [gemma4:e4b warm-prime] ttft=28.88s prompt_eval=28.87s (536 tok) tok/s=3.43
+
+===== variant: default =====
+2026-09-08 16:35:30.864 | INFO     | nexa.tts.server:start:109 - nexa.tts: Piper HTTP server started at nice 10
+2026-09-08 16:35:33.279 | INFO     | nexa.tts.server:start:124 - nexa.tts: Piper HTTP server ready at http://127.0.0.1:5001
+2026-09-08 16:35:33.638 | INFO     | nexa.tts.server:prewarm:145 - nexa.tts: prewarmed voice 'en_GB-jenny_dioco-medium' in 0.36s
+2026-09-08 16:35:35.842 | INFO     | nexa.tts.server:prewarm:145 - nexa.tts: prewarmed voice 'pl_PL-gosia-medium' in 2.20s
+  turn1: tok/s=1.63 ch/s=5.3 chars=169 ttft=42.016s  cpu=[4.9, 3.7, 6.2, 2.5] temp=62.25C thr=0x0
+  turn2: tok/s=1.64 ch/s=5.11 chars=137 ttft=48.615s  cpu=[1.3, 2.5, 3.8, 3.8] temp=62.25C thr=0x0
+  turn3: tok/s=1.8 ch/s=6.22 chars=138 ttft=44.716s  cpu=[1.3, 1.2, 1.3, 0.0] temp=62.8C thr=0x0
+  => default: LLM tok/s 1.69 chars/s 5.543 | Piper RTF mean 0.342 max 0.462 (n=40, err=0) | temp 61.15C thr 0x0
+
+===== variant: num_thread=2 =====
+2026-09-08 16:39:18.158 | INFO     | nexa.tts.server:start:109 - nexa.tts: Piper HTTP server started at nice 10
+2026-09-08 16:39:20.571 | INFO     | nexa.tts.server:start:124 - nexa.tts: Piper HTTP server ready at http://127.0.0.1:5001
+2026-09-08 16:39:20.667 | INFO     | nexa.tts.server:prewarm:145 - nexa.tts: prewarmed voice 'en_GB-jenny_dioco-medium' in 0.10s
+2026-09-08 16:39:22.840 | INFO     | nexa.tts.server:prewarm:145 - nexa.tts: prewarmed voice 'pl_PL-gosia-medium' in 2.17s
+  turn1: tok/s=2.81 ch/s=9.16 chars=186 ttft=85.259s  cpu=[37.5, 38.7, 38.0, 32.5] temp=62.25C thr=0x0
+  turn2: tok/s=2.91 ch/s=8.91 chars=104 ttft=50.982s  cpu=[0.0, 2.5, 0.0, 0.0] temp=62.25C thr=0x0
+  turn3: tok/s=2.82 ch/s=10.02 chars=199 ttft=51.607s  cpu=[0.0, 1.2, 1.2, 0.0] temp=61.7C thr=0x0
+  => num_thread=2: LLM tok/s 2.847 chars/s 9.363 | Piper RTF mean 0.329 max 0.452 (n=45, err=0) | temp 60.05C thr 0x0
+
+--- VERDICT ---
+  decode tok/s 1.69 -> 2.847 (+68.5%)
+  Piper RTF max: default 0.462 / nt2 0.452 (<1.0 => no TTS regression)
+  throttled: default 0x0 / nt2 0x0
+  piper synth errors: default 0 / nt2 0
+
+NT2_PIPER_VALIDATION DONE

@@ -54,3 +54,39 @@ are captured (the `LocalModelProvider` drops them).
 - `bench_smallpl_20260907.json` — `qwen2.5:3b` / `llama3.2:3b` PL+EN core
   spot-check.
 - `*_raw.txt` — human-readable progress echoes of the batch runs.
+
+## M2.4B.3.5 — operator-blind model A/B (R0022)
+
+A real, operator-blind A/B of `gemma4:e4b` vs `gemma4:e2b` on the full
+realtime voice path. **The A/B mapping is sealed and must not be printed
+or revealed before the operator's verdict.**
+
+- `make_mapping.py` — one-shot `secrets.SystemRandom` assignment of the
+  two models to Candidate A / Candidate B; writes
+  `operator_blind_ab_mapping_20260908.txt` and prints only a neutral line
+  + the file's SHA-256. `--force` to reshuffle (do not, mid-test).
+- `blind_ab_common.py` — the sealed-mapping loader, `_NumThreadProvider`
+  (`LocalModelProvider` + one `num_thread` request option), and
+  `build_blind_session(candidate)` — a fresh `ConversationSession` with
+  the real persona + `GenerationOptions`, `num_thread=2` + `keep_alive=30m`
+  applied to **both** candidates. Production default (`gemma4:e4b`)
+  untouched.
+- `operator_blind_ab.py` — the blind launcher.
+  `--candidate {A,B} --language {pl,en}`; `--selftest` for an offline
+  wiring check. Real mic + STT + `ConversationSession` +
+  `ResponseMode.VOICE` + SpeechPlanner + continuity controller + Piper
+  `nice +10`. The model tag is **never printed**; all per-turn metrics /
+  resource samples go to `blind_results/candidate_<X>_<lang>_<ts>.txt` /
+  `.jsonl`.
+- `nt2_piper_validation.py` — checks `num_thread=2` (R0021) is still safe
+  under a concurrent realistic Piper load before the A/B uses it.
+- `operator_blind_ab_mapping_20260908.txt` — the sealed mapping
+  (auditable; **do not open before the A/B verdict**).
+- `blind_results/` — per-candidate metrics land here when the operator runs.
+
+Operator commands (carry no model identity):
+
+    ./.venv/bin/python docs/research/m2_4b_llm_bench/operator_blind_ab.py --candidate A --language pl
+    ./.venv/bin/python docs/research/m2_4b_llm_bench/operator_blind_ab.py --candidate A --language en
+    ./.venv/bin/python docs/research/m2_4b_llm_bench/operator_blind_ab.py --candidate B --language pl
+    ./.venv/bin/python docs/research/m2_4b_llm_bench/operator_blind_ab.py --candidate B --language en

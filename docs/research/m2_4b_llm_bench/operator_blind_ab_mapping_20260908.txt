@@ -1,0 +1,9 @@
+{
+ "purpose": "M2.4B.3.5 operator-blind model A/B \u2014 SEALED. Do not print.",
+ "created": "2026-09-08T16:29:36+0100",
+ "salt": "dc48ecc7b336986a4c9db206cf968bc4",
+ "mapping": {
+  "A": "gemma4:e2b",
+  "B": "gemma4:e4b"
+ }
+}
