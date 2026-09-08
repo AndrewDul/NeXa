@@ -402,7 +402,7 @@ model. No `nexa.config` / `nexa.bootstrap` change. M2.5 not started.
 
 ## COMMIT HASH
 
-_Recorded on commit (this stage's fix commit)._
+`20660ce` — `fix: strict pre-M2.5 half-duplex — no turn while a response is in flight (M2.4B.5A / R0026)` (tip of `main`). Not pushed. (This hash-record edit lands in the next commit.)
 
 ## GIT STATUS
 
