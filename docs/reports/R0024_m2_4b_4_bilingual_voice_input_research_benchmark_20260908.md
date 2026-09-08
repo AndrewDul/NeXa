@@ -547,15 +547,19 @@ stage.
 
 ## COMMIT HASH
 
-_Recorded on commit (this stage's benchmark + report commit)._
+`badab98` — `research: bilingual voice-input benchmark + architecture
+decision (M2.4B.4 / R0024)` (tip of `main`). Preceded by `d633f11` /
+`787b4b4` (corpus + recorder prep). Research + docs only; not pushed.
+(This hash-record edit lands in the next commit.)
 
 ## GIT STATUS
 
-Branch `main`, not pushed. `ruff check` clean for this stage's scope
-(`src tests apps docs/research/m2_4b_bilingual_stt`); `git diff --check`
-clean. Pre-existing unrelated `ruff` E501s in
-`docs/research/m2_1_vad_calibration/vad_offline_calibration.py` (commit
-`e2201ca`) left untouched.
+Branch `main`, not pushed. `pytest` 513 passed / 7 skipped / 14 subtests;
+`python -m unittest discover -s tests` 520 OK; `ruff check src tests apps
+docs/research/m2_4b_bilingual_stt` clean; `git diff --check` clean. No
+`src/`, `apps/`, `configs/`, or ADR file changed. Pre-existing unrelated
+`ruff` E501s in `docs/research/m2_1_vad_calibration/vad_offline_calibration.py`
+(commit `e2201ca`) left untouched.
 
 ## NEXT STEP
 
