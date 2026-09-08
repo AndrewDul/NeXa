@@ -204,7 +204,7 @@ started.
 
 ## COMMIT HASH
 
-_Recorded on commit._
+`01cdf37` — `fix: one-turn response-language override vs sticky preference (M2.4B.5B / R0027)` (tip of `main`). Not pushed. (This hash-record edit lands in the next commit.)
 
 ## GIT STATUS
 
