@@ -1,0 +1,53 @@
+{
+ "note": "Manual S-class review (human, 2026-09-08) of the M2.4B.4 STT benchmark transcripts. S0 harmless (punct/case/number-form) - S1 minor lexical, meaning intact - S2 meaning partially changed - S3 critical (wrong entity/intent/nonsense/wrong script). Judged on b0_pl for PL fixtures and b0_en for EN fixtures (the production baseline), plus the 'auto' delta.",
+ "pl_baseline_b0_pl": {
+  "001": {"s": "S0", "why": "comma only"},
+  "002": {"s": "S0", "why": "'powstaje.' vs 'powstaje?' - punct"},
+  "003": {"s": "S0", "why": "exact"},
+  "004": {"s": "S2", "why": "'sen' (sleep) -> 'sam' (alone) - topic word wrong + bad split"},
+  "005": {"s": "S1", "why": "'Jaki' -> 'Jakie' gender agreement; casing"},
+  "006": {"s": "S0", "why": "comma only"},
+  "007": {"s": "S0", "why": "exact"},
+  "008": {"s": "S1", "why": "'wyjaśnij' -> 'wyjaśni' (dropped imperative -j); sentence split"},
+  "009": {"s": "S1", "why": "'żytnią' -> 'rzytnią' (phonetic misspelling of rye, still recoverable)"},
+  "010": {"s": "S1", "why": "'dziewięćdziesiąt pięć' -> '95' (numeric form; meaning identical); casing"},
+  "011": {"s": "S0", "why": "punct"},
+  "012": {"s": "S0", "why": "exact"},
+  "013": {"s": "S0", "why": "punct"},
+  "014": {"s": "S2", "why": "'niebo' -> 'nie bo' (split), 'niebieskie' -> 'nie pieskie' (garbled to 'not doggy') - the R0016 PL weakness"},
+  "015": {"s": "S0", "why": "exact"}
+ },
+ "pl_auto_delta": "identical to b0_pl EXCEPT 002: auto misdetects language 'ru' -> Cyrillic 'как она повстает.' = S3. So auto PL adds one S3 (002).",
+ "en_baseline_b0_en": {
+  "016": {"s": "S0"}, "017": {"s": "S0"}, "018": {"s": "S0"}, "019": {"s": "S0"},
+  "020": {"s": "S0", "why": "'colour'->'color' (accepted variant), 'Sun'->'sun' casing"},
+  "021": {"s": "S2", "why": "'feathers' -> 'features' - the key entity of the trick question is wrong; also 'one'->'1', dropped 2nd 'one'"},
+  "022": {"s": "S0"},
+  "023": {"s": "S2", "why": "'explain it again' -> 'explain it better' - intent changed (repeat vs improve)"},
+  "024": {"s": "S2", "why": "'bread flour and rye flour' -> 'bread, flour and rye flour' - 2 items become 3; memory content corrupted"},
+  "025": {"s": "S1", "why": "'ninety-five' -> '95' numeric; meaning identical"},
+  "026": {"s": "S0"}, "027": {"s": "S0"}, "028": {"s": "S0"},
+  "029": {"s": "S0", "why": "exact (b0_en). NOTE auto misdetects 'he' -> Hebrew script = S3"},
+  "030": {"s": "S0"}
+ },
+ "en_auto_delta": "identical to b0_en EXCEPT 029: auto misdetects 'he' -> Hebrew 'ומה זה איזו שקי בלו?' = S3. (021 auto label is 'ko' but its transcript is still English, same S2 as baseline.) dl_then_explicit rescues both 021 and 029 to baseline quality because its pl/en fallback forces an English decode.",
+ "totals": {
+  "b0_pl_on_pl_15": {"S0": 8, "S1": 4, "S2": 2, "S3": 0, "wer_mean": 0.139},
+  "auto_on_pl_15":  {"S0": 7, "S1": 4, "S2": 2, "S3": 1, "wer_mean": 0.205, "delta": "one extra S3 from a 'ru' misdetect (002)"},
+  "b0_en_on_en_15": {"S0": 11, "S1": 1, "S2": 3, "S3": 0, "wer_mean": 0.041},
+  "auto_on_en_15":  {"S0": 10, "S1": 1, "S2": 3, "S3": 1, "wer_mean": 0.113, "delta": "one extra S3 from a 'he' misdetect (029)"},
+  "dl_then_explicit_on_en_15": {"S0": 11, "S1": 1, "S2": 3, "S3": 0, "wer_mean": 0.041, "note": "pl/en fallback rescued 021+029"}
+ },
+ "mixed_auto_class": {
+  "041": "USABLE", "042": "PARTIALLY_USABLE", "043": "PARTIALLY_USABLE",
+  "044": "PARTIALLY_USABLE", "045": "USABLE", "046": "USABLE",
+  "047": "USABLE", "048": "USABLE", "049": "PARTIALLY_USABLE", "050": "USABLE",
+  "tally": "USABLE 6 / PARTIALLY_USABLE 4 / BROKEN 0",
+  "lost_pieces": {
+   "042": "'polskiego' -> 'pluskiego' (the intent word 'Polish' garbled)",
+   "043": "'Powiedz mi' (tell me) -> 'Hope it's me' (Polish framing lost; the English question survives intact)",
+   "044": "'Can you' -> 'Keniu' (English framing lost; Polish 'wyjaśnić to prościej' survives)",
+   "049": "'Explain' -> 'Explenuj' (English verb hybridised; rest intact)"
+  }
+ }
+}

@@ -9,8 +9,39 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0023_m2_4b_3_6_production_local_model_serving_freeze_20260908.md`
-  (M2.4B.3.6 — **Production Local Model Serving Freeze — PASS**. The
+- **Latest report:** `docs/reports/R0024_m2_4b_4_bilingual_voice_input_research_benchmark_20260908.md`
+  (M2.4B.4 — **Bilingual Voice Input Research & Benchmark — COMPLETE,
+  research + decision only, NO production change**. Operator recorded a
+  50-utterance real-voice corpus (15 PL / 15 EN / 10 short-ambiguous /
+  10 mixed-code-switch, `docs/research/m2_4b_bilingual_stt/`); benchmark
+  ran the pinned production whisper.cpp `v1.9.3` `ggml-base-q8_0` `-t 4`
+  over all 50 under 4 strategies (200 runs). **Key evidence:** whisper
+  v1.9.3 **never confuses PL with EN** (0/15 PL→EN, 0/15 EN→PL);
+  `-l auto` monolingual LID **90 %** (27/30), all 3 misses are
+  low-confidence slips to a *third* language (`ru`/`ko`/`he`, p 0.35–0.53
+  vs 0.6–0.99 for confident hits); `-l auto` transcript == explicit
+  baseline on 28/30 monolingual (the 2 diffs are the third-lang misdetects
+  → wrong-script S3). `-l auto` costs **~+1.1 s/turn**; `-dl`→explicit
+  costs ~+1.3 s and adds nothing (same detector) — rejected. Short PL
+  one-word utterances break under auto (Tak→"Talk.", Nie→"Не.",
+  Dobra→"Доброе утро!") but at low confidence — gate-able. Mixed:
+  `-l auto` 6 USABLE / 4 PARTIALLY_USABLE / 0 BROKEN (better than either
+  forced language). Resources identical across strategies: RSS 221 MB,
+  ≤70 °C, `throttled 0x0`. **No stronger-model download** (architecture
+  decides on base/q8_0 evidence; PL transcript-quality S2 rate 13 % PL /
+  20 % EN is a *pre-existing* `base/q8_0` issue — separate track, `R0016`,
+  candidate `large-v3-turbo-q5_0` named for a future approved benchmark).
+  **Decision:** future bilingual input = `-l auto` single pass +
+  PL/EN-and-confidence guard on the label + inherit-previous-input-language
+  fallback; response-language stays a *separate* resolver from STT.
+  **ADR-0003 D5 verdict: PARTIALLY supersede** — automatic per-utterance
+  PL↔EN switching for normal turns is evidence-backed; isolated shorts +
+  true within-utterance code-switch stay deferred. Proposed D5 amendment
+  recorded, **ADR not edited**. `pytest` 513 / `unittest` 520 (+19
+  `tests/test_bilingual_stt_bench.py`, +14 `_corpus`). Production
+  `VoiceRuntime` explicit-language behaviour unchanged. Not pushed.)
+- **Prior report — R0023** (`docs/reports/R0023_m2_4b_3_6_production_local_model_serving_freeze_20260908.md`,
+  M2.4B.3.6 — **Production Local Model Serving Freeze — PASS**. The
   R0021/R0022 serving findings are productionised on the one canonical
   conversation path with `gemma4:e4b` kept as `DEFAULT_LOCAL_MODEL`:
   (1) **`num_thread=2`** — one-time provider policy in `nexa.config`
@@ -246,18 +277,36 @@ Runtime / test evidence outranks anything else in this repo.
   (deferred, NOT in B.3.6): Polish throughput (~11 vs 15.9 chars/s target);
   Polish STT accuracy (whisper.cpp `base`/`q8_0`); bilingual auto-STT /
   code-switch; `keep_alive` = infinite residency (resource-policy
-  decision). **M2.4B is NOT complete** — the remaining continuity work is
-  faster Polish generation. Then **M2.5 — barge-in / interruption**
+  decision). **M2.4B.4 — Bilingual Voice Input Research & Benchmark:
+  COMPLETE (research + decision, NO production change)** — `R0024`. Real
+  50-utterance operator corpus + `whisper.cpp v1.9.3 base/q8_0` benchmark
+  (4 strategies, 200 runs). PL↔EN never confused (0/30); `-l auto` LID
+  90 %, all 3 misses low-confidence third-language slips; `-l auto`
+  transcript == explicit baseline when the label is right; `-l auto`
+  +~1.1 s/turn, `-dl`→explicit +~1.3 s and no gain (rejected). Decision:
+  future bilingual input = guarded `-l auto` (PL/EN + confidence gate +
+  inherit-previous-input-language fallback), response-language a *separate*
+  resolver. **ADR-0003 D5: PARTIALLY supersede** (per-utterance PL↔EN
+  switching OK; isolated shorts + within-utterance code-switch deferred);
+  proposed D5 amendment recorded, ADR not edited. No stronger-model
+  download (PL S2 rate 13 %/20 % is a pre-existing `base/q8_0` issue —
+  separate track, candidate `large-v3-turbo-q5_0` named for a future
+  approved benchmark). **M2.4B is NOT complete** — remaining continuity
+  work is faster Polish generation. Then **M2.5 — barge-in / interruption**
   (replaces the temporary half-duplex gate).
-- **Current objective:** operator runs a short live voice session on the
-  B.3.6 build (PL + EN, a "rozwiń" / "tell me more" follow-up) to confirm
-  B.3.3 `VOICE` live and capture STT latency + END_OF_TURN→first-audio for
-  the `num_thread=2` / `keep_alive=30m` / warm-up config (the headless
-  `b36` probe cannot produce mic-dependent metrics). M2.4's functional
-  baseline is frozen by the M2.4 commit and unchanged; the speech planner
-  + continuity controller are additive; the voice response policy is
-  additive (`ResponseMode.TEXT` → byte-for-byte pre-B.3.3 wire prompt).
-  `gemma4:e4b` is the operator-confirmed canonical production model.
+- **Current objective:** operator reviews the R0024 recommendation
+  (guarded `-l auto` bilingual-input architecture + the proposed ADR-0003
+  D5 amendment). If accepted, a dedicated implementation stage adds a
+  library-level `{p_pl,p_en}` constrained detector + `LanguageIdGuard` +
+  `ResponseLanguageResolver` behind the amended D5 (keeping
+  `ggml-base-q8_0` / `-t 4`). Separately still owed: the B.3.6 operator
+  live-voice confirmation (PL + EN, "rozwiń" / "tell me more", capture STT
+  latency + END_OF_TURN→first-audio). M2.4's functional baseline is frozen
+  by the M2.4 commit and unchanged; planner + continuity controller +
+  voice response policy are additive. `gemma4:e4b` + `num_thread=2` +
+  `keep_alive=30m` + startup warm-up are the operator-confirmed canonical
+  production serving config; production `VoiceRuntime` still uses explicit
+  per-run `--language pl|en` (ADR-0003 D5, unchanged).
 
 ---
 

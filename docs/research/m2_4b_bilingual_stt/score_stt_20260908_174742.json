@@ -1,0 +1,2837 @@
+{
+ "wer_latency": {
+  "auto": {
+   "pl": {
+    "n": 15,
+    "wer_mean": 0.205,
+    "wer_median": 0.0,
+    "lat_mean_s": 2.925,
+    "lat_median_s": 2.878,
+    "lat_p90_s": 3.046,
+    "lat_min_s": 2.667,
+    "lat_max_s": 3.579,
+    "rtf_mean": 0.7
+   },
+   "en": {
+    "n": 15,
+    "wer_mean": 0.113,
+    "wer_median": 0.0,
+    "lat_mean_s": 2.966,
+    "lat_median_s": 2.947,
+    "lat_p90_s": 3.119,
+    "lat_min_s": 2.75,
+    "lat_max_s": 3.401,
+    "rtf_mean": 0.887
+   },
+   "short": {
+    "n": 10,
+    "wer_mean": 0.5,
+    "wer_median": 0.0,
+    "lat_mean_s": 2.712,
+    "lat_median_s": 2.722,
+    "lat_p90_s": 2.809,
+    "lat_min_s": 2.601,
+    "lat_max_s": 2.836,
+    "rtf_mean": 1.702
+   },
+   "mixed": {
+    "n": 10,
+    "wer_mean": 0.206,
+    "wer_median": 0.1,
+    "lat_mean_s": 2.917,
+    "lat_median_s": 2.891,
+    "lat_p90_s": 3.036,
+    "lat_min_s": 2.819,
+    "lat_max_s": 3.069,
+    "rtf_mean": 0.882
+   }
+  },
+  "b0_en": {
+   "pl": {
+    "n": 15,
+    "wer_mean": 1.234,
+    "wer_median": 1.25,
+    "lat_mean_s": 1.866,
+    "lat_median_s": 1.767,
+    "lat_p90_s": 2.149,
+    "lat_min_s": 1.602,
+    "lat_max_s": 2.669,
+    "rtf_mean": 0.448
+   },
+   "en": {
+    "n": 15,
+    "wer_mean": 0.041,
+    "wer_median": 0.0,
+    "lat_mean_s": 1.742,
+    "lat_median_s": 1.736,
+    "lat_p90_s": 1.864,
+    "lat_min_s": 1.611,
+    "lat_max_s": 1.881,
+    "rtf_mean": 0.518
+   },
+   "short": {
+    "n": 10,
+    "wer_mean": 0.4,
+    "wer_median": 0.0,
+    "lat_mean_s": 1.503,
+    "lat_median_s": 1.493,
+    "lat_p90_s": 1.524,
+    "lat_min_s": 1.445,
+    "lat_max_s": 1.655,
+    "rtf_mean": 0.944
+   },
+   "mixed": {
+    "n": 10,
+    "wer_mean": 0.675,
+    "wer_median": 0.514,
+    "lat_mean_s": 1.783,
+    "lat_median_s": 1.812,
+    "lat_p90_s": 1.841,
+    "lat_min_s": 1.67,
+    "lat_max_s": 1.881,
+    "rtf_mean": 0.54
+   }
+  },
+  "b0_pl": {
+   "pl": {
+    "n": 15,
+    "wer_mean": 0.139,
+    "wer_median": 0.0,
+    "lat_mean_s": 1.9,
+    "lat_median_s": 1.794,
+    "lat_p90_s": 2.136,
+    "lat_min_s": 1.58,
+    "lat_max_s": 2.611,
+    "rtf_mean": 0.458
+   },
+   "en": {
+    "n": 15,
+    "wer_mean": 1.041,
+    "wer_median": 1.0,
+    "lat_mean_s": 2.371,
+    "lat_median_s": 2.304,
+    "lat_p90_s": 2.968,
+    "lat_min_s": 1.683,
+    "lat_max_s": 3.188,
+    "rtf_mean": 0.687
+   },
+   "short": {
+    "n": 10,
+    "wer_mean": 0.5,
+    "wer_median": 0.5,
+    "lat_mean_s": 1.561,
+    "lat_median_s": 1.504,
+    "lat_p90_s": 1.766,
+    "lat_min_s": 1.465,
+    "lat_max_s": 1.776,
+    "rtf_mean": 0.981
+   },
+   "mixed": {
+    "n": 10,
+    "wer_mean": 0.263,
+    "wer_median": 0.1,
+    "lat_mean_s": 1.799,
+    "lat_median_s": 1.739,
+    "lat_p90_s": 1.968,
+    "lat_min_s": 1.645,
+    "lat_max_s": 2.316,
+    "rtf_mean": 0.542
+   }
+  },
+  "dl_then_explicit": {
+   "pl": {
+    "n": 15,
+    "wer_mean": 0.227,
+    "wer_median": 0.0,
+    "lat_mean_s": 3.178,
+    "lat_median_s": 3.15,
+    "lat_p90_s": 3.421,
+    "lat_min_s": 2.808,
+    "lat_max_s": 3.732,
+    "rtf_mean": 0.759
+   },
+   "en": {
+    "n": 15,
+    "wer_mean": 0.041,
+    "wer_median": 0.0,
+    "lat_mean_s": 3.093,
+    "lat_median_s": 3.078,
+    "lat_p90_s": 3.246,
+    "lat_min_s": 2.955,
+    "lat_max_s": 3.31,
+    "rtf_mean": 0.922
+   },
+   "short": {
+    "n": 10,
+    "wer_mean": 0.4,
+    "wer_median": 0.0,
+    "lat_mean_s": 2.861,
+    "lat_median_s": 2.87,
+    "lat_p90_s": 2.908,
+    "lat_min_s": 2.783,
+    "lat_max_s": 2.93,
+    "rtf_mean": 1.797
+   },
+   "mixed": {
+    "n": 10,
+    "wer_mean": 0.231,
+    "wer_median": 0.225,
+    "lat_mean_s": 3.134,
+    "lat_median_s": 3.148,
+    "lat_p90_s": 3.223,
+    "lat_min_s": 3.024,
+    "lat_max_s": 3.242,
+    "rtf_mean": 0.948
+   }
+  }
+ },
+ "language_id": {
+  "auto": {
+   "n": 30,
+   "accuracy": 0.9,
+   "pl_acc": 0.933,
+   "en_acc": 0.867,
+   "pl_to_en": 0,
+   "en_to_pl": 0,
+   "confusion": {
+    "en->en": 13,
+    "en->he": 1,
+    "en->ko": 1,
+    "pl->pl": 14,
+    "pl->ru": 1
+   },
+   "prob_mean_pl": 0.799,
+   "prob_mean_en": 0.606,
+   "prob_min": 0.265,
+   "errors": [
+    {
+     "uid": "002_pl_jak_ona_powstaje",
+     "expected": "pl",
+     "detected": "ru",
+     "p": 0.345343,
+     "audio_s": 3.456
+    },
+    {
+     "uid": "021_en_what_is_heavier_one_kilogram_of_iron_or_",
+     "expected": "en",
+     "detected": "ko",
+     "p": 0.465718,
+     "audio_s": 6.272
+    },
+    {
+     "uid": "029_en_why_is_the_sky_blue",
+     "expected": "en",
+     "detected": "he",
+     "p": 0.526325,
+     "audio_s": 2.56
+    }
+   ]
+  },
+  "dl_then_explicit": {
+   "n": 30,
+   "accuracy": 0.9,
+   "pl_acc": 0.933,
+   "en_acc": 0.867,
+   "pl_to_en": 0,
+   "en_to_pl": 0,
+   "confusion": {
+    "en->en": 13,
+    "en->he": 1,
+    "en->ko": 1,
+    "pl->pl": 14,
+    "pl->ru": 1
+   },
+   "prob_mean_pl": 0.799,
+   "prob_mean_en": 0.606,
+   "prob_min": 0.265,
+   "errors": [
+    {
+     "uid": "002_pl_jak_ona_powstaje",
+     "expected": "pl",
+     "detected": "ru",
+     "p": 0.345343,
+     "audio_s": 3.456
+    },
+    {
+     "uid": "021_en_what_is_heavier_one_kilogram_of_iron_or_",
+     "expected": "en",
+     "detected": "ko",
+     "p": 0.465718,
+     "audio_s": 6.272
+    },
+    {
+     "uid": "029_en_why_is_the_sky_blue",
+     "expected": "en",
+     "detected": "he",
+     "p": 0.526325,
+     "audio_s": 2.56
+    }
+   ]
+  }
+ },
+ "per_item": {
+  "auto": [
+   {
+    "uid": "001_pl_co_to_jest_czarna_dziura",
+    "group": "pl",
+    "expected": "Co to jest czarna dziura?",
+    "hyp": "Co to jest, czarna dziura.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.313134
+   },
+   {
+    "uid": "002_pl_jak_ona_powstaje",
+    "group": "pl",
+    "expected": "Jak ona powstaje?",
+    "hyp": "как она повстает.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "ru",
+    "p": 0.345343
+   },
+   {
+    "uid": "003_pl_z_czego_sklada_sie_gwiazda",
+    "group": "pl",
+    "expected": "Z czego składa się gwiazda?",
+    "hyp": "Z czego składa się gwiazda?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.980366
+   },
+   {
+    "uid": "004_pl_po_co_czlowiekowi_sen",
+    "group": "pl",
+    "expected": "Po co człowiekowi sen?",
+    "hyp": "Po co? Człowiekowi sam.",
+    "wer": 0.25,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": 0.265025
+   },
+   {
+    "uid": "005_pl_jaki_jest_rzeczywisty_kolor_slonca",
+    "group": "pl",
+    "expected": "Jaki jest rzeczywisty kolor Słońca?",
+    "hyp": "Jakie jest rzeczywisty kolor słońca?",
+    "wer": 0.2,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": 0.967755
+   },
+   {
+    "uid": "006_pl_co_jest_ciezsze_kilogram_zelaza_czy_kilo",
+    "group": "pl",
+    "expected": "Co jest cięższe, kilogram żelaza czy kilogram piór?",
+    "hyp": "Co jest cięższe kilogram żelaza czy kilogram piór?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.987746
+   },
+   {
+    "uid": "007_pl_powiedz_mi_to_troche_prosciej",
+    "group": "pl",
+    "expected": "Powiedz mi to trochę prościej.",
+    "hyp": "Powiedz mi to trochę prościej.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.78471
+   },
+   {
+    "uid": "008_pl_nie_rozumiem_wyjasnij_jeszcze_raz",
+    "group": "pl",
+    "expected": "Nie rozumiem, wyjaśnij jeszcze raz.",
+    "hyp": "Nie rozumiem. Wyjaśni jeszcze raz.",
+    "wer": 0.2,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": 0.997955
+   },
+   {
+    "uid": "009_pl_zapamietaj_ze_kupilem_make_pszenna_i_zyt",
+    "group": "pl",
+    "expected": "Zapamiętaj, że kupiłem mąkę pszenną i żytnią.",
+    "hyp": "Zapamiętaj, że kupiłem mąkę pszenną i rzytnią.",
+    "wer": 0.143,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": 0.995203
+   },
+   {
+    "uid": "010_pl_ktora_bedzie_godzina_za_dziewiecdziesiat",
+    "group": "pl",
+    "expected": "Która będzie godzina za dziewięćdziesiąt pięć minut?",
+    "hyp": "która będzie godzina za 95 minut.",
+    "wer": 0.286,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": 0.971487
+   },
+   {
+    "uid": "011_pl_co_dzisiaj_mozemy_zrobic",
+    "group": "pl",
+    "expected": "Co dzisiaj możemy zrobić?",
+    "hyp": "Co dzisiaj możemy zrobić.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.976687
+   },
+   {
+    "uid": "012_pl_powiedz_mi_cos_ciekawego",
+    "group": "pl",
+    "expected": "Powiedz mi coś ciekawego.",
+    "hyp": "Powiedz mi coś ciekawego.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.983294
+   },
+   {
+    "uid": "013_pl_jak_dziala_komputer",
+    "group": "pl",
+    "expected": "Jak działa komputer?",
+    "hyp": "Jak działa komputer.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.441373
+   },
+   {
+    "uid": "014_pl_dlaczego_niebo_jest_niebieskie",
+    "group": "pl",
+    "expected": "Dlaczego niebo jest niebieskie?",
+    "hyp": "Dlaczego nie bo jest nie pieskie?",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": 0.984683
+   },
+   {
+    "uid": "015_pl_wrocmy_do_poprzedniego_tematu",
+    "group": "pl",
+    "expected": "Wróćmy do poprzedniego tematu.",
+    "hyp": "Wróćmy do poprzedniego tematu.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.996722
+   },
+   {
+    "uid": "016_en_what_is_a_black_hole",
+    "group": "en",
+    "expected": "What is a black hole?",
+    "hyp": "What is a black hole?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.854754
+   },
+   {
+    "uid": "017_en_how_does_it_form",
+    "group": "en",
+    "expected": "How does it form?",
+    "hyp": "How does it form?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.861207
+   },
+   {
+    "uid": "018_en_what_is_a_star_made_of",
+    "group": "en",
+    "expected": "What is a star made of?",
+    "hyp": "What is a star made of?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.335202
+   },
+   {
+    "uid": "019_en_why_do_humans_need_sleep",
+    "group": "en",
+    "expected": "Why do humans need sleep?",
+    "hyp": "Why do humans need sleep?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.281085
+   },
+   {
+    "uid": "020_en_what_is_the_actual_colour_of_the_sun",
+    "group": "en",
+    "expected": "What is the actual colour of the Sun?",
+    "hyp": "What is the actual color of the sun?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.72514
+   },
+   {
+    "uid": "021_en_what_is_heavier_one_kilogram_of_iron_or_",
+    "group": "en",
+    "expected": "What is heavier, one kilogram of iron or one kilogram of feathers?",
+    "hyp": "What is heavier, 1kg of iron or kilogram of features?",
+    "wer": 0.333,
+    "sclass_auto": "S2?",
+    "detected": "ko",
+    "p": 0.465718
+   },
+   {
+    "uid": "022_en_explain_it_more_simply",
+    "group": "en",
+    "expected": "Explain it more simply.",
+    "hyp": "Explain it more simply.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.703338
+   },
+   {
+    "uid": "023_en_i_still_don_t_understand_explain_it_agai",
+    "group": "en",
+    "expected": "I still don't understand, explain it again.",
+    "hyp": "I still don't understand. Explain it better.",
+    "wer": 0.143,
+    "sclass_auto": "S1",
+    "detected": "en",
+    "p": 0.446075
+   },
+   {
+    "uid": "024_en_remember_that_i_bought_bread_flour_and_r",
+    "group": "en",
+    "expected": "Remember that I bought bread flour and rye flour.",
+    "hyp": "Remember that I bought bread, flour and rye flour.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.644737
+   },
+   {
+    "uid": "025_en_what_time_will_it_be_in_ninety_five_minu",
+    "group": "en",
+    "expected": "What time will it be in ninety-five minutes?",
+    "hyp": "What time will it be in 95 minutes?",
+    "wer": 0.222,
+    "sclass_auto": "S2?",
+    "detected": "en",
+    "p": 0.337614
+   },
+   {
+    "uid": "026_en_what_can_we_do_today",
+    "group": "en",
+    "expected": "What can we do today?",
+    "hyp": "What can we do today?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.589466
+   },
+   {
+    "uid": "027_en_tell_me_something_interesting",
+    "group": "en",
+    "expected": "Tell me something interesting.",
+    "hyp": "Tell me something interesting.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.720284
+   },
+   {
+    "uid": "028_en_how_does_a_computer_work",
+    "group": "en",
+    "expected": "How does a computer work?",
+    "hyp": "How does a computer work?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.737695
+   },
+   {
+    "uid": "029_en_why_is_the_sky_blue",
+    "group": "en",
+    "expected": "Why is the sky blue?",
+    "hyp": "ומה זה איזו שקי בלו?",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "he",
+    "p": 0.526325
+   },
+   {
+    "uid": "030_en_let_s_go_back_to_the_previous_topic",
+    "group": "en",
+    "expected": "Let's go back to the previous topic.",
+    "hyp": "Let's go back to the previous topic.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.859501
+   },
+   {
+    "uid": "031_short_tak",
+    "group": "short",
+    "expected": "Tak.",
+    "hyp": "Talk.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": 0.563494
+   },
+   {
+    "uid": "032_short_nie",
+    "group": "short",
+    "expected": "Nie.",
+    "hyp": "Не.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "ru",
+    "p": 0.421901
+   },
+   {
+    "uid": "033_short_dobra",
+    "group": "short",
+    "expected": "Dobra.",
+    "hyp": "Доброе утро!",
+    "wer": 2.0,
+    "sclass_auto": "S3?",
+    "detected": "ru",
+    "p": 0.243677
+   },
+   {
+    "uid": "034_short_okej",
+    "group": "short",
+    "expected": "Okej.",
+    "hyp": "Okay.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": 0.584004
+   },
+   {
+    "uid": "035_short_super",
+    "group": "short",
+    "expected": "Super.",
+    "hyp": "Super!",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.367317
+   },
+   {
+    "uid": "036_short_yeah",
+    "group": "short",
+    "expected": "Yeah.",
+    "hyp": "Yeah.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.913734
+   },
+   {
+    "uid": "037_short_no",
+    "group": "short",
+    "expected": "No.",
+    "hyp": "No.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.894393
+   },
+   {
+    "uid": "038_short_right",
+    "group": "short",
+    "expected": "Right.",
+    "hyp": "Right.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.828704
+   },
+   {
+    "uid": "039_short_okay",
+    "group": "short",
+    "expected": "Okay.",
+    "hyp": "Okay.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.863433
+   },
+   {
+    "uid": "040_short_sure",
+    "group": "short",
+    "expected": "Sure.",
+    "hyp": "Sure.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.679784
+   },
+   {
+    "uid": "041_mixed_dobra_tell_me_more",
+    "group": "mixed",
+    "expected": "Dobra, tell me more.",
+    "hyp": "Dobra, tell me more!",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "it",
+    "p": 0.317946
+   },
+   {
+    "uid": "042_mixed_okay_wrocmy_do_polskiego",
+    "group": "mixed",
+    "expected": "Okay, wróćmy do polskiego.",
+    "hyp": "Ok, wróćmy do pluskiego.",
+    "wer": 0.5,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": 0.917478
+   },
+   {
+    "uid": "043_mixed_powiedz_mi_what_a_black_hole_is",
+    "group": "mixed",
+    "expected": "Powiedz mi what a black hole is.",
+    "hyp": "Hope it's me. What a black hole is.",
+    "wer": 0.429,
+    "sclass_auto": "S2?",
+    "detected": "en",
+    "p": 0.755378
+   },
+   {
+    "uid": "044_mixed_can_you_wyjasnic_to_prosciej",
+    "group": "mixed",
+    "expected": "Can you wyjaśnić to prościej?",
+    "hyp": "Keniu wyjaśnić to prostiej.",
+    "wer": 0.6,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": 0.840555
+   },
+   {
+    "uid": "045_mixed_no_dobra_let_s_continue",
+    "group": "mixed",
+    "expected": "No dobra, let's continue.",
+    "hyp": "No dobra, let's continue.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.389216
+   },
+   {
+    "uid": "046_mixed_tell_me_wiecej_o_gwiazdach",
+    "group": "mixed",
+    "expected": "Tell me więcej o gwiazdach.",
+    "hyp": "Tell me więcej o gwiazdach.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.188795
+   },
+   {
+    "uid": "047_mixed_okay_ale_dlaczego",
+    "group": "mixed",
+    "expected": "Okay, ale dlaczego?",
+    "hyp": "Ok, ale dlaczego?",
+    "wer": 0.333,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": 0.851349
+   },
+   {
+    "uid": "048_mixed_let_s_wrocic_do_tego",
+    "group": "mixed",
+    "expected": "Let's wrócić do tego.",
+    "hyp": "Let's wrócić do tego.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.981571
+   },
+   {
+    "uid": "049_mixed_explain_mi_to_jeszcze_raz",
+    "group": "mixed",
+    "expected": "Explain mi to jeszcze raz.",
+    "hyp": "Explenuj mi to jeszcze raz.",
+    "wer": 0.2,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": 0.88316
+   },
+   {
+    "uid": "050_mixed_super_now_powiedz_to_po_polsku",
+    "group": "mixed",
+    "expected": "Super, now powiedz to po polsku.",
+    "hyp": "Super! Now Powiedz to po Polsku!",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.659144
+   }
+  ],
+  "b0_en": [
+   {
+    "uid": "001_pl_co_to_jest_czarna_dziura",
+    "group": "pl",
+    "expected": "Co to jest czarna dziura?",
+    "hyp": "Soto is Charna Jura.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "002_pl_jak_ona_powstaje",
+    "group": "pl",
+    "expected": "Jak ona powstaje?",
+    "hyp": "How to install it?",
+    "wer": 1.333,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "003_pl_z_czego_sklada_sie_gwiazda",
+    "group": "pl",
+    "expected": "Z czego składa się gwiazda?",
+    "hyp": "(speaking in foreign language)",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "004_pl_po_co_czlowiekowi_sen",
+    "group": "pl",
+    "expected": "Po co człowiekowi sen?",
+    "hyp": "Poza, Czubikowi, Sen",
+    "wer": 0.75,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "005_pl_jaki_jest_rzeczywisty_kolor_slonca",
+    "group": "pl",
+    "expected": "Jaki jest rzeczywisty kolor Słońca?",
+    "hyp": "Jakie is Życzywisty kolor słońca.",
+    "wer": 0.6,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "006_pl_co_jest_ciezsze_kilogram_zelaza_czy_kilo",
+    "group": "pl",
+    "expected": "Co jest cięższe, kilogram żelaza czy kilogram piór?",
+    "hyp": "What is heavier? Kilogram Relaza or Kilogram Pior?",
+    "wer": 0.75,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "007_pl_powiedz_mi_to_troche_prosciej",
+    "group": "pl",
+    "expected": "Powiedz mi to trochę prościej.",
+    "hyp": "So, I'm a little bit more careful.",
+    "wer": 1.4,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "008_pl_nie_rozumiem_wyjasnij_jeszcze_raz",
+    "group": "pl",
+    "expected": "Nie rozumiem, wyjaśnij jeszcze raz.",
+    "hyp": "I don't understand. I'll explain it once more.",
+    "wer": 1.6,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "009_pl_zapamietaj_ze_kupilem_make_pszenna_i_zyt",
+    "group": "pl",
+    "expected": "Zapamiętaj, że kupiłem mąkę pszenną i żytnią.",
+    "hyp": "I remember that I bought a small spring and a spring.",
+    "wer": 1.571,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "010_pl_ktora_bedzie_godzina_za_dziewiecdziesiat",
+    "group": "pl",
+    "expected": "Która będzie godzina za dziewięćdziesiąt pięć minut?",
+    "hyp": "which will take about 90-95 minutes.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "011_pl_co_dzisiaj_mozemy_zrobic",
+    "group": "pl",
+    "expected": "Co dzisiaj możemy zrobić?",
+    "hyp": "What can we do today?",
+    "wer": 1.25,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "012_pl_powiedz_mi_cos_ciekawego",
+    "group": "pl",
+    "expected": "Powiedz mi coś ciekawego.",
+    "hyp": "So, I'm going to tell you something interesting.",
+    "wer": 2.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "013_pl_jak_dziala_komputer",
+    "group": "pl",
+    "expected": "Jak działa komputer?",
+    "hyp": "YAK JAWAKOMPUTER",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "014_pl_dlaczego_niebo_jest_niebieskie",
+    "group": "pl",
+    "expected": "Dlaczego niebo jest niebieskie?",
+    "hyp": "Why not? Because there is no song.",
+    "wer": 1.75,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "015_pl_wrocmy_do_poprzedniego_tematu",
+    "group": "pl",
+    "expected": "Wróćmy do poprzedniego tematu.",
+    "hyp": "We return to the previous topic.",
+    "wer": 1.5,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "016_en_what_is_a_black_hole",
+    "group": "en",
+    "expected": "What is a black hole?",
+    "hyp": "What is a black hole?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "017_en_how_does_it_form",
+    "group": "en",
+    "expected": "How does it form?",
+    "hyp": "How does it form?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "018_en_what_is_a_star_made_of",
+    "group": "en",
+    "expected": "What is a star made of?",
+    "hyp": "What is a star made of?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "019_en_why_do_humans_need_sleep",
+    "group": "en",
+    "expected": "Why do humans need sleep?",
+    "hyp": "Why do humans need sleep?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "020_en_what_is_the_actual_colour_of_the_sun",
+    "group": "en",
+    "expected": "What is the actual colour of the Sun?",
+    "hyp": "What is the actual color of the sun?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "021_en_what_is_heavier_one_kilogram_of_iron_or_",
+    "group": "en",
+    "expected": "What is heavier, one kilogram of iron or one kilogram of feathers?",
+    "hyp": "What is heavier, 1 kilogram of iron or kilogram of features?",
+    "wer": 0.25,
+    "sclass_auto": "S2?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "022_en_explain_it_more_simply",
+    "group": "en",
+    "expected": "Explain it more simply.",
+    "hyp": "Explain it more simply.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "023_en_i_still_don_t_understand_explain_it_agai",
+    "group": "en",
+    "expected": "I still don't understand, explain it again.",
+    "hyp": "I still don't understand. Explain it better.",
+    "wer": 0.143,
+    "sclass_auto": "S1",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "024_en_remember_that_i_bought_bread_flour_and_r",
+    "group": "en",
+    "expected": "Remember that I bought bread flour and rye flour.",
+    "hyp": "Remember that I bought bread, flour and rye flour.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "025_en_what_time_will_it_be_in_ninety_five_minu",
+    "group": "en",
+    "expected": "What time will it be in ninety-five minutes?",
+    "hyp": "What time will it be in 95 minutes?",
+    "wer": 0.222,
+    "sclass_auto": "S2?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "026_en_what_can_we_do_today",
+    "group": "en",
+    "expected": "What can we do today?",
+    "hyp": "What can we do today?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "027_en_tell_me_something_interesting",
+    "group": "en",
+    "expected": "Tell me something interesting.",
+    "hyp": "Tell me something interesting.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "028_en_how_does_a_computer_work",
+    "group": "en",
+    "expected": "How does a computer work?",
+    "hyp": "How does a computer work?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "029_en_why_is_the_sky_blue",
+    "group": "en",
+    "expected": "Why is the sky blue?",
+    "hyp": "Why is the sky blue?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "030_en_let_s_go_back_to_the_previous_topic",
+    "group": "en",
+    "expected": "Let's go back to the previous topic.",
+    "hyp": "Let's go back to the previous topic.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "031_short_tak",
+    "group": "short",
+    "expected": "Tak.",
+    "hyp": "Talk.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "032_short_nie",
+    "group": "short",
+    "expected": "Nie.",
+    "hyp": "Yeah.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "033_short_dobra",
+    "group": "short",
+    "expected": "Dobra.",
+    "hyp": "Good.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "034_short_okej",
+    "group": "short",
+    "expected": "Okej.",
+    "hyp": "Okay.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "035_short_super",
+    "group": "short",
+    "expected": "Super.",
+    "hyp": "Super!",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "036_short_yeah",
+    "group": "short",
+    "expected": "Yeah.",
+    "hyp": "Yeah.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "037_short_no",
+    "group": "short",
+    "expected": "No.",
+    "hyp": "No.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "038_short_right",
+    "group": "short",
+    "expected": "Right.",
+    "hyp": "Right.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "039_short_okay",
+    "group": "short",
+    "expected": "Okay.",
+    "hyp": "Okay.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "040_short_sure",
+    "group": "short",
+    "expected": "Sure.",
+    "hyp": "Sure.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "041_mixed_dobra_tell_me_more",
+    "group": "mixed",
+    "expected": "Dobra, tell me more.",
+    "hyp": "Good, tell me more.",
+    "wer": 0.25,
+    "sclass_auto": "S2?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "042_mixed_okay_wrocmy_do_polskiego",
+    "group": "mixed",
+    "expected": "Okay, wróćmy do polskiego.",
+    "hyp": "Okay, let's go back to the other side.",
+    "wer": 1.75,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "043_mixed_powiedz_mi_what_a_black_hole_is",
+    "group": "mixed",
+    "expected": "Powiedz mi what a black hole is.",
+    "hyp": "Hope it's me. What a black hole is.",
+    "wer": 0.429,
+    "sclass_auto": "S2?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "044_mixed_can_you_wyjasnic_to_prosciej",
+    "group": "mixed",
+    "expected": "Can you wyjaśnić to prościej?",
+    "hyp": "Can you explain it to me?",
+    "wer": 0.6,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "045_mixed_no_dobra_let_s_continue",
+    "group": "mixed",
+    "expected": "No dobra, let's continue.",
+    "hyp": "No, ok, let's continue.",
+    "wer": 0.25,
+    "sclass_auto": "S2?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "046_mixed_tell_me_wiecej_o_gwiazdach",
+    "group": "mixed",
+    "expected": "Tell me więcej o gwiazdach.",
+    "hyp": "Tell me, \"viencej o gwiazdach\".",
+    "wer": 0.2,
+    "sclass_auto": "S1",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "047_mixed_okay_ale_dlaczego",
+    "group": "mixed",
+    "expected": "Okay, ale dlaczego?",
+    "hyp": "Okay, I'll let you go.",
+    "wer": 1.333,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "048_mixed_let_s_wrocic_do_tego",
+    "group": "mixed",
+    "expected": "Let's wrócić do tego.",
+    "hyp": "Let's go back to this.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "049_mixed_explain_mi_to_jeszcze_raz",
+    "group": "mixed",
+    "expected": "Explain mi to jeszcze raz.",
+    "hyp": "Explain it to you again.",
+    "wer": 0.6,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": null
+   },
+   {
+    "uid": "050_mixed_super_now_powiedz_to_po_polsku",
+    "group": "mixed",
+    "expected": "Super, now powiedz to po polsku.",
+    "hyp": "Super! Now, Powiedz to popolsku!",
+    "wer": 0.333,
+    "sclass_auto": "S2?",
+    "detected": "en",
+    "p": null
+   }
+  ],
+  "b0_pl": [
+   {
+    "uid": "001_pl_co_to_jest_czarna_dziura",
+    "group": "pl",
+    "expected": "Co to jest czarna dziura?",
+    "hyp": "Co to jest, czarna dziura.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "002_pl_jak_ona_powstaje",
+    "group": "pl",
+    "expected": "Jak ona powstaje?",
+    "hyp": "Jak ona powstaje.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "003_pl_z_czego_sklada_sie_gwiazda",
+    "group": "pl",
+    "expected": "Z czego składa się gwiazda?",
+    "hyp": "Z czego składa się gwiazda?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "004_pl_po_co_czlowiekowi_sen",
+    "group": "pl",
+    "expected": "Po co człowiekowi sen?",
+    "hyp": "Po co? Człowiekowi sam.",
+    "wer": 0.25,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "005_pl_jaki_jest_rzeczywisty_kolor_slonca",
+    "group": "pl",
+    "expected": "Jaki jest rzeczywisty kolor Słońca?",
+    "hyp": "Jakie jest rzeczywisty kolor słońca?",
+    "wer": 0.2,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "006_pl_co_jest_ciezsze_kilogram_zelaza_czy_kilo",
+    "group": "pl",
+    "expected": "Co jest cięższe, kilogram żelaza czy kilogram piór?",
+    "hyp": "Co jest cięższe kilogram żelaza czy kilogram piór?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "007_pl_powiedz_mi_to_troche_prosciej",
+    "group": "pl",
+    "expected": "Powiedz mi to trochę prościej.",
+    "hyp": "Powiedz mi to trochę prościej.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "008_pl_nie_rozumiem_wyjasnij_jeszcze_raz",
+    "group": "pl",
+    "expected": "Nie rozumiem, wyjaśnij jeszcze raz.",
+    "hyp": "Nie rozumiem. Wyjaśni jeszcze raz.",
+    "wer": 0.2,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "009_pl_zapamietaj_ze_kupilem_make_pszenna_i_zyt",
+    "group": "pl",
+    "expected": "Zapamiętaj, że kupiłem mąkę pszenną i żytnią.",
+    "hyp": "Zapamiętaj, że kupiłem mąkę pszenną i rzytnią.",
+    "wer": 0.143,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "010_pl_ktora_bedzie_godzina_za_dziewiecdziesiat",
+    "group": "pl",
+    "expected": "Która będzie godzina za dziewięćdziesiąt pięć minut?",
+    "hyp": "która będzie godzina za 95 minut.",
+    "wer": 0.286,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "011_pl_co_dzisiaj_mozemy_zrobic",
+    "group": "pl",
+    "expected": "Co dzisiaj możemy zrobić?",
+    "hyp": "Co dzisiaj możemy zrobić.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "012_pl_powiedz_mi_cos_ciekawego",
+    "group": "pl",
+    "expected": "Powiedz mi coś ciekawego.",
+    "hyp": "Powiedz mi coś ciekawego.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "013_pl_jak_dziala_komputer",
+    "group": "pl",
+    "expected": "Jak działa komputer?",
+    "hyp": "Jak działa komputer.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "014_pl_dlaczego_niebo_jest_niebieskie",
+    "group": "pl",
+    "expected": "Dlaczego niebo jest niebieskie?",
+    "hyp": "Dlaczego nie bo jest nie pieskie?",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "015_pl_wrocmy_do_poprzedniego_tematu",
+    "group": "pl",
+    "expected": "Wróćmy do poprzedniego tematu.",
+    "hyp": "Wróćmy do poprzedniego tematu.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "016_en_what_is_a_black_hole",
+    "group": "en",
+    "expected": "What is a black hole?",
+    "hyp": "Co jest blakol?",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "017_en_how_does_it_form",
+    "group": "en",
+    "expected": "How does it form?",
+    "hyp": "Jak to się formuje?",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "018_en_what_is_a_star_made_of",
+    "group": "en",
+    "expected": "What is a star made of?",
+    "hyp": "Co jest stary?",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "019_en_why_do_humans_need_sleep",
+    "group": "en",
+    "expected": "Why do humans need sleep?",
+    "hyp": "Czemu ty znam?",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "020_en_what_is_the_actual_colour_of_the_sun",
+    "group": "en",
+    "expected": "What is the actual colour of the Sun?",
+    "hyp": "Co to jest, że jest to kolor dla nas?",
+    "wer": 1.125,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "021_en_what_is_heavier_one_kilogram_of_iron_or_",
+    "group": "en",
+    "expected": "What is heavier, one kilogram of iron or one kilogram of feathers?",
+    "hyp": "Co jest wiewiela? 1 kg z ironów i 1 kg z filtrosów.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "022_en_explain_it_more_simply",
+    "group": "en",
+    "expected": "Explain it more simply.",
+    "hyp": "Wspólnie to bardziej.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "023_en_i_still_don_t_understand_explain_it_agai",
+    "group": "en",
+    "expected": "I still don't understand, explain it again.",
+    "hyp": "Ale nie jestem w tym momencie. Wspanaj się, że to najlepsze.",
+    "wer": 1.571,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "024_en_remember_that_i_bought_bread_flour_and_r",
+    "group": "en",
+    "expected": "Remember that I bought bread flour and rye flour.",
+    "hyp": "Mam nadzieję, że to zbawię się z blaszczą i zbawię się zbawię.",
+    "wer": 1.333,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "025_en_what_time_will_it_be_in_ninety_five_minu",
+    "group": "en",
+    "expected": "What time will it be in ninety-five minutes?",
+    "hyp": "Co time will it be in 95 minutes?",
+    "wer": 0.333,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "026_en_what_can_we_do_today",
+    "group": "en",
+    "expected": "What can we do today?",
+    "hyp": "co możemy zrobić dzisiaj?",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "027_en_tell_me_something_interesting",
+    "group": "en",
+    "expected": "Tell me something interesting.",
+    "hyp": "Zobaczmy coś, co jest wiesz.",
+    "wer": 1.25,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "028_en_how_does_a_computer_work",
+    "group": "en",
+    "expected": "How does a computer work?",
+    "hyp": "Jak to się podoba?",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "029_en_why_is_the_sky_blue",
+    "group": "en",
+    "expected": "Why is the sky blue?",
+    "hyp": "Czemu jest skaj blu?",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "030_en_let_s_go_back_to_the_previous_topic",
+    "group": "en",
+    "expected": "Let's go back to the previous topic.",
+    "hyp": "Zabijam na to, że to jest pierwszy stopik.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "031_short_tak",
+    "group": "short",
+    "expected": "Tak.",
+    "hyp": "Tak.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "032_short_nie",
+    "group": "short",
+    "expected": "Nie.",
+    "hyp": "Nie.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "033_short_dobra",
+    "group": "short",
+    "expected": "Dobra.",
+    "hyp": "Dobra.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "034_short_okej",
+    "group": "short",
+    "expected": "Okej.",
+    "hyp": "Ok.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "035_short_super",
+    "group": "short",
+    "expected": "Super.",
+    "hyp": "Super.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "036_short_yeah",
+    "group": "short",
+    "expected": "Yeah.",
+    "hyp": "Ja.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "037_short_no",
+    "group": "short",
+    "expected": "No.",
+    "hyp": "No.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "038_short_right",
+    "group": "short",
+    "expected": "Right.",
+    "hyp": "Właśnie.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "039_short_okay",
+    "group": "short",
+    "expected": "Okay.",
+    "hyp": "Ok.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "040_short_sure",
+    "group": "short",
+    "expected": "Sure.",
+    "hyp": "Szó!",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "041_mixed_dobra_tell_me_more",
+    "group": "mixed",
+    "expected": "Dobra, tell me more.",
+    "hyp": "Dobra. Tell me more.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "042_mixed_okay_wrocmy_do_polskiego",
+    "group": "mixed",
+    "expected": "Okay, wróćmy do polskiego.",
+    "hyp": "Ok, wróćmy do pluskiego.",
+    "wer": 0.5,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "043_mixed_powiedz_mi_what_a_black_hole_is",
+    "group": "mixed",
+    "expected": "Powiedz mi what a black hole is.",
+    "hyp": "Poprzez mnie, co blakuje to.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "044_mixed_can_you_wyjasnic_to_prosciej",
+    "group": "mixed",
+    "expected": "Can you wyjaśnić to prościej?",
+    "hyp": "Keniu wyjaśnić to prostiej.",
+    "wer": 0.6,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "045_mixed_no_dobra_let_s_continue",
+    "group": "mixed",
+    "expected": "No dobra, let's continue.",
+    "hyp": "No dobra, let's continue.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "046_mixed_tell_me_wiecej_o_gwiazdach",
+    "group": "mixed",
+    "expected": "Tell me więcej o gwiazdach.",
+    "hyp": "Tell me więcej o gwiazdach.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "047_mixed_okay_ale_dlaczego",
+    "group": "mixed",
+    "expected": "Okay, ale dlaczego?",
+    "hyp": "Ok, ale dlaczego?",
+    "wer": 0.333,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "048_mixed_let_s_wrocic_do_tego",
+    "group": "mixed",
+    "expected": "Let's wrócić do tego.",
+    "hyp": "Let's wrócić do tego.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "049_mixed_explain_mi_to_jeszcze_raz",
+    "group": "mixed",
+    "expected": "Explain mi to jeszcze raz.",
+    "hyp": "Explenuj mi to jeszcze raz.",
+    "wer": 0.2,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": null
+   },
+   {
+    "uid": "050_mixed_super_now_powiedz_to_po_polsku",
+    "group": "mixed",
+    "expected": "Super, now powiedz to po polsku.",
+    "hyp": "Super! Now Powiedz to po Polsku!",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": null
+   }
+  ],
+  "dl_then_explicit": [
+   {
+    "uid": "001_pl_co_to_jest_czarna_dziura",
+    "group": "pl",
+    "expected": "Co to jest czarna dziura?",
+    "hyp": "Co to jest, czarna dziura.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.313134
+   },
+   {
+    "uid": "002_pl_jak_ona_powstaje",
+    "group": "pl",
+    "expected": "Jak ona powstaje?",
+    "hyp": "How to install it?",
+    "wer": 1.333,
+    "sclass_auto": "S3?",
+    "detected": "ru",
+    "p": 0.345343
+   },
+   {
+    "uid": "003_pl_z_czego_sklada_sie_gwiazda",
+    "group": "pl",
+    "expected": "Z czego składa się gwiazda?",
+    "hyp": "Z czego składa się gwiazda?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.980366
+   },
+   {
+    "uid": "004_pl_po_co_czlowiekowi_sen",
+    "group": "pl",
+    "expected": "Po co człowiekowi sen?",
+    "hyp": "Po co? Człowiekowi sam.",
+    "wer": 0.25,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": 0.265025
+   },
+   {
+    "uid": "005_pl_jaki_jest_rzeczywisty_kolor_slonca",
+    "group": "pl",
+    "expected": "Jaki jest rzeczywisty kolor Słońca?",
+    "hyp": "Jakie jest rzeczywisty kolor słońca?",
+    "wer": 0.2,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": 0.967755
+   },
+   {
+    "uid": "006_pl_co_jest_ciezsze_kilogram_zelaza_czy_kilo",
+    "group": "pl",
+    "expected": "Co jest cięższe, kilogram żelaza czy kilogram piór?",
+    "hyp": "Co jest cięższe kilogram żelaza czy kilogram piór?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.987746
+   },
+   {
+    "uid": "007_pl_powiedz_mi_to_troche_prosciej",
+    "group": "pl",
+    "expected": "Powiedz mi to trochę prościej.",
+    "hyp": "Powiedz mi to trochę prościej.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.78471
+   },
+   {
+    "uid": "008_pl_nie_rozumiem_wyjasnij_jeszcze_raz",
+    "group": "pl",
+    "expected": "Nie rozumiem, wyjaśnij jeszcze raz.",
+    "hyp": "Nie rozumiem. Wyjaśni jeszcze raz.",
+    "wer": 0.2,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": 0.997955
+   },
+   {
+    "uid": "009_pl_zapamietaj_ze_kupilem_make_pszenna_i_zyt",
+    "group": "pl",
+    "expected": "Zapamiętaj, że kupiłem mąkę pszenną i żytnią.",
+    "hyp": "Zapamiętaj, że kupiłem mąkę pszenną i rzytnią.",
+    "wer": 0.143,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": 0.995203
+   },
+   {
+    "uid": "010_pl_ktora_bedzie_godzina_za_dziewiecdziesiat",
+    "group": "pl",
+    "expected": "Która będzie godzina za dziewięćdziesiąt pięć minut?",
+    "hyp": "która będzie godzina za 95 minut.",
+    "wer": 0.286,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": 0.971487
+   },
+   {
+    "uid": "011_pl_co_dzisiaj_mozemy_zrobic",
+    "group": "pl",
+    "expected": "Co dzisiaj możemy zrobić?",
+    "hyp": "Co dzisiaj możemy zrobić.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.976687
+   },
+   {
+    "uid": "012_pl_powiedz_mi_cos_ciekawego",
+    "group": "pl",
+    "expected": "Powiedz mi coś ciekawego.",
+    "hyp": "Powiedz mi coś ciekawego.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.983294
+   },
+   {
+    "uid": "013_pl_jak_dziala_komputer",
+    "group": "pl",
+    "expected": "Jak działa komputer?",
+    "hyp": "Jak działa komputer.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.441373
+   },
+   {
+    "uid": "014_pl_dlaczego_niebo_jest_niebieskie",
+    "group": "pl",
+    "expected": "Dlaczego niebo jest niebieskie?",
+    "hyp": "Dlaczego nie bo jest nie pieskie?",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": 0.984683
+   },
+   {
+    "uid": "015_pl_wrocmy_do_poprzedniego_tematu",
+    "group": "pl",
+    "expected": "Wróćmy do poprzedniego tematu.",
+    "hyp": "Wróćmy do poprzedniego tematu.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.996722
+   },
+   {
+    "uid": "016_en_what_is_a_black_hole",
+    "group": "en",
+    "expected": "What is a black hole?",
+    "hyp": "What is a black hole?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.854754
+   },
+   {
+    "uid": "017_en_how_does_it_form",
+    "group": "en",
+    "expected": "How does it form?",
+    "hyp": "How does it form?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.861207
+   },
+   {
+    "uid": "018_en_what_is_a_star_made_of",
+    "group": "en",
+    "expected": "What is a star made of?",
+    "hyp": "What is a star made of?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.335202
+   },
+   {
+    "uid": "019_en_why_do_humans_need_sleep",
+    "group": "en",
+    "expected": "Why do humans need sleep?",
+    "hyp": "Why do humans need sleep?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.281085
+   },
+   {
+    "uid": "020_en_what_is_the_actual_colour_of_the_sun",
+    "group": "en",
+    "expected": "What is the actual colour of the Sun?",
+    "hyp": "What is the actual color of the sun?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.72514
+   },
+   {
+    "uid": "021_en_what_is_heavier_one_kilogram_of_iron_or_",
+    "group": "en",
+    "expected": "What is heavier, one kilogram of iron or one kilogram of feathers?",
+    "hyp": "What is heavier, 1 kilogram of iron or kilogram of features?",
+    "wer": 0.25,
+    "sclass_auto": "S2?",
+    "detected": "ko",
+    "p": 0.465718
+   },
+   {
+    "uid": "022_en_explain_it_more_simply",
+    "group": "en",
+    "expected": "Explain it more simply.",
+    "hyp": "Explain it more simply.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.703338
+   },
+   {
+    "uid": "023_en_i_still_don_t_understand_explain_it_agai",
+    "group": "en",
+    "expected": "I still don't understand, explain it again.",
+    "hyp": "I still don't understand. Explain it better.",
+    "wer": 0.143,
+    "sclass_auto": "S1",
+    "detected": "en",
+    "p": 0.446075
+   },
+   {
+    "uid": "024_en_remember_that_i_bought_bread_flour_and_r",
+    "group": "en",
+    "expected": "Remember that I bought bread flour and rye flour.",
+    "hyp": "Remember that I bought bread, flour and rye flour.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.644737
+   },
+   {
+    "uid": "025_en_what_time_will_it_be_in_ninety_five_minu",
+    "group": "en",
+    "expected": "What time will it be in ninety-five minutes?",
+    "hyp": "What time will it be in 95 minutes?",
+    "wer": 0.222,
+    "sclass_auto": "S2?",
+    "detected": "en",
+    "p": 0.337614
+   },
+   {
+    "uid": "026_en_what_can_we_do_today",
+    "group": "en",
+    "expected": "What can we do today?",
+    "hyp": "What can we do today?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.589466
+   },
+   {
+    "uid": "027_en_tell_me_something_interesting",
+    "group": "en",
+    "expected": "Tell me something interesting.",
+    "hyp": "Tell me something interesting.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.720284
+   },
+   {
+    "uid": "028_en_how_does_a_computer_work",
+    "group": "en",
+    "expected": "How does a computer work?",
+    "hyp": "How does a computer work?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.737695
+   },
+   {
+    "uid": "029_en_why_is_the_sky_blue",
+    "group": "en",
+    "expected": "Why is the sky blue?",
+    "hyp": "Why is the sky blue?",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "he",
+    "p": 0.526325
+   },
+   {
+    "uid": "030_en_let_s_go_back_to_the_previous_topic",
+    "group": "en",
+    "expected": "Let's go back to the previous topic.",
+    "hyp": "Let's go back to the previous topic.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.859501
+   },
+   {
+    "uid": "031_short_tak",
+    "group": "short",
+    "expected": "Tak.",
+    "hyp": "Talk.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": 0.563494
+   },
+   {
+    "uid": "032_short_nie",
+    "group": "short",
+    "expected": "Nie.",
+    "hyp": "Yeah.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "ru",
+    "p": 0.421901
+   },
+   {
+    "uid": "033_short_dobra",
+    "group": "short",
+    "expected": "Dobra.",
+    "hyp": "Good.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "ru",
+    "p": 0.243677
+   },
+   {
+    "uid": "034_short_okej",
+    "group": "short",
+    "expected": "Okej.",
+    "hyp": "Okay.",
+    "wer": 1.0,
+    "sclass_auto": "S3?",
+    "detected": "en",
+    "p": 0.584004
+   },
+   {
+    "uid": "035_short_super",
+    "group": "short",
+    "expected": "Super.",
+    "hyp": "Super!",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.367317
+   },
+   {
+    "uid": "036_short_yeah",
+    "group": "short",
+    "expected": "Yeah.",
+    "hyp": "Yeah.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.913734
+   },
+   {
+    "uid": "037_short_no",
+    "group": "short",
+    "expected": "No.",
+    "hyp": "No.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.894393
+   },
+   {
+    "uid": "038_short_right",
+    "group": "short",
+    "expected": "Right.",
+    "hyp": "Right.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.828704
+   },
+   {
+    "uid": "039_short_okay",
+    "group": "short",
+    "expected": "Okay.",
+    "hyp": "Okay.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.863433
+   },
+   {
+    "uid": "040_short_sure",
+    "group": "short",
+    "expected": "Sure.",
+    "hyp": "Sure.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "en",
+    "p": 0.679784
+   },
+   {
+    "uid": "041_mixed_dobra_tell_me_more",
+    "group": "mixed",
+    "expected": "Dobra, tell me more.",
+    "hyp": "Good, tell me more.",
+    "wer": 0.25,
+    "sclass_auto": "S2?",
+    "detected": "it",
+    "p": 0.317946
+   },
+   {
+    "uid": "042_mixed_okay_wrocmy_do_polskiego",
+    "group": "mixed",
+    "expected": "Okay, wróćmy do polskiego.",
+    "hyp": "Ok, wróćmy do pluskiego.",
+    "wer": 0.5,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": 0.917478
+   },
+   {
+    "uid": "043_mixed_powiedz_mi_what_a_black_hole_is",
+    "group": "mixed",
+    "expected": "Powiedz mi what a black hole is.",
+    "hyp": "Hope it's me. What a black hole is.",
+    "wer": 0.429,
+    "sclass_auto": "S2?",
+    "detected": "en",
+    "p": 0.755378
+   },
+   {
+    "uid": "044_mixed_can_you_wyjasnic_to_prosciej",
+    "group": "mixed",
+    "expected": "Can you wyjaśnić to prościej?",
+    "hyp": "Keniu wyjaśnić to prostiej.",
+    "wer": 0.6,
+    "sclass_auto": "S3?",
+    "detected": "pl",
+    "p": 0.840555
+   },
+   {
+    "uid": "045_mixed_no_dobra_let_s_continue",
+    "group": "mixed",
+    "expected": "No dobra, let's continue.",
+    "hyp": "No dobra, let's continue.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.389216
+   },
+   {
+    "uid": "046_mixed_tell_me_wiecej_o_gwiazdach",
+    "group": "mixed",
+    "expected": "Tell me więcej o gwiazdach.",
+    "hyp": "Tell me więcej o gwiazdach.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.188795
+   },
+   {
+    "uid": "047_mixed_okay_ale_dlaczego",
+    "group": "mixed",
+    "expected": "Okay, ale dlaczego?",
+    "hyp": "Ok, ale dlaczego?",
+    "wer": 0.333,
+    "sclass_auto": "S2?",
+    "detected": "pl",
+    "p": 0.851349
+   },
+   {
+    "uid": "048_mixed_let_s_wrocic_do_tego",
+    "group": "mixed",
+    "expected": "Let's wrócić do tego.",
+    "hyp": "Let's wrócić do tego.",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.981571
+   },
+   {
+    "uid": "049_mixed_explain_mi_to_jeszcze_raz",
+    "group": "mixed",
+    "expected": "Explain mi to jeszcze raz.",
+    "hyp": "Explenuj mi to jeszcze raz.",
+    "wer": 0.2,
+    "sclass_auto": "S1",
+    "detected": "pl",
+    "p": 0.88316
+   },
+   {
+    "uid": "050_mixed_super_now_powiedz_to_po_polsku",
+    "group": "mixed",
+    "expected": "Super, now powiedz to po polsku.",
+    "hyp": "Super! Now Powiedz to po Polsku!",
+    "wer": 0.0,
+    "sclass_auto": "S0",
+    "detected": "pl",
+    "p": 0.659144
+   }
+  ]
+ },
+ "short": [
+  {
+   "uid": "031_short_tak",
+   "text": "Tak.",
+   "leans": "pl",
+   "b0_pl": {
+    "t": "Tak.",
+    "det": "pl",
+    "p": null
+   },
+   "b0_en": {
+    "t": "Talk.",
+    "det": "en",
+    "p": null
+   },
+   "auto": {
+    "t": "Talk.",
+    "det": "en",
+    "p": 0.563494
+   },
+   "dl_then_explicit": {
+    "t": "Talk.",
+    "det": "en",
+    "p": 0.563494
+   }
+  },
+  {
+   "uid": "032_short_nie",
+   "text": "Nie.",
+   "leans": "pl",
+   "b0_pl": {
+    "t": "Nie.",
+    "det": "pl",
+    "p": null
+   },
+   "b0_en": {
+    "t": "Yeah.",
+    "det": "en",
+    "p": null
+   },
+   "auto": {
+    "t": "Не.",
+    "det": "ru",
+    "p": 0.421901
+   },
+   "dl_then_explicit": {
+    "t": "Yeah.",
+    "det": "ru",
+    "p": 0.421901
+   }
+  },
+  {
+   "uid": "033_short_dobra",
+   "text": "Dobra.",
+   "leans": "pl",
+   "b0_pl": {
+    "t": "Dobra.",
+    "det": "pl",
+    "p": null
+   },
+   "b0_en": {
+    "t": "Good.",
+    "det": "en",
+    "p": null
+   },
+   "auto": {
+    "t": "Доброе утро!",
+    "det": "ru",
+    "p": 0.243677
+   },
+   "dl_then_explicit": {
+    "t": "Good.",
+    "det": "ru",
+    "p": 0.243677
+   }
+  },
+  {
+   "uid": "034_short_okej",
+   "text": "Okej.",
+   "leans": "pl",
+   "b0_pl": {
+    "t": "Ok.",
+    "det": "pl",
+    "p": null
+   },
+   "b0_en": {
+    "t": "Okay.",
+    "det": "en",
+    "p": null
+   },
+   "auto": {
+    "t": "Okay.",
+    "det": "en",
+    "p": 0.584004
+   },
+   "dl_then_explicit": {
+    "t": "Okay.",
+    "det": "en",
+    "p": 0.584004
+   }
+  },
+  {
+   "uid": "035_short_super",
+   "text": "Super.",
+   "leans": "none",
+   "b0_pl": {
+    "t": "Super.",
+    "det": "pl",
+    "p": null
+   },
+   "b0_en": {
+    "t": "Super!",
+    "det": "en",
+    "p": null
+   },
+   "auto": {
+    "t": "Super!",
+    "det": "en",
+    "p": 0.367317
+   },
+   "dl_then_explicit": {
+    "t": "Super!",
+    "det": "en",
+    "p": 0.367317
+   }
+  },
+  {
+   "uid": "036_short_yeah",
+   "text": "Yeah.",
+   "leans": "en",
+   "b0_pl": {
+    "t": "Ja.",
+    "det": "pl",
+    "p": null
+   },
+   "b0_en": {
+    "t": "Yeah.",
+    "det": "en",
+    "p": null
+   },
+   "auto": {
+    "t": "Yeah.",
+    "det": "en",
+    "p": 0.913734
+   },
+   "dl_then_explicit": {
+    "t": "Yeah.",
+    "det": "en",
+    "p": 0.913734
+   }
+  },
+  {
+   "uid": "037_short_no",
+   "text": "No.",
+   "leans": "none",
+   "b0_pl": {
+    "t": "No.",
+    "det": "pl",
+    "p": null
+   },
+   "b0_en": {
+    "t": "No.",
+    "det": "en",
+    "p": null
+   },
+   "auto": {
+    "t": "No.",
+    "det": "en",
+    "p": 0.894393
+   },
+   "dl_then_explicit": {
+    "t": "No.",
+    "det": "en",
+    "p": 0.894393
+   }
+  },
+  {
+   "uid": "038_short_right",
+   "text": "Right.",
+   "leans": "en",
+   "b0_pl": {
+    "t": "Właśnie.",
+    "det": "pl",
+    "p": null
+   },
+   "b0_en": {
+    "t": "Right.",
+    "det": "en",
+    "p": null
+   },
+   "auto": {
+    "t": "Right.",
+    "det": "en",
+    "p": 0.828704
+   },
+   "dl_then_explicit": {
+    "t": "Right.",
+    "det": "en",
+    "p": 0.828704
+   }
+  },
+  {
+   "uid": "039_short_okay",
+   "text": "Okay.",
+   "leans": "none",
+   "b0_pl": {
+    "t": "Ok.",
+    "det": "pl",
+    "p": null
+   },
+   "b0_en": {
+    "t": "Okay.",
+    "det": "en",
+    "p": null
+   },
+   "auto": {
+    "t": "Okay.",
+    "det": "en",
+    "p": 0.863433
+   },
+   "dl_then_explicit": {
+    "t": "Okay.",
+    "det": "en",
+    "p": 0.863433
+   }
+  },
+  {
+   "uid": "040_short_sure",
+   "text": "Sure.",
+   "leans": "en",
+   "b0_pl": {
+    "t": "Szó!",
+    "det": "pl",
+    "p": null
+   },
+   "b0_en": {
+    "t": "Sure.",
+    "det": "en",
+    "p": null
+   },
+   "auto": {
+    "t": "Sure.",
+    "det": "en",
+    "p": 0.679784
+   },
+   "dl_then_explicit": {
+    "t": "Sure.",
+    "det": "en",
+    "p": 0.679784
+   }
+  }
+ ],
+ "mixed": [
+  {
+   "uid": "041_mixed_dobra_tell_me_more",
+   "text": "Dobra, tell me more.",
+   "primary": "pl",
+   "b0_pl": {
+    "t": "Dobra. Tell me more.",
+    "det": "pl",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "b0_en": {
+    "t": "Good, tell me more.",
+    "det": "en",
+    "class": "PARTIALLY_USABLE?",
+    "why": "EN only survived"
+   },
+   "auto": {
+    "t": "Dobra, tell me more!",
+    "det": "it",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "dl_then_explicit": {
+    "t": "Good, tell me more.",
+    "det": "it",
+    "class": "PARTIALLY_USABLE?",
+    "why": "EN only survived"
+   }
+  },
+  {
+   "uid": "042_mixed_okay_wrocmy_do_polskiego",
+   "text": "Okay, wróćmy do polskiego.",
+   "primary": "en",
+   "b0_pl": {
+    "t": "Ok, wróćmy do pluskiego.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "b0_en": {
+    "t": "Okay, let's go back to the other side.",
+    "det": "en",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "auto": {
+    "t": "Ok, wróćmy do pluskiego.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "dl_then_explicit": {
+    "t": "Ok, wróćmy do pluskiego.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   }
+  },
+  {
+   "uid": "043_mixed_powiedz_mi_what_a_black_hole_is",
+   "text": "Powiedz mi what a black hole is.",
+   "primary": "pl",
+   "b0_pl": {
+    "t": "Poprzez mnie, co blakuje to.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "b0_en": {
+    "t": "Hope it's me. What a black hole is.",
+    "det": "en",
+    "class": "PARTIALLY_USABLE?",
+    "why": "EN only survived"
+   },
+   "auto": {
+    "t": "Hope it's me. What a black hole is.",
+    "det": "en",
+    "class": "PARTIALLY_USABLE?",
+    "why": "EN only survived"
+   },
+   "dl_then_explicit": {
+    "t": "Hope it's me. What a black hole is.",
+    "det": "en",
+    "class": "PARTIALLY_USABLE?",
+    "why": "EN only survived"
+   }
+  },
+  {
+   "uid": "044_mixed_can_you_wyjasnic_to_prosciej",
+   "text": "Can you wyjaśnić to prościej?",
+   "primary": "en",
+   "b0_pl": {
+    "t": "Keniu wyjaśnić to prostiej.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "b0_en": {
+    "t": "Can you explain it to me?",
+    "det": "en",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "auto": {
+    "t": "Keniu wyjaśnić to prostiej.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "dl_then_explicit": {
+    "t": "Keniu wyjaśnić to prostiej.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   }
+  },
+  {
+   "uid": "045_mixed_no_dobra_let_s_continue",
+   "text": "No dobra, let's continue.",
+   "primary": "pl",
+   "b0_pl": {
+    "t": "No dobra, let's continue.",
+    "det": "pl",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "b0_en": {
+    "t": "No, ok, let's continue.",
+    "det": "en",
+    "class": "PARTIALLY_USABLE?",
+    "why": "EN only survived"
+   },
+   "auto": {
+    "t": "No dobra, let's continue.",
+    "det": "pl",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "dl_then_explicit": {
+    "t": "No dobra, let's continue.",
+    "det": "pl",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   }
+  },
+  {
+   "uid": "046_mixed_tell_me_wiecej_o_gwiazdach",
+   "text": "Tell me więcej o gwiazdach.",
+   "primary": "en",
+   "b0_pl": {
+    "t": "Tell me więcej o gwiazdach.",
+    "det": "pl",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "b0_en": {
+    "t": "Tell me, \"viencej o gwiazdach\".",
+    "det": "en",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "auto": {
+    "t": "Tell me więcej o gwiazdach.",
+    "det": "pl",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "dl_then_explicit": {
+    "t": "Tell me więcej o gwiazdach.",
+    "det": "pl",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   }
+  },
+  {
+   "uid": "047_mixed_okay_ale_dlaczego",
+   "text": "Okay, ale dlaczego?",
+   "primary": "en",
+   "b0_pl": {
+    "t": "Ok, ale dlaczego?",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "b0_en": {
+    "t": "Okay, I'll let you go.",
+    "det": "en",
+    "class": "PARTIALLY_USABLE?",
+    "why": "EN only survived"
+   },
+   "auto": {
+    "t": "Ok, ale dlaczego?",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "dl_then_explicit": {
+    "t": "Ok, ale dlaczego?",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   }
+  },
+  {
+   "uid": "048_mixed_let_s_wrocic_do_tego",
+   "text": "Let's wrócić do tego.",
+   "primary": "en",
+   "b0_pl": {
+    "t": "Let's wrócić do tego.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "b0_en": {
+    "t": "Let's go back to this.",
+    "det": "en",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "auto": {
+    "t": "Let's wrócić do tego.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "dl_then_explicit": {
+    "t": "Let's wrócić do tego.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   }
+  },
+  {
+   "uid": "049_mixed_explain_mi_to_jeszcze_raz",
+   "text": "Explain mi to jeszcze raz.",
+   "primary": "en",
+   "b0_pl": {
+    "t": "Explenuj mi to jeszcze raz.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "b0_en": {
+    "t": "Explain it to you again.",
+    "det": "en",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "auto": {
+    "t": "Explenuj mi to jeszcze raz.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   },
+   "dl_then_explicit": {
+    "t": "Explenuj mi to jeszcze raz.",
+    "det": "pl",
+    "class": "PARTIALLY_USABLE?",
+    "why": "PL only survived"
+   }
+  },
+  {
+   "uid": "050_mixed_super_now_powiedz_to_po_polsku",
+   "text": "Super, now powiedz to po polsku.",
+   "primary": "en",
+   "b0_pl": {
+    "t": "Super! Now Powiedz to po Polsku!",
+    "det": "pl",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "b0_en": {
+    "t": "Super! Now, Powiedz to popolsku!",
+    "det": "en",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "auto": {
+    "t": "Super! Now Powiedz to po Polsku!",
+    "det": "pl",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   },
+   "dl_then_explicit": {
+    "t": "Super! Now Powiedz to po Polsku!",
+    "det": "pl",
+    "class": "USABLE?",
+    "why": "both PL+EN tokens present"
+   }
+  }
+ ],
+ "resources": {
+  "temp_c_max": 70.0,
+  "peak_rss_kb_max": 226176,
+  "peak_rss_mb_max": 220.9,
+  "cpu_pct_window_mean": 85.0,
+  "throttled": {
+   "0x0": 200
+  }
+ },
+ "raw_file": "bench_stt_raw_20260908_174742.jsonl",
+ "n_rows": 200
+}

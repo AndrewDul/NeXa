@@ -1,0 +1,16 @@
+{
+ "ts": "20260908_174742",
+ "whisper_cpp_tag": "v1.9.3",
+ "model": "ggml-base-q8_0",
+ "threads": 4,
+ "cli": "/home/devdul/.local/share/nexa/stt/whisper.cpp-v1.9.3/build/bin/whisper-cli",
+ "n_fixtures": 50,
+ "strategies": [
+  "b0_pl",
+  "b0_en",
+  "auto",
+  "dl_then_explicit"
+ ],
+ "n_rows": 200,
+ "notes": "Explicit b0_pl/b0_en run on ALL 50 fixtures (not just their own language) so forced-language effects on mixed/short are visible. detected_p is from whisper-cli stderr 'auto-detected language: X (p = Y)'; JSON does not expose it. -dl re-runs the encoder, so dl_then_explicit pays ~2x encode — reported, not hidden."
+}
