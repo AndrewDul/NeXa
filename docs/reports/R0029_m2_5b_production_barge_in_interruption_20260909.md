@@ -567,7 +567,7 @@ conversation brain, no new framework.
 
 ## COMMIT HASH
 
-`<pending>` — the wiring-audit commit (`build_bargein_stack` + 12
+`20df578` — the wiring-audit commit (`build_bargein_stack` + 12
 integration tests + 3 hardenings + this report). Implementation commits:
 `c3155ca` (barge-in core), `dcf0df4` (38 deterministic tests + continuity
 discard), `59141f6`
@@ -579,7 +579,7 @@ tip: `2f23613` (M2.5A closure). Not pushed.
 
 Branch `main`, **not pushed**. `git diff --check` clean. Sequence:
 `2f23613` (M2.5A closed) → `c3155ca` → `dcf0df4` → `59141f6` → `c1306b6`
-→ `97f4a84` → wiring-audit commit (this edit). No `src/` change to any
+→ `97f4a84` → `20df578` → hash-record commit (this edit). No `src/` change to any
 frozen component.
 
 ## RISKS
