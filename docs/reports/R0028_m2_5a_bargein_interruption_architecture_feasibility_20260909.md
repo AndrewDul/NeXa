@@ -270,9 +270,10 @@ silently becoming the measurement.
   **`pytest` 603 passed / 7 skipped / 14 subtests**; **`unittest` 610
   OK / 7 skipped**; **`ruff check src tests apps
   docs/research/m2_5_bargein`** clean; **`git diff --check`** clean.
-- **COMMIT HASH:** _pending_ — the SPIKE B-live v2 repair commit is made
-  after this edit; its hash is recorded in the immediately-following commit
-  (the R0026/R0027 pattern). Prior R0028 tip: `22dc46b`.
+- **COMMIT HASH:** `8314dc2` — `research: repair SPIKE B-live
+  instrumentation (M2.5A / R0028)`. This hash-record edit lands in the
+  immediately-following commit (the R0026/R0027 pattern). Prior R0028 tip:
+  `22dc46b`.
 - **GIT STATUS:** branch `main`, not pushed.
 - **NEXT STEP:** operator re-runs SPIKE B-live v2 (one command below); fold
   the corrected `vad_to_stop_request_ms` / `vad_to_playback_stopped_ms`
@@ -1063,17 +1064,18 @@ evidence exists.**
 
 ## COMMIT HASH
 
-Prior R0028 tip: `22dc46b` — `docs: record R0028 commit hash`. The SPIKE
-B-live v2 instrumentation-repair commit is made immediately after this
-edit; its hash is recorded in the following commit (R0026/R0027 pattern).
-Not pushed.
+`8314dc2` — `research: repair SPIKE B-live instrumentation (M2.5A / R0028)`
+(SPIKE B-live rewritten to v2, `tests/test_bargein_spike.py` +6, v1 raw
+output committed for the record, this report updated). This hash-record
+edit lands in the immediately-following commit (R0026/R0027 pattern). Prior
+R0028 tip: `22dc46b`. Not pushed.
 
 ## GIT STATUS
 
-Branch `main`. Not pushed. Working tree: `spike_bargein_live.py` rewritten
-(v2), `tests/test_bargein_spike.py` +6, this report updated, plus the
-untracked v1 raw output `spike_bargein_live_20260909_134647.json`. `ruff`
-clean for this stage's scope; `git diff --check` clean.
+Branch `main`. Not pushed. `8314dc2` committed on top of `22dc46b`; this
+hash-record edit is the next commit. `ruff check src tests apps
+docs/research/m2_5_bargein` clean; `git diff --check` clean; `pytest` 603
+passed / 7 skipped, `unittest` 610 OK / 7 skipped.
 
 ## NEXT STEP
 
