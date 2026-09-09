@@ -371,11 +371,11 @@ reason is reported transparently, not silently dropped.
 
 ### COMMIT HASH
 
-`<pending>` — the M2.5A.2 commit (`spike_aec_nearfield_voice.py` +
-`tests/test_bargein_spike.py` +10 + this report) is made immediately after
-this edit; its hash is recorded in the following commit (R0026/R0027
-pattern). Prior R0028 tip: `e0ff9e9` (`docs: record R0028 M2.5A.1 commit
-hash`). Not pushed.
+`897fe0c` — `research: M2.5A.2 packaged near-field-voice-with-AEC-reference
+spike (R0028)` (`spike_aec_nearfield_voice.py` + `tests/test_bargein_spike.py`
++10 + this report). This hash-record edit lands in the immediately-following
+commit (R0026/R0027 pattern). Prior R0028 tip: `e0ff9e9` (`docs: record
+R0028 M2.5A.1 commit hash`). Not pushed.
 
 ### GIT STATUS
 
@@ -559,10 +559,10 @@ implements, in order: (1) the AEC-reference wiring; (2) `BargeInController`
   suite: **`pytest` 621 passed / 7 skipped / 14 subtests**; **`unittest`
   628 OK / 7 skipped**; **`ruff check src tests apps
   docs/research/m2_5_bargein`** clean; **`git diff --check`** clean.
-- **COMMIT HASH:** `<pending>` — the M2.5A.2 commit is made after this
-  edit; its hash is recorded in the immediately-following commit
-  (R0026/R0027 pattern). Prior R0028 tip: `e0ff9e9` (`docs: record R0028
-  M2.5A.1 commit hash`).
+- **COMMIT HASH:** `897fe0c` — `research: M2.5A.2 packaged
+  near-field-voice-with-AEC-reference spike (R0028)`. This hash-record edit
+  lands in the immediately-following commit (R0026/R0027 pattern). Prior
+  R0028 tip: `e0ff9e9` (`docs: record R0028 M2.5A.1 commit hash`).
 - **GIT STATUS:** branch `main`, not pushed. No `src/` change.
 - **NEXT STEP:** operator runs the one packaged command
   (`spike_aec_nearfield_voice.py`). QUIET_AEC false-VAD 0 **and** operator
@@ -1414,17 +1414,17 @@ confidence/volume separation between AEC-quiet residual and real speech,
 
 ## COMMIT HASH
 
-`<pending>` — the M2.5A.2 commit (`spike_aec_nearfield_voice.py` +
-`tests/test_bargein_spike.py` +10 + this report) is made immediately after
-this edit; its hash is recorded in the following commit (R0026/R0027
-pattern). Prior R0028 tip: `e0ff9e9`
+`897fe0c` — `research: M2.5A.2 packaged near-field-voice-with-AEC-reference
+spike (R0028)` (`spike_aec_nearfield_voice.py` + `tests/test_bargein_spike.py`
++10 + this report). This hash-record edit lands in the immediately-following
+commit (R0026/R0027 pattern). Prior R0028 tip: `e0ff9e9`
 (`docs: record R0028 M2.5A.1 commit hash`). Not pushed.
 
 ## GIT STATUS
 
 Branch `main`. Not pushed. Sequence: `77c7c0f` → `22dc46b` → `8314dc2`
 (SPIKE B-live v2) → `777eac0` → `85e8cb6` (M2.5A.1) → `e0ff9e9` →
-**M2.5A.2 commit (this edit)** → hash-record commit. `ruff check src tests
+`897fe0c` (M2.5A.2) → **hash-record commit (this edit)**. `ruff check src tests
 apps docs/research/m2_5_bargein` clean; `git diff --check` clean; `pytest`
 621 passed / 7 skipped / 14 subtests; `unittest` 628 OK / 7 skipped. No
 `src/` change.
