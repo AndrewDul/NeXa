@@ -901,20 +901,36 @@ conversation brain, no new framework.
 
 ## COMMIT HASH
 
-`20df578` — the wiring-audit commit (`build_bargein_stack` + 12
-integration tests + 3 hardenings + this report). Implementation commits:
-`c3155ca` (barge-in core), `dcf0df4` (38 deterministic tests + continuity
-discard), `59141f6`
-(probe wiring + AEC status callback). This hash-record edit lands in the
-immediately-following commit (R0026/R0027/R0028 pattern). Prior milestone
-tip: `2f23613` (M2.5A closure). Not pushed.
+**M2.5B (implementation):** `c3155ca` (barge-in core) → `dcf0df4` (38
+deterministic tests + continuity discard) → `59141f6` (probe wiring + AEC
+status) → `c1306b6` → `97f4a84` → `20df578` (wiring audit +
+`build_bargein_stack`) → `69e8828` (hash record).
+
+**M2.5B.1 (this fix cycle):**
+
+- `2460463` — Problem 1: interruption-utterance fragmentation → capture /
+  coalesce phase (one confirmed interruption = one canonical turn).
+- `5e6f877` — latency ledger + `CancelToken` completion signals + Ollama
+  `last_metrics`.
+- `4a55a7e` — Problem 2: KV-cache-safe context window (`DEFAULT_MAX_TURNS`
+  20→40, `DEFAULT_MAX_CHARS` 12k→20k) + responsive LLM cancellation
+  (`select()` poll; `cancel → worker-stop` ~2 s → 251 ms) + 8 regression
+  tests + this report's M2.5B.1 sections.
+
+This hash-record edit lands in the immediately-following commit
+(R0026/R0027/R0028 pattern). Prior milestone tip: `2f23613` (M2.5A
+closure). **Not pushed.**
 
 ## GIT STATUS
 
-Branch `main`, **not pushed**. `git diff --check` clean. Sequence:
-`2f23613` (M2.5A closed) → `c3155ca` → `dcf0df4` → `59141f6` → `c1306b6`
-→ `97f4a84` → `20df578` → hash-record commit (this edit). No `src/` change to any
-frozen component.
+Branch `main`, **not pushed**. `git diff --check` clean. Working tree
+clean after the hash-record commit. Sequence: `2f23613` (M2.5A closed) →
+`c3155ca` → `dcf0df4` → `59141f6` → `c1306b6` → `97f4a84` → `20df578` →
+`69e8828` → `2460463` → `5e6f877` → `4a55a7e` → hash-record commit (this
+edit). Frozen components (model / `num_thread` / `keep_alive` / `num_ctx`
+/ whisper / Piper / resolver) untouched; the context-window constants
+(`DEFAULT_MAX_TURNS` / `DEFAULT_MAX_CHARS`) are deliberately changed and
+were never on the frozen list.
 
 ## RISKS
 
@@ -944,6 +960,15 @@ frozen component.
 6. **`ConversationTurn.interrupted` on a frozen dataclass.** Additive +
    defaulted; every construction site and `to_provider_messages` audited;
    typed-chat wire output byte-identical (test 27).
+7. **40-turn context boundary (M2.5B.1).** The window fix moves the
+   KV-cache-collapse cliff from turn 20 to turn 40, it does not remove it —
+   a session past ~40 turns re-enters the ~155 s-per-turn regime (44-turn
+   Pi run, section E). An M2.5B acceptance session is far shorter, but a
+   marathon daily-use session is not; the real fix (prefix-stable history
+   compaction) is M5 (AGENTS.md §3.8) and is deliberately not attempted
+   here. `DEFAULT_MAX_CHARS = 20_000` (~5 k tokens) keeps the pre-eviction
+   prompt clear of Ollama's 8 k `num_ctx` so `--context-shift` never
+   triggers before the turn cap.
 
 ## NEXT STEP
 
