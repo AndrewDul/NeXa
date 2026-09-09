@@ -317,9 +317,10 @@ and needs no operator. The SPIKE B-live v2 media-stop result (28.5 ms /
 
 ### COMMIT HASH
 
-`<pending>` — the M2.5A.1 commit is made immediately after this edit; its
-hash is recorded in the following commit (R0026/R0027 pattern). Prior
-R0028 tip: `777eac0`. Not pushed.
+`85e8cb6` — `research: M2.5A.1 playback-time false-VAD / self-echo
+investigation (R0028)`. This hash-record edit lands in the immediately-
+following commit (R0026/R0027 pattern). Prior R0028 tip: `777eac0`. Not
+pushed.
 
 ### GIT STATUS
 
@@ -502,10 +503,10 @@ ARCHITECTURE*. **M2.5B has not started.**
   skipped / 14 subtests**; **`unittest` 618 OK / 7 skipped**; **`ruff
   check src tests apps docs/research/m2_5_bargein`** clean; **`git diff
   --check`** clean.
-- **COMMIT HASH:** `<pending>` — the M2.5A.1 commit is made after this
-  edit; its hash is recorded in the immediately-following commit (R0026/
-  R0027 pattern). Prior R0028 tip: `777eac0`
-  (`docs: record R0028 SPIKE B-live v2 commit hash`).
+- **COMMIT HASH:** `85e8cb6` — `research: M2.5A.1 playback-time false-VAD /
+  self-echo investigation (R0028)`. This hash-record edit lands in the
+  immediately-following commit (R0026/R0027 pattern). Prior R0028 tip:
+  `777eac0` (`docs: record R0028 SPIKE B-live v2 commit hash`).
 - **GIT STATUS:** branch `main`, not pushed.
 - **NEXT STEP:** operator runs the one near-field-under-AEC-reference test
   (below). If a real voice is still detected with the reference fed, M2.5A
@@ -1337,10 +1338,12 @@ this.**
 
 ## COMMIT HASH
 
-`<pending>` — the M2.5A.1 commit (`spike_playback_false_vad.py` +
+`85e8cb6` — `research: M2.5A.1 playback-time false-VAD / self-echo
+investigation (R0028)` (`spike_playback_false_vad.py` +
 `tests/test_bargein_spike.py` +8 + `spike_bargein_live_20260909_142619.json`
-+ this report) is made immediately after this edit; its hash is recorded in
-the following commit (R0026/R0027 pattern). Prior R0028 tip: `777eac0`
++ `spike_playback_false_vad_20260909_143729.json` + this report). This
+hash-record edit lands in the immediately-following commit (R0026/R0027
+pattern). Prior R0028 tip: `777eac0`
 (`docs: record R0028 SPIKE B-live v2 commit hash`). Not pushed.
 
 ## GIT STATUS
