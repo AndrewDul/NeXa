@@ -156,8 +156,8 @@
   **`pytest` 597 passed / 7 skipped / 14 subtests**; **`unittest` 604
   OK / 7 skipped**; **`ruff check src tests apps
   docs/research/m2_5_bargein`** clean; **`git diff --check`** clean.
-- **COMMIT HASH:** `__PENDING__` (recorded by the immediately-following
-  doc commit, matching the R0026/R0027 pattern).
+- **COMMIT HASH:** `77c7c0f` (this hash-record edit lands in the
+  immediately-following commit — the R0026/R0027 pattern).
 - **GIT STATUS:** branch `main`, not pushed.
 - **NEXT STEP:** run **SPIKE B-live** with the operator; fold its numbers
   into this report; then implement **M2.5B** to the architecture below.
@@ -917,8 +917,7 @@ Do **not** start M2.5B before that number exists.
 
 ## COMMIT HASH
 
-`__PENDING__` — recorded by the follow-up doc commit (R0026/R0027
-pattern). Not pushed.
+`77c7c0f` — `research: M2.5A barge-in / interruption architecture & feasibility (R0028)` (tip of `main`). This hash-record edit lands in the immediately-following commit (R0026/R0027 pattern). Not pushed.
 
 ## GIT STATUS
 
