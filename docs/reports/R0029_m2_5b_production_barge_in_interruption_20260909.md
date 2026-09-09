@@ -499,17 +499,17 @@ conversation brain, no new framework.
 
 ## COMMIT HASH
 
-`59141f6` — `feat(m2.5b): wire barge-in into the bilingual voice probe +
-AEC status callback` (tip). Preceded by `dcf0df4` (38 deterministic tests
-+ continuity discard) and `c3155ca` (barge-in core). This hash-record edit
-lands in the immediately-following commit (R0026/R0027/R0028 pattern).
-Prior milestone tip: `2f23613` (M2.5A closure). Not pushed.
+`c1306b6` — this report. Implementation commits: `c3155ca` (barge-in
+core), `dcf0df4` (38 deterministic tests + continuity discard), `59141f6`
+(probe wiring + AEC status callback). This hash-record edit lands in the
+immediately-following commit (R0026/R0027/R0028 pattern). Prior milestone
+tip: `2f23613` (M2.5A closure). Not pushed.
 
 ## GIT STATUS
 
 Branch `main`, **not pushed**. `git diff --check` clean. Sequence:
-`2f23613` (M2.5A closed) → `c3155ca` → `dcf0df4` → `59141f6` (M2.5B) →
-hash-record commit (this edit). No `src/` change to any frozen component.
+`2f23613` (M2.5A closed) → `c3155ca` → `dcf0df4` → `59141f6` → `c1306b6`
+(this report). No `src/` change to any frozen component.
 
 ## RISKS
 
