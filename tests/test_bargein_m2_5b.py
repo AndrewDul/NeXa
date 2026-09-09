@@ -145,14 +145,27 @@ class TestInterruptionStateMachine(unittest.TestCase):
         self.assertEqual(sm.state, InterruptionState.INTERRUPT_CANDIDATE)
         self.assertEqual(sm.candidate_started_at, 10.0)  # unchanged
 
-    def test_case6_second_speech_start_during_interrupting_is_ignored(self) -> None:
+    def test_case6_speech_during_interrupting_is_a_segment_not_a_new_candidate(self) -> None:
+        # M2.5B.1 — a later VAD segment of the SAME interruption utterance is
+        # captured & coalesced, NOT ignored and NOT a second candidate/turn.
         sm = InterruptionStateMachine(confirm_hold_secs=0.3)
         sm.notify_response_dispatched()
         sm.speech_started(now=10.0)
-        sm.poll(now=10.3)  # -> INTERRUPTING
-        self.assertEqual(sm.speech_started(now=10.4), InterruptionEvent.IGNORED_SPEECH)
-        self.assertEqual(sm.speech_started(now=10.5), InterruptionEvent.IGNORED_SPEECH)
-        self.assertEqual(sm.ignored_speech_starts, 2)
+        sm.poll(now=10.3)  # -> INTERRUPTING, segment 1 in progress
+        sm.speech_stopped(now=11.5)  # segment 1 ends
+        self.assertEqual(sm.capture_segments_ended, 1)
+        self.assertEqual(
+            sm.speech_started(now=12.0), InterruptionEvent.INTERRUPT_SEGMENT_STARTED
+        )
+        self.assertEqual(sm.capture_open_segments, 1)
+        self.assertEqual(
+            sm.speech_stopped(now=13.5), InterruptionEvent.INTERRUPT_SEGMENT_ENDED
+        )
+        self.assertEqual(sm.capture_segments_ended, 2)
+        self.assertEqual(sm.state, InterruptionState.INTERRUPTING)
+        self.assertEqual(sm.confirmed_interruptions, 1)  # still ONE interruption
+        # no second candidate ever
+        self.assertEqual(sm.ignored_speech_starts, 0)
 
     def test_case29_nested_interruption_gets_a_fresh_monotonic_id(self) -> None:
         sm = InterruptionStateMachine(confirm_hold_secs=0.3)
@@ -218,16 +231,23 @@ class TestHalfDuplexGateBargeIn(unittest.TestCase):
         self.assertTrue(g.mic_suppressed)  # died mid-response -> safe mode
         self.assertEqual(aec.failure_count, 1)
 
-    def test_case7_admit_one_utterance_lets_exactly_the_interruption_through(self) -> None:
+    def test_case7_capture_phase_admits_every_interruption_segment(self) -> None:
+        # M2.5B.1 — a real interruption is often 2-3 VAD segments. ALL of them
+        # must pass DROP_BUSY, not just the first.
         aec = AecReferenceHealth()
         aec.mark_started()
         g = HalfDuplexGate(bargein_enabled=True, aec_health=aec)
         g.notify_response_dispatched()
         self.assertTrue(g.response_in_flight)
-        g.admit_next_utterance()
-        self.assertFalse(g.should_drop_busy_utterance())  # the interruption passes
-        # one-shot consumed: the next busy utterance is dropped again
-        self.assertTrue(g.should_drop_busy_utterance())
+        g.begin_interrupt_capture()
+        self.assertTrue(g.capturing_interrupt)
+        self.assertFalse(g.should_drop_busy_utterance())  # segment A
+        self.assertFalse(g.should_drop_busy_utterance())  # segment B
+        self.assertFalse(g.should_drop_busy_utterance())  # segment C
+        # dispatching the coalesced turn ends the capture phase
+        g.notify_response_dispatched()
+        self.assertFalse(g.capturing_interrupt)
+        self.assertTrue(g.should_drop_busy_utterance())  # an unrelated later busy utterance
 
 
 # ============================================================ AEC health

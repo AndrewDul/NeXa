@@ -61,6 +61,11 @@ class InterruptionEvent(StrEnum):
     INTERRUPT_CONFIRMED = "interrupt_confirmed"
     RESPONSE_FINISHED = "response_finished"
     IGNORED_SPEECH = "ignored_speech"
+    #: M2.5B.1 — during ``INTERRUPTING`` the user's interruption is still
+    #: being spoken as one or more VAD segments; these are collected into a
+    #: single canonical turn, never dispatched piecemeal.
+    INTERRUPT_SEGMENT_STARTED = "interrupt_segment_started"
+    INTERRUPT_SEGMENT_ENDED = "interrupt_segment_ended"
 
 
 @dataclass
@@ -75,6 +80,12 @@ class InterruptionStateMachine:
     #: (``active_response_id`` is already ``None`` by then).
     _last_invalidated_response_id: int | None = field(default=None, init=False)
     _candidate_started_at: float | None = field(default=None, init=False)
+    # M2.5B.1 — interruption-utterance capture bookkeeping (only meaningful
+    # while INTERRUPTING). ``_capture_open_segments`` = VAD segments started
+    # but not yet ended; ``_capture_segments_ended`` = segments finished
+    # (one STT result is owed for each).
+    _capture_open_segments: int = field(default=0, init=False)
+    _capture_segments_ended: int = field(default=0, init=False)
     # telemetry counters
     _ignored_speech_starts: int = field(default=0, init=False)
     _rejected_candidates: int = field(default=0, init=False)
@@ -139,8 +150,15 @@ class InterruptionStateMachine:
 
     def notify_response_finished(self) -> InterruptionEvent:
         """Generation + playback for the current reply completed normally
-        (no interruption). Back to ``IDLE``. A no-op if not responding."""
-        if self._state == InterruptionState.IDLE:
+        (no interruption). Back to ``IDLE`` from ``RESPONDING`` /
+        ``INTERRUPT_CANDIDATE``.
+
+        **Not** from ``INTERRUPTING``: that state is the interruption-capture
+        phase and is exited only by ``notify_interruption_complete`` once the
+        one canonical turn has been submitted. (The bridge's
+        ``on_interruption`` hook, which fires at confirm time, calls this —
+        it must be a no-op then so capture is not cut short.)"""
+        if self._state in (InterruptionState.IDLE, InterruptionState.INTERRUPTING):
             return InterruptionEvent.NONE
         self._state = InterruptionState.IDLE
         self._active_response_id = None
@@ -153,26 +171,42 @@ class InterruptionStateMachine:
             self._state = InterruptionState.INTERRUPT_CANDIDATE
             self._candidate_started_at = now
             return InterruptionEvent.CANDIDATE_STARTED
-        # IDLE / already a candidate / already interrupting → single-candidate
-        # invariant: never a second candidate, never a second busy-period turn.
-        if self._state in (
-            InterruptionState.INTERRUPT_CANDIDATE,
-            InterruptionState.INTERRUPTING,
-        ):
+        if self._state == InterruptionState.INTERRUPT_CANDIDATE:
+            # single-candidate invariant — never a second parallel candidate
             self._ignored_speech_starts += 1
             return InterruptionEvent.IGNORED_SPEECH
+        if self._state == InterruptionState.INTERRUPTING:
+            # M2.5B.1 — more of the SAME interruption utterance (a later VAD
+            # segment after a mid-sentence pause). Not a new candidate, not
+            # ignored: it is captured and coalesced into the one turn.
+            self._capture_open_segments += 1
+            return InterruptionEvent.INTERRUPT_SEGMENT_STARTED
         return InterruptionEvent.NONE
 
     def speech_stopped(self, now: float) -> InterruptionEvent:  # noqa: ARG002
-        """A ``VADUserStoppedSpeakingFrame`` was seen. Rejects an unconfirmed
-        candidate; ignored otherwise (the confirmed utterance's own stop is
-        handled by the controller, not here)."""
+        """A ``VADUserStoppedSpeakingFrame`` was seen."""
         if self._state == InterruptionState.INTERRUPT_CANDIDATE:
             self._state = InterruptionState.RESPONDING
             self._candidate_started_at = None
             self._rejected_candidates += 1
             return InterruptionEvent.CANDIDATE_REJECTED
+        if self._state == InterruptionState.INTERRUPTING:
+            # end of one interruption segment — an STT result is now owed
+            # for it. The FIRST segment's start happened during CANDIDATE,
+            # so this is where segment 1 is counted too.
+            if self._capture_open_segments > 0:
+                self._capture_open_segments -= 1
+            self._capture_segments_ended += 1
+            return InterruptionEvent.INTERRUPT_SEGMENT_ENDED
         return InterruptionEvent.NONE
+
+    @property
+    def capture_open_segments(self) -> int:
+        return self._capture_open_segments
+
+    @property
+    def capture_segments_ended(self) -> int:
+        return self._capture_segments_ended
 
     def poll(self, now: float) -> InterruptionEvent:
         """Time-driven confirmation check. The controller calls this on every
@@ -198,14 +232,16 @@ class InterruptionStateMachine:
         return InterruptionEvent.NONE
 
     def notify_interruption_complete(self) -> InterruptionEvent:
-        """The old reply has been torn down and the interrupting utterance is
-        ready to be submitted as the next turn. Back to ``IDLE`` — the new
-        turn will call ``notify_response_dispatched`` for its own id."""
+        """The interruption utterance has been fully captured, coalesced and
+        submitted as one turn. Back to ``IDLE`` — that turn calls
+        ``notify_response_dispatched`` for its own id."""
         if self._state != InterruptionState.INTERRUPTING:
             return InterruptionEvent.NONE
         self._state = InterruptionState.IDLE
         self._active_response_id = None
         self._candidate_started_at = None
+        self._capture_open_segments = 0
+        self._capture_segments_ended = 0
         return InterruptionEvent.RESPONSE_FINISHED
 
     def reset(self) -> None:
@@ -213,3 +249,5 @@ class InterruptionStateMachine:
         self._state = InterruptionState.IDLE
         self._active_response_id = None
         self._candidate_started_at = None
+        self._capture_open_segments = 0
+        self._capture_segments_ended = 0

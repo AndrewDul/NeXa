@@ -70,6 +70,19 @@ class DroppedTurn:
 
 
 @dataclass(frozen=True, slots=True)
+class CoalescedInterruptTurn:
+    """M2.5B.1 — one confirmed interruption, assembled from ALL its VAD
+    segments into a single canonical user turn before any conversation
+    dispatch. ``_run_turn_inner`` reads it exactly like a
+    ``TranscriptionResult``."""
+
+    text: str
+    input_language: str | None
+    language_decision: LanguageDecision | None
+    segment_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class InterruptedTurn:
     """Telemetry for a reply cut short by a confirmed barge-in (M2.5B)."""
 
@@ -122,6 +135,8 @@ class VoiceConversationAdapter:
         response_mode: ResponseMode = ResponseMode.VOICE,
         response_id_source: Callable[[], int | None] | None = None,
         spoken_prefix_source: Callable[[int | None], str] | None = None,
+        interruption_complete_hook: Callable[[], None] | None = None,
+        interrupt_capture_timeout_s: float = 15.0,
     ) -> None:
         # M2.4B.3.3: this adapter *is* the voice surface, so it defaults to
         # ``ResponseMode.VOICE`` — a transient per-request hint the same
@@ -146,12 +161,29 @@ class VoiceConversationAdapter:
         # ``bargein_enabled=True`` (BargeInController present).
         self._response_id_source = response_id_source
         self._spoken_prefix_source = spoken_prefix_source
+        self._interruption_complete_hook = interruption_complete_hook
+        self._interrupt_capture_timeout_s = interrupt_capture_timeout_s
         self._active_response_id: int | None = None
         self._active_cancel_token: CancelToken | None = None
         self._consume_task: asyncio.Task | None = None
         self._interrupt_requested = False
         self._llm_cancel_completed = False
         self._interrupted_count = 0
+        # M2.5B.1 — interruption-utterance capture / coalesce phase. While
+        # ``_capturing_interrupt`` every STT result belongs to the ONE
+        # confirmed interruption: it is accumulated, never dropped, never
+        # dispatched piecemeal. One canonical turn is submitted when the
+        # capture has settled AND every owed segment result has arrived.
+        self._capturing_interrupt = False
+        self._interrupt_segments: list[str] = []
+        self._interrupt_pending_results = 0   # segments ended, result not yet in
+        self._interrupt_open_segments = 0     # segments started, not yet ended
+        self._interrupt_capture_settled = False
+        self._interrupt_last_decision: LanguageDecision | None = None
+        self._interrupt_last_language: str | None = None
+        self._interrupt_reason: str = "sustained_vad"
+        self._interrupt_capture_timeout_task: asyncio.Task | None = None
+        self._coalesced_interrupt_turns = 0
         self._queue = SerialConversationQueue(self._run_turn, max_queue_size=max_queue_size)
         # M2.4B.5A: strict pre-M2.5 half-duplex — True from the instant a
         # turn starts being handled until its assistant reply's generation
@@ -171,6 +203,22 @@ class VoiceConversationAdapter:
     @property
     def conversation_queue_depth(self) -> int:
         return self._queue.queue_size
+
+    @property
+    def conversation_in_flight(self) -> int:
+        """1 while a ``ConversationSession.send()`` turn is executing (M2.5B.1
+        — ``conversation_queue_depth`` alone hides in-flight work)."""
+        return self._queue.in_flight
+
+    @property
+    def capturing_interrupt(self) -> bool:
+        """M2.5B.1 — True while a confirmed interruption's VAD segments are
+        still being collected into one canonical turn."""
+        return self._capturing_interrupt
+
+    @property
+    def coalesced_interrupt_turns(self) -> int:
+        return self._coalesced_interrupt_turns
 
     @property
     def turn_in_flight(self) -> bool:
@@ -225,7 +273,135 @@ class VoiceConversationAdapter:
         self._active_cancel_token.cancel()
         if self._consume_task is not None and not self._consume_task.done():
             self._consume_task.cancel()
+        # M2.5B.1 — enter the interruption-capture phase. Segment-1's start
+        # already happened (it is what confirmed); its end + STT result are
+        # still owed, so pre-count one pending result + one open segment.
+        self._begin_interrupt_capture(open_segments=1, pending_results=0)
         return True
+
+    # -- M2.5B.1 interruption capture / coalesce -------------------------- #
+    def _begin_interrupt_capture(self, *, open_segments: int, pending_results: int) -> None:
+        self._capturing_interrupt = True
+        self._interrupt_segments = []
+        self._interrupt_pending_results = pending_results
+        self._interrupt_open_segments = open_segments
+        self._interrupt_capture_settled = False
+        self._interrupt_last_decision = None
+        self._interrupt_last_language = None
+        self._cancel_capture_timeout()
+        try:
+            self._interrupt_capture_timeout_task = asyncio.ensure_future(
+                self._capture_timeout_guard()
+            )
+        except RuntimeError:
+            self._interrupt_capture_timeout_task = None
+
+    async def _capture_timeout_guard(self) -> None:
+        try:
+            await asyncio.sleep(self._interrupt_capture_timeout_s)
+        except asyncio.CancelledError:
+            return
+        if self._capturing_interrupt:
+            logger.warning(
+                "nexa.voice_conversation: interruption capture timed out after "
+                f"{self._interrupt_capture_timeout_s}s — finalising with what we have"
+            )
+            self._interrupt_capture_settled = True
+            self._interrupt_open_segments = 0
+            self._interrupt_pending_results = 0
+            self._finalize_interrupt_turn()
+
+    def _cancel_capture_timeout(self) -> None:
+        t = self._interrupt_capture_timeout_task
+        if t is not None and not t.done():
+            t.cancel()
+        self._interrupt_capture_timeout_task = None
+
+    def note_interrupt_segment_started(self) -> None:
+        """Called by ``BargeInController`` — a later VAD segment of the same
+        interruption utterance began."""
+        if self._capturing_interrupt:
+            self._interrupt_open_segments += 1
+
+    def note_interrupt_segment_ended(self) -> None:
+        """Called by ``BargeInController`` — one interruption segment ended;
+        an STT result is now owed for it."""
+        if self._capturing_interrupt:
+            if self._interrupt_open_segments > 0:
+                self._interrupt_open_segments -= 1
+            self._interrupt_pending_results += 1
+
+    def note_interrupt_capture_settled(self) -> None:
+        """Called by ``BargeInController`` — the settle window elapsed with no
+        new speech. Finalise once every owed segment result is also in."""
+        if self._capturing_interrupt:
+            self._interrupt_capture_settled = True
+            self._maybe_finalize_interrupt()
+
+    def _accumulate_interrupt_segment(self, result: object) -> None:
+        if isinstance(result, TranscriptionResult):
+            seg = result.text.strip()
+            self._interrupt_last_language = result.language.value
+            self._interrupt_last_decision = result.language_decision
+        else:
+            seg = str(result).strip()
+            self._interrupt_last_language = None
+        if seg:
+            self._interrupt_segments.append(seg)
+        if self._interrupt_pending_results > 0:
+            self._interrupt_pending_results -= 1
+        logger.info(
+            f"nexa.voice_conversation: interruption segment captured "
+            f"({seg[:40]!r}); segments={len(self._interrupt_segments)}, "
+            f"open={self._interrupt_open_segments}, "
+            f"pending_results={self._interrupt_pending_results}, "
+            f"settled={self._interrupt_capture_settled}"
+        )
+        self._maybe_finalize_interrupt()
+
+    def _maybe_finalize_interrupt(self) -> None:
+        if not self._capturing_interrupt:
+            return
+        if not self._interrupt_capture_settled:
+            return
+        if self._interrupt_open_segments > 0 or self._interrupt_pending_results > 0:
+            return
+        self._finalize_interrupt_turn()
+
+    def _finalize_interrupt_turn(self) -> None:
+        if not self._capturing_interrupt:
+            return
+        self._capturing_interrupt = False
+        self._cancel_capture_timeout()
+        text = " ".join(s for s in self._interrupt_segments if s).strip()
+        n = len(self._interrupt_segments)
+        if not text:
+            logger.info(
+                "nexa.voice_conversation: interruption produced no transcript — "
+                "reply already cancelled, no replacement turn"
+            )
+            if self._interruption_complete_hook is not None:
+                self._interruption_complete_hook()
+            return
+        coalesced = CoalescedInterruptTurn(
+            text=text,
+            input_language=self._interrupt_last_language,
+            language_decision=self._interrupt_last_decision,
+            segment_count=n,
+        )
+        self._coalesced_interrupt_turns += 1
+        logger.info(
+            f"nexa.voice_conversation: ONE interruption turn from {n} segment(s): "
+            f"{text[:80]!r}"
+        )
+        try:
+            self._queue.submit(coalesced)
+        except ConversationQueueOverflowError as exc:
+            logger.error(f"nexa.voice_conversation: {exc}")
+            if self._on_conversation_error is not None:
+                self._on_conversation_error(exc)
+        if self._interruption_complete_hook is not None:
+            self._interruption_complete_hook()
 
     def start(self, task_factory: Callable[[Coroutine], object] | None = None) -> None:
         self._queue.start(task_factory)
@@ -239,6 +415,17 @@ class VoiceConversationAdapter:
         An empty/whitespace-only transcript never becomes a conversation
         turn — explicit, not a silently-ignored edge case.
         """
+        # M2.5B.1 — while a confirmed interruption is being captured, EVERY
+        # STT result belongs to that ONE interruption utterance: accumulate
+        # it (coalesced into a single turn later), never drop, never dispatch
+        # piecemeal. This check MUST come before the DROP_BUSY / turn-in-
+        # flight checks below — otherwise a second interruption segment that
+        # arrives while the interrupted reply is still tearing down would be
+        # wrongly DROP_BUSY'd (the live-acceptance fragmentation bug).
+        if self._capturing_interrupt:
+            self._accumulate_interrupt_segment(result)
+            return
+
         if isinstance(result, TranscriptionResult):
             text = result.text.strip()
             input_language = result.language.value
@@ -304,6 +491,13 @@ class VoiceConversationAdapter:
         if isinstance(item, TranscriptionResult):
             text = item.text.strip()
             input_language = item.language.value
+            decision_telemetry = item.language_decision
+        elif isinstance(item, CoalescedInterruptTurn):
+            # M2.5B.1 — one canonical interruption turn, already assembled
+            # from all its VAD segments. Treated exactly like a normal turn
+            # from here (STT / resolver / ConversationSession).
+            text = item.text.strip()
+            input_language = item.input_language
             decision_telemetry = item.language_decision
         else:  # a bare transcript string (M2.3-style callers / tests)
             text = str(item).strip()

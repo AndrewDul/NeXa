@@ -80,11 +80,14 @@ class HalfDuplexGate:
         # byte-for-byte the R0026 gate.
         self._bargein_enabled = bargein_enabled
         self._aec = aec_health or AecReferenceHealth()
-        # One-shot: allow exactly the next captured utterance through the
-        # DROP_BUSY gate even though a response is technically still winding
-        # down. Set by the controller on a confirmed interruption; consumed
-        # by the capture processor's drop decision.
-        self._admit_one_utterance = False
+        # M2.5B.1 — interruption-capture phase. Set on a confirmed
+        # ``InterruptionFrame``, cleared when the coalesced interruption turn
+        # is dispatched. While True, EVERY captured utterance is admitted (it
+        # is a VAD segment of the one interruption utterance) — never a
+        # one-shot, because a real interruption is often two or three
+        # segments across a mid-sentence pause (the live-acceptance
+        # fragmentation bug).
+        self._capturing_interrupt = False
         # True strictly between BotStartedSpeakingFrame and
         # BotStoppedSpeakingFrame — real TTS audio is leaving the speaker.
         self._bot_speaking = False
@@ -141,19 +144,23 @@ class HalfDuplexGate:
             return False
         return self._bot_speaking or self.response_in_flight
 
-    def admit_next_utterance(self) -> None:
-        """M2.5B — let exactly the next captured utterance (the confirmed
-        interrupting one) through the DROP_BUSY gate, covering the brief
-        window between confirmation and the killed reply's lifecycle
-        actually closing."""
-        self._admit_one_utterance = True
+    @property
+    def capturing_interrupt(self) -> bool:
+        """M2.5B.1 — True from a confirmed ``InterruptionFrame`` until the
+        coalesced interruption turn is dispatched. Every utterance captured
+        in this window is a segment of the one interruption utterance."""
+        return self._capturing_interrupt
+
+    def begin_interrupt_capture(self) -> None:
+        self._capturing_interrupt = True
 
     def should_drop_busy_utterance(self) -> bool:
         """Called by the capture processor for each completed utterance:
-        True => drop it (a response is in flight and this is not the admitted
-        interruption). Consumes the one-shot admit flag."""
-        if self._admit_one_utterance:
-            self._admit_one_utterance = False
+        True => drop it. **Never** dropped while ``capturing_interrupt`` (it
+        belongs to the confirmed interruption) — that is the M2.5B.1 fix for
+        interruption-utterance fragmentation. Otherwise dropped iff a reply
+        is in flight."""
+        if self._capturing_interrupt:
             return False
         return self.response_in_flight
 
@@ -168,6 +175,9 @@ class HalfDuplexGate:
         self._response_generating = True
         self._spoke_this_response = False
         self._response_playback_done = False
+        # M2.5B.1 — dispatching a turn ends any interruption-capture phase:
+        # this IS the coalesced interruption turn (or an unrelated new turn).
+        self._capturing_interrupt = False
 
     def notify_response_finished(self) -> None:
         """Assistant generation for the current reply is complete
@@ -194,16 +204,18 @@ class HalfDuplexGate:
                 self._response_playback_done = True
         elif isinstance(frame, InterruptionFrame):
             # M2.5B — a barge-in was confirmed; the reply is being torn down.
-            # Force-clear the reply lifecycle so the interrupting utterance
-            # is not DROP_BUSY'd, and let exactly the next utterance through.
+            # Force-clear the reply lifecycle so interruption segments are not
+            # DROP_BUSY'd, and enter the capture phase (ALL segments of the
+            # one interruption utterance are admitted until it is dispatched).
             self._bot_speaking = False
             self._response_generating = False
             self._spoke_this_response = False
             self._response_playback_done = False
-            self._admit_one_utterance = True
+            self._capturing_interrupt = True
         elif isinstance(frame, (EndFrame, CancelFrame, ErrorFrame)):
             # Pipeline is stopping or errored — never leave the mic latched shut.
             self._bot_speaking = False
             self._response_generating = False
             self._spoke_this_response = False
             self._response_playback_done = False
+            self._capturing_interrupt = False

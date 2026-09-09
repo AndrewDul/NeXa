@@ -52,6 +52,17 @@ from .interruption import (
     InterruptionStateMachine,
 )
 
+#: M2.5B.1 — after a confirmed barge-in, how long the interruption-capture
+#: phase waits after the *last* VAD segment ends with no new speech before
+#: it declares the interruption utterance settled. Long enough to bridge a
+#: mid-sentence pause ("Czekaj." <pause> "tylko jak powstaje."), which VAD's
+#: ``stop_secs=1.0`` has already turned into two segments. In the common
+#: single-segment case this overlaps the segment's STT decode entirely and
+#: adds ~0 latency (the adapter still waits for STT).
+DEFAULT_INTERRUPT_SETTLE_SECS = 1.2
+#: Hard cap on the capture phase — it can never hang.
+DEFAULT_MAX_CAPTURE_SECS = 12.0
+
 
 @dataclass
 class BargeInTelemetry:
@@ -63,6 +74,8 @@ class BargeInTelemetry:
     candidate_rejected: int = 0
     interrupt_confirmed: int = 0
     ignored_speech_starts: int = 0
+    interrupt_segments: int = 0        # extra VAD segments coalesced into interruptions
+    interrupt_segments_ended: int = 0
     unsafe_speech_ignored: int = 0  # speech during a reply while AEC ref was down
     active_response_id: int | None = None
     state: str = InterruptionState.IDLE.value
@@ -90,7 +103,12 @@ class BargeInController(FrameProcessor):
         on_confirmed: Callable[[InterruptContext], None],
         on_candidate: Callable[[int | None], None] | None = None,
         on_candidate_rejected: Callable[[], None] | None = None,
+        on_interrupt_segment_started: Callable[[], None] | None = None,
+        on_interrupt_segment_ended: Callable[[], None] | None = None,
+        on_interrupt_capture_settled: Callable[[], None] | None = None,
         confirm_hold_secs: float = DEFAULT_CONFIRM_HOLD_SECS,
+        settle_secs: float = DEFAULT_INTERRUPT_SETTLE_SECS,
+        max_capture_secs: float = DEFAULT_MAX_CAPTURE_SECS,
         time_source: Callable[[], float] | None = None,
         **kwargs,
     ) -> None:
@@ -101,9 +119,28 @@ class BargeInController(FrameProcessor):
         self._on_confirmed = on_confirmed
         self._on_candidate = on_candidate
         self._on_candidate_rejected = on_candidate_rejected
+        self._on_seg_started = on_interrupt_segment_started
+        self._on_seg_ended = on_interrupt_segment_ended
+        self._on_capture_settled = on_interrupt_capture_settled
+        self._settle_secs = settle_secs
+        self._max_capture_secs = max_capture_secs
         self._confirm_task: asyncio.Task | None = None
+        self._settle_task: asyncio.Task | None = None
+        self._capture_deadline_task: asyncio.Task | None = None
         self._confirming = False  # re-entrancy guard for _do_confirm
         self.telemetry = BargeInTelemetry()
+
+    def set_capture_hooks(
+        self,
+        on_segment_started: Callable[[], None] | None,
+        on_segment_ended: Callable[[], None] | None,
+        on_capture_settled: Callable[[], None] | None,
+    ) -> None:
+        """M2.5B.1 — late-bind the interruption-capture callbacks (the
+        adapter that owns them is built after this controller)."""
+        self._on_seg_started = on_segment_started
+        self._on_seg_ended = on_segment_ended
+        self._on_capture_settled = on_capture_settled
 
     # -- state the runtime / bridge drive ------------------------------- #
     @property
@@ -127,10 +164,20 @@ class BargeInController(FrameProcessor):
         return self._sm.active_response_id
 
     def notify_response_finished(self) -> None:
-        """Called when a reply finished — normal completion OR the tail of an
-        interruption teardown."""
+        """A reply finished normally. **No-op while ``INTERRUPTING``** (the
+        interruption-capture phase is exited only by
+        ``notify_interruption_complete``)."""
         ev = self._sm.notify_response_finished()
-        self._cancel_confirm_task()
+        if ev == InterruptionEvent.RESPONSE_FINISHED:
+            self._cancel_confirm_task()
+            self.telemetry.response_finished += 1
+        self._sync_telemetry()
+
+    def notify_interruption_complete(self) -> None:
+        """M2.5B.1 — the adapter has coalesced + submitted the one canonical
+        interruption turn. End the capture phase."""
+        self._cancel_settle_tasks()
+        ev = self._sm.notify_interruption_complete()
         if ev == InterruptionEvent.RESPONSE_FINISHED:
             self.telemetry.response_finished += 1
         self._sync_telemetry()
@@ -144,6 +191,7 @@ class BargeInController(FrameProcessor):
             self._sync_telemetry()
         elif isinstance(frame, (EndFrame, CancelFrame, ErrorFrame)):
             self._cancel_confirm_task()
+            self._cancel_settle_tasks()
             self._sm.reset()
             self._sync_telemetry()
         elif isinstance(frame, InterruptionFrame):
@@ -193,6 +241,12 @@ class BargeInController(FrameProcessor):
             self._schedule_confirm()
         elif ev == InterruptionEvent.IGNORED_SPEECH:
             self.telemetry.ignored_speech_starts += 1
+        elif ev == InterruptionEvent.INTERRUPT_SEGMENT_STARTED:
+            # more of the same interruption utterance — hold off settling
+            self.telemetry.interrupt_segments += 1
+            self._cancel_settle_task()
+            if self._on_seg_started is not None:
+                self._on_seg_started()
         self._sync_telemetry()
 
     def _handle_speech_stopped(self) -> None:
@@ -202,6 +256,12 @@ class BargeInController(FrameProcessor):
             self.telemetry.candidate_rejected += 1
             if self._on_candidate_rejected is not None:
                 self._on_candidate_rejected()
+        elif ev == InterruptionEvent.INTERRUPT_SEGMENT_ENDED:
+            # a segment of the interruption finished — an STT result is owed
+            # for it; (re)arm the settle window from here.
+            if self._on_seg_ended is not None:
+                self._on_seg_ended()
+            self._arm_settle()
         self._sync_telemetry()
 
     def _schedule_confirm(self) -> None:
@@ -212,6 +272,48 @@ class BargeInController(FrameProcessor):
         if self._confirm_task is not None and not self._confirm_task.done():
             self._confirm_task.cancel()
         self._confirm_task = None
+
+    # -- M2.5B.1 interruption-capture settle phase --------------------- #
+    def _arm_settle(self) -> None:
+        self._cancel_settle_task()
+        self._settle_task = self.create_task(self._settle_after())
+
+    def _cancel_settle_task(self) -> None:
+        if self._settle_task is not None and not self._settle_task.done():
+            self._settle_task.cancel()
+        self._settle_task = None
+
+    def _cancel_settle_tasks(self) -> None:
+        self._cancel_settle_task()
+        if self._capture_deadline_task is not None and not self._capture_deadline_task.done():
+            self._capture_deadline_task.cancel()
+        self._capture_deadline_task = None
+
+    async def _settle_after(self) -> None:
+        try:
+            await asyncio.sleep(self._settle_secs)
+        except asyncio.CancelledError:
+            return
+        self._settle_task = None
+        self._notify_capture_settled()
+
+    async def _capture_deadline(self) -> None:
+        try:
+            await asyncio.sleep(self._max_capture_secs)
+        except asyncio.CancelledError:
+            return
+        logger.warning(
+            "nexa.voice.bargein: interruption capture hit the "
+            f"{self._max_capture_secs}s cap — forcing settle"
+        )
+        self._notify_capture_settled()
+
+    def _notify_capture_settled(self) -> None:
+        if self._sm.state != InterruptionState.INTERRUPTING:
+            return
+        self._sync_telemetry()
+        if self._on_capture_settled is not None:
+            self._on_capture_settled()
 
     async def _confirm_after_hold(self) -> None:
         try:
@@ -236,14 +338,18 @@ class BargeInController(FrameProcessor):
             )
             # Pipecat: cancel + recreate the output audio task, drop queued PCM.
             await self.broadcast_interruption()
-            # NeXa: cancel the LLM turn, commit the spoken prefix, capture the
-            # interrupting utterance. Synchronous + fast by contract.
+            # NeXa: cancel the LLM turn, begin interruption capture.
+            # Synchronous + fast by contract.
             try:
                 self._on_confirmed(
                     InterruptContext(invalidated_response_id=invalidated, reason=reason)
                 )
             except Exception:
                 logger.exception("nexa.voice.bargein: on_confirmed hook raised")
+            # M2.5B.1 — capture phase begins. Arm the hard cap now; the
+            # settle window is armed each time a segment ends.
+            self._cancel_settle_tasks()
+            self._capture_deadline_task = self.create_task(self._capture_deadline())
         finally:
             self._confirming = False
 
@@ -252,5 +358,6 @@ class BargeInController(FrameProcessor):
         t.state = self._sm.state.value
         t.active_response_id = self._sm.active_response_id
         t.ignored_speech_starts = self._sm.ignored_speech_starts
+        t.interrupt_segments_ended = self._sm.capture_segments_ended
         t.aec_reference_active = self._aec.active
         t.aec_reference_failure_count = self._aec.failure_count

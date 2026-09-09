@@ -288,8 +288,13 @@ async def main() -> None:
         response_mode=ResponseMode.VOICE,
         response_id_source=(stack.response_id_source if bargein_on else None),
         spoken_prefix_source=(stack.spoken_prefix_source if bargein_on else None),
+        interruption_complete_hook=(
+            stack.on_interruption_complete if bargein_on else None
+        ),
     )
     adapter_ref = [adapter]
+    if bargein_on:
+        stack.bind_adapter(adapter)  # controller -> adapter capture callbacks
     adapter.start()
 
     def on_transcription(result) -> None:

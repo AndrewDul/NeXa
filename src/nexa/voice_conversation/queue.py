@@ -61,6 +61,12 @@ class SerialConversationQueue:
     def queue_size(self) -> int:
         return self._queue.qsize()
 
+    @property
+    def in_flight(self) -> int:
+        """1 while an item is currently being processed, else 0 (M2.5B.1 —
+        queue_size alone hides in-flight work)."""
+        return self._in_flight
+
     def start(self, task_factory: Callable[[Coroutine], asyncio.Task] | None = None) -> None:
         """Start the single background worker. Idempotent. `task_factory`
         defaults to a plain `asyncio.ensure_future`."""

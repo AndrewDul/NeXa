@@ -70,12 +70,38 @@ class BargeInStack:
         self.tracker.add_synthesized_sentence(rid if rid is not None else -1, text)
 
     def note_interruption(self) -> None:
-        """Wire to ``AssistantSpeechBridge(on_interruption=…)``. Closes the
-        interruption state machine / lets the gate reopen. Does NOT clear
-        the tracker — the adapter has already captured the spoken prefix on
-        the loop; the next ``note_response_dispatched`` resets it."""
+        """Wire to ``AssistantSpeechBridge(on_interruption=…)`` — fires when
+        the ``InterruptionFrame`` reaches the bridge (at confirm time).
+
+        M2.5B.1: this no longer ends the interruption state machine. The
+        confirmed reply is cancelled by the ``on_confirmed`` hook; the
+        machine stays in ``INTERRUPTING`` (capture phase) until the adapter
+        has coalesced + submitted the one canonical turn and calls
+        ``on_interruption_complete``. Kept as a wiring point (telemetry /
+        future use); currently a no-op on the controller."""
+        # controller.notify_response_finished() is a no-op while INTERRUPTING
+        # by design; call it so a stray InterruptionFrame outside a capture
+        # (shouldn't happen) still can't latch the machine.
         if self.controller is not None:
             self.controller.notify_response_finished()
+
+    def on_interruption_complete(self) -> None:
+        """Wire to ``VoiceConversationAdapter(interruption_complete_hook=…)``.
+        The adapter calls this once it has submitted the single coalesced
+        interruption turn — end the capture phase."""
+        if self.controller is not None:
+            self.controller.notify_interruption_complete()
+
+    def bind_adapter(self, adapter) -> None:
+        """Late-bind the controller's interruption-capture callbacks to the
+        adapter (built after the stack). Call once, right after the adapter
+        is constructed."""
+        if self.controller is not None:
+            self.controller.set_capture_hooks(
+                adapter.note_interrupt_segment_started,
+                adapter.note_interrupt_segment_ended,
+                adapter.note_interrupt_capture_settled,
+            )
 
     def response_id_source(self) -> int | None:
         """Wire to ``VoiceConversationAdapter(response_id_source=…)``."""
