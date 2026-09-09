@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import select
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator
@@ -39,6 +41,8 @@ from .base import (
 )
 
 _DONE = object()
+#: M2.5B.1 — see ``nexa.providers.ollama._CANCEL_POLL_SECS``.
+_CANCEL_POLL_SECS = 0.25
 
 
 class LlamaServerProvider(ModelProvider):
@@ -88,11 +92,30 @@ class LlamaServerProvider(ModelProvider):
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
+                deadline = time.monotonic() + self._timeout
                 with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                    for raw_line in resp:
+                    try:
+                        fd = resp.fileno()
+                    except (AttributeError, OSError):  # pragma: no cover
+                        fd = None
+                    while True:
                         if cancel_token is not None and cancel_token.is_cancelled:
                             cancel_token.mark_cancel_observed()
                             return
+                        if time.monotonic() > deadline:
+                            errors.append(
+                                TimeoutError(
+                                    f"llama-server stream exceeded {self._timeout}s"
+                                )
+                            )
+                            break
+                        if fd is not None and not select.select(
+                            [fd], [], [], _CANCEL_POLL_SECS
+                        )[0]:
+                            continue
+                        raw_line = resp.readline()
+                        if not raw_line:
+                            break
                         line = raw_line.strip()
                         if not line or not line.startswith(b"data:"):
                             continue

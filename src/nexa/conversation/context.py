@@ -29,6 +29,24 @@ prompt's exact prefix, plus new content — so caching works normally. This
 keeps ``ConversationTurn``/``ConversationSession.history`` completely
 unmodified (the real transcript, ADR-0003 D2) — only the wire-level message
 list gains the directive, freshly, every time it's built.
+
+Window size vs. KV-cache (M2.5B.1, R0029): the same prefix-stability rule
+governs *eviction*. While the whole conversation fits in the window the
+rebuilt prompt is a pure prefix-extension every turn and Ollama re-evaluates
+only the ~90-120 new tokens (~3-4 s to first token on the Pi). The instant
+the window has to drop its oldest turn, the token sequence right after the
+system prompt changes, the cached prefix diverges at position ~0, and
+llama.cpp cold-reprocesses the *entire* ~1.4k-token prompt at ~17 tok/s —
+~75 s to first token, and (because the drop advances again next turn) it
+stays collapsed for the rest of the session. R0029's real-Pi measurement
+reproduced exactly this at the old 20-turn boundary (turn 12, history 22:
+3.1 s -> 78 s prompt-eval, permanent). The window is therefore sized
+(``DEFAULT_MAX_TURNS`` = 40, ``DEFAULT_MAX_CHARS`` = 20_000 ≈ 5k tokens,
+well inside Ollama's 8k ``num_ctx``) so a normal voice session — including
+an interruption-heavy M2.5B one, which adds turns faster — never reaches the
+first eviction and every turn stays in the ~3-4 s regime. A genuine marathon
+(40+ turns) still eventually slides; a prefix-stable compaction for that is
+long-term-memory work (M5, §3.8), deliberately not M2.5B.1.
 """
 
 from __future__ import annotations
@@ -41,8 +59,13 @@ from .language import detect_response_language, language_directive
 from .response_mode import ResponseMode, voice_response_directive
 from .turn import ConversationTurn, Role
 
-DEFAULT_MAX_TURNS = 20
-DEFAULT_MAX_CHARS = 12_000
+#: M2.5B.1 (R0029): sized so a normal voice session never has to evict a
+#: turn mid-session — the first eviction permanently collapses Ollama's
+#: prompt-prefix KV-cache reuse (module header). 40 turns / 20k chars is
+#: ~5k tokens, well inside the 8k ``num_ctx``. Was 20 / 12_000 (a 20-turn
+#: session hit the collapse at the boundary — R0029 live acceptance).
+DEFAULT_MAX_TURNS = 40
+DEFAULT_MAX_CHARS = 20_000
 
 #: M2.5B — appended to an interrupted ASSISTANT turn's wire content ONLY
 #: (never to stored history). Deterministic + fixed: the same history

@@ -21,6 +21,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from nexa.conversation import ConversationSession, Role  # noqa: E402
+from nexa.conversation.response_language import ResponseLanguageResolver  # noqa: E402
 from nexa.providers.base import (  # noqa: E402
     GenerationOptions,
     ModelProvider,
@@ -43,6 +44,8 @@ class _Prov(ModelProvider):
         self._chunks = chunks
         self._delay = delay
         self.starts = 0
+        self.workers_started = 0
+        self.workers_stopped = 0
 
     def describe(self) -> ProviderDescription:
         return ProviderDescription(provider_name="p", model="t")
@@ -55,6 +58,8 @@ class _Prov(ModelProvider):
         loop = asyncio.get_running_loop()
         q: asyncio.Queue = asyncio.Queue()
         done = object()
+
+        self.workers_started += 1
 
         def worker() -> None:
             try:
@@ -74,6 +79,7 @@ class _Prov(ModelProvider):
                     except RuntimeError:
                         return
             finally:
+                self.workers_stopped += 1
                 if cancel_token is not None and hasattr(cancel_token, "mark_worker_stopped"):
                     cancel_token.mark_worker_stopped()
                 try:
@@ -97,7 +103,7 @@ def _tr(text: str, lang: str = "pl") -> TranscriptionResult:
 
 class _Fixture(unittest.IsolatedAsyncioTestCase):
     def _build(self, chunks=("odp1 ", "odp2 ", "odp3 ", "odp4"), *, settle=0.15,
-               capture_timeout=3.0):
+               capture_timeout=3.0, with_resolver=False):
         prov = _Prov(list(chunks))
         sess = ConversationSession(
             provider=prov, system_prompt="s", options=GenerationOptions()
@@ -122,17 +128,24 @@ class _Fixture(unittest.IsolatedAsyncioTestCase):
         self.completes: list[str] = []
         self.dropped: list = []
         self.interrupts: list = []
+        self.cancel_completions: list = []
+        self.langs: list = []
         self.adapter = VoiceConversationAdapter(
             sess,
             on_assistant_token=self.tokens.append,
             on_assistant_complete=self.completes.append,
             on_turn_dropped=self.dropped.append,
             on_turn_interrupted=self.interrupts.append,
+            on_cancel_completed=self.cancel_completions.append,
+            on_turn_language=self.langs.append,
             on_user_transcript=lambda t: self.stack.note_response_dispatched(),
             response_id_source=self.stack.response_id_source,
             spoken_prefix_source=self.stack.spoken_prefix_source,
             interruption_complete_hook=self.stack.on_interruption_complete,
             interrupt_capture_timeout_s=capture_timeout,
+            response_language_resolver=(
+                ResponseLanguageResolver() if with_resolver else None
+            ),
         )
         self.stack.bind_adapter(self.adapter)
         self.adapter.start()
@@ -144,7 +157,9 @@ class _Fixture(unittest.IsolatedAsyncioTestCase):
         for t in getattr(self, "_ctl_tasks", []):
             if not t.done():
                 t.cancel()
-        await self.adapter.shutdown()
+        adapter = getattr(self, "adapter", None)
+        if adapter is not None:
+            await adapter.shutdown()
 
     async def _confirm_barge_in(self):
         """Drive the controller to a confirmed interruption while a reply
@@ -324,6 +339,160 @@ class TestRepeatedInterruptionStress(_Fixture):
         self.assertLessEqual(len(asyncio.all_tasks(loop)) - base_tasks, 3)
         # no progressive latency explosion (fake model: cycles are ~equal)
         self.assertLess(lat, first_latency * 3 + 0.5)
+
+
+class TestCancellationOverlapAudit(_Fixture):
+    async def test_7_cancel_requested_and_worker_stop_are_tracked_separately(self) -> None:
+        """``llm_cancel_requested`` (the instant we ask) is recorded on the
+        ``InterruptedTurn`` at commit time; the authoritative
+        ``cancel_to_worker_stop_ms`` arrives afterwards via
+        ``on_cancel_completed`` — the two are never conflated."""
+        a = self._build()
+        await self._confirm_barge_in()
+        self.stack.controller._sm.speech_stopped(now=2.0)  # noqa: SLF001
+        a.note_interrupt_segment_ended()
+        a.handle_transcription(_tr("Czekaj."))
+        a.note_interrupt_capture_settled()
+        await asyncio.sleep(0.3)
+        # the interrupted turn recorded that a cancel was *requested*
+        self.assertEqual(len(self.interrupts), 1)
+        self.assertTrue(self.interrupts[0].llm_cancel_requested)
+        # a separate, later completion record carries the measured timing
+        self.assertEqual(len(self.cancel_completions), 1)
+        cc = self.cancel_completions[0]
+        self.assertTrue(cc.cancel_observed)
+        self.assertTrue(cc.worker_stopped)
+        self.assertIsInstance(cc.cancel_to_worker_stop_ms, float)
+        self.assertGreaterEqual(cc.cancel_to_worker_stop_ms, 0.0)
+
+    async def test_8_no_stale_provider_worker_after_repeated_cancels(self) -> None:
+        """Every cancelled generation's worker thread actually exits — after
+        N barge-in cycles, started == stopped (no accumulating workers)."""
+        a = self._build(chunks=tuple(f"c{i} " for i in range(6)))
+        ctl = self.stack.controller
+        for cycle in range(8):
+            rid = ctl.notify_response_dispatched()
+            a._active_response_id = rid  # noqa: SLF001
+            turn = asyncio.ensure_future(
+                a._run_turn_inner(_tr(f"pytanie {cycle}"))  # noqa: SLF001
+            )
+            await asyncio.sleep(0.04)
+            ctl._sm.speech_started(now=0.0)  # noqa: SLF001
+            ctl._sm.poll(now=1.0)  # noqa: SLF001
+            await ctl._do_confirm("sustained_vad")  # noqa: SLF001
+            await turn
+            ctl._sm.speech_stopped(now=2.0)  # noqa: SLF001
+            a.note_interrupt_segment_ended()
+            a.handle_transcription(_tr(f"krócej {cycle}"))
+            a.note_interrupt_capture_settled()
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if not a.turn_in_flight and not a.capturing_interrupt:
+                    break
+        # let any still-draining worker finish
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if self.prov.workers_stopped == self.prov.workers_started:
+                break
+        self.assertEqual(self.prov.workers_started, self.prov.workers_stopped)
+        self.assertGreaterEqual(self.prov.workers_stopped, 8)
+        # every completion observed the cancel and a stopped worker
+        self.assertTrue(all(c.cancel_observed for c in self.cancel_completions))
+        self.assertTrue(all(c.worker_stopped for c in self.cancel_completions))
+
+    async def test_9_response_id_is_strictly_monotonic_across_interruptions(self) -> None:
+        a = self._build(chunks=tuple(f"c{i} " for i in range(6)))
+        ctl = self.stack.controller
+        seen: list[int] = []
+        for cycle in range(6):
+            rid = ctl.notify_response_dispatched()
+            a._active_response_id = rid  # noqa: SLF001
+            turn = asyncio.ensure_future(
+                a._run_turn_inner(_tr(f"pytanie {cycle}"))  # noqa: SLF001
+            )
+            await asyncio.sleep(0.04)
+            # _run_turn_inner fires on_user_transcript -> the stack allocates
+            # THIS turn's real response_id; that is the one an interruption
+            # invalidates.
+            active = ctl.active_response_id
+            seen.append(active)
+            ctl._sm.speech_started(now=0.0)  # noqa: SLF001
+            ctl._sm.poll(now=1.0)  # noqa: SLF001
+            await ctl._do_confirm("sustained_vad")  # noqa: SLF001
+            self.assertEqual(ctl.state_machine.last_invalidated_response_id, active)
+            await turn
+            ctl._sm.speech_stopped(now=2.0)  # noqa: SLF001
+            a.note_interrupt_segment_ended()
+            a.handle_transcription(_tr(f"krócej {cycle}"))
+            a.note_interrupt_capture_settled()
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if not a.turn_in_flight and not a.capturing_interrupt:
+                    break
+        self.assertEqual(seen, sorted(seen))
+        self.assertEqual(len(set(seen)), len(seen))  # no repeats
+
+
+class TestBilingualInterruption(_Fixture):
+    async def test_10_pl_reply_interrupted_in_english_coalesces_as_english(self) -> None:
+        a = self._build(with_resolver=True)
+        await self._confirm_barge_in()
+        # two EN segments of the one interruption
+        self.stack.controller._sm.speech_stopped(now=2.0)  # noqa: SLF001
+        a.note_interrupt_segment_ended()
+        a.handle_transcription(_tr("Sorry.", "en"))
+        self.stack.controller._sm.speech_started(now=3.0)  # noqa: SLF001
+        a.note_interrupt_segment_started()
+        self.stack.controller._sm.speech_stopped(now=4.0)  # noqa: SLF001
+        a.note_interrupt_segment_ended()
+        a.handle_transcription(_tr("I just meant its colour.", "en"))
+        a.note_interrupt_capture_settled()
+        await asyncio.sleep(0.3)
+        self.assertEqual(a.coalesced_interrupt_turns, 1)
+        user_turns = [t for t in self.sess.history if t.role == Role.USER]
+        self.assertEqual(user_turns[-1].content, "Sorry. I just meant its colour.")
+        # the coalesced turn was dispatched as an English turn
+        self.assertTrue(self.langs)
+        self.assertEqual(self.langs[-1].input_speech_language, "en")
+        self.assertEqual(self.langs[-1].response_language, "en")
+
+
+class TestNoBargeInUnchanged(_Fixture):
+    async def test_11_no_bargein_has_no_capture_phase_and_plain_drop_busy(self) -> None:
+        """``enabled=False`` (the ``--no-bargein`` default): no controller, no
+        interruption-capture phase — a second busy utterance is DROP_BUSY'd
+        exactly as R0026."""
+        prov = _Prov(["a ", "b ", "c ", "d "])
+        sess = ConversationSession(
+            provider=prov, system_prompt="s", options=GenerationOptions()
+        )
+        stack = build_bargein_stack(
+            enabled=False, sample_rate=16000, channels=1,
+            on_confirmed=lambda ctx: None,
+        )
+        self.assertIsNone(stack.controller)
+        dropped: list = []
+        adapter = VoiceConversationAdapter(
+            sess,
+            on_turn_dropped=dropped.append,
+            response_id_source=stack.response_id_source,
+        )
+        adapter.start()
+        adapter.handle_transcription(_tr("Pierwsze pytanie."))
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+            if adapter.turn_in_flight:
+                break
+        self.assertTrue(adapter.turn_in_flight)
+        self.assertFalse(adapter.capturing_interrupt)
+        adapter.handle_transcription(_tr("Drugie w trakcie."))
+        self.assertEqual(len(dropped), 1)
+        self.assertEqual(dropped[0].reason, DROP_BUSY_RESPONSE_IN_FLIGHT)
+        for _ in range(60):
+            await asyncio.sleep(0.01)
+            if not adapter.turn_in_flight:
+                break
+        await adapter.shutdown()
 
 
 if __name__ == "__main__":

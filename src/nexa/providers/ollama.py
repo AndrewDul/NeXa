@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import select
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator
@@ -25,6 +27,15 @@ from .base import (
 )
 
 _DONE = object()
+#: M2.5B.1 — how often the streaming worker re-checks
+#: ``cancel_token.is_cancelled`` while Ollama is mid-token and the socket
+#: has no data. R0029 measured ``cancel() → worker stopped`` at ~2.0 s with
+#: a plain blocking ``readline`` (the worker was stuck between lines); that
+#: ~2 s overlapped the interrupting utterance's whisper.cpp decode and
+#: inflated it ~34 %. ``select()`` on the socket fd (kept in blocking mode —
+#: a per-read ``settimeout`` corrupts ``http.client``'s chunked reader) lets
+#: the check run ~4×/s so cancellation lands in well under a second.
+_CANCEL_POLL_SECS = 0.25
 
 
 class LocalModelProvider(ModelProvider):
@@ -106,11 +117,31 @@ class LocalModelProvider(ModelProvider):
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
+                deadline = time.monotonic() + self._timeout
                 with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                    for raw_line in resp:
+                    try:
+                        fd = resp.fileno()
+                    except (AttributeError, OSError):  # pragma: no cover
+                        fd = None
+                    while True:
                         if cancel_token is not None and cancel_token.is_cancelled:
                             cancel_token.mark_cancel_observed()
                             return
+                        if time.monotonic() > deadline:
+                            errors.append(
+                                TimeoutError(f"ollama stream exceeded {self._timeout}s")
+                            )
+                            break
+                        # Wait for data with a short poll so the cancel check
+                        # above runs ~4x/s; the socket stays blocking so
+                        # http.client's chunked reader is not corrupted.
+                        if fd is not None and not select.select(
+                            [fd], [], [], _CANCEL_POLL_SECS
+                        )[0]:
+                            continue
+                        raw_line = resp.readline()
+                        if not raw_line:
+                            break  # EOF — stream ended without an explicit done
                         line = raw_line.strip()
                         if not line:
                             continue

@@ -61,8 +61,15 @@ STT_WAV = (
     HERE.parents[0] / "m2_voice_spikes" / "asr_test_samples"
     / "pl_jaka_jest_prędkość_światła.wav"
 )
-N_TURNS = 18
-INTERRUPT_AT = {5: "spoken_prefix", 10: "rollback", 14: "spoken_prefix"}
+#: M2.5B.1 rerun (R0029): 44 turns so the session crosses the *new*
+#: 40-turn ``DEFAULT_MAX_TURNS`` window — confirms (a) turns past the old
+#: 20-turn boundary now stay in the ~3-4 s regime and (b) where (if at
+#: all) the sliding-window KV-cache collapse now appears.
+N_TURNS = int(__import__("os").environ.get("MEASURE_N_TURNS", "44"))
+INTERRUPT_AT = {
+    5: "spoken_prefix", 10: "rollback", 14: "spoken_prefix",
+    22: "rollback", 30: "spoken_prefix", 38: "rollback",
+}
 
 
 def _wav_pcm16k_mono(path: Path) -> bytes:
@@ -91,9 +98,17 @@ async def _one_turn(session, text: str, *, interrupt: str | None) -> dict:
     first_tok_at = None
     n_chunks = 0
     chunks: list[str] = []
+    # PRODUCTION-ACCURATE: a barge-in turn carries a per-turn CancelToken and
+    # the controller calls ``.cancel()`` the instant the interruption is
+    # confirmed. Modelling that here is the whole point — an earlier version
+    # of this spike only did ``gen.aclose()`` with no token, so the Ollama
+    # worker ran the abandoned generation to completion and (Ollama
+    # serialises per model) blocked the *next* turn ~24 s. That over-stated
+    # the damage vs production.
+    tok = CancelToken() if interrupt is not None else None
     gen = session.send(text, response_mode=__import__(
         "nexa.conversation.response_mode", fromlist=["ResponseMode"]
-    ).ResponseMode.VOICE)
+    ).ResponseMode.VOICE, cancel_token=tok)
     async for ch in gen:
         n_chunks += 1
         chunks.append(ch)
@@ -108,14 +123,24 @@ async def _one_turn(session, text: str, *, interrupt: str | None) -> dict:
         "history_turns_before": len(session.history),
     }
     if interrupt is not None:
-        await gen.aclose()
+        t_cancel = time.monotonic()
+        tok.cancel()
+        loop = asyncio.get_running_loop()
+        stopped = await loop.run_in_executor(None, tok.wait_worker_stopped, 5.0)
+        rec["cancel_to_worker_stop_ms"] = (
+            round((time.monotonic() - t_cancel) * 1000, 1) if stopped else None
+        )
+        rec["cancel_observed"] = tok.cancel_observed
+        rec["worker_stopped"] = stopped
+        try:
+            await gen.aclose()
+        except Exception:  # noqa: BLE001
+            pass
         if interrupt == "rollback":
             out = session.commit_interrupted_turn("")
         else:
             out = session.commit_interrupted_turn("".join(chunks).strip()[:120])
         rec["interrupt_outcome"] = out.value
-        # give Ollama a beat to notice the dropped stream
-        await asyncio.sleep(0.2)
     else:
         m = prov.last_metrics or {}
         rec["prompt_eval_count"] = m.get("prompt_eval_count")
@@ -141,9 +166,13 @@ async def part_a_kv_cache(session) -> list[dict]:
         r = await _one_turn(session, q, interrupt=interrupt)
         r["turn"] = i
         tag = f" [INTERRUPT:{interrupt}]" if interrupt else ""
+        extra = (
+            f"  cancel->stop={r.get('cancel_to_worker_stop_ms')}ms"
+            if interrupt else ""
+        )
         print(f"  turn {i:2d}{tag}  ttft={r.get('ttft_ms')}ms  "
               f"prompt_eval={r.get('prompt_eval_count')} "
-              f"({r.get('prompt_eval_ms')}ms)  hist={r['history_turns_after']}")
+              f"({r.get('prompt_eval_ms')}ms)  hist={r['history_turns_after']}{extra}")
         out.append(r)
     return out
 
@@ -227,20 +256,32 @@ async def main() -> None:
         and part_a[i].get("prompt_eval_ms")
     ]
     early = [r for r in normal if r["turn"] <= 6]
-    late = [r for r in normal if r["turn"] >= 13]
+    late = [r for r in normal if r["turn"] >= N_TURNS - 6]
+    mid = [r for r in normal if 13 <= r["turn"] <= N_TURNS - 7]
 
     def _avg(rows, key):
         xs = [r[key] for r in rows if isinstance(r.get(key), (int, float))]
         return round(statistics.mean(xs), 1) if xs else None
 
+    int_turns = [r for r in part_a if r["interrupt"]]
     analysis = {
         "ttft_ms_early_avg": _avg(early, "ttft_ms"),
+        "ttft_ms_mid_avg": _avg(mid, "ttft_ms"),
         "ttft_ms_late_avg": _avg(late, "ttft_ms"),
+        "prompt_eval_ms_mid_avg": _avg(mid, "prompt_eval_ms"),
         "prompt_eval_count_early_avg": _avg(early, "prompt_eval_count"),
         "prompt_eval_count_late_avg": _avg(late, "prompt_eval_count"),
         "prompt_eval_ms_normal_avg": _avg(normal, "prompt_eval_ms"),
         "prompt_eval_ms_after_interrupt_avg": _avg(after_int, "prompt_eval_ms"),
         "prompt_eval_ms_after_interrupt_turns": [r["turn"] for r in after_int],
+        "ttft_ms_turn_after_interrupt": [
+            part_a[i]["ttft_ms"] for i in range(len(part_a))
+            if i > 0 and part_a[i - 1]["interrupt"] and not part_a[i]["interrupt"]
+        ],
+        "cancel_to_worker_stop_ms_part_a": [
+            r.get("cancel_to_worker_stop_ms") for r in int_turns
+        ],
+        "cancel_observed_part_a": [r.get("cancel_observed") for r in int_turns],
     }
     out = {"ts": ts, "part_a_turns": part_a, "part_bc": part_bc, "analysis": analysis}
     (HERE / f"measure_interrupt_latency_pi_{ts}.json").write_text(

@@ -11,7 +11,11 @@ SRC = REPO_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from nexa.conversation.context import ConversationContext  # noqa: E402
+from nexa.conversation.context import (  # noqa: E402
+    DEFAULT_MAX_CHARS,
+    DEFAULT_MAX_TURNS,
+    ConversationContext,
+)
 from nexa.conversation.turn import ConversationTurn, Role  # noqa: E402
 
 SYSTEM_PROMPT = "system"
@@ -59,6 +63,50 @@ class TestConversationContext(unittest.TestCase):
             [t.content for t in context.turns],
             [f"turn-{i}" for i in range(5)],
         )
+
+    def test_default_window_holds_a_long_voice_session_without_eviction(self) -> None:
+        """M2.5B.1 / R0029: the first turn-eviction permanently collapses
+        Ollama's prompt-prefix KV-cache reuse, so a normal (even
+        interruption-heavy) session must stay entirely inside the window.
+        At the old cap of 20 the collapse hit mid-session (history 22)."""
+        # 38 turns (19 user/assistant pairs) — a long session, still < 40.
+        history: list[ConversationTurn] = []
+        for i in range(19):
+            history.append(_turn(Role.USER, f"pytanie numer {i}"))
+            history.append(_turn(Role.ASSISTANT, f"odpowiedz numer {i} " * 8))
+        ctx = ConversationContext.build(SYSTEM_PROMPT, history)
+        # nothing dropped: the oldest turn is still there
+        self.assertEqual(len(ctx.turns), len(history))
+        self.assertEqual(ctx.turns[0].content, "pytanie numer 0")
+
+    def test_prompt_prefix_is_byte_stable_as_the_session_grows(self) -> None:
+        """Turn N+1's wire message list must be turn N's list plus the new
+        turn appended — a pure prefix-extension — for as long as the window
+        does not evict. This is the property Ollama's KV-cache reuse needs."""
+        history: list[ConversationTurn] = []
+        prev_messages: list | None = None
+        for i in range(DEFAULT_MAX_TURNS // 2):
+            history.append(_turn(Role.USER, f"q{i}"))
+            history.append(_turn(Role.ASSISTANT, f"a{i}"))
+            msgs = [
+                (m.role, m.content)
+                for m in ConversationContext.build(
+                    SYSTEM_PROMPT, list(history)
+                ).to_provider_messages()
+            ]
+            if prev_messages is not None:
+                # every message of the previous build is an unchanged prefix
+                self.assertEqual(msgs[: len(prev_messages)], prev_messages)
+            prev_messages = msgs
+
+    def test_eviction_above_the_cap_still_keeps_the_newest_turns(self) -> None:
+        n = DEFAULT_MAX_TURNS + 12
+        history = [_turn(Role.USER, f"m{i}") for i in range(n)]
+        ctx = ConversationContext.build(SYSTEM_PROMPT, history)
+        self.assertLessEqual(len(ctx.turns), n)
+        self.assertEqual(ctx.turns[-1].content, f"m{n - 1}")
+        # the char budget (20k) is not the binding constraint here
+        self.assertLess(sum(len(t.content) for t in ctx.turns), DEFAULT_MAX_CHARS)
 
     def test_to_provider_messages_prefixes_system_prompt(self) -> None:
         history = [_turn(Role.USER, "hi"), _turn(Role.ASSISTANT, "hello")]

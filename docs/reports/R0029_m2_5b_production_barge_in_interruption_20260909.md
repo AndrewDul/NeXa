@@ -4,11 +4,22 @@
 - **Author:** Claude Code (agent), for Andrzej Dul
 - **Milestone:** M2 — Realtime Voice · **Substage M2.5B — production
   barge-in / interruption.**
-- **Status:** **IMPLEMENTED + wiring-audited; deterministic + integration +
-  hardware-safe tests GREEN; awaiting the live operator acceptance
-  session.** `--no-bargein` (the default) is byte-for-byte R0026. Not
-  pushed. (See *WIRING AUDIT* — both audited wires were already correct in
-  code; 3 hardenings + a single-source `build_bargein_stack` were added.)
+- **Status:** **LIVE ACCEPTANCE FAILED once (2026-09-09) → M2.5B.1 fixes
+  applied, automated Pi evidence clean, re-test pending.** The first
+  `--bargein` operator session showed: AEC healthy; barge-in cancellation
+  worked; PL↔EN switching worked — **but** (1) an interrupting utterance
+  spoken as two VAD segments was **fragmented** (segment A started a reply,
+  segment B → `DROP_BUSY`), and (2) model time-to-first-token degraded
+  badly later in the session (→ ~75 s). **M2.5B.1 root-caused and fixed
+  both** — Problem 1 with an interruption-capture/coalesce phase, Problem 2
+  (the real cause: the 20-turn context window evicting its oldest turn
+  every turn permanently collapses Ollama's prompt-prefix KV-cache reuse)
+  by sizing the window to 40 turns so a normal session never evicts (a
+  40 +-turn marathon still eventually does — deferred to M5), plus a
+  responsive-cancellation fix (`cancel → worker-stop` ~2 s → 251 ms).
+  **NOT operator-confirmed** (one live session still owed). `--no-bargein`
+  (the default) remains byte-for-byte R0026. Not pushed. See *M2.5B.1 —
+  LIVE STABILITY / LATENCY / INTERRUPT-UTTERANCE INTEGRITY*.
 - **Related:** `R0028` (M2.5A architecture + real-hardware feasibility;
   **M2.5A COMPLETE / OPERATOR-CONFIRMED 2026-09-09**), `R0026` (the
   half-duplex behaviour this milestone replaces when enabled), `R0027`
@@ -20,11 +31,18 @@
 
 ## TASK RESULT
 
-**PASS (implementation).** Production barge-in is implemented end-to-end
-behind `LocalAudioConfig.bargein_enabled` (default `False`). With the flag
-off the M2.1/M2.4/R0026 pipeline is **byte-for-byte unchanged** (existing
-suite green, two R0026 lock-down guard tests updated for the M2.5B
-premise). With the flag on:
+**IMPLEMENTED; LIVE ACCEPTANCE FAILED once; M2.5B.1 fix in progress.**
+Production barge-in is implemented end-to-end behind
+`LocalAudioConfig.bargein_enabled` (default `False`). With the flag off the
+M1/M2.1/M2.4/R0026 pipeline is **byte-for-byte unchanged** (whole existing
+suite green, three prior lock-down assertions updated for the M2.5B
+premise). The first live `--bargein` session (2026-09-09) surfaced two
+defects — **Problem 1** interrupt-utterance fragmentation (**FIXED**,
+commit `2460463`, regression-tested) and **Problem 2** late-session model
+TTFT collapse (**root-caused + FIXED** — a pre-existing 20-turn
+context-window eviction that permanently breaks Ollama prompt-prefix
+KV-cache reuse; window resized so a normal session never evicts; see
+*M2.5B.1*). **Not `OPERATOR-CONFIRMED`.** With the flag on:
 
 - NeXa's TTS PCM is teed to the XVF3800 AEC far-end reference
   (`plug:respeaker`) so the microphone can safely stay hot during a reply;
@@ -38,16 +56,18 @@ premise). With the flag on:
   itself** for that response and the mic returns to R0026 whole-response
   suppression — loudly (telemetry), never a silent unsafe hot mic.
 
-**38 deterministic + 12 integration/wiring tests**
-(`tests/test_bargein_m2_5b.py`, `tests/test_bargein_wiring_m2_5b.py`) +
-updated guards; **full suite `pytest` 671 / `unittest` 678, `ruff` clean,
-`git diff --check` clean**; a **hardware-safe integration smoke** (real
+**38 + 12 + 13 tests** (`test_bargein_m2_5b.py` / `_wiring_m2_5b.py` /
+`_m2_5b1.py`) + updated guards; **full suite `pytest` 684 / `unittest`
+691, `ruff` clean, `git diff --check` clean**; a **hardware-safe integration smoke** (real
 reSpeaker + real `aplay -D plug:respeaker`, operator absent) passed: AEC
 reference active, mic hot during a simulated reply, **0 false candidates /
 0 confirmations while silent**, clean teardown.
 
-**Remaining:** one short live operator session (script below). Nothing is
-marked `OPERATOR-CONFIRMED` until it is run.
+**Remaining:** one short live operator session (below). The Problem 2
+analysis is done (real Pi, `gemma4:e4b`): the cause was **context-window
+eviction breaking KV-cache prefix reuse**, fixed by resizing the window;
+no cancellation barrier / summarisation needed. Nothing is
+`OPERATOR-CONFIRMED` until the live session passes.
 
 ## M2.5A CLOSURE
 
@@ -423,9 +443,27 @@ Mapped to the acceptance matrix:
 | 28 | `test_case28_default_gate_is_byte_for_byte_r0026` + whole existing suite unchanged |
 | 29 | `test_case29_nested_interruption_gets_a_fresh_monotonic_id` |
 
-Full suite: **`pytest` 671 passed / 7 skipped / 14 subtests** ·
-**`python -m unittest discover -s tests` 678 OK / 7 skipped** ·
+Full suite: **`pytest` 684 passed / 7 skipped / 14 subtests** ·
+**`python -m unittest discover -s tests` 691 OK / 7 skipped** ·
 **`ruff check src tests apps` clean** · **`git diff --check` clean**.
+
+**M2.5B.1 regression tests — `tests/test_bargein_m2_5b1.py` (13):**
+
+| # | Test | Locks |
+|---|---|---|
+| 1 | `test_1_and_5_split_A_B_becomes_ONE_canonical_turn` | the live bug: 2 VAD segments → 1 turn, segment B not `DROP_BUSY`'d |
+| 2 | `test_5_exactly_one_user_turn_even_with_three_segments` | 3 segments → 1 turn |
+| 3 | `test_3_no_DROP_BUSY_for_a_segment_of_the_confirmed_interruption` | no segment of the interruption is dropped |
+| 4 | `test_4_unrelated_later_busy_speech_is_STILL_dropped` | a genuinely new mid-reply utterance is still `DROP_BUSY` |
+| 5 | `test_noise_only_interruption_produces_no_replacement_turn` | cough/noise interruption → no turn, clean state |
+| 6 | `test_6_queues_and_in_flight_return_to_zero_after_the_interruption` | queue depth **and** in-flight → 0, no latched capture phase |
+| 7 | `test_7_cancel_requested_and_worker_stop_are_tracked_separately` | `llm_cancel_requested` (commit-time) vs `CancelCompletion.cancel_to_worker_stop_ms` (measured, later) never conflated |
+| 8 | `test_8_no_stale_provider_worker_after_repeated_cancels` | 8 cancels → workers started == stopped; every completion saw `cancel_observed` + `worker_stopped` |
+| 9 | `test_9_response_id_is_strictly_monotonic_across_interruptions` | 6 interruptions → strictly increasing, unique `response_id`; `last_invalidated_response_id` == the active id |
+| 10 | `test_10_pl_reply_interrupted_in_english_coalesces_as_english` | PL reply, EN interruption segments → coalesced turn dispatched EN (Jenny) |
+| 11 | `test_11_no_bargein_has_no_capture_phase_and_plain_drop_busy` | `enabled=False`: no controller, no capture phase, plain R0026 `DROP_BUSY` |
+| 12 | `test_capture_timeout_never_hangs` | missing settle signal → hard timeout finalises, never hangs |
+| 13 | `test_12_fifteen_interruptions_leave_no_accumulation` | 15 cycles: queues 0, ≤ 1 concurrency, ≤ 3 net asyncio tasks, no latency growth, 15 coalesced / 15 interrupted |
 
 **Hardware-safe integration smoke** (agent, operator absent): built
 `VoiceRuntime` + `BargeInController` + `AecReferenceFeeder` on the real
@@ -499,12 +537,261 @@ stack's `aec_status` callback); `barge_in_safe=True`,
 `candidate_started=0`, `interrupt_confirmed=0`**; clean teardown
 (`AEC REF DOWN`, 0 failures). **PASS.**
 
+## M2.5B.1 — LIVE STABILITY / LATENCY / INTERRUPT-UTTERANCE INTEGRITY
+
+### What the live session showed (2026-09-09)
+
+**Worked:** `✓ AEC REF ACTIVE` held; NeXa's own voice never triggered a
+barge-in; interruptions triggered and cancelled replies; PL↔EN switching
++ Jenny/Gosia mapping correct.
+
+**Failed — Problem 1, interrupt-utterance fragmentation.** The operator
+meant *"Czekaj. Powiedz tylko, jak powstaje."* — the runtime produced
+`canonical transcript: "Czekaj."`, NeXa replied *"Czekam. Co chciałbyś
+wiedzieć dalej?"*, then `DROP_BUSY_RESPONSE_IN_FLIGHT — dropped STT result
+'tylko jak powstaje.'`. Also seen: `"Sorry. I just meant..."` → dropped
+`'colon.'`; `"No."` → then `dropped 3540ms of audio captured while NeXa is
+answering`. VAD's `stop_secs=1.0` splits a mid-sentence pause into two
+segments; the one-shot `admit_next_utterance` let only segment 1 through,
+segment 1 dispatched a reply, segment 2 was `DROP_BUSY`'d. **Violates "full
+interrupting utterance is captured".**
+
+**Failed — Problem 2, latency degradation.** Most turns ~2.8–3.5 s STT
+total; later, after repeated interruptions, one turn `detect 2.55s + decode
+4.72s = 7.28s`, and perceived long end-to-end waits. Queue depths were
+often 0 (so not a visible backlog).
+
+### Problem 1 — root cause + fix (SHIPPED, commit `2460463`)
+
+**Root cause:** a confirmed interruption was treated as **one utterance =
+one VAD segment**. `HalfDuplexGate.admit_next_utterance()` was a *one-shot*;
+`InterruptionState.INTERRUPTING` treated a later `VADUserStartedSpeakingFrame`
+as `IGNORED_SPEECH`; the adapter dispatched a turn on the first STT result
+while more of the same interruption was still being captured/transcribed.
+
+**Fix — an explicit interruption-capture / settle phase** after
+`INTERRUPT_CONFIRMED` (default OFF; `--no-bargein` unchanged):
+
+- `InterruptionStateMachine`: `INTERRUPTING` now means *"capturing the
+  interruption utterance"*. `speech_started` / `speech_stopped` in that
+  state return `INTERRUPT_SEGMENT_STARTED` / `_ENDED` (not `IGNORED_SPEECH`);
+  it tracks `capture_open_segments` / `capture_segments_ended`.
+  `notify_response_finished` is a **no-op from `INTERRUPTING`** — only
+  `notify_interruption_complete` exits it.
+- `BargeInController`: on each segment end, arm a **settle window**
+  (`DEFAULT_INTERRUPT_SETTLE_SECS = 1.2`, restarted on every new segment;
+  hard cap `DEFAULT_MAX_CAPTURE_SECS = 12`). In the common single-segment
+  case the settle overlaps the segment's STT decode entirely and adds ~0
+  latency. On settle → `on_interrupt_capture_settled`.
+- `HalfDuplexGate`: the one-shot is replaced by a `capturing_interrupt`
+  **phase** (set on `InterruptionFrame`, cleared on the next
+  `notify_response_dispatched`). `should_drop_busy_utterance()` **never**
+  drops while capturing → every segment of the one interruption passes.
+- `VoiceConversationAdapter`: `handle_transcription` **first** checks
+  `_capturing_interrupt` (before the turn-in-flight / DROP_BUSY checks) and
+  accumulates each segment result. When the capture has *settled* **and**
+  every owed segment result has arrived, **ONE** `CoalescedInterruptTurn`
+  (`" ".join` of the segments, language from the last segment) is submitted
+  — a single canonical turn. Hard timeout guard. A noise-only interruption
+  yields no replacement turn. `_run_turn_inner` handles
+  `CoalescedInterruptTurn` exactly like a `TranscriptionResult`.
+
+**Invariant now enforced & tested:** *one confirmed interruption → exactly
+one canonical user turn*, no matter how many VAD segments; extras are
+coalesced, never `DROP_BUSY`'d, never separate turns. An *unrelated* later
+busy utterance is still dropped.
+
+### Problem 2 — Fix 1: responsive LLM cancellation (SHIPPED + validated)
+
+**Root cause of the slow `cancel() → worker stopped`.** The `ollama` /
+`llama_server` provider worker thread streamed the response with a plain
+blocking `resp.readline()`. Between two streamed lines (Ollama mid-token,
+~0.3–2 s on the Pi) the thread was parked inside `readline()` and could
+not see `cancel_token.is_cancelled`. R0029's first spike measured
+`cancel() → worker stopped` at **~2.0 s** (`cancel_to_worker_stop_ms =
+[2057, 2098, 2105]`), and a whisper.cpp decode started in that ~2 s window
+inflated **+34 %** (`decode_inflation_ratio 1.34`) from the old worker
+still burning a core.
+
+**Fix.** The worker now waits for socket readability with
+`select.select([resp.fileno()], [], [], 0.25)` before each `readline()`,
+so the `is_cancelled` check runs ~4×/s while the socket is idle. The
+socket stays in **blocking** mode — an earlier attempt with
+`socket.settimeout(0.25)` corrupted `http.client`'s chunked-transfer
+reader (`OSError: cannot read from timed out object` against real Ollama).
+On cancel the worker calls `mark_cancel_observed()` and returns; the
+`finally` calls `mark_worker_stopped()`.
+
+**Validated against the real Ollama server (`gemma4:e4b`, Pi):** streaming
+still works (24 chunks, `last_metrics` populated); `cancel() → worker
+stopped` = **251 ms** consistently in the re-measurement (three interrupt
+turns: 251.3 / 251.0 / 251.9 ms — one `_CANCEL_POLL_SECS` tick, the
+designed worst case), **down from ~2000 ms**. This alone removes the
+old-generation / new-work CPU overlap: by the time the coalesced
+interruption turn calls `session.send()` (after the ≥ 1.2 s settle window
++ the last segment's STT decode), a 251 ms-old cancellation has been
+complete for seconds. No explicit pre-`send()` "cancellation barrier" /
+sleep is added — Fix 1 makes it redundant (the re-measured decode-overlap
+inflation dropped x1.34 → x1.18, and even that residual never coincides
+with the interrupting utterance's decode in production — see below).
+
+### Problem 2 — instrumentation + measurement
+
+Added (measurement only, no control-flow dependency):
+
+- **`CancelToken`** now carries completion signals: `mark_cancel_observed()`
+  / `mark_worker_stopped()` (set by the provider worker thread) +
+  `cancel_observed` / `worker_stopped` / `wait_worker_stopped(timeout)`.
+  The `ollama` / `llama_server` workers set them; `is_cancelled` alone no
+  longer conflates *requested* with *stopped* — `InterruptedTurn` now has
+  `llm_cancel_requested` **and** `provider_worker_stopped_at_commit`, and a
+  separate `on_cancel_completed(CancelCompletion)` fires with the measured
+  `cancel_to_worker_stop_ms`.
+- **`LocalModelProvider.last_metrics`** — the Ollama server's own
+  `prompt_eval_count/duration`, `eval_count/duration`, `load_duration`,
+  `total_duration` from the `done` chunk.
+- **`SerialTranscriptionQueue` / `SerialConversationQueue`** expose
+  `in_flight` (queue_size hid in-flight work).
+- **`nexa.voice_conversation.LatencyLedger`** — per-turn record (STT
+  detect/decode/total, model TTFT + prompt_eval/eval/load, EOT→first-audio,
+  queue depth+in-flight, AEC, cancel completion, history growth) with an
+  early-vs-late summary + optional JSONL.
+- **`docs/research/m2_5_bargein/measure_interrupt_latency_pi.py`** — a
+  real-Pi spike (real `gemma4:e4b`, real whisper.cpp, no operator, no
+  audio): 18 turns with interruption-history mutations at turns 5/10/14
+  (KV-cache-collapse check) + `cancel() → worker stopped` timing + a
+  whisper-decode-while-old-Ollama-worker-runs measurement vs a no-Ollama
+  baseline (the 7.28 s STT hypothesis).
+
+### Problem 2 — measurement results (real Pi, `gemma4:e4b`, whisper.cpp)
+
+Spike `measure_interrupt_latency_pi.py`, 18-turn Polish session, per-turn
+`CancelToken.cancel()` at turns 5 (spoken-prefix) / 10 (rollback) / 14
+(spoken-prefix), then a `cancel → worker-stop` / decode-overlap block.
+Raw: `docs/research/m2_5_bargein/measure_interrupt_latency_pi_20260909_203953.json`
+(the first run, `…_191448.json`, is superseded — its interrupt path did
+**not** call `.cancel()`, so an abandoned generation ran to completion
+server-side and inflated the two post-interrupt turns to ~28 s; that was a
+spike bug, not a production effect).
+
+**A. Was the live failure a queue backlog? — NO.** `conv_queue_depth` /
+`stt_queue_depth` were 0 throughout; `in_flight` ≤ 1. The degradation is
+entirely **model time to first token**, not work waiting in a queue.
+
+**B. `cancel() → provider worker stopped` — bounded at one poll tick.**
+Part A: **251.3 / 251.0 / 251.9 ms** (all three `cancel_observed=True`,
+`worker_stopped=True`). Was ~2.0 s pre-Fix-1. (Part B/C's
+`cancel_to_worker_stop_ms` of ~1.84 s is a *spike artefact* — that block
+measures the stop only *after* an intervening `await whisper_decode()`, so
+it reports `max(actual_stop, decode_time)`; Part A's inline number is the
+real one.)
+
+**C. Whisper decode overlapping a just-cancelled Ollama worker —
+x1.18** (baseline median 1557.9 ms → overlap median 1839.1 ms; was x1.34
+pre-Fix-1). ~280 ms, from the ≤ 251 ms tail of the old worker plus
+llama.cpp finishing its current batch. **In production this overlap never
+occurs on the critical path**: the interrupting utterance's decode starts
+only after its VAD segments end, ≥ 1.2 s (settle) after the cancel — the
+worker (≤ 251 ms) is long gone. So the live 7.28 s STT was **not** a
+still-running cancelled worker (production always cancelled).
+
+**D. Why the late-session latency collapse — THE root cause.** Per-turn
+model TTFT / `prompt_eval_duration`:
+
+| turns | history | prompt_eval_count | prompt_eval | TTFT | regime |
+|---|---|---|---|---|---|
+| 1–4 | 2–8 | 535 → 798 | 3.1–3.5 s | 3.4–3.8 s | warm (KV-prefix reuse) |
+| 6–9 (after interrupts 5) | 12–18 | 945 → 1241 | 3.4–4.0 s | 3.7–4.3 s | **still warm** |
+| 11 (after interrupt 10) | 20 | 1331 | 3.1 s | 3.7 s | **still warm** |
+| **12** | **22** | **1382** | **77.9 s** | **78.3 s** | **collapsed** |
+| 13–18 | 24–34 | 1321–1387 | 71–79 s | 71–79 s | collapsed (permanent) |
+
+- `load_duration` is 1–4 ms on **every** turn → the model never reloads;
+  `keep_alive=30m` is fine. Not a reload.
+- The collapse is **exactly** at the point `len(history)` first exceeds the
+  old `DEFAULT_MAX_TURNS = 20` (turn 12, history 22). `prompt_eval_count`
+  then **plateaus** at ~1350–1387 while history climbs 22 → 34 — i.e. the
+  context window has started **evicting its oldest turn every turn**.
+- Dropping the oldest turn changes the token sequence right after the
+  system prompt, so Ollama/llama.cpp's cached prompt **prefix diverges at
+  position ~0** and the whole ~1.4 k-token prompt is cold-reprocessed at
+  ~17 tok/s (≈ 78 s). Because the eviction advances again next turn, it
+  **never recovers**. This is precisely the KV-cache-prefix failure mode
+  `context.py`'s module header already documents for the R0009 language
+  directive — the same rule, applied to eviction.
+- **Interrupted-history mutations are NOT the cause.** Turns 6 and 11
+  (immediately after a spoken-prefix commit and a CASE-A rollback) are
+  ~3.7–4.3 s — fully warm. CASE A / CASE B keep the prefix byte-stable, as
+  designed. `ttft_ms_turn_after_interrupt = [4285, 3741, 73838]` — the
+  third is 74 s only because the whole session is already collapsed by
+  turn 15, not because of interrupt 14.
+
+**Fix (Problem 2): `DEFAULT_MAX_TURNS` 20 → 40, `DEFAULT_MAX_CHARS`
+12 000 → 20 000** (`nexa.conversation.context`). ~40 turns / ~5 k tokens
+sits well inside Ollama's 8 k `num_ctx`, so a normal voice session —
+including an interruption-heavy M2.5B one — **never reaches the first
+eviction**, and every turn stays in the ~3–4 s TTFT regime the early
+turns show. Model, `num_thread=2`, `keep_alive=30m`, `num_ctx`, whisper,
+Piper: **unchanged**. This is not summarisation/compaction — a genuine
+40 +-turn marathon still eventually slides the window; a prefix-stable
+compaction for that is long-term-memory work (M5, AGENTS.md §3.8),
+explicitly out of M2.5B.1 scope.
+
+Regression tests: `test_context.py::test_default_window_holds_a_long_voice_
+session_without_eviction`, `::test_prompt_prefix_is_byte_stable_as_the_
+session_grows`, `::test_eviction_above_the_cap_still_keeps_the_newest_turns`.
+
+**E. 44-turn re-measurement (`…_210436.json`) — the fix, and its
+boundary.** Same spike, `N_TURNS=44`, interrupts at 5/10/14/22/30/38, run
+*with* the resized window:
+
+| turns | history | prompt_eval_count | TTFT | regime |
+|---|---|---|---|---|
+| 1–21 | 2 → 40 | 535 → 2155 (**grows, no plateau**) | **3.4–4.6 s** | warm — every turn, the whole span the old build collapsed at turn 12 |
+| 6, 11, 12, 13 (after interrupts) | 12–24 | — | 3.8–4.5 s | warm — interrupted-history mutations still don't break it |
+| 24–44 | 44 → 82 | plateaus ~2250–2340 | **154–164 s** | collapsed — history now exceeds the **new** 40-turn cap; identical mechanism, moved 20 turns out |
+| 23, 39 (turn *after* a rollback) | 42 / 72 | 2223 / 2311 | 4.0 / 4.6 s | one warm turn: CASE-A rollback leaves the cache matching the evicted prefix, so the next turn only appends a user message |
+
+So the fix **fully covers a normal session** (the early-turns regime now
+holds to turn 40 / ~2150 prompt tokens) and the operator's live failure
+(which degraded well before that) — but it **moves** the eviction cliff,
+it does not remove it. A 40 +-turn session collapses the same way. That
+final removal needs prefix-stable history compaction and is deferred to M5
+(`context.py` header; AGENTS.md §3.8) — not M2.5B.1. `cancel → worker-stop`
+held at **250–256 ms** across all six interrupts in this run.
+
+**Model decode rate** (`eval` ~3.4 tok/s on the Pi at `num_thread=2`) is a
+pre-existing, accepted R0022/R0023 trade-off and is *not* touched here —
+it affects how fast a long reply finishes streaming, not the "tens of
+seconds to first audio" the operator reported (that was D).
+
 ## OPERATOR ACCEPTANCE STATUS
 
-**NOT YET RUN.** M2.5B is not `OPERATOR-CONFIRMED` until the live session
-(script below) passes. `--no-bargein` remains available and is
-byte-for-byte R0026. The wiring audit above confirms the `--bargein` build
-reaches `✓ AEC REF ACTIVE` on the real `plug:respeaker` endpoint.
+**FAILED once (2026-09-09); fixes applied + automated Pi evidence clean;
+ONE live re-test now owed.** M2.5B is **not** `OPERATOR-CONFIRMED`.
+
+- Problem 1 (fragmentation): fixed (capture/coalesce phase) + 13 regression
+  tests including the exact live reproduction.
+- Problem 2 (late-session TTFT): root-caused on the real Pi
+  (`gemma4:e4b`) — the 20-turn context window evicting one turn per turn
+  permanently collapses Ollama prompt-prefix KV-cache reuse (3 s → 78 s at
+  history 22). Fixed by resizing the window (40 turns / 20 k chars, still
+  inside `num_ctx`): a 44-turn re-measurement shows every turn flat at
+  ~4 s through turn 40 (the whole span that used to collapse at turn 12).
+  Not a queue, not a reload, not interrupted-history mutation, not an
+  un-cancelled worker. **Boundary, not removal:** a 40 +-turn session
+  collapses identically — prefix-stable compaction for that is M5, not
+  M2.5B.1. An M2.5B live-acceptance session is ~7 exchanges, far short of
+  40.
+- Responsive cancellation: `cancel → worker-stop` ~2 s → 251 ms
+  (`select()` poll in the provider worker).
+- Automated evidence is clean: `pytest` 687 / `unittest` 694 / `ruff`
+  clean; repeated-interruption stress (15 cycles) stable — queues 0, ≤ 1
+  concurrency, ≤ 3 net asyncio tasks, no latency growth; the 7.28 s STT is
+  explained (CPU contention from the collapsed 78 s prompt-eval, gone once
+  Problem 2 is fixed).
+
+`--no-bargein` remains byte-for-byte R0026.
 
 ## FILES CHANGED
 
@@ -522,6 +809,13 @@ reaches `✓ AEC REF ACTIVE` on the real `plug:respeaker` endpoint.
 - `tests/test_bargein_m2_5b.py` — 38 deterministic cases.
 - `tests/test_bargein_wiring_m2_5b.py` — 12 integration/wiring cases (A–J
   + probe-uses-the-builder parity).
+- `tests/test_bargein_m2_5b1.py` — **13** M2.5B.1 cases (no-fragmentation,
+  cancellation-overlap audit, bilingual interruption, `--no-bargein`
+  unchanged, 15-cycle stress).
+- `src/nexa/voice_conversation/latency_ledger.py` — `LatencyLedger` /
+  `TurnLedgerRecord` (M2.5B.1 per-turn latency instrumentation).
+- `docs/research/m2_5_bargein/measure_interrupt_latency_pi.py` — real-Pi
+  latency / KV-cache / cancel-overlap spike (M2.5B.1) + its result JSONs.
 - `docs/reports/R0029_…md` — this report.
 
 **Changed:**
@@ -530,8 +824,23 @@ reaches `✓ AEC REF ACTIVE` on the real `plug:respeaker` endpoint.
 - `src/nexa/conversation/session.py` — `commit_interrupted_turn` +
   `InterruptedTurnOutcome`.
 - `src/nexa/conversation/context.py` — `INTERRUPTED_WIRE_SUFFIX`
-  deterministic wire annotation.
+  deterministic wire annotation; **M2.5B.1: `DEFAULT_MAX_TURNS` 20 → 40,
+  `DEFAULT_MAX_CHARS` 12 000 → 20 000** so a normal session never evicts a
+  turn mid-session (the first eviction permanently collapses KV-cache
+  prefix reuse — Problem 2 root cause). Header documents the mechanism.
 - `src/nexa/conversation/__init__.py` — export `InterruptedTurnOutcome`.
+- `src/nexa/providers/ollama.py`, `src/nexa/providers/llama_server.py` —
+  **M2.5B.1: `select()` poll before each streamed `readline()`** so the
+  worker sees `cancel_token.is_cancelled` ~4×/s (was parked in a blocking
+  `readline` between tokens → `cancel → stop` ~2 s; now ≤ 251 ms). Socket
+  stays blocking (a per-read `settimeout` corrupts `http.client`'s chunked
+  reader). `mark_cancel_observed()` / `mark_worker_stopped()`.
+- `src/nexa/providers/base.py` — **M2.5B.1: `CancelToken`** gains
+  `mark_cancel_observed()` / `mark_worker_stopped()` / `cancel_observed` /
+  `worker_stopped` / `wait_worker_stopped(timeout)`.
+- `src/nexa/stt/queue.py`, `src/nexa/voice_conversation/queue.py` —
+  **M2.5B.1: `in_flight` property** (queue depth alone hid in-flight work
+  in the ledger).
 - `src/nexa/voice/gate.py` — `HalfDuplexGate(bargein_enabled, aec_health)`,
   `bargein_active`, `admit_next_utterance` / `should_drop_busy_utterance`,
   observes `InterruptionFrame`.
@@ -547,9 +856,34 @@ reaches `✓ AEC REF ACTIVE` on the real `plug:respeaker` endpoint.
   `response_id`, `interrupt_active_turn()` (**+ capture the spoken prefix
   on the loop at confirm time**), `_commit_interrupted` (**uses the
   captured value**), `on_turn_interrupted` / `InterruptedTurn`,
-  `response_id_source` / `spoken_prefix_source`.
+  `response_id_source` / `spoken_prefix_source`. **M2.5B.1:**
+  interruption-capture phase — `handle_transcription` accumulates every
+  segment result *before* the DROP_BUSY check; `CoalescedInterruptTurn`
+  (one canonical turn from N segments) via `note_interrupt_segment_*` /
+  `note_interrupt_capture_settled` + a hard timeout guard;
+  `CancelCompletion` / `on_cancel_completed` + `_watch_cancel_completion`
+  (measures `cancel → worker-stop` off-loop); `llm_cancel_requested`
+  vs `provider_worker_stopped_at_commit` split.
 - `src/nexa/voice/interruption.py` — **`last_invalidated_response_id`**
   (wiring-audit hardening; the controller reads it in `_do_confirm`).
+  **M2.5B.1:** `INTERRUPTING` is a *capture* state —
+  `INTERRUPT_SEGMENT_STARTED` / `_ENDED` events, `capture_open_segments` /
+  `capture_segments_ended`; `notify_response_finished` a no-op from
+  `INTERRUPTING` (only `notify_interruption_complete` exits it).
+- `src/nexa/voice/bargein.py` — **M2.5B.1:** per-segment settle window
+  (`DEFAULT_INTERRUPT_SETTLE_SECS = 1.2`, restarted each segment; hard cap
+  `DEFAULT_MAX_CAPTURE_SECS = 12`), `set_capture_hooks(...)`,
+  `notify_interruption_complete()`, `_arm_settle` / `_capture_deadline`;
+  telemetry `interrupt_segments` / `_ended`.
+- `src/nexa/voice/gate.py` — **M2.5B.1:** the `admit_next_utterance`
+  one-shot is replaced by a `capturing_interrupt` *phase* (set on
+  `InterruptionFrame`, cleared on the next `notify_response_dispatched`);
+  `should_drop_busy_utterance()` never drops while capturing.
+- `src/nexa/voice_tts/bargein_wiring.py` — **M2.5B.1:** `bind_adapter()`
+  (late-binds controller capture hooks ↔ adapter), `on_interruption_
+  complete()`; `note_interruption()` now a controller no-op.
+- `apps/nexa_bilingual_voice_probe.py` — **M2.5B.1:**
+  `interruption_complete_hook` + `stack.bind_adapter(adapter)`.
 - `apps/nexa_bilingual_voice_probe.py` — `--bargein` / `--no-bargein`;
   **refactored onto `build_bargein_stack`** (the hand-rolled construction
   removed); live surface.
