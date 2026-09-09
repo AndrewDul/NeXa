@@ -5,11 +5,32 @@ Runtime / test evidence outranks anything else in this repo.
 
 ---
 
-- **Last verified:** 2026-09-08
+- **Last verified:** 2026-09-09
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0027_response_language_override_vs_sticky_20260908.md`
+- **Latest report:** `docs/reports/R0028_m2_5a_bargein_interruption_architecture_feasibility_20260909.md`
+  (**M2.5A — Barge-In / Interruption Architecture & Real-Hardware Feasibility
+  — COMPLETE / OPERATOR-CONFIRMED (2026-09-09).** No `src/` change in M2.5A.
+  Key facts for M2.5B: **(1)** on the bare `plug:usb_speaker` route NeXa's
+  own Piper voice trips the reSpeaker + Silero VAD on **14/14** silent-
+  playback trials (latched 3.4–17.0 s) — a hot mic during a response is
+  unsafe there; **(2)** feeding the XVF3800 its **AEC far-end reference**
+  (identical PCM also to `plug:respeaker`) removes it — automated 0/4, and
+  the operator M2.5A.2 test: audible+AEC active 3/3, QUIET_AEC false-VAD 0,
+  operator voice detected 3/3, AEC live at every detection, Silero
+  separation AEC-quiet residual conf/vol p95 0.756/0.536 vs operator speech
+  0.985/0.761, `M2.5A CLOSE CRITERIA MET = True`; **(3)** SPIKE B-live v2
+  media-stop: VAD start → PLAYBACK TASK STOPPED **28.5 ms mean / 37.4 ms
+  max** (playback-process stopped, not last speaker sample); **(4)** Pipecat
+  1.8.1 has first-class interruption (`InterruptionFrame`,
+  `broadcast_interruption()`, `base_output.handle_interruptions()`) but NeXa
+  wires none of it; `session.send(cancel_token=)` / Ollama cancel work
+  (~1 s, model resident) but the voice path passes no token. **Superseded
+  operator-action / next-step items in R0028 are historical — M2.5A.2 has
+  since passed.** `pytest` 621 / `unittest` 628; `ruff` clean; `git diff
+  --check` clean. Not pushed.
+- **Prior report:** `docs/reports/R0027_response_language_override_vs_sticky_20260908.md`
   (M2.4B.5B — **Response Language Override vs Sticky Preference — DONE**.
   Corrected `ResponseLanguageResolver`: a **one-turn override** ("Answer in
   English.", "Odpowiedz po polsku.") now affects **this reply only** and
@@ -235,7 +256,10 @@ Runtime / test evidence outranks anything else in this repo.
   M2.4B.1A CPU spike + metric fixes; `R0013` = M2.4B.1 instrumentation;
   `R0012` = M2.4B research; `R0011` = M2.4)
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
-  **M2 — Realtime Voice — IN PROGRESS (M2.1, M2.2, M2.3, M2.4, M2.4B COMPLETE, `OPERATOR-CONFIRMED`; active: M2.5 — barge-in / interruption)**
+  **M2 — Realtime Voice — IN PROGRESS** (M2.1, M2.2, M2.3, M2.4, M2.4B
+  COMPLETE, `OPERATOR-CONFIRMED`; **M2.5A — barge-in/interruption
+  architecture & feasibility — COMPLETE / OPERATOR-CONFIRMED (2026-09-09),
+  `R0028`**; **active: M2.5B — production barge-in / interruption, `R0029`**)
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
   M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1 local
   baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. M2
