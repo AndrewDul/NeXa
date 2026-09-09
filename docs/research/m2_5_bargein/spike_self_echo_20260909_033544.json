@@ -1,0 +1,66 @@
+{
+ "ts": "20260909_033544",
+ "phrase": "Czarna dziura to obszar czasoprzestrzeni o tak ogromnej grawitacji, że nic, nawet światło, nie jest w stanie się z niej wydostać. Powstaje, gdy bardzo masywna gwiazda zapada się pod własnym ciężarem.",
+ "audio_s": 12.71,
+ "results": [
+  {
+   "variant": "BASE_no_playback",
+   "play_devices": [],
+   "playback_audio_s": 12.71,
+   "user_speaking_events": 0,
+   "user_speaking_during_playback": 0,
+   "self_echo_false_barge_in": false,
+   "events": [
+    {
+     "to": "listening",
+     "at_rel_playback_s": null
+    },
+    {
+     "to": "idle",
+     "at_rel_playback_s": 15.714
+    }
+   ]
+  },
+  {
+   "variant": "A1_usb_speaker_only",
+   "play_devices": [
+    "plug:usb_speaker"
+   ],
+   "playback_audio_s": 12.71,
+   "user_speaking_events": 0,
+   "user_speaking_during_playback": 0,
+   "self_echo_false_barge_in": false,
+   "events": [
+    {
+     "to": "listening",
+     "at_rel_playback_s": null
+    },
+    {
+     "to": "idle",
+     "at_rel_playback_s": 15.716
+    }
+   ]
+  },
+  {
+   "variant": "A2_with_xvf3800_aec_reference",
+   "play_devices": [
+    "plug:usb_speaker",
+    "plug:respeaker"
+   ],
+   "playback_audio_s": 12.71,
+   "user_speaking_events": 0,
+   "user_speaking_during_playback": 0,
+   "self_echo_false_barge_in": false,
+   "events": [
+    {
+     "to": "listening",
+     "at_rel_playback_s": null
+    },
+    {
+     "to": "idle",
+     "at_rel_playback_s": 15.715
+    }
+   ]
+  }
+ ]
+}

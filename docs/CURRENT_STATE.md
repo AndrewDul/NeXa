@@ -235,7 +235,7 @@ Runtime / test evidence outranks anything else in this repo.
   M2.4B.1A CPU spike + metric fixes; `R0013` = M2.4B.1 instrumentation;
   `R0012` = M2.4B research; `R0011` = M2.4)
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
-  **M2 — Realtime Voice — IN PROGRESS (M2.1, M2.2, M2.3, M2.4 COMPLETE, `OPERATOR-CONFIRMED`)**
+  **M2 — Realtime Voice — IN PROGRESS (M2.1, M2.2, M2.3, M2.4, M2.4B COMPLETE, `OPERATOR-CONFIRMED`; active: M2.5 — barge-in / interruption)**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
   M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1 local
   baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. M2
@@ -273,8 +273,14 @@ Runtime / test evidence outranks anything else in this repo.
   by-name selection (`LocalAudioConfig.output_device_name = "usb_speaker"`
   = the dedicated USB DAC's stable ALSA alias; input stays `"respeaker"`).
   Plus a probe turn-timing instrumentation fix. No barge-in.
-- **Next substage:** **M2.4B — Natural Speech Flow / Streaming Pacing**
-  (**IN PROGRESS**). Research/design frozen at `f8c3964` (`R0012`).
+- **Substage M2.4B — Natural Speech Flow / Streaming Pacing — COMPLETE**
+  (2026-09-09). Every sub-stage landed and the operator confirmed normal
+  bilingual live voice operation (M2.4B.5 / .5A, 2026-09-08); M2.4B.5B
+  corrected the response-language semantics (R0027). **No M2.4B blocker
+  remains.** The one outstanding item — a B.3.6 operator latency
+  re-confirmation (STT latency + END_OF_TURN→first-audio) — is explicitly
+  **non-blocking** and does not gate M2.5. Research/design was frozen at
+  `f8c3964` (`R0012`). Sub-stage history:
   **M2.4B.1 — realtime speech-flow instrumentation / gap profiler:
   IMPLEMENTED** (`R0013`, `509da2d`): `src/nexa/voice_tts/metrics.py` +
   `apps/nexa_voice_tts_probe.py --report` — measure-only. **M2.4B.1A —
@@ -456,17 +462,21 @@ Runtime / test evidence outranks anything else in this repo.
   (InputSpeechLanguage / ResponseLanguage / ResponseLanguagePreference).
   +18 `tests/test_response_language_override_vs_sticky.py`; `pytest` 587 /
   `unittest` 594; ruff + diff-check clean. Nothing else moved.
-  **M2.4B is NOT complete.** Then **M2.5 — barge-in / interruption**
-  (replaces the temporary half-duplex gate).
-- **Current objective:** **M2.5 — barge-in / interruption** (replaces the
-  temporary `HalfDuplexGate`). M2.4B.5 / .5A are OPERATOR-CONFIRMED for
-  normal operation (TV-stress waived); .5B corrected the response-language
-  semantics. Also still owed (non-blocking): the B.3.6 operator live-voice
-  confirmation (STT latency + END_OF_TURN→first-audio). `gemma4:e4b` +
-  `num_thread=2` + `keep_alive=30m` + warm-up + `ggml-base-q8_0` / `-t 4`
-  unchanged; the plain explicit `WhisperCppTranscriber` path
-  (`--language pl|en`) is
-  still fully supported alongside the new bilingual one.
+  **→ M2.4B is COMPLETE (2026-09-09); no blocker remains.** The active
+  voice milestone is now **M2.5 — barge-in / interruption**, opening with
+  the **M2.5A architecture / feasibility spike** (`R0028`).
+- **Current objective:** **M2.5A — barge-in / interruption architecture &
+  real-hardware feasibility** (`R0028`) — research + architecture audit +
+  Pipecat capability audit + AEC/self-echo feasibility + interruption
+  semantics design + small isolated spikes. NOT the production
+  implementation (that is M2.5B). Replaces the temporary R0026
+  whole-response `HalfDuplexGate` **without** reintroducing the backlog
+  bug. Non-blocking, deferred: the B.3.6 operator latency re-confirmation
+  (STT latency + END_OF_TURN→first-audio). `gemma4:e4b` + `num_thread=2` +
+  `keep_alive=30m` + warm-up + `ggml-base-q8_0` / `-t 4` /
+  `LanguageIdGuard` / `ResponseLanguageResolver` / Piper / SpeechPlanner /
+  continuity all unchanged; the plain explicit `WhisperCppTranscriber`
+  path (`--language pl|en`) still supported alongside the bilingual one.
 
 ---
 

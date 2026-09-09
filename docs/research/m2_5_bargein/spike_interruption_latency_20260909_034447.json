@@ -1,0 +1,95 @@
+{
+ "ts": "20260909_034447",
+ "tts_phrase": "Czarna dziura to obszar czasoprzestrzeni o tak ogromnej grawitacji, że nic, nawet światło, nie jest w stanie się z niej wydostać. Powstaje, gdy bardzo masywna gwiazda zapada się pod własnym ciężarem, a jej jądro nie może już dłużej opierać się grawitacyjnemu zapadaniu.",
+ "interrupt_clip": "en_what_is_the_speed_of_light.wav",
+ "overlay_start_s": 2.0,
+ "interrupt_gain": 1.0,
+ "note": "headless: pre-mixed TTS+recorded-utterance played to plug:usb_speaker; measures speech-onset -> VAD USER_SPEAKING only, not the audio-stop tail",
+ "runs_detail": [
+  {
+   "user_speaking_onset_rel_play_s": null,
+   "interrupt_detect_latency_s": null,
+   "detected": false,
+   "events": [
+    {
+     "to": "listening",
+     "rel_play_s": null
+    },
+    {
+     "to": "idle",
+     "rel_play_s": 19.686
+    }
+   ]
+  },
+  {
+   "user_speaking_onset_rel_play_s": null,
+   "interrupt_detect_latency_s": null,
+   "detected": false,
+   "events": [
+    {
+     "to": "listening",
+     "rel_play_s": null
+    },
+    {
+     "to": "idle",
+     "rel_play_s": 19.686
+    }
+   ]
+  },
+  {
+   "user_speaking_onset_rel_play_s": null,
+   "interrupt_detect_latency_s": null,
+   "detected": false,
+   "events": [
+    {
+     "to": "listening",
+     "rel_play_s": null
+    },
+    {
+     "to": "idle",
+     "rel_play_s": 19.687
+    }
+   ]
+  },
+  {
+   "user_speaking_onset_rel_play_s": null,
+   "interrupt_detect_latency_s": null,
+   "detected": false,
+   "events": [
+    {
+     "to": "listening",
+     "rel_play_s": null
+    },
+    {
+     "to": "idle",
+     "rel_play_s": 19.686
+    }
+   ]
+  },
+  {
+   "user_speaking_onset_rel_play_s": null,
+   "interrupt_detect_latency_s": null,
+   "detected": false,
+   "events": [
+    {
+     "to": "listening",
+     "rel_play_s": null
+    },
+    {
+     "to": "idle",
+     "rel_play_s": 19.686
+    }
+   ]
+  }
+ ],
+ "summary": {
+  "runs": 5,
+  "detected_count": 0,
+  "detect_latency_s": {
+   "mean": null,
+   "median": null,
+   "max": null,
+   "min": null
+  }
+ }
+}
