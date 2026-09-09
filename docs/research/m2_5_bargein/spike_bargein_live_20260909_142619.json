@@ -1,0 +1,204 @@
+{
+ "ts": "20260909_142619",
+ "phrase": "Wszechświat rozszerza się od około trzynastu miliardów ośmiuset milionów lat, a tempo tego rozszerzania opisuje stała Hubble'a. Galaktyki oddalają się od siebie tym szybciej, im większa jest dzieląca je odległość, co odkrył Edwin Hubble w tysiąc dziewięćset dwudziestym dziewiątym roku, obserwując przesunięcie ku czerwieni.",
+ "audio_s": 19.1,
+ "params": {
+  "WARMUP_S": 3.0,
+  "PLAYBACK_LEADIN_S": 1.5,
+  "DETECT_TIMEOUT_S": 15.0,
+  "POST_ACCEPT_LISTEN_S": 2.0
+ },
+ "trials_detail": [
+  {
+   "trial": 1,
+   "playback_started": true,
+   "playback_error": null,
+   "t_playback_started": 80286.851179466,
+   "prompt_printed": 80288.853014671,
+   "trial_armed": 80288.853021153,
+   "vad_user_started": 80303.629786409,
+   "playback_stop_requested": 80303.629791186,
+   "playback_actually_stopped": 80303.663112706,
+   "prearm_vad_count": 1,
+   "post_accept_vad_count": 0,
+   "vad_events_rel_arm": [
+    {
+     "kind": "start",
+     "rel_arm_s": -1.484
+    },
+    {
+     "kind": "stop",
+     "rel_arm_s": 8.716
+    },
+    {
+     "kind": "start",
+     "rel_arm_s": 14.777
+    },
+    {
+     "kind": "stop",
+     "rel_arm_s": 15.857
+    }
+   ],
+   "detected": true,
+   "prompt_to_vad_s": 14.777,
+   "arm_to_vad_s": 14.777,
+   "vad_to_stop_request_ms": 0.0,
+   "vad_to_playback_stopped_ms": 33.3,
+   "prearm_contaminated": true
+  },
+  {
+   "trial": 2,
+   "playback_started": true,
+   "playback_error": null,
+   "t_playback_started": 80308.164478441,
+   "prompt_printed": 80310.16496316,
+   "trial_armed": 80310.164990105,
+   "vad_user_started": 80310.890103834,
+   "playback_stop_requested": 80310.890108426,
+   "playback_actually_stopped": 80310.927516405,
+   "prearm_vad_count": 0,
+   "post_accept_vad_count": 0,
+   "vad_events_rel_arm": [
+    {
+     "kind": "start",
+     "rel_arm_s": 0.725
+    },
+    {
+     "kind": "stop",
+     "rel_arm_s": 2.005
+    }
+   ],
+   "detected": true,
+   "prompt_to_vad_s": 0.725,
+   "arm_to_vad_s": 0.725,
+   "vad_to_stop_request_ms": 0.0,
+   "vad_to_playback_stopped_ms": 37.4,
+   "prearm_contaminated": false
+  },
+  {
+   "trial": 3,
+   "playback_started": true,
+   "playback_error": null,
+   "t_playback_started": 80315.429738983,
+   "prompt_printed": 80317.430751719,
+   "trial_armed": 80317.43077646,
+   "vad_user_started": 80318.930708967,
+   "playback_stop_requested": 80318.93071117,
+   "playback_actually_stopped": 80318.959984793,
+   "prearm_vad_count": 0,
+   "post_accept_vad_count": 0,
+   "vad_events_rel_arm": [
+    {
+     "kind": "start",
+     "rel_arm_s": 1.5
+    },
+    {
+     "kind": "stop",
+     "rel_arm_s": 2.7
+    }
+   ],
+   "detected": true,
+   "prompt_to_vad_s": 1.5,
+   "arm_to_vad_s": 1.5,
+   "vad_to_stop_request_ms": 0.0,
+   "vad_to_playback_stopped_ms": 29.3,
+   "prearm_contaminated": false
+  },
+  {
+   "trial": 4,
+   "playback_started": true,
+   "playback_error": null,
+   "t_playback_started": 80323.46232398,
+   "prompt_printed": 80325.465053107,
+   "trial_armed": 80325.465059459,
+   "vad_user_started": 80330.131182517,
+   "playback_stop_requested": 80330.131184609,
+   "playback_actually_stopped": 80330.160612455,
+   "prearm_vad_count": 1,
+   "post_accept_vad_count": 0,
+   "vad_events_rel_arm": [
+    {
+     "kind": "start",
+     "rel_arm_s": -0.494
+    },
+    {
+     "kind": "stop",
+     "rel_arm_s": 3.026
+    },
+    {
+     "kind": "start",
+     "rel_arm_s": 4.666
+    }
+   ],
+   "detected": true,
+   "prompt_to_vad_s": 4.666,
+   "arm_to_vad_s": 4.666,
+   "vad_to_stop_request_ms": 0.0,
+   "vad_to_playback_stopped_ms": 29.4,
+   "prearm_contaminated": true
+  },
+  {
+   "trial": 5,
+   "playback_started": true,
+   "playback_error": null,
+   "t_playback_started": 80334.662435636,
+   "prompt_printed": 80336.665395522,
+   "trial_armed": 80336.665421244,
+   "vad_user_started": 80336.931736972,
+   "playback_stop_requested": 80336.931739287,
+   "playback_actually_stopped": 80336.944977284,
+   "prearm_vad_count": 0,
+   "post_accept_vad_count": 0,
+   "vad_events_rel_arm": [
+    {
+     "kind": "start",
+     "rel_arm_s": 0.266
+    }
+   ],
+   "detected": true,
+   "prompt_to_vad_s": 0.266,
+   "arm_to_vad_s": 0.266,
+   "vad_to_stop_request_ms": 0.0,
+   "vad_to_playback_stopped_ms": 13.2,
+   "prearm_contaminated": false
+  }
+ ],
+ "summary": {
+  "trials": 5,
+  "playback_confirmed_active": 5,
+  "post_arm_vad_detected": 5,
+  "fully_measurable_trials": 5,
+  "total_prearm_vad_count": 2,
+  "total_post_accept_vad_count": 0,
+  "prearm_contaminated_trials": [
+   1,
+   4
+  ],
+  "vad_to_stop_request_ms": {
+   "n": 5,
+   "mean": 0.0,
+   "median": 0.0,
+   "max": 0.0,
+   "min": 0.0
+  },
+  "vad_to_playback_stopped_ms": {
+   "n": 5,
+   "mean": 28.5,
+   "median": 29.4,
+   "max": 37.4,
+   "min": 13.2
+  },
+  "prompt_to_vad_s_INFORMATIONAL": {
+   "n": 5,
+   "mean": 4.4,
+   "median": 1.5,
+   "max": 14.8,
+   "min": 0.3
+  },
+  "labels": {
+   "vad_to_playback_stopped_ms": "PLAYBACK TASK STOPPED (aplay process reaped)",
+   "last_physical_speaker_sample": "NOT MEASURED — no hardware-drain instrumentation in this spike",
+   "prompt_to_vad_s": "operator reaction time + VAD detection — informational, not system latency"
+  }
+ }
+}

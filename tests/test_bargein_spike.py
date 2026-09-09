@@ -8,6 +8,7 @@ spike scripts stay research-only (no production-state imports, no
 from __future__ import annotations
 
 import ast
+import statistics
 import sys
 import unittest
 import wave
@@ -98,6 +99,7 @@ class TestSpikesAreResearchOnly(unittest.TestCase):
         "spike_self_echo.py",
         "spike_interruption_latency.py",
         "spike_bargein_live.py",
+        "spike_playback_false_vad.py",
         "audio_mix.py",
     )
 
@@ -210,6 +212,99 @@ class TestBargeinLiveMetrics(unittest.TestCase):
                                         "max": None, "min": None})
         a = self.agg([10.0, None, 20.0, 30.0])
         self.assertEqual((a["n"], a["mean"], a["max"], a["min"]), (3, 20.0, 30.0, 10.0))
+
+
+def _load_false_vad_pure() -> dict:
+    """Load the pure analysis helpers from spike_playback_false_vad.py in an
+    isolated namespace (no pyaudio/pipecat/nexa import). Also carries the
+    ALL-CAPS module constants those helpers close over, plus `statistics`."""
+    src = (SPIKE_DIR / "spike_playback_false_vad.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    wanted_fns = {"speaking_intervals", "classify_interval", "summarize_trial",
+                  "verdict_300ms_safe", "_agg"}
+    wanted_consts = {"QUIET_BEFORE_S"}  # the only module const the helpers close over
+    picked: list = []
+    for n in tree.body:
+        if isinstance(n, ast.FunctionDef) and n.name in wanted_fns:
+            picked.append(n)
+        elif isinstance(n, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id in wanted_consts for t in n.targets
+        ):
+            picked.append(n)
+    ns: dict = {"statistics": statistics}
+    exec(compile(ast.Module(body=picked, type_ignores=[]), "<false_vad_pure>", "exec"), ns)  # noqa: S102
+    return ns
+
+
+class TestPlaybackFalseVadAnalysis(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.ns = _load_false_vad_pure()
+
+    def test_speaking_intervals_pairs_starts_and_stops(self) -> None:
+        f = self.ns["speaking_intervals"]
+        evs = [{"kind": "start", "t": 1.0}, {"kind": "stop", "t": 2.0},
+               {"kind": "start", "t": 5.0}, {"kind": "stop", "t": 5.4}]
+        self.assertEqual(f(evs), [(1.0, 2.0), (5.0, 5.4)])
+
+    def test_speaking_intervals_open_start_has_none_stop(self) -> None:
+        f = self.ns["speaking_intervals"]
+        self.assertEqual(f([{"kind": "start", "t": 3.0}]), [(3.0, None)])
+
+    def test_speaking_intervals_ignores_orphan_stop_and_dup_start(self) -> None:
+        f = self.ns["speaking_intervals"]
+        evs = [{"kind": "stop", "t": 0.1}, {"kind": "start", "t": 1.0},
+               {"kind": "start", "t": 1.2}, {"kind": "stop", "t": 2.0}]
+        self.assertEqual(f(evs), [(1.0, 2.0)])
+
+    def test_classify_interval_before_during_after(self) -> None:
+        f = self.ns["classify_interval"]
+        self.assertEqual(f(8.0, 10.0, 30.0), "before")
+        self.assertEqual(f(15.0, 10.0, 30.0), "during")
+        self.assertEqual(f(31.0, 10.0, 30.0), "after")
+
+    def test_summarize_trial_max_continuous_and_phase_stats(self) -> None:
+        summarize = self.ns["summarize_trial"]
+        pstart, pend, after = 100.0, 119.0, 122.0
+        vad = [{"kind": "start", "t": 100.5}, {"kind": "stop", "t": 110.7}]  # 10.2 s
+        frames = [
+            {"t": 98.0, "conf": 0.05, "vol": 0.02, "speaking": False},   # quiet_before
+            {"t": 101.0, "conf": 0.95, "vol": 0.83, "speaking": True},   # playback
+            {"t": 105.0, "conf": 0.91, "vol": 0.72, "speaking": True},   # playback
+            {"t": 120.0, "conf": 0.10, "vol": 0.05, "speaking": False},  # after
+        ]
+        s = summarize(playback_started=True, playback_start=pstart,
+                      playback_end=pend, after_end=after,
+                      vad_events=vad, frames=frames)
+        self.assertTrue(s["false_vad"])
+        self.assertEqual(s["user_speaking_starts"], 1)
+        self.assertAlmostEqual(s["max_continuous_speaking_s"], 10.2, places=3)
+        self.assertEqual(s["speaking_intervals"][0]["began"], "during")
+        self.assertEqual(s["phase_playback"]["n_frames"], 2)
+        self.assertEqual(s["phase_playback"]["speaking_frame_frac"], 1.0)
+        self.assertEqual(s["phase_quiet_before"]["speaking_frame_frac"], 0.0)
+
+    def test_verdict_300ms_unsafe_when_any_silent_trial_sustains_speaking(self) -> None:
+        f = self.ns["verdict_300ms_safe"]
+        trials = [
+            {"playback_started": True, "max_continuous_speaking_s": 0.0},
+            {"playback_started": True, "max_continuous_speaking_s": 3.5},
+        ]
+        v = f(trials)
+        self.assertFalse(v["safe"])
+        self.assertEqual(v["offending_trials"], [2])
+        self.assertEqual(v["worst_continuous_speaking_s"], 3.5)
+
+    def test_verdict_300ms_safe_when_all_silent_trials_stay_quiet(self) -> None:
+        f = self.ns["verdict_300ms_safe"]
+        trials = [{"playback_started": True, "max_continuous_speaking_s": 0.0},
+                  {"playback_started": True, "max_continuous_speaking_s": 0.12}]
+        self.assertTrue(f(trials)["safe"])
+
+    def test_verdict_ignores_trials_where_playback_never_started(self) -> None:
+        f = self.ns["verdict_300ms_safe"]
+        trials = [{"playback_started": False, "max_continuous_speaking_s": 9.9}]
+        self.assertTrue(f(trials)["safe"])
 
 
 if __name__ == "__main__":

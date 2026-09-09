@@ -5,18 +5,30 @@
 - **Milestone:** M2 — Realtime Voice · **Substage M2.5A — barge-in /
   interruption architecture, capability audit, AEC / self-echo
   feasibility, interruption-semantics design, isolated hardware spikes.**
-- **Status:** **RESEARCH COMPLETE; one confirmatory latency spike still
-  OPEN.** No production behaviour changed. The half-duplex `HalfDuplexGate`
-  (R0026) is untouched and still in force. Deterministic tests added for
-  the spike tooling. **SPIKE B-live was run once by the operator on
-  2026-09-09 (`spike_bargein_live_20260909_134647.json`). Its detection
-  result — near-field operator speech IS picked up by the reSpeaker +
-  Silero VAD — is kept; its latency figure (`mean=5.168 s`) is INVALID and
-  is withdrawn** (instrumentation faults: no arming window, playback never
-  actually ran, VAD→stop never measured — see *SPIKE B-live — FIRST RUN
-  (2026-09-09): WHY THE LATENCY IS INVALID*). `spike_bargein_live.py` has
-  been rewritten (v2); the operator must re-run it once. The exact
-  one-line command is in *OPERATOR ACTION REQUIRED* below. Not pushed.
+- **Status:** **RESEARCH COMPLETE; ONE narrow operator confirmation still
+  OPEN (near-field detectability with the AEC reference fed).** No
+  production behaviour changed. The half-duplex `HalfDuplexGate` (R0026) is
+  untouched and still in force. Deterministic tests added for the spike
+  tooling.
+  - **SPIKE B-live v2 — RAN & ACCEPTED (`spike_bargein_live_20260909_142619.json`).**
+    Playback confirmed active 5/5; post-arm VAD detected 5/5; **VAD start →
+    PLAYBACK TASK STOPPED = 28.5 ms mean / 29.4 ms median / 37.4 ms max**
+    (VAD → stop-request ≈ 0 ms). This media-stop result is **accepted and
+    does not need repeating.** (v1's `mean=5.168 s` remains withdrawn — see
+    *SPIKE B-live — FIRST RUN*.)
+  - **NEW BLOCKER FOUND & INVESTIGATED — M2.5A.1.** The same v2 run showed
+    pre-arm false `VADUserStartedSpeakingFrame` in 2/5 trials. The
+    follow-up automated spike (`spike_playback_false_vad.py`, operator not
+    required) proved it is **acoustic self-echo of NeXa's own Piper voice**:
+    **14/14** silent-playback trials on the current `plug:usb_speaker` route
+    tripped the VAD (idle-room control 0/3), latching speech state
+    3.4–17.0 s. **Feeding the reSpeaker XVF3800 its AEC far-end reference
+    removed it: 0/4.** A naive "sustained VAD ≥ 300 ms" barge-in trigger is
+    therefore **NOT safe** on the current route. See *PLAYBACK-TIME FALSE
+    VAD INVESTIGATION (M2.5A.1)*.
+  - The only remaining operator step is one short test: confirm a real
+    near-field voice is still detected **while the XVF3800 AEC reference is
+    fed** (the M2.5A.1 spike proved suppression with the operator silent).
 - **Related:** `R0026` (the half-duplex fix this milestone replaces),
   `R0027` (one-turn vs sticky response language — must survive barge-in),
   `R0024`/`R0025` (bilingual STT), `ADR-0003` D8 ("barge-in is M2.5"),
@@ -35,9 +47,10 @@ inspection shows the latency number is not usable.
 
 - Near-field operator speech **is detectable by the current reSpeaker
   XVF3800 + Silero VAD** — a valid `USER_SPEAKING` transition fired in
-  every one of the 5 trials. This is consistent with the SPIKE A / headless
-  SPIKE B finding that only the *speaker→mic* self-echo path is below the
-  VAD floor; a live near-field voice is a much stronger signal and is seen.
+  every one of the 5 trials. (Note: M2.5A.1 later showed NeXa's *own*
+  playback also trips the VAD on this route — see *PLAYBACK-TIME FALSE VAD
+  INVESTIGATION* — so this run's pre-arm events in trials 1 & 4 were
+  self-echo, not the operator.)
 
 **Why `5.168 s` is INVALID / INCONCLUSIVE and is withdrawn:**
 
@@ -117,16 +130,223 @@ silently becoming the measurement.
   pre-arm events flag contamination without changing the measured event,
   negative `prompt_to_vad_s` reported not clamped.
 
-**M2.5A status:** open only for the corrected latency confirmation.
-**M2.5B has not started.**
+**M2.5A status:** SPIKE B-live v2 media-stop is done and accepted; M2.5A
+now open only for one narrow near-field-under-AEC-reference operator
+confirmation (see next section). **M2.5B has not started.**
+
+---
+
+## PLAYBACK-TIME FALSE VAD INVESTIGATION (M2.5A.1)
+
+SPIKE B-live v2 (`spike_bargein_live_20260909_142619.json`) is **accepted**:
+playback confirmed active 5/5, post-arm VAD detected 5/5, **VAD start →
+stop-request ≈ 0 ms**, **VAD start → PLAYBACK TASK STOPPED = 28.5 ms mean /
+29.4 ms median / 37.4 ms max** (5/5 fully measurable). That is the
+`aplay`-process-reaped instant, not the last physical speaker sample. This
+result does **not** need to be re-run.
+
+But that same run flagged **2 pre-arm false `VADUserStartedSpeakingFrame`
+(trials 1 & 4)**, with the VAD latched in speech state for ~10 s and ~3.5 s
+*before* the operator spoke. `spike_playback_false_vad.py`
+(`spike_playback_false_vad_20260909_143729.json`) investigated it — fully
+automated, operator silent. It builds the **same production VAD path**
+(real reSpeaker input, real `SileroVADAnalyzer` with `DEFAULT_VAD_PARAMS`
+= `confidence=0.7 / start_secs=0.2 / stop_secs=1.0 / min_volume=0.6`, real
+`VADProcessor`) with `audio_out_enabled=False` so the trial `aplay` truly
+drives `plug:usb_speaker`, and probes every 512-sample VAD frame's Silero
+`confidence` + smoothed `volume` via a spike-only `SileroVADAnalyzer`
+subclass (real computations, no logic copied).
+
+| Block | playback active | false-VAD trials | max continuous `USER_SPEAKING` (mean / max) | playback-phase Silero conf p95 | vol p95 | speaking-frame frac | 300 ms trigger safe? |
+|---|---|---|---|---|---|---|---|
+| **BASE** (no playback, control) | 0/3 | **0/3** | 0 / 0 s | – | – | – | ✅ |
+| **PERSIST** (one persistent pipeline, ×10) | 10/10 | **10/10** | 8.58 / 16.74 s | 0.953 | 0.722 | 0.393 | ❌ |
+| **FRESH** (new analyzer+pipeline per trial, ×4) | 4/4 | **4/4** | 15.19 / 16.96 s | 0.974 | 0.724 | 0.628 | ❌ |
+| **AEC_REF** (playback PCM also → `plug:respeaker`, ×4) | 4/4 | **0/4** | 0 / 0 s | 0.611 | 0.522 | 0.002 | ✅ |
+
+Every false interval in PERSIST/FRESH was classified `began: "during"`
+playback — none before, none after. `quiet_before` phase confidence p95
+≈ 0.005–0.012 (idle room is clean). During playback Silero confidence p95
+≈ 0.91–0.985 (max 0.99) **and** smoothed volume p95 ≈ 0.71–0.74 (max 0.78)
+— the self-echo clears **both** gates (`conf ≥ 0.7` and `vol ≥ 0.6`), so
+25–65 % of playback frames individually score as speech and, with
+`stop_secs=1.0` needing a full 1 s sub-threshold gap that continuous Piper
+speech never gives, the state stays latched through whole sentences.
+
+### TASK RESULT
+
+PASS (research). Root cause identified with signal-level evidence; a
+working mitigation identified (XVF3800 AEC far-end reference); the
+barge-in trigger design is revised accordingly; **M2.5B not started, no
+`src/` change.**
+
+### WHAT CAUSED PRE-ARM VAD
+
+**Cause A — acoustic self-echo of NeXa's own Piper voice**, on the current
+`plug:usb_speaker`-only route (XVF3800 AEC reference unfed). Proof: 14/14
+silent-playback trials tripped `USER_SPEAKING`; every false interval began
+*during* playback; idle-room control 0/3; Silero confidence p95 ≈ 0.95 and
+smoothed volume p95 ≈ 0.72 during playback; and feeding the XVF3800 its
+far-end reference removes it (0/4). **Ruled out:** (D) stale/persistent VAD
+state — a brand-new analyzer+pipeline per trial (FRESH) behaved
+identically; (C) room noise — BASE control clean; (E/F) Silero-startup or
+buffer artifact — onset is mid-playback, ~0.5–1.5 s after audio starts,
+not at pipeline start, and repeats many times per utterance.
+
+### WHY SPIKE A AND SPIKE B-V2 DIFFERED
+
+SPIKE A (`spike_self_echo.py`) and headless SPIKE B
+(`spike_interruption_latency.py`) each construct a full
+`VoiceRuntime(LocalAudioConfig())`, whose transport is built with
+`audio_out_enabled=True` and opens `plug:usb_speaker` →
+`hw:CARD=UACDemoV10,DEV=0`, a **non-mixing raw-hw device (no `dmix`)**.
+Their trial `aplay -D plug:usb_speaker` therefore hit **`Device or resource
+busy`** and exited within milliseconds; `stderr` was routed to `DEVNULL`,
+so the failure was invisible. **No audio ever played.**
+`spike_self_echo_20260909_033338.json` confirms it: the `events` list for
+BASE, A1 and A2 is byte-identical (`listening` → `idle` at ~15.63 s, zero
+`USER_SPEAKING`) — A1/A2 carry no playback signature at all. SPIKE B-live
+v2 and `spike_playback_false_vad.py` use `audio_out_enabled=False` (a
+VAD-only pipeline that holds no speaker), so `aplay` genuinely drives the
+DAC — the first spikes in which NeXa was actually audible while the VAD
+listened. **SPIKE A's "self-echo risk LOW / 0 false `USER_SPEAKING`" and
+the headless "0/8 detections" are withdrawn as no-audio artifacts.**
+
+### FALSE VAD RATE DURING SILENT PLAYBACK
+
+Current route: **14/14 (100 %)** — PERSIST 10/10, FRESH 4/4. Idle-room
+control BASE 0/3. With the XVF3800 AEC reference fed: **0/4.**
+
+### FALSE VAD DURATION
+
+Per-trial maximum continuous `USER_SPEAKING`: **3.4 s – 17.0 s** (PERSIST
+mean 8.58 s / median 8.5 s / max 16.74 s; FRESH mean 15.19 s / max
+16.96 s). Multiple false starts per trial (PERSIST: 30 starts over 10
+trials). Once latched, `stop_secs=1.0` + gap-free Piper speech keeps it
+latched for entire sentences. `after` phase: confidence collapses (< 0.13)
+but smoothed volume drains slowly (p95 ≈ 0.57–0.61 for ~1–2 s) — the
+`min_volume` gate is what closes the state, not confidence.
+
+### PERSISTENT VS FRESH VAD STATE
+
+**No material difference — both 100 % false-VAD.** FRESH was marginally
+*worse* (longer latches, higher speaking-frame fraction), consistent with
+Silero's periodic internal state reset (every 5 s) slightly helping the
+persistent case. Production `VoiceRuntime` uses one persistent pipeline, so
+the production-relevant figure is the PERSIST block: **100 % false-VAD,
+~8.6 s mean latch.** This is not a pipeline-lifetime bug; it is acoustics.
+
+### AEC REFERENCE RESULT
+
+Duplicating NeXa's playback PCM to `plug:respeaker` (the XVF3800 USB
+playback endpoint = its hardware AEC far-end reference), started alongside
+the main `aplay`: **false-VAD 0/4.** Playback-phase Silero confidence p95
+fell 0.953 → **0.611**, smoothed volume p95 0.722 → **0.522** (now *below*
+the `min_volume=0.6` gate), speaking-frame fraction 0.393 → **0.002**. The
+hardware AEC, once given its reference, removes enough echo energy at the
+mic that neither gate holds for the 6 consecutive frames (`start_secs=0.2`)
+an emission needs. Residual echo still spikes Silero confidence
+occasionally (one trial conf p95 0.879) but the volume gate absorbs it.
+**Caveat:** the operator was silent, so this proves *suppression only* —
+**not** that a real near-field voice stays detectable with the reference
+fed. Time alignment here was best-effort (two independent `aplay`
+processes); production must feed the reference properly (route TTS through
+the XVF3800 playback endpoint, or a synchronised tee).
+
+### CAN 300 MS SUSTAINED VAD SAFELY TRIGGER BARGE-IN? — **NO**
+
+Not on the current `plug:usb_speaker`-only route. Every one of the 14
+silent-playback trials sustained the VAD speaking state ≥ 3.4 s — more than
+10× the 300 ms window — so a bare "sustained `VADUserStartedSpeakingFrame`
+≥ 300 ms while `response_in_flight`" rule would fire on NeXa's own voice on
+essentially every response, and a genuine operator interruption arriving
+mid-utterance could not be distinguished until the false speaking state
+happened to lapse. **YES becomes achievable once the XVF3800 AEC reference
+is fed** (0/4 false, and the residual never sustained even one frame past
+the gate).
+
+### FINAL INTERRUPTION TRIGGER RECOMMENDATION
+
+1. **Prerequisite (new, mandatory for M2.5B):** feed the reSpeaker XVF3800
+   its AEC far-end reference — route or synchronously tee NeXa's TTS PCM to
+   the XVF3800 USB playback endpoint (`plug:respeaker`) in addition to the
+   Jieli DAC. Without this, barge-in on a hot mic is unsafe.
+2. **With the reference fed:** the two-stage trigger stands — *candidate*
+   on the first `VADUserStartedSpeakingFrame` while `response_in_flight`;
+   *confirmed* after a **≥ 300 ms** sustain (tune upward against live
+   telemetry) with no `VADUserStoppedSpeakingFrame`; confirmation fires
+   `broadcast_interruption()` immediately, no STT wait; single-candidate
+   invariant retained.
+3. **Second line of defence (keep, do not raise yet):** `min_volume=0.6`
+   held the AEC residual below the gate on its own — keep it. A
+   *response-time* VAD-params profile (slightly higher `min_volume` /
+   `confidence`, longer sustain) is available as a supplement **only if**
+   live data shows residual leakage; it is not the primary mechanism, and
+   raising thresholds alone (which would also reject soft-spoken users) is
+   not acceptable.
+4. **Not doing:** speaker recognition; TV-based testing; threshold-only
+   fixes.
+
+### DOES OPERATOR NEED ANOTHER TEST? — **YES, exactly one**
+
+Confirm that a **real near-field operator voice is still detected while the
+XVF3800 AEC far-end reference is being fed**. The M2.5A.1 spike proved the
+false VAD is removed with the reference fed, but the operator was silent,
+so near-field detectability under that condition is unverified. Everything
+else — self-echo root cause, 100 % false-VAD rate, persistent-vs-fresh
+equivalence, AEC suppression, the 300 ms verdict — is settled automatically
+and needs no operator. The SPIKE B-live v2 media-stop result (28.5 ms /
+37.4 ms) is accepted and **must not** be repeated.
+
+### TEST RESULTS
+
+- `tests/test_bargein_spike.py` **+8** (24 total in the file), deterministic
+  / offline, loaded AST-isolated so no pyaudio/pipecat/nexa import:
+  `speaking_intervals` pairs starts/stops and tolerates orphan-stop /
+  duplicate-start / open-final-start; `classify_interval`
+  before/during/after; `summarize_trial` max-continuous-speaking + per-phase
+  conf/vol/`speaking_frame_frac`; `verdict_300ms_safe` is unsafe iff any
+  playback-active trial sustained ≥ 0.3 s and ignores trials where playback
+  never started.
+- Full suite: **`pytest` 611 passed / 7 skipped / 14 subtests** ·
+  **`python -m unittest discover -s tests` 618 OK / 7 skipped** ·
+  **`ruff check src tests apps docs/research/m2_5_bargein`** clean ·
+  **`git diff --check`** clean.
+- `spike_playback_false_vad.py` is not run in CI (needs the reSpeaker + USB
+  DAC + real Piper).
+
+### COMMIT HASH
+
+`<pending>` — the M2.5A.1 commit is made immediately after this edit; its
+hash is recorded in the following commit (R0026/R0027 pattern). Prior
+R0028 tip: `777eac0`. Not pushed.
+
+### GIT STATUS
+
+Branch `main`, not pushed. Working tree: `spike_playback_false_vad.py`
+(new), `spike_bargein_live_20260909_142619.json` (v2 raw output),
+`tests/test_bargein_spike.py` (+8), this report.
+
+### NEXT STEP
+
+Operator runs the one near-field-under-AEC-reference test (procedure in
+*OPERATOR ACTION REQUIRED*). If a real voice is still detected with the
+reference fed → M2.5A closes. **M2.5B** then implements, in order: (1) the
+AEC-reference wiring; (2) `BargeInController` + the two-stage trigger; (3)
+per-turn `CancelToken` + history commit — per *RECOMMENDED PRODUCTION
+ARCHITECTURE*. **M2.5B has not started.**
 
 ---
 
 ## RETURN SUMMARY
 
 - **TASK RESULT:** PASS (research). Architecture, capability audit and
-  feasibility evidence are in hand; a production design for M2.5B is
-  recommended below; one operator spike is prepared and pending.
+  feasibility evidence are in hand; SPIKE B-live v2 media-stop is measured
+  and accepted (**28.5 ms mean / 37.4 ms max**); **M2.5A.1 found and
+  root-caused a self-echo false-VAD blocker** and identified the fix
+  (XVF3800 AEC far-end reference: 14/14 false-VAD → 0/4); the M2.5B design
+  is revised to require that wiring first; one narrow operator confirmation
+  remains. No `src/` change.
 - **IS M2.4B NOW COMPLETE? — YES.** Every sub-stage B.1…B.5B landed;
   M2.4B.5 and M2.4B.5A are OPERATOR-CONFIRMED for normal bilingual PL/EN
   live voice operation (2026-09-08); M2.4B.5B (R0027) corrected the
@@ -152,42 +372,53 @@ silently becoming the measurement.
   The `InterruptionFrame` handlers already present in
   `NexaSpeechPlanner` and `NexaSpeechContinuityController` are dead code
   waiting for a producer.
-- **AEC / SELF-ECHO RESULT:** The reSpeaker XVF3800 substantially rejects
-  speaker-reproduced audio at the mic **even with no AEC reference fed**.
-  Three self-echo spike runs (`spike_self_echo.py`): NeXa's own Piper
-  voice played through the live `plug:usb_speaker` route produced **0
-  false `USER_SPEAKING` events** during playback, with or without the
-  XVF3800 USB playback endpoint driven as an AEC far-end reference, and
-  with the Jieli DAC PCM at max. The headless interruption spike
-  (`spike_interruption_latency.py`) then played a **real recorded human
-  utterance** through the same speaker, mixed over the TTS, at +0 dB and
-  again at +9.5 dB: **0 / 8 detections.** Conclusion: at conversational
-  levels the current hardware path from `plug:usb_speaker` → reSpeaker
-  mic → Silero VAD (`min_volume=0.6`, `confidence=0.7`) is **below the VAD
-  floor** — good for self-echo safety, but it also means a headless,
-  speaker-played "interruption" cannot be measured, because it is the
-  exact signal path the array suppresses. A live near-field operator
-  voice is a different, much stronger signal and must be measured
-  separately (SPIKE B-live).
-- **CAN WE KEEP THE MIC OPEN SAFELY WHILE NEXA SPEAKS? — YES, with a
-  guarded trigger.** The self-echo evidence says NeXa's own TTS will not
-  by itself trip the VAD on this hardware, so the R0026 whole-response mic
-  close can be replaced by *keeping the raw mic hot during a response* and
-  admitting **at most one** interruption candidate through an explicit
-  state machine (below). The backlog bug is prevented not by closing the
-  mic but by the state machine's single-candidate invariant plus the
-  retained `SerialTranscriptionQueue` (max 1 concurrent) and
-  `SerialConversationQueue` (max 1 in flight).
-- **INTERRUPTION TRIGGER RECOMMENDATION:** Trigger on **sustained VAD
-  speech while `response_in_flight` is true** — the first
-  `VADUserStartedSpeakingFrame` starts an *interruption candidate*; the
-  candidate is *confirmed* only if speech persists ≥ **300 ms**
-  (`start_secs=0.2` of VAD onset + a ~100 ms guard) without a
-  `VADUserStoppedSpeakingFrame`. Confirmation immediately issues
-  `broadcast_interruption()` — it does **not** wait for STT. Full
-  transcription of the interrupting utterance runs afterwards, off the
-  same captured audio, and becomes the next user turn. Detection and
-  transcription are separate stages.
+- **AEC / SELF-ECHO RESULT — CORRECTED (M2.5A.1).** The earlier claim
+  ("the XVF3800 rejects NeXa's own voice even with no AEC reference; 0
+  false `USER_SPEAKING`; 0/8 headless detections") is **WITHDRAWN.** It
+  came from `spike_self_echo.py` / `spike_interruption_latency.py`, which
+  run a full `VoiceRuntime` that holds `plug:usb_speaker`
+  (`audio_out_enabled=True`); their trial `aplay -D plug:usb_speaker` then
+  hit `Device or resource busy` and exited in milliseconds (stderr →
+  `DEVNULL`), so **no audio ever played** — `spike_self_echo_*.json` shows
+  byte-identical `listening→idle` event lists for BASE / A1 / A2, i.e. no
+  playback signature at all. **The truth, from `spike_playback_false_vad.py`
+  (playback genuinely driven, `audio_out_enabled=False`):** on the current
+  `plug:usb_speaker`-only route NeXa's own Piper voice trips the
+  reSpeaker + Silero VAD on **14/14** silent-playback trials
+  (persistent-pipeline 10/10, fresh-pipeline 4/4; idle-room control 0/3),
+  latching `USER_SPEAKING` for **3.4–17.0 s** per trial. During playback
+  Silero confidence p95 ≈ 0.95 (gate 0.7) and smoothed volume p95 ≈ 0.72
+  (gate `min_volume` 0.6) — the echo passes **both** gates. **Fix that
+  works:** feeding the XVF3800 its AEC far-end reference (playback PCM also
+  sent to `plug:respeaker`) drops false-VAD to **0/4**, pulling
+  playback-phase confidence p95 to ≈ 0.61 and volume p95 to ≈ 0.52 (below
+  the gates). Not yet confirmed: that a real near-field voice stays
+  detectable with the reference fed (one operator test).
+- **CAN WE KEEP THE MIC OPEN SAFELY WHILE NEXA SPEAKS? — YES, but ONLY
+  with the XVF3800 AEC reference fed.** The corrected self-echo evidence
+  (M2.5A.1) shows that on the current route NeXa's own TTS trips the VAD
+  continuously, so keeping the raw mic hot during a response is safe
+  **only once the echo is removed at the mic** — i.e. after routing NeXa's
+  TTS PCM to the reSpeaker's USB playback endpoint as the hardware AEC
+  far-end reference. With that in place, admitting **at most one**
+  interruption candidate through the state machine (below) is sound; the
+  backlog bug stays prevented by the single-candidate invariant plus the
+  retained `SerialTranscriptionQueue` / `SerialConversationQueue`. Without
+  the AEC reference, a hot mic during a response is **not** safe.
+- **INTERRUPTION TRIGGER RECOMMENDATION — REVISED (M2.5A.1).** A bare
+  "sustained `VADUserStartedSpeakingFrame` ≥ 300 ms while
+  `response_in_flight`" trigger is **NOT safe on the current audio route** —
+  every silent-playback trial sustained the VAD speaking state ≥ 3.4 s, so
+  it would false-fire on NeXa's own voice on essentially every response.
+  M2.5B **must first feed the XVF3800 its AEC far-end reference** (route /
+  duplicate NeXa's TTS PCM to `plug:respeaker`, time-aligned). *With that
+  in place*, the two-stage trigger (candidate on first
+  `VADUserStartedSpeakingFrame`; confirm after a ≥ 300 ms sustain with no
+  `VADUserStoppedSpeakingFrame`; `broadcast_interruption()` immediately, no
+  STT wait) becomes viable, tuned against live data, with `min_volume=0.6`
+  retained as a second line of defence (it alone held the AEC-residual
+  echo below the gate in the spike). Detection and transcription stay
+  separate stages.
 - **LLM CANCELLATION RESULT:** Effective backend cancellation exists and
   was measured. `session.send(..., cancel_token=…)` →
   `provider.generate(..., cancel_token=…)`; the Ollama worker thread
@@ -234,23 +465,20 @@ silently becoming the measurement.
   simply become no-ops when nothing is playing yet; the LLM-cancel and
   history-commit actions still apply (with an empty flushed-text →
   Option A/"discard the user turn cleanly", see below).
-- **MEASURED INTERRUPTION LATENCY:** **Not measurable headless on this
-  hardware.** `spike_self_echo.py` (3 runs) and
-  `spike_interruption_latency.py` (2 runs, 8 plays) both show the
-  speaker→mic path is below the VAD floor, so a speaker-played
-  "interruption" yields 0 detections and no latency. The dominant term
-  that *can* be reasoned about: Silero VAD `start_secs=0.2` + our ~100 ms
-  confirmation guard ≈ **~300 ms speech-onset → interruption confirmed**,
-  plus a bounded audio-stop tail of one output chunk (~20–40 ms) +
-  `cancel_task` latency for `handle_interruptions()`. **Target:
-  < 1 s** speech-onset → last old audio frame. Whether the live hardware
-  meets it is **still unproven**: SPIKE B-live's first run (2026-09-09)
-  proved near-field operator speech IS detected during a response (5/5) but
-  its latency figure (`5.168 s`) is **withdrawn as invalid** — no arming
-  window, `aplay` never actually opened the busy `plug:usb_speaker`, and
-  VAD-onset → playback-stopped was never measured (see *SPIKE B-live —
-  FIRST RUN*). `spike_bargein_live.py` v2 fixes the instrumentation;
-  operator re-run pending.
+- **MEASURED INTERRUPTION LATENCY:** **Media-stop half is now measured
+  (SPIKE B-live v2, `spike_bargein_live_20260909_142619.json`):** once a
+  valid post-arm `VADUserStartedSpeakingFrame` exists, **VAD start → stop
+  requested ≈ 0 ms** and **VAD start → PLAYBACK TASK STOPPED (aplay reaped)
+  = 28.5 ms mean / 29.4 ms median / 37.4 ms max** across 5/5 fully
+  measurable trials (playback confirmed active 5/5). This is the
+  `aplay`-process-reaped instant, **not** the last physical speaker sample
+  (this spike has no hardware-drain instrumentation). Comfortably inside
+  the **< 1 s** target for that leg. **What is NOT yet clean:** the
+  *speech-onset → VAD-accepts* half — on the current route that VAD state
+  is contaminated by continuous self-echo (M2.5A.1), so a real
+  speech-onset latency can only be trusted once the XVF3800 AEC reference
+  is fed. `prompt → VAD` from v2 (mean 4.4 s, median 1.5 s) is operator
+  reaction time, not system latency. v1's `mean=5.168 s` stays withdrawn.
 - **RECOMMENDED M2.5B ARCHITECTURE:** see *RECOMMENDED PRODUCTION
   ARCHITECTURE* — a NeXa `BargeInController` frame processor that owns the
   `InterruptionState` machine and `response_id`, emits
@@ -258,28 +486,31 @@ silently becoming the measurement.
   `CancelToken`, and coordinates the history commit; Pipecat owns media
   transport + audio-queue cancellation; the one `ConversationSession`
   stays the sole brain / history / model / language authority.
-- **OPERATOR ACTION REQUIRED? — YES, one re-run.** SPIKE B-live's
-  instrumentation was repaired (v2); the operator re-runs the **single
-  command** in *OPERATOR ACTION REQUIRED* (5 trials, one short phrase each
-  after `>>> SPEAK NOW <<<`). No TV test.
-- **TEST RESULTS:** `tests/test_bargein_spike.py` +16 total (+6 this
-  round: `derive_trial_metrics` / `_agg` — none-not-zero on no-detection,
-  control latency still reported when playback failed, pre-arm events flag
-  contamination without becoming the measurement, negative
-  `prompt_to_vad_s` reported not clamped). Full suite:
-  **`pytest` 603 passed / 7 skipped / 14 subtests**; **`unittest` 610
-  OK / 7 skipped**; **`ruff check src tests apps
-  docs/research/m2_5_bargein`** clean; **`git diff --check`** clean.
-- **COMMIT HASH:** `8314dc2` — `research: repair SPIKE B-live
-  instrumentation (M2.5A / R0028)`. This hash-record edit lands in the
-  immediately-following commit (the R0026/R0027 pattern). Prior R0028 tip:
-  `22dc46b`.
+- **OPERATOR ACTION REQUIRED? — YES, ONE narrow test only.** SPIKE B-live
+  v2 (media-stop) is done and accepted — **do not repeat it.** The M2.5A.1
+  self-echo investigation ran fully automated. The single remaining
+  operator step: with NeXa's TTS PCM also routed to the XVF3800 AEC far-end
+  reference (`plug:respeaker`), confirm a **real near-field voice is still
+  detected** during playback. Exact procedure in *OPERATOR ACTION
+  REQUIRED*.
+- **TEST RESULTS:** `tests/test_bargein_spike.py` **+24 total** (+8 this
+  round: `spike_playback_false_vad.py` pure analysis — `speaking_intervals`
+  start/stop pairing incl. orphan-stop / dup-start, before/during/after
+  classification, `summarize_trial` max-continuous + per-phase stats,
+  `verdict_300ms_safe` unsafe-if-any-silent-trial-sustains and
+  ignores-non-playback-trials). Full suite: **`pytest` 611 passed / 7
+  skipped / 14 subtests**; **`unittest` 618 OK / 7 skipped**; **`ruff
+  check src tests apps docs/research/m2_5_bargein`** clean; **`git diff
+  --check`** clean.
+- **COMMIT HASH:** `<pending>` — the M2.5A.1 commit is made after this
+  edit; its hash is recorded in the immediately-following commit (R0026/
+  R0027 pattern). Prior R0028 tip: `777eac0`
+  (`docs: record R0028 SPIKE B-live v2 commit hash`).
 - **GIT STATUS:** branch `main`, not pushed.
-- **NEXT STEP:** operator re-runs SPIKE B-live v2 (one command below); fold
-  the corrected `vad_to_stop_request_ms` / `vad_to_playback_stopped_ms`
-  numbers into this report; **then** implement **M2.5B** to the
-  architecture below. **M2.5B has not started and does not start before the
-  corrected latency evidence exists.**
+- **NEXT STEP:** operator runs the one near-field-under-AEC-reference test
+  (below). If a real voice is still detected with the reference fed, M2.5A
+  closes; **M2.5B** then implements the *AEC-reference wiring first*, then
+  the two-stage trigger. **M2.5B has not started.**
 
 ---
 
@@ -435,13 +666,27 @@ whole window. Consequences that M2.5B must remove:
   reference-based echo canceller**. There is no usable local AEC in this
   environment from Pipecat.
 
-**Net:** there is no software AEC and the hardware AEC is unfed. Whether
-that matters is answered empirically by the self-echo spike — and it
-turns out **not to**, because the array's other DSP stages plus the
-physical speaker→mic attenuation already put NeXa's own voice below the
-VAD floor.
+**Net:** there is no software AEC and the hardware AEC is unfed — and
+**M2.5A.1 proved this matters:** with the reference unfed, NeXa's own Piper
+voice trips the VAD on 14/14 trials (the array's other DSP stages + physical
+attenuation are **not** enough). Feeding the XVF3800 its far-end reference
+(`plug:respeaker`) is what pulls the echo below the VAD gates (0/4). This is
+now an M2.5B prerequisite — see *PLAYBACK-TIME FALSE VAD INVESTIGATION
+(M2.5A.1)*.
 
 ## SELF-ECHO TEST
+
+> **⚠️ SUPERSEDED / WITHDRAWN (M2.5A.1, 2026-09-09).** The runs below did
+> **not actually play audio**: `spike_self_echo.py` holds `plug:usb_speaker`
+> via a full `VoiceRuntime` (`audio_out_enabled=True`), so its concurrent
+> `aplay` on the same non-`dmix` device hit `Device or resource busy` and
+> exited in milliseconds (`stderr` → `DEVNULL`). The JSON confirms it —
+> BASE/A1/A2 event lists are byte-identical, no playback signature. The
+> corrected result is in *PLAYBACK-TIME FALSE VAD INVESTIGATION (M2.5A.1)*:
+> with playback genuinely driven, NeXa's own Piper voice trips the VAD on
+> **14/14** trials on the current route; the XVF3800 AEC far-end reference
+> removes it (**0/4**). Treat everything in this section as a null result,
+> retained only for the record.
 
 `docs/research/m2_5_bargein/spike_self_echo.py` — VAD-only `VoiceRuntime`
 on the reSpeaker, no STT/LLM/TTS-pipeline; synthesises ~12–13 s of Polish
@@ -464,19 +709,30 @@ playback. Three variants:
 | 2 | 0 | 0 → **False** | 0 → **False** |
 | 3 (louder) | 0 | 0 → **False** | 0 → **False** |
 
-**Finding:** NeXa's own Piper voice, at the levels tested, does **not**
-trip the reSpeaker's Silero VAD on the current route, and feeding the
-XVF3800 its AEC reference makes no observable difference (there is
-nothing to cancel at the VAD's input). Self-echo false-barge-in risk on
-this hardware is **low**. (An earlier ad-hoc RMS check in the prior
-session showed the mic *does* acoustically pick up the echo — RMS ~8→~348
-during a tone — so the rejection is happening in the array DSP + the VAD
-threshold, not because the mic is deaf.)
+**Finding (WITHDRAWN — see the box above).** The original text read
+"NeXa's own Piper voice does not trip the VAD on the current route; the
+AEC reference makes no difference; self-echo risk is low." M2.5A.1 shows
+the opposite once audio actually plays: **100 % false-VAD on the current
+route, removed by the AEC reference.** The earlier ad-hoc RMS check (mic
+RMS ~8→~348 during a tone — the mic *does* pick up the echo) was the only
+part that pointed the right way.
 
 ## INTERRUPTION TRIGGER
 
-**Recommendation:** confirmed sustained VAD speech during
-`response_in_flight`, split into two stages:
+> **REVISED by M2.5A.1 (2026-09-09).** **Prerequisite:** M2.5B must feed
+> the reSpeaker XVF3800 its AEC far-end reference (route / synchronously tee
+> NeXa's TTS PCM to the XVF3800 USB playback endpoint `plug:respeaker`, in
+> addition to the Jieli DAC). Without it, `spike_playback_false_vad.py`
+> measured **100 % false-VAD** during NeXa's own speech, latched 3.4–17.0 s
+> — the two-stage trigger below is unusable on a hot mic. **With** the
+> reference fed, false-VAD dropped to 0/4 and the trigger is sound. The
+> `min_volume=0.6` gate stays (it alone held the AEC residual below the
+> line); do **not** raise `confidence` / `start_secs` / `min_volume` as the
+> primary fix. One operator test still owed: real near-field voice still
+> detected while the reference is fed.
+
+**Recommendation (with the AEC reference fed):** confirmed sustained VAD
+speech during `response_in_flight`, split into two stages:
 
 1. **Candidate** — the first `VADUserStartedSpeakingFrame` seen while
    `response_in_flight` is true and no interruption is already in
@@ -486,7 +742,8 @@ threshold, not because the mic is deaf.)
    hold (`VADParams.start_secs=0.2` already elapsed inside the frame +
    ~100 ms guard) with no intervening `VADUserStoppedSpeakingFrame`.
    Confirmation fires `broadcast_interruption()` and the cancellation
-   actions **immediately** — it does **not** wait for STT.
+   actions **immediately** — it does **not** wait for STT. Tune the hold
+   upward against live telemetry if residual echo still leaks.
 
 **Detection ≠ transcription.** The interrupting utterance's audio keeps
 being captured; when its `VADUserStoppedSpeakingFrame` arrives it goes
@@ -500,13 +757,16 @@ second turn/847-context authority. NeXa keeps its `ConversationSession`
 as the only brain; the trigger is a small NeXa processor calling
 `broadcast_interruption()`.
 
-**Self-echo / false-trigger defence (evidence-backed):** the self-echo
-spike shows NeXa's own voice does not reach the VAD, so the 300 ms
-sustain is mainly a guard against room-noise transients and against the
-operator's own tail-echo. Room-noise `BASE` runs were 0/0. If live
-telemetry later shows spurious confirmations, the sustain window is the
-first knob; a `min_volume` bump on a response-time VAD-params profile is
-the second.
+**Self-echo / false-trigger defence (CORRECTED, M2.5A.1):** NeXa's own
+voice **does** reach the VAD and trips it continuously on the current route
+(confidence p95 ≈ 0.95, volume p95 ≈ 0.72 during playback — both above the
+gates). The 300 ms sustain does **not** defend against this — the false
+state lasts seconds. The actual defence is the **XVF3800 AEC far-end
+reference** (drops confidence p95 to ≈ 0.61, volume p95 to ≈ 0.52, false-
+VAD to 0/4). Keep `min_volume=0.6` as a second line (it caught the AEC
+residual). Idle-room `BASE` control was genuinely 0/3. Sustain-window and
+response-time-`min_volume` tuning are supplements only, applied on live
+evidence — never in place of the AEC reference.
 
 ## INTERRUPTION STATE MACHINE
 
@@ -739,10 +999,11 @@ single-candidate `InterruptionState` gate *in front of* promotion to
 - While `INTERRUPT_CANDIDATE` / `INTERRUPTING`: further
   `VADUserStartedSpeakingFrame`s are ignored at the controller (never
   reach STT submission), so no second candidate, no backlog.
-- The mic is **open** during a response (that is the change), but the VAD
-  self-echo floor (self-echo spike) plus the single-candidate gate means
-  room noise produces at most one candidate that fails the 300 ms
-  sustain and resets — it cannot snowball.
+- The mic is **open** during a response (that is the change) — safe **only
+  with the XVF3800 AEC reference fed** (M2.5A.1: without it, NeXa's own
+  voice is a continuous false candidate). With the reference fed, the
+  single-candidate gate means room noise produces at most one candidate
+  that fails the 300 ms sustain and resets — it cannot snowball.
 
 Result: the worst case is **1 interruption STT + 1 promoted turn**, never
 8 + 4.
@@ -786,31 +1047,29 @@ onward, not only once audio is playing.
 
 ## REAL PI LATENCY FINDINGS
 
-- **Self-echo spike (3 runs)** and **headless interruption spike (2 runs,
-  8 speaker plays, +0 dB and +9.5 dB)**: the `plug:usb_speaker` → reSpeaker
-  → Silero VAD path is **below the VAD floor** on this hardware. A
-  speaker-played "interruption" produces **0 `USER_SPEAKING`** events, so
-  **no headless latency number is obtainable** — the automated approach
-  conflates the interruption signal with the self-echo signal we want
-  suppressed.
-- **What can be stated:** the detection term is Silero
-  `start_secs=0.2` + a ~100 ms confirmation guard ≈ **~300 ms**
-  speech-onset → interruption confirmed; the audio-stop tail via
-  `base_output.handle_interruptions()` is one output chunk (~20–40 ms) +
-  `cancel_task`. **Target: < 1 s** speech-onset → last old audio frame.
-- **Measured capability vs target:** the target is **not yet proven** on
-  the live hardware. `spike_bargein_live.py` (operator, near-field voice)
-  is the test that produces the real numbers. **First run (2026-09-09):
-  detection proven 5/5; latency INVALID and withdrawn** — the harness had
-  no arming window and its `aplay` could never open the busy
-  `plug:usb_speaker` that `VoiceRuntime` was already holding, so
-  VAD-onset → playback-stopped was never measured (full analysis in *SPIKE
-  B-live — FIRST RUN*). Rewritten to **v2** (VAD-only pipeline that holds no
-  speaker; explicit A–J window; `playback_actually_stopped` measured via
-  `kill()` + `wait()`). Operator re-run pending — see below.
-- Room-noise `BASE` runs were 0 `USER_SPEAKING` across all three
-  self-echo runs → idle-room false-interruption rate is low without any
-  extra gating.
+- **~~Self-echo spike (3 runs)~~ / ~~headless interruption spike~~ —
+  WITHDRAWN.** Those runs played no audio (device held by `VoiceRuntime`;
+  `aplay` EBUSY) — see *PLAYBACK-TIME FALSE VAD INVESTIGATION (M2.5A.1)*.
+  The corrected picture: on the current `plug:usb_speaker`-only route the
+  reSpeaker → Silero path is **NOT** below the VAD floor — NeXa's own Piper
+  voice trips `USER_SPEAKING` on 14/14 trials.
+- **Media-stop leg — MEASURED (SPIKE B-live v2,
+  `spike_bargein_live_20260909_142619.json`):** VAD start → stop-request
+  **≈ 0 ms**; VAD start → **PLAYBACK TASK STOPPED = 28.5 ms mean / 29.4 ms
+  median / 37.4 ms max** (5/5 fully measurable, playback confirmed active
+  5/5). This is the `aplay`-process-reaped instant, **not** the last
+  physical speaker sample. Well inside the **< 1 s** target for this leg.
+  The audio-stop tail in production is Pipecat
+  `base_output.handle_interruptions()` — one output chunk (~20–40 ms) +
+  `cancel_task` — comparable order.
+- **Detection leg — still NOT clean.** Silero `start_secs=0.2` + ~100 ms
+  guard ≈ ~300 ms *in principle*, but on the current route the VAD state is
+  saturated by self-echo, so a real speech-onset→VAD-accepts latency is
+  only trustworthy once the XVF3800 AEC reference is fed. `prompt → VAD`
+  from v2 (mean 4.4 s) is operator human reaction time, not system latency.
+- **Idle-room control:** `spike_playback_false_vad.py` BASE block (no
+  playback) = **0 `USER_SPEAKING` / 3 trials** — the idle-room false rate
+  is genuinely low; the problem is exclusively NeXa's own playback.
 
 ## RECOMMENDED PRODUCTION ARCHITECTURE
 
@@ -877,11 +1136,19 @@ VAD start (response_in_flight) → CANDIDATE → (≥300 ms sustained) → CONFI
 
 ## WHAT M2.5B MUST IMPLEMENT
 
+0. **(NEW — M2.5A.1, do first.) Feed the reSpeaker XVF3800 its AEC far-end
+   reference.** Route or synchronously tee NeXa's TTS PCM to the XVF3800
+   USB playback endpoint (`plug:respeaker`) in addition to the Jieli DAC,
+   time-aligned. Without this the mic-open-during-response change is
+   unsafe (`spike_playback_false_vad.py`: 14/14 false-VAD → 0/4 with the
+   reference fed). Confirm one operator near-field test with the reference
+   live before building the trigger on top.
 1. `BargeInController` frame processor + `InterruptionState` machine +
    single-candidate invariant + `response_id`.
 2. `HalfDuplexGate.bargein_enabled` (raw mic hot during
-   `response_in_flight`; self-echo tail still gated by `_bot_speaking`);
-   `--no-bargein` fallback to R0026 behaviour.
+   `response_in_flight` — **only with item 0 in place**; self-echo tail
+   still gated by `_bot_speaking`); `--no-bargein` fallback to R0026
+   behaviour.
 3. Per-turn `CancelToken`: created in the controller, threaded
    adapter → `session.send` → `provider.generate`, cancelled on
    confirmation; adapter consumes the stream in a cancellable task
@@ -912,7 +1179,7 @@ VAD start (response_in_flight) → CANDIDATE → (≥300 ms sustained) → CONFI
 | 4 | Sticky preference = EN, assistant speaking EN, operator interrupts in PL (no command) | new answer still **EN** (sticky survives interruption) |
 | 5 | One-turn override ("odpowiedz po angielsku") was in force for the interrupted turn; next (interrupting) turn is plain PL | interrupting turn answered in **PL** — the override did not leak (never sticky) |
 | 6 | Interrupting utterance **is** a sticky command ("od teraz po angielsku") | `ResponsePreference.sticky := en`; that turn + subsequent turns EN |
-| 7 | NeXa's own TTS playing, **no** operator speech | **no** interruption; response completes normally (self-echo spike backs this) |
+| 7 | NeXa's own TTS playing, **no** operator speech | **no** interruption; response completes normally. **REGRESSION GUARD (M2.5A.1):** on the bare `plug:usb_speaker` route this FAILS (14/14 false-VAD, latched 3.4–17 s); it passes only with the XVF3800 AEC far-end reference fed (0/4). M2.5B must verify this case *with* the reference wired. |
 | 8 | Silence / room tone during a response | **no** interruption turn admitted |
 | 9 | Continuous room noise (TV) during a long generation | at most **one** candidate, fails the 300 ms sustain, resets; **0** promoted turns; no STT/turn backlog (R0026 regression guard) |
 | 10 | Operator interrupts, then two more people talk over each other immediately | **exactly one** interruption turn admitted; extras ignored, not queued |
@@ -946,16 +1213,20 @@ beyond the existing policy):
 
 ## RISKS
 
-1. **Live near-field barge-in latency unproven.** The headless path
-   cannot measure it (self-echo floor). SPIKE B-live's first run proved
-   *detection* (5/5) but its latency was invalid (see *SPIKE B-live —
-   FIRST RUN*); the v2 harness fixes the instrumentation. Still mitigated
-   by a corrected SPIKE B-live run before M2.5B.
-2. **Raw mic hot during a response** could still catch loud room audio
-   the array does not fully suppress — a candidate that *passes* 300 ms.
-   Mitigated by the single-candidate gate (worst case = 1 spurious turn,
-   not a backlog) and a tunable sustain window; a response-time
-   `min_volume` profile is the fallback.
+1. **Self-echo saturates the VAD on the current audio route (M2.5A.1).**
+   `spike_playback_false_vad.py`: 14/14 silent-playback trials tripped
+   `USER_SPEAKING`, latched 3.4–17.0 s. **Mitigation is a hard M2.5B
+   prerequisite:** feed the XVF3800 its AEC far-end reference (playback PCM
+   → `plug:respeaker`) — that took false-VAD to 0/4. Residual risk: one
+   operator test still owed to confirm a real near-field voice stays
+   detectable with the reference fed. Media-stop leg is already measured
+   and fine (28.5 ms mean / 37.4 ms max, SPIKE B-live v2).
+2. **Raw mic hot during a response** — *only acceptable with the AEC
+   reference fed* (item 1). Even then, loud room audio the array does not
+   fully suppress could pass 300 ms; mitigated by the single-candidate
+   gate (worst case = 1 spurious turn, not a backlog), `min_volume=0.6`
+   retained, and a tunable sustain / response-time `min_volume` profile as
+   supplements on live evidence.
 3. **`spoken_text` high-water mark** — if the planner seam is hard to
    read precisely, the fragment committed to history may be a sentence
    or two off from what was heard. Acceptable; documented; refine later.
@@ -975,24 +1246,29 @@ beyond the existing policy):
 
 - `docs/CURRENT_STATE.md` — consistency fix (M2.4B COMPLETE; M2.5A active;
   B.3.6 latency re-confirmation marked non-blocking).
-- `docs/research/m2_5_bargein/spike_self_echo.py` — SPIKE A (self-echo),
-  ran 3×; JSON results committed.
+- `docs/research/m2_5_bargein/spike_self_echo.py` — SPIKE A (self-echo).
+  Ran 3× but **played no audio** (device held by `VoiceRuntime`; `aplay`
+  EBUSY); results WITHDRAWN (M2.5A.1). Kept for the record.
 - `docs/research/m2_5_bargein/audio_mix.py` — pure `mix_overlay` /
   `read_wav_i16` / `write_wav_i16` (numpy + `wave` only).
 - `docs/research/m2_5_bargein/spike_interruption_latency.py` — SPIKE B
-  headless; ran 2× (0/8 detections — documented negative result).
-- `docs/research/m2_5_bargein/spike_bargein_live.py` — SPIKE B-live.
-  **v1 ran once (2026-09-09), latency invalid; rewritten to v2** — VAD-only
-  pipeline (no audio output held), explicit arming window, captured `aplay`
-  stderr, `playback_actually_stopped` measured via `proc.kill()` +
-  `proc.wait()` ("PLAYBACK TASK STOPPED"), pre-/post-arm VAD counts. Still
-  research-only; no `src/` import for mutation. Operator re-run pending.
+  headless; ran 2× but **played no audio** (same EBUSY); "0/8" WITHDRAWN.
+- `docs/research/m2_5_bargein/spike_bargein_live.py` — SPIKE B-live v2.
+  Ran by operator 2026-09-09 (`..._142619.json`): media-stop **28.5 ms
+  mean / 37.4 ms max**, ACCEPTED. (v1 `..._134647.json` latency withdrawn.)
+- `docs/research/m2_5_bargein/spike_playback_false_vad.py` — **NEW
+  (M2.5A.1)**, fully automated (operator silent). Probes every VAD frame's
+  Silero confidence + smoothed volume via a spike-only `SileroVADAnalyzer`
+  subclass; blocks BASE / PERSIST / FRESH / AEC_REF. Ran once
+  (`spike_playback_false_vad_20260909_143729.json`). Research-only; no
+  `src/` import for mutation.
 - `docs/research/m2_5_bargein/spike_self_echo_2026090*.json`,
   `spike_interruption_latency_2026090*.json`,
-  `spike_bargein_live_20260909_134647.json` — raw spike output (the last is
-  v1's invalidated run, kept for the record).
-- `tests/test_bargein_spike.py` — +16 deterministic (pure maths + AST
-  research-only guards; +6 `derive_trial_metrics` / `_agg` this round).
+  `spike_bargein_live_20260909_134647.json`,
+  `spike_bargein_live_20260909_142619.json`,
+  `spike_playback_false_vad_20260909_143729.json` — raw spike output.
+- `tests/test_bargein_spike.py` — **+24 total** (pure maths + AST
+  research-only guards; +6 v2 metric derivation; +8 M2.5A.1 analysis).
 - `docs/reports/R0028_…md` — this report.
 
 **No `src/` change. No production behaviour change.** `HalfDuplexGate`,
@@ -1005,88 +1281,88 @@ warm-up, Piper, `ggml-base-q8_0 -t4` — all untouched.
 
 ## TEST RESULTS
 
-- `tests/test_bargein_spike.py` — **16 deterministic, offline** (10 prior
-  + 6 this round):
-  - prior: `mix_overlay` offset / extension / int16-clip (no wrap) /
-    gain-scales-overlay-only / negative-start-rejected; WAV round-trip;
-    stereo downmix; AST guards that every spike imports **no**
-    `nexa.conversation` / `nexa.providers` / `nexa.voice_conversation` /
-    `nexa.memory` / `nexa.bootstrap` module, never contains `_history` or
-    `.send(`; `audio_mix` is `{__future__, wave, pathlib, numpy}` only.
-  - new (SPIKE B-live v2 metric derivation, loaded AST-isolated so no
-    pyaudio/pipecat import): happy-path `prompt_to_vad_s` /
-    `vad_to_stop_request_ms` / `vad_to_playback_stopped_ms`; no-detection
-    yields **`None`, not `0`**, latencies; playback-failed trial still
-    reports control latency but `None` media-stop; a pre-arm VAD event
-    flags `prearm_contaminated` **without** changing the measured
-    (post-arm) event; a negative `prompt_to_vad_s` is reported, never
-    clamped; `_agg` ignores `None` and reports `n`.
-- Full suite: **`pytest` 603 passed / 7 skipped / 14 subtests** ·
-  **`python -m unittest discover -s tests` 610 OK / 7 skipped** ·
+- `tests/test_bargein_spike.py` — **24 deterministic, offline** (10 prior
+  + 6 SPIKE B-live v2 + **8 M2.5A.1**), all AST-isolated so no
+  pyaudio/pipecat/nexa import:
+  - prior: `mix_overlay` offset / extension / int16-clip / gain / negative
+    start; WAV round-trip; stereo downmix; AST guards that every spike
+    imports no `nexa.conversation`/`providers`/`voice_conversation`/
+    `memory`/`bootstrap`, never `_history` / `.send(`.
+  - SPIKE B-live v2: `prompt_to_vad_s` / `vad_to_stop_request_ms` /
+    `vad_to_playback_stopped_ms` derivation; no-detection → **`None`, not
+    `0`**; playback-failed trial still reports control latency but `None`
+    media-stop; pre-arm event flags `prearm_contaminated` without changing
+    the measured event; negative `prompt_to_vad_s` not clamped.
+  - **M2.5A.1** (`spike_playback_false_vad.py` analysis): `speaking_intervals`
+    pairs start/stop, tolerates orphan-stop / duplicate-start /
+    open-final-start; `classify_interval` before/during/after;
+    `summarize_trial` max-continuous + per-phase conf/vol/
+    `speaking_frame_frac`; `verdict_300ms_safe` is unsafe iff any
+    playback-active trial sustained ≥ 0.3 s, and ignores trials where
+    playback never started.
+- Full suite: **`pytest` 611 passed / 7 skipped / 14 subtests** ·
+  **`python -m unittest discover -s tests` 618 OK / 7 skipped** ·
   **`ruff check src tests apps docs/research/m2_5_bargein`** clean ·
   **`git diff --check`** clean.
-- SPIKE B-live v2 itself is **not** run in CI (needs the reSpeaker, the USB
-  DAC, real Piper, and the operator).
+- `spike_bargein_live.py` and `spike_playback_false_vad.py` are **not** run
+  in CI (need the reSpeaker + USB DAC + real Piper).
 
 ## OPERATOR ACTION REQUIRED
 
-SPIKE B-live's instrumentation was repaired (v2). **Re-run it once** — the
-same single command, from the repo root:
+**SPIKE B-live v2 is done and ACCEPTED — do not re-run it.** M2.5A.1 ran
+fully automated. **One test remains:** confirm a real near-field voice is
+still detected while the XVF3800 AEC far-end reference is being fed.
 
-```
-.venv/bin/python docs/research/m2_5_bargein/spike_bargein_live.py
-```
+There is no packaged spike for this yet (it needs a small change to how
+the reference is routed — an M2.5B design item), so it is a **manual
+check**, roughly:
 
-**5 trials.** Each trial NeXa speaks a ~19 s Polish sentence through the
-USB speaker; ~2 s after playback is confirmed active the terminal prints
-`>>> SPEAK NOW <<<`. **Only after that prompt**, at **normal speaking
-volume**, say **one short phrase** and stop. The harness accepts only the
-first VAD speech-start *after* it arms, immediately kills the playback, and
-waits for that process to exit. Suggested phrases (one per trial, vary
-them):
+1. In one terminal, start NeXa's Piper phrase playing on a loop to **both**
+   the DAC and the reSpeaker's playback endpoint, e.g.
+   `while :; do aplay -q -D plug:usb_speaker P.wav & aplay -q -D plug:respeaker P.wav & wait; done`
+   (`P.wav` = any ~15–20 s Piper phrase; the second `aplay` is the AEC
+   far-end reference).
+2. In another, run a VAD-only listener on `respeaker` (the M2.5A.1 spike's
+   `_mk_pipeline` with playback disabled, or any `VADProcessor` tap) and
+   watch for `VADUserStartedSpeakingFrame`.
+3. With that running: (a) stay **silent** for ~20 s — expect **no**
+   `USER_SPEAKING` (this is what M2.5A.1 already showed, 0/4); (b) then
+   **speak normally near the array** — expect `USER_SPEAKING` **within a
+   few hundred ms**.
 
-1. `Stop.`
-2. `Czekaj.`
-3. `Actually, tell me about black holes instead.`
-4. `Nie, zapytam o coś innego.`
-5. `Hold on — what about gravity?`
-
-If a trial prints `!! PLAYBACK DID NOT START`, note it and keep going — the
-`VERDICT` block reports how many trials had playback confirmed active.
-It writes `docs/research/m2_5_bargein/spike_bargein_live_<ts>.json` and
-prints a `VERDICT (<ts>):` block with: playback-confirmed-active count,
-post-arm-VAD-detected count, fully-measurable count, pre-arm / post-accept
-VAD counts, **`VAD start → stop requested` (control, ms)**, **`VAD start →
-PLAYBACK TASK STOPPED` (media-stop, ms)**, and `prompt → VAD` (seconds,
-**informational only — includes human reaction time**). Paste that block
-(or the JSON) back. **No TV test. Do not start M2.5B before that corrected
-evidence exists.**
+Report: did silent playback stay clean, and was your near-field voice
+still detected promptly? If both yes → M2.5A closes and M2.5B proceeds
+(AEC-reference wiring first). **No TV test. Do not start M2.5B before
+this.**
 
 ## COMMIT HASH
 
-`8314dc2` — `research: repair SPIKE B-live instrumentation (M2.5A / R0028)`
-(SPIKE B-live rewritten to v2, `tests/test_bargein_spike.py` +6, v1 raw
-output committed for the record, this report updated). This hash-record
-edit lands in the immediately-following commit (R0026/R0027 pattern). Prior
-R0028 tip: `22dc46b`. Not pushed.
+`<pending>` — the M2.5A.1 commit (`spike_playback_false_vad.py` +
+`tests/test_bargein_spike.py` +8 + `spike_bargein_live_20260909_142619.json`
++ this report) is made immediately after this edit; its hash is recorded in
+the following commit (R0026/R0027 pattern). Prior R0028 tip: `777eac0`
+(`docs: record R0028 SPIKE B-live v2 commit hash`). Not pushed.
 
 ## GIT STATUS
 
-Branch `main`. Not pushed. `8314dc2` committed on top of `22dc46b`; this
-hash-record edit is the next commit. `ruff check src tests apps
-docs/research/m2_5_bargein` clean; `git diff --check` clean; `pytest` 603
-passed / 7 skipped, `unittest` 610 OK / 7 skipped.
+Branch `main`. Not pushed. Sequence so far: `77c7c0f` → `22dc46b` →
+`8314dc2` (SPIKE B-live v2) → `777eac0` (hash record) → **M2.5A.1 commit
+(this edit)** → hash-record commit. `ruff check src tests apps
+docs/research/m2_5_bargein` clean; `git diff --check` clean; `pytest` 611
+passed / 7 skipped / 14 subtests; `unittest` 618 OK / 7 skipped.
 
 ## NEXT STEP
 
-1. Operator **re-runs SPIKE B-live v2** (one command above); the corrected
-   `vad_to_stop_request_ms` / `vad_to_playback_stopped_ms` (and the
-   playback-confirmed-active count) are folded into this report. M2.5A
-   closes only then. **M2.5B has not started.**
-2. **M2.5B — production barge-in** to *RECOMMENDED PRODUCTION
-   ARCHITECTURE* + *WHAT M2.5B MUST IMPLEMENT*, verified against the
-   17-case matrix and a live operator session, `--no-bargein` keeping
-   the R0026 behaviour as fallback. **Does not begin before step 1's
-   corrected evidence exists.**
+1. Operator runs the **one near-field-under-AEC-reference check** above.
+   If silent playback stays clean **and** a real voice is still detected
+   promptly → **M2.5A closes.** **M2.5B has not started.**
+2. **M2.5B — production barge-in**, in order: **(a)** wire the XVF3800 AEC
+   far-end reference (route/synchronously tee NeXa's TTS PCM to
+   `plug:respeaker`); **(b)** `BargeInController` + two-stage trigger
+   (candidate → ≥ 300 ms sustain → `broadcast_interruption()`), single
+   candidate, `min_volume=0.6` kept; **(c)** per-turn `CancelToken` +
+   `commit_interrupted_turn`. Verified against the 17-case matrix and a
+   live operator session; `--no-bargein` keeps the R0026 behaviour as
+   fallback. Does not begin before step 1.
 3. Still non-blocking and owed independently: the B.3.6 operator latency
    re-confirmation (STT latency + END_OF_TURN→first-audio).

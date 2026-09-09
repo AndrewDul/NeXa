@@ -1,0 +1,1259 @@
+{
+ "ts": "20260909_143729",
+ "phrase": "Wszechświat rozszerza się od około trzynastu miliardów ośmiuset milionów lat, a tempo tego rozszerzania opisuje stała Hubble'a. Galaktyki oddalają się od siebie tym szybciej, im większa jest dzieląca je odległość, co odkrył Edwin Hubble w tysiąc dziewięćset dwudziestym dziewiątym roku, obserwując przesunięcie ku czerwieni.",
+ "audio_s": 19.13,
+ "vad_params": {
+  "confidence": 0.7,
+  "start_secs": 0.2,
+  "stop_secs": 1.0,
+  "min_volume": 0.6
+ },
+ "params": {
+  "WARMUP_S": 3.0,
+  "QUIET_BEFORE_S": 2.5,
+  "PLAYBACK_LEADIN_S": 1.0,
+  "TAIL_S": 3.0
+ },
+ "blocks": {
+  "BASE": [
+   {
+    "playback_started": false,
+    "user_speaking_starts": 0,
+    "user_speaking_starts_during_playback": 0,
+    "false_vad": false,
+    "max_continuous_speaking_s": 0.0,
+    "speaking_intervals": [],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0038,
+     "conf_p95": 0.0082,
+     "conf_max": 0.0416,
+     "vol_mean": 0.0,
+     "vol_p95": 0.0,
+     "vol_max": 0.0,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 0
+    },
+    "phase_after": {
+     "n_frames": 691,
+     "conf_mean": 0.0029,
+     "conf_p95": 0.004,
+     "conf_max": 0.0425,
+     "vol_mean": 0.0,
+     "vol_p95": 0.0,
+     "vol_max": 0.0,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "note": "BASE control — no playback",
+    "trial": 1
+   },
+   {
+    "playback_started": false,
+    "user_speaking_starts": 0,
+    "user_speaking_starts_during_playback": 0,
+    "false_vad": false,
+    "max_continuous_speaking_s": 0.0,
+    "speaking_intervals": [],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0031,
+     "conf_p95": 0.0041,
+     "conf_max": 0.0319,
+     "vol_mean": 0.0,
+     "vol_p95": 0.0,
+     "vol_max": 0.0,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 0
+    },
+    "phase_after": {
+     "n_frames": 692,
+     "conf_mean": 0.0029,
+     "conf_p95": 0.0038,
+     "conf_max": 0.0485,
+     "vol_mean": 0.0,
+     "vol_p95": 0.0,
+     "vol_max": 0.0,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "note": "BASE control — no playback",
+    "trial": 2
+   },
+   {
+    "playback_started": false,
+    "user_speaking_starts": 0,
+    "user_speaking_starts_during_playback": 0,
+    "false_vad": false,
+    "max_continuous_speaking_s": 0.0,
+    "speaking_intervals": [],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0033,
+     "conf_p95": 0.0066,
+     "conf_max": 0.0332,
+     "vol_mean": 0.094,
+     "vol_p95": 0.4032,
+     "vol_max": 0.4078,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 0
+    },
+    "phase_after": {
+     "n_frames": 692,
+     "conf_mean": 0.0053,
+     "conf_p95": 0.0174,
+     "conf_max": 0.0525,
+     "vol_mean": 0.1065,
+     "vol_p95": 0.4749,
+     "vol_max": 0.498,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "note": "BASE control — no playback",
+    "trial": 3
+   }
+  ],
+  "PERSIST": [
+   {
+    "playback_started": true,
+    "user_speaking_starts": 2,
+    "user_speaking_starts_during_playback": 2,
+    "false_vad": true,
+    "max_continuous_speaking_s": 12.001,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 1.11,
+      "duration_s": 12.001,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 15.891,
+      "duration_s": 1.641,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0037,
+     "conf_p95": 0.0048,
+     "conf_max": 0.039,
+     "vol_mean": 0.0,
+     "vol_p95": 0.0,
+     "vol_max": 0.0,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.6196,
+     "conf_p95": 0.985,
+     "conf_max": 0.992,
+     "vol_mean": 0.6301,
+     "vol_p95": 0.708,
+     "vol_max": 0.7233,
+     "speaking_frame_frac": 0.3445
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.0222,
+     "conf_p95": 0.1084,
+     "conf_max": 0.1921,
+     "vol_mean": 0.4926,
+     "vol_p95": 0.5943,
+     "vol_max": 0.6344,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 1
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 4,
+    "user_speaking_starts_during_playback": 4,
+    "false_vad": true,
+    "max_continuous_speaking_s": 10.28,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.575,
+      "duration_s": 10.28,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 11.075,
+      "duration_s": 3.381,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 15.875,
+      "duration_s": 1.66,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 17.735,
+      "duration_s": 1.72,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0081,
+     "conf_p95": 0.0123,
+     "conf_max": 0.0902,
+     "vol_mean": 0.4729,
+     "vol_p95": 0.4784,
+     "vol_max": 0.4788,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 597,
+     "conf_mean": 0.6285,
+     "conf_p95": 0.9606,
+     "conf_max": 0.9832,
+     "vol_mean": 0.655,
+     "vol_p95": 0.7358,
+     "vol_max": 0.7773,
+     "speaking_frame_frac": 0.5109
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.0152,
+     "conf_p95": 0.0629,
+     "conf_max": 0.1301,
+     "vol_mean": 0.4707,
+     "vol_p95": 0.5823,
+     "vol_max": 0.6375,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 2
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 3,
+    "user_speaking_starts_during_playback": 3,
+    "false_vad": true,
+    "max_continuous_speaking_s": 3.36,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.478,
+      "duration_s": 3.36,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 5.679,
+      "duration_s": 2.741,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 18.44,
+      "duration_s": 1.56,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 79,
+     "conf_mean": 0.006,
+     "conf_p95": 0.0125,
+     "conf_max": 0.0211,
+     "vol_mean": 0.4597,
+     "vol_p95": 0.4636,
+     "vol_max": 0.4639,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 597,
+     "conf_mean": 0.4632,
+     "conf_p95": 0.9198,
+     "conf_max": 0.9742,
+     "vol_mean": 0.6345,
+     "vol_p95": 0.7179,
+     "vol_max": 0.7611,
+     "speaking_frame_frac": 0.2395
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.0349,
+     "conf_p95": 0.1094,
+     "conf_max": 0.3608,
+     "vol_mean": 0.4661,
+     "vol_p95": 0.5712,
+     "vol_max": 0.6294,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 3
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 4,
+    "user_speaking_starts_during_playback": 4,
+    "false_vad": true,
+    "max_continuous_speaking_s": 3.4,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.582,
+      "duration_s": 1.76,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 2.662,
+      "duration_s": 1.32,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 5.642,
+      "duration_s": 3.4,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 12.042,
+      "duration_s": 2.12,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0041,
+     "conf_p95": 0.0063,
+     "conf_max": 0.0084,
+     "vol_mean": 0.4515,
+     "vol_p95": 0.4556,
+     "vol_max": 0.4559,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.4829,
+     "conf_p95": 0.9085,
+     "conf_max": 0.961,
+     "vol_mean": 0.6447,
+     "vol_p95": 0.7179,
+     "vol_max": 0.7562,
+     "speaking_frame_frac": 0.2258
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.0193,
+     "conf_p95": 0.0568,
+     "conf_max": 0.1285,
+     "vol_mean": 0.4649,
+     "vol_p95": 0.5884,
+     "vol_max": 0.6438,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 4
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 1,
+    "user_speaking_starts_during_playback": 1,
+    "false_vad": true,
+    "max_continuous_speaking_s": 16.742,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.783,
+      "duration_s": 16.742,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0054,
+     "conf_p95": 0.0094,
+     "conf_max": 0.0139,
+     "vol_mean": 0.4501,
+     "vol_p95": 0.4541,
+     "vol_max": 0.4545,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.6685,
+     "conf_p95": 0.9668,
+     "conf_max": 0.9842,
+     "vol_mean": 0.6496,
+     "vol_p95": 0.7219,
+     "vol_max": 0.7594,
+     "speaking_frame_frac": 0.5368
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.022,
+     "conf_p95": 0.0763,
+     "conf_max": 0.247,
+     "vol_mean": 0.4704,
+     "vol_p95": 0.6025,
+     "vol_max": 0.6502,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 5
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 4,
+    "user_speaking_starts_during_playback": 4,
+    "false_vad": true,
+    "max_continuous_speaking_s": 9.54,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.787,
+      "duration_s": 9.54,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 11.167,
+      "duration_s": 2.9,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 14.948,
+      "duration_s": 2.579,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 17.728,
+      "duration_s": 2.34,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 79,
+     "conf_mean": 0.0057,
+     "conf_p95": 0.0102,
+     "conf_max": 0.0728,
+     "vol_mean": 0.4544,
+     "vol_p95": 0.4591,
+     "vol_max": 0.4593,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.6186,
+     "conf_p95": 0.9571,
+     "conf_max": 0.9841,
+     "vol_mean": 0.6538,
+     "vol_p95": 0.723,
+     "vol_max": 0.7573,
+     "speaking_frame_frac": 0.5017
+    },
+    "phase_after": {
+     "n_frames": 93,
+     "conf_mean": 0.0143,
+     "conf_p95": 0.0659,
+     "conf_max": 0.3114,
+     "vol_mean": 0.4682,
+     "vol_p95": 0.5892,
+     "vol_max": 0.645,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 6
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 5,
+    "user_speaking_starts_during_playback": 5,
+    "false_vad": true,
+    "max_continuous_speaking_s": 5.46,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.569,
+      "duration_s": 3.6,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 5.349,
+      "duration_s": 5.46,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 11.17,
+      "duration_s": 2.999,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 14.97,
+      "duration_s": 2.56,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 17.77,
+      "duration_s": 2.0,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0063,
+     "conf_p95": 0.0168,
+     "conf_max": 0.063,
+     "vol_mean": 0.4672,
+     "vol_p95": 0.4877,
+     "vol_max": 0.4882,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 599,
+     "conf_mean": 0.5887,
+     "conf_p95": 0.9678,
+     "conf_max": 0.9876,
+     "vol_mean": 0.6547,
+     "vol_p95": 0.7214,
+     "vol_max": 0.7562,
+     "speaking_frame_frac": 0.4424
+    },
+    "phase_after": {
+     "n_frames": 93,
+     "conf_mean": 0.026,
+     "conf_p95": 0.088,
+     "conf_max": 0.2289,
+     "vol_mean": 0.4753,
+     "vol_p95": 0.5972,
+     "vol_max": 0.6469,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 7
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 2,
+    "user_speaking_starts_during_playback": 2,
+    "false_vad": true,
+    "max_continuous_speaking_s": 7.26,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.771,
+      "duration_s": 7.26,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 17.832,
+      "duration_s": 2.28,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0041,
+     "conf_p95": 0.0072,
+     "conf_max": 0.0089,
+     "vol_mean": 0.448,
+     "vol_p95": 0.4517,
+     "vol_max": 0.4519,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.4915,
+     "conf_p95": 0.9409,
+     "conf_max": 0.9741,
+     "vol_mean": 0.6564,
+     "vol_p95": 0.7225,
+     "vol_max": 0.7571,
+     "speaking_frame_frac": 0.2977
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.0513,
+     "conf_p95": 0.2144,
+     "conf_max": 0.692,
+     "vol_mean": 0.4719,
+     "vol_p95": 0.6185,
+     "vol_max": 0.6614,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 8
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 3,
+    "user_speaking_starts_during_playback": 3,
+    "false_vad": true,
+    "max_continuous_speaking_s": 7.461,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.594,
+      "duration_s": 7.461,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 13.095,
+      "duration_s": 1.06,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 15.115,
+      "duration_s": 1.92,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0046,
+     "conf_p95": 0.0084,
+     "conf_max": 0.0099,
+     "vol_mean": 0.4479,
+     "vol_p95": 0.4531,
+     "vol_max": 0.4535,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.5196,
+     "conf_p95": 0.9467,
+     "conf_max": 0.9875,
+     "vol_mean": 0.6591,
+     "vol_p95": 0.7264,
+     "vol_max": 0.7596,
+     "speaking_frame_frac": 0.306
+    },
+    "phase_after": {
+     "n_frames": 93,
+     "conf_mean": 0.021,
+     "conf_p95": 0.0762,
+     "conf_max": 0.1905,
+     "vol_mean": 0.4728,
+     "vol_p95": 0.6183,
+     "vol_max": 0.66,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 9
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 2,
+    "user_speaking_starts_during_playback": 2,
+    "false_vad": true,
+    "max_continuous_speaking_s": 10.28,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.558,
+      "duration_s": 10.28,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 11.058,
+      "duration_s": 4.94,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0061,
+     "conf_p95": 0.0124,
+     "conf_max": 0.068,
+     "vol_mean": 0.4522,
+     "vol_p95": 0.4582,
+     "vol_max": 0.4593,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.645,
+     "conf_p95": 0.9776,
+     "conf_max": 0.9877,
+     "vol_mean": 0.6585,
+     "vol_p95": 0.7269,
+     "vol_max": 0.7616,
+     "speaking_frame_frac": 0.5201
+    },
+    "phase_after": {
+     "n_frames": 93,
+     "conf_mean": 0.0173,
+     "conf_p95": 0.063,
+     "conf_max": 0.1755,
+     "vol_mean": 0.4698,
+     "vol_p95": 0.6047,
+     "vol_max": 0.6529,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 10
+   }
+  ],
+  "FRESH": [
+   {
+    "playback_started": true,
+    "user_speaking_starts": 3,
+    "user_speaking_starts_during_playback": 3,
+    "false_vad": true,
+    "max_continuous_speaking_s": 10.059,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.75,
+      "duration_s": 10.059,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 11.03,
+      "duration_s": 6.501,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 17.751,
+      "duration_s": 2.28,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0062,
+     "conf_p95": 0.0106,
+     "conf_max": 0.0748,
+     "vol_mean": 0.448,
+     "vol_p95": 0.451,
+     "vol_max": 0.4511,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.7075,
+     "conf_p95": 0.9726,
+     "conf_max": 0.9883,
+     "vol_mean": 0.6585,
+     "vol_p95": 0.7246,
+     "vol_max": 0.757,
+     "speaking_frame_frac": 0.6438
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.0172,
+     "conf_p95": 0.0807,
+     "conf_max": 0.2527,
+     "vol_mean": 0.4637,
+     "vol_p95": 0.6044,
+     "vol_max": 0.6518,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 1
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 2,
+    "user_speaking_starts_during_playback": 2,
+    "false_vad": true,
+    "max_continuous_speaking_s": 16.781,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.752,
+      "duration_s": 16.781,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 17.753,
+      "duration_s": 2.28,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0057,
+     "conf_p95": 0.0103,
+     "conf_max": 0.0693,
+     "vol_mean": 0.4448,
+     "vol_p95": 0.4481,
+     "vol_max": 0.4484,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.6996,
+     "conf_p95": 0.9724,
+     "conf_max": 0.9865,
+     "vol_mean": 0.6567,
+     "vol_p95": 0.7226,
+     "vol_max": 0.7538,
+     "speaking_frame_frac": 0.6204
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.0206,
+     "conf_p95": 0.097,
+     "conf_max": 0.3487,
+     "vol_mean": 0.4634,
+     "vol_p95": 0.5993,
+     "vol_max": 0.6528,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 2
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 2,
+    "user_speaking_starts_during_playback": 2,
+    "false_vad": true,
+    "max_continuous_speaking_s": 16.962,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.587,
+      "duration_s": 16.962,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 17.768,
+      "duration_s": 2.3,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0058,
+     "conf_p95": 0.007,
+     "conf_max": 0.0634,
+     "vol_mean": 0.4443,
+     "vol_p95": 0.446,
+     "vol_max": 0.4462,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.7113,
+     "conf_p95": 0.9753,
+     "conf_max": 0.9883,
+     "vol_mean": 0.6573,
+     "vol_p95": 0.7239,
+     "vol_max": 0.7563,
+     "speaking_frame_frac": 0.6438
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.026,
+     "conf_p95": 0.126,
+     "conf_max": 0.5325,
+     "vol_mean": 0.4713,
+     "vol_p95": 0.6148,
+     "vol_max": 0.6581,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 3
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 2,
+    "user_speaking_starts_during_playback": 2,
+    "false_vad": true,
+    "max_continuous_speaking_s": 16.961,
+    "speaking_intervals": [
+     {
+      "rel_playback_start_s": 0.57,
+      "duration_s": 16.961,
+      "began": "during",
+      "closed": true
+     },
+     {
+      "rel_playback_start_s": 17.811,
+      "duration_s": 2.22,
+      "began": "during",
+      "closed": true
+     }
+    ],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0062,
+     "conf_p95": 0.0109,
+     "conf_max": 0.0652,
+     "vol_mean": 0.4461,
+     "vol_p95": 0.4488,
+     "vol_max": 0.449,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.6932,
+     "conf_p95": 0.9757,
+     "conf_max": 0.9894,
+     "vol_mean": 0.6597,
+     "vol_p95": 0.7261,
+     "vol_max": 0.7575,
+     "speaking_frame_frac": 0.6037
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.0174,
+     "conf_p95": 0.0735,
+     "conf_max": 0.2564,
+     "vol_mean": 0.4651,
+     "vol_p95": 0.6053,
+     "vol_max": 0.6576,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 4
+   }
+  ],
+  "AEC_REF": [
+   {
+    "playback_started": true,
+    "user_speaking_starts": 0,
+    "user_speaking_starts_during_playback": 0,
+    "false_vad": false,
+    "max_continuous_speaking_s": 0.0,
+    "speaking_intervals": [],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0067,
+     "conf_p95": 0.0109,
+     "conf_max": 0.0727,
+     "vol_mean": 0.4482,
+     "vol_p95": 0.4542,
+     "vol_max": 0.4545,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.2317,
+     "conf_p95": 0.6984,
+     "conf_max": 0.8063,
+     "vol_mean": 0.4603,
+     "vol_p95": 0.5379,
+     "vol_max": 0.6679,
+     "speaking_frame_frac": 0.0084
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.0065,
+     "conf_p95": 0.0127,
+     "conf_max": 0.0882,
+     "vol_mean": 0.4359,
+     "vol_p95": 0.4484,
+     "vol_max": 0.4486,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 1
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 0,
+    "user_speaking_starts_during_playback": 0,
+    "false_vad": false,
+    "max_continuous_speaking_s": 0.0,
+    "speaking_intervals": [],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0071,
+     "conf_p95": 0.0192,
+     "conf_max": 0.0578,
+     "vol_mean": 0.4506,
+     "vol_p95": 0.4541,
+     "vol_max": 0.4545,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 597,
+     "conf_mean": 0.232,
+     "conf_p95": 0.7302,
+     "conf_max": 0.8738,
+     "vol_mean": 0.4759,
+     "vol_p95": 0.5261,
+     "vol_max": 0.5429,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_after": {
+     "n_frames": 95,
+     "conf_mean": 0.0069,
+     "conf_p95": 0.0158,
+     "conf_max": 0.0297,
+     "vol_mean": 0.4024,
+     "vol_p95": 0.4473,
+     "vol_max": 0.4681,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 2
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 0,
+    "user_speaking_starts_during_playback": 0,
+    "false_vad": false,
+    "max_continuous_speaking_s": 0.0,
+    "speaking_intervals": [],
+    "phase_quiet_before": {
+     "n_frames": 79,
+     "conf_mean": 0.0039,
+     "conf_p95": 0.013,
+     "conf_max": 0.0206,
+     "vol_mean": 0.4477,
+     "vol_p95": 0.4525,
+     "vol_max": 0.4529,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 597,
+     "conf_mean": 0.2724,
+     "conf_p95": 0.8792,
+     "conf_max": 0.9589,
+     "vol_mean": 0.475,
+     "vol_p95": 0.5255,
+     "vol_max": 0.5366,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.0099,
+     "conf_p95": 0.0248,
+     "conf_max": 0.0392,
+     "vol_mean": 0.3987,
+     "vol_p95": 0.4496,
+     "vol_max": 0.4692,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 3
+   },
+   {
+    "playback_started": true,
+    "user_speaking_starts": 0,
+    "user_speaking_starts_during_playback": 0,
+    "false_vad": false,
+    "max_continuous_speaking_s": 0.0,
+    "speaking_intervals": [],
+    "phase_quiet_before": {
+     "n_frames": 78,
+     "conf_mean": 0.0053,
+     "conf_p95": 0.0096,
+     "conf_max": 0.0154,
+     "vol_mean": 0.4485,
+     "vol_p95": 0.4521,
+     "vol_max": 0.4524,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_playback": {
+     "n_frames": 598,
+     "conf_mean": 0.0388,
+     "conf_p95": 0.1344,
+     "conf_max": 0.7522,
+     "vol_mean": 0.434,
+     "vol_p95": 0.4993,
+     "vol_max": 0.5237,
+     "speaking_frame_frac": 0.0
+    },
+    "phase_after": {
+     "n_frames": 94,
+     "conf_mean": 0.0078,
+     "conf_p95": 0.0137,
+     "conf_max": 0.0837,
+     "vol_mean": 0.4167,
+     "vol_p95": 0.4492,
+     "vol_max": 0.4508,
+     "speaking_frame_frac": 0.0
+    },
+    "playback_error": null,
+    "trial": 4
+   }
+  ]
+ },
+ "summary": {
+  "BASE": {
+   "trials": 3,
+   "playback_confirmed_active": 0,
+   "false_vad_trials": 0,
+   "false_vad_rate": 0.0,
+   "total_user_speaking_starts": 0,
+   "max_continuous_speaking_s": {
+    "n": 3,
+    "mean": 0.0,
+    "median": 0.0,
+    "max": 0.0
+   },
+   "playback_phase_conf_p95": {
+    "n": 0,
+    "mean": null,
+    "median": null,
+    "max": null
+   },
+   "playback_phase_vol_p95": {
+    "n": 0,
+    "mean": null,
+    "median": null,
+    "max": null
+   },
+   "playback_phase_speaking_frac": {
+    "n": 0,
+    "mean": null,
+    "median": null,
+    "max": null
+   },
+   "verdict_300ms": {
+    "safe": true,
+    "offending_trials": [],
+    "worst_continuous_speaking_s": 0.0
+   }
+  },
+  "PERSIST": {
+   "trials": 10,
+   "playback_confirmed_active": 10,
+   "false_vad_trials": 10,
+   "false_vad_rate": 1.0,
+   "total_user_speaking_starts": 30,
+   "max_continuous_speaking_s": {
+    "n": 10,
+    "mean": 8.578,
+    "median": 8.5,
+    "max": 16.742
+   },
+   "playback_phase_conf_p95": {
+    "n": 10,
+    "mean": 0.953,
+    "median": 0.959,
+    "max": 0.985
+   },
+   "playback_phase_vol_p95": {
+    "n": 10,
+    "mean": 0.722,
+    "median": 0.722,
+    "max": 0.736
+   },
+   "playback_phase_speaking_frac": {
+    "n": 10,
+    "mean": 0.393,
+    "median": 0.393,
+    "max": 0.537
+   },
+   "verdict_300ms": {
+    "safe": false,
+    "offending_trials": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10
+    ],
+    "worst_continuous_speaking_s": 16.742
+   }
+  },
+  "FRESH": {
+   "trials": 4,
+   "playback_confirmed_active": 4,
+   "false_vad_trials": 4,
+   "false_vad_rate": 1.0,
+   "total_user_speaking_starts": 9,
+   "max_continuous_speaking_s": {
+    "n": 4,
+    "mean": 15.191,
+    "median": 16.871,
+    "max": 16.962
+   },
+   "playback_phase_conf_p95": {
+    "n": 4,
+    "mean": 0.974,
+    "median": 0.974,
+    "max": 0.976
+   },
+   "playback_phase_vol_p95": {
+    "n": 4,
+    "mean": 0.724,
+    "median": 0.724,
+    "max": 0.726
+   },
+   "playback_phase_speaking_frac": {
+    "n": 4,
+    "mean": 0.628,
+    "median": 0.632,
+    "max": 0.644
+   },
+   "verdict_300ms": {
+    "safe": false,
+    "offending_trials": [
+     1,
+     2,
+     3,
+     4
+    ],
+    "worst_continuous_speaking_s": 16.962
+   }
+  },
+  "AEC_REF": {
+   "trials": 4,
+   "playback_confirmed_active": 4,
+   "false_vad_trials": 0,
+   "false_vad_rate": 0.0,
+   "total_user_speaking_starts": 0,
+   "max_continuous_speaking_s": {
+    "n": 4,
+    "mean": 0.0,
+    "median": 0.0,
+    "max": 0.0
+   },
+   "playback_phase_conf_p95": {
+    "n": 4,
+    "mean": 0.611,
+    "median": 0.714,
+    "max": 0.879
+   },
+   "playback_phase_vol_p95": {
+    "n": 4,
+    "mean": 0.522,
+    "median": 0.526,
+    "max": 0.538
+   },
+   "playback_phase_speaking_frac": {
+    "n": 4,
+    "mean": 0.002,
+    "median": 0.0,
+    "max": 0.008
+   },
+   "verdict_300ms": {
+    "safe": true,
+    "offending_trials": [],
+    "worst_continuous_speaking_s": 0.0
+   }
+  }
+ }
+}
