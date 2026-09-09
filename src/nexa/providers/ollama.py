@@ -54,6 +54,14 @@ class LocalModelProvider(ModelProvider):
         # provenance.
         self._num_thread = num_thread
         self._timeout = timeout
+        #: M2.5B.1 — the Ollama server's own timing counters from the last
+        #: completed (``done``) response: ``prompt_eval_count`` /
+        #: ``prompt_eval_duration`` / ``eval_count`` / ``eval_duration`` /
+        #: ``load_duration`` / ``total_duration`` (ns). ``None`` until the
+        #: first full response; not updated for a response cut short by
+        #: cancellation. Read by the latency ledger — measurement only, no
+        #: control flow depends on it.
+        self.last_metrics: dict[str, int] | None = None
 
     def describe(self) -> ProviderDescription:
         return ProviderDescription(provider_name="ollama", model=self._model)
@@ -101,6 +109,7 @@ class LocalModelProvider(ModelProvider):
                 with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                     for raw_line in resp:
                         if cancel_token is not None and cancel_token.is_cancelled:
+                            cancel_token.mark_cancel_observed()
                             return
                         line = raw_line.strip()
                         if not line:
@@ -110,10 +119,20 @@ class LocalModelProvider(ModelProvider):
                         if content:
                             loop.call_soon_threadsafe(queue.put_nowait, content)
                         if chunk.get("done"):
+                            # M2.5B.1 — capture the server's own timing counters
+                            self.last_metrics = {
+                                k: chunk[k] for k in (
+                                    "total_duration", "load_duration",
+                                    "prompt_eval_count", "prompt_eval_duration",
+                                    "eval_count", "eval_duration",
+                                ) if isinstance(chunk.get(k), int)
+                            }
                             return
             except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as exc:
                 errors.append(exc)
             finally:
+                if cancel_token is not None:
+                    cancel_token.mark_worker_stopped()
                 loop.call_soon_threadsafe(queue.put_nowait, _DONE)
 
         threading.Thread(target=worker, daemon=True).start()

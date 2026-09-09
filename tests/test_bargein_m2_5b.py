@@ -84,14 +84,20 @@ class _ScriptedProvider(ModelProvider):
                     while slept < self._delay:
                         if cancel_token is not None and cancel_token.is_cancelled:
                             self.cancel_observed = True
+                            if hasattr(cancel_token, 'mark_cancel_observed'):
+                                cancel_token.mark_cancel_observed()
                             return
                         _t.sleep(0.005)
                         slept += 0.005
                     if cancel_token is not None and cancel_token.is_cancelled:
                         self.cancel_observed = True
+                        if hasattr(cancel_token, 'mark_cancel_observed'):
+                            cancel_token.mark_cancel_observed()
                         return
                     _post(c)
             finally:
+                if cancel_token is not None and hasattr(cancel_token, 'mark_worker_stopped'):
+                    cancel_token.mark_worker_stopped()
                 _post(self._DONE)
 
         self._thread = threading.Thread(target=worker, daemon=True)
@@ -385,6 +391,7 @@ class TestAdapterInterruption(unittest.IsolatedAsyncioTestCase):
             on_turn_interrupted=interrupts.append,
             response_id_source=(rid_source if bargein else None),
             spoken_prefix_source=(spoken if bargein else None),
+            cancel_watch_timeout_s=1.0,
         )
         return a, s, p, tokens, completes, interrupts
 
@@ -422,7 +429,7 @@ class TestAdapterInterruption(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             interrupts[0].outcome, InterruptedTurnOutcome.COMMITTED_SPOKEN_PREFIX.value
         )
-        self.assertTrue(interrupts[0].llm_cancel_completed)
+        self.assertTrue(interrupts[0].llm_cancel_requested)  # cancel() was called
         self.assertEqual(a.interrupted_turns, 1)
 
     async def test_case18_adapter_think_window_interrupt_rolls_back_user_turn(self) -> None:

@@ -92,8 +92,30 @@ class InterruptedTurn:
     invalidated_response_id: int | None
     outcome: str  # InterruptedTurnOutcome value
     spoken_chars: int
-    llm_cancel_completed: bool
+    #: ``cancel_token.cancel()`` was called (NOT "the worker stopped" — see
+    #: ``CancelCompletion`` for that; the old name conflated the two).
+    llm_cancel_requested: bool
+    #: worker-stop state *at commit time* — usually not yet final; the
+    #: authoritative measurement arrives later via ``on_cancel_completed``.
+    provider_worker_stopped_at_commit: bool
     interrupted_count_this_session: int
+    # back-compat alias (kept so nothing downstream breaks)
+    llm_cancel_completed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CancelCompletion:
+    """M2.5B.1 — measured after ``interrupt_active_turn``: how long the
+    provider worker took to actually stop once cancelled. On a 4-core Pi an
+    old worker overlapping the new whisper.cpp decode multiplies STT
+    latency, so this is the number that matters for a cancellation
+    barrier/priority policy (R0029)."""
+
+    invalidated_response_id: int | None
+    cancel_requested_at: float  # time.monotonic()
+    cancel_observed: bool       # the worker saw is_cancelled
+    worker_stopped: bool        # the worker thread exited within the watch window
+    cancel_to_worker_stop_ms: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +152,7 @@ class VoiceConversationAdapter:
         on_turn_language: Callable[[TurnLanguage], None] | None = None,
         on_turn_dropped: Callable[[DroppedTurn], None] | None = None,
         on_turn_interrupted: Callable[[InterruptedTurn], None] | None = None,
+        on_cancel_completed: Callable[[CancelCompletion], None] | None = None,
         response_language_resolver: ResponseLanguageResolver | None = None,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
         response_mode: ResponseMode = ResponseMode.VOICE,
@@ -137,6 +160,7 @@ class VoiceConversationAdapter:
         spoken_prefix_source: Callable[[int | None], str] | None = None,
         interruption_complete_hook: Callable[[], None] | None = None,
         interrupt_capture_timeout_s: float = 15.0,
+        cancel_watch_timeout_s: float = 5.0,
     ) -> None:
         # M2.4B.3.3: this adapter *is* the voice surface, so it defaults to
         # ``ResponseMode.VOICE`` — a transient per-request hint the same
@@ -152,6 +176,7 @@ class VoiceConversationAdapter:
         self._on_turn_language = on_turn_language
         self._on_turn_dropped = on_turn_dropped
         self._on_turn_interrupted = on_turn_interrupted
+        self._on_cancel_completed = on_cancel_completed
         # M2.4B.5: optional. Without it, the response language stays the
         # pre-B.5 R0009 per-turn text detection (byte-for-byte).
         self._resolver = response_language_resolver
@@ -163,11 +188,14 @@ class VoiceConversationAdapter:
         self._spoken_prefix_source = spoken_prefix_source
         self._interruption_complete_hook = interruption_complete_hook
         self._interrupt_capture_timeout_s = interrupt_capture_timeout_s
+        self._cancel_watch_timeout_s = cancel_watch_timeout_s
         self._active_response_id: int | None = None
         self._active_cancel_token: CancelToken | None = None
         self._consume_task: asyncio.Task | None = None
         self._interrupt_requested = False
         self._llm_cancel_completed = False
+        self._cancel_requested_at: float | None = None
+        self._cancel_watch_task: asyncio.Task | None = None
         self._interrupted_count = 0
         # M2.5B.1 — interruption-utterance capture / coalesce phase. While
         # ``_capturing_interrupt`` every STT result belongs to the ONE
@@ -270,14 +298,47 @@ class VoiceConversationAdapter:
                 )
             except Exception:
                 self._captured_interrupt_prefix = ""
-        self._active_cancel_token.cancel()
+        tok = self._active_cancel_token
+        self._cancel_requested_at = time.monotonic()
+        tok.cancel()
         if self._consume_task is not None and not self._consume_task.done():
             self._consume_task.cancel()
+        # M2.5B.1 — measure how long the provider worker takes to actually
+        # stop (off the loop; a thread-Event wait). Fires on_cancel_completed.
+        try:
+            self._cancel_watch_task = asyncio.ensure_future(
+                self._watch_cancel_completion(tok, self._active_response_id)
+            )
+        except RuntimeError:
+            self._cancel_watch_task = None
         # M2.5B.1 — enter the interruption-capture phase. Segment-1's start
         # already happened (it is what confirmed); its end + STT result are
         # still owed, so pre-count one pending result + one open segment.
         self._begin_interrupt_capture(open_segments=1, pending_results=0)
         return True
+
+    async def _watch_cancel_completion(self, tok: CancelToken, rid: int | None) -> None:
+        loop = asyncio.get_running_loop()
+        t0 = self._cancel_requested_at or time.monotonic()
+        stopped = await loop.run_in_executor(
+            None, tok.wait_worker_stopped, self._cancel_watch_timeout_s
+        )
+        ms = round((time.monotonic() - t0) * 1000, 1) if stopped else None
+        self._llm_cancel_completed = stopped
+        rec = CancelCompletion(
+            invalidated_response_id=rid,
+            cancel_requested_at=t0,
+            cancel_observed=tok.cancel_observed,
+            worker_stopped=stopped,
+            cancel_to_worker_stop_ms=ms,
+        )
+        logger.info(
+            f"nexa.voice_conversation: provider worker for response_id={rid} "
+            f"cancel_observed={tok.cancel_observed} stopped={stopped} "
+            f"cancel_to_worker_stop_ms={ms}"
+        )
+        if self._on_cancel_completed is not None:
+            self._on_cancel_completed(rec)
 
     # -- M2.5B.1 interruption capture / coalesce -------------------------- #
     def _begin_interrupt_capture(self, *, open_segments: int, pending_results: int) -> None:
@@ -592,18 +653,17 @@ class VoiceConversationAdapter:
                 await gen.aclose()
             except Exception:
                 logger.debug("nexa.voice_conversation: aclose after interrupt raised")
-            self._llm_cancel_completed = (
-                cancel_token is not None and cancel_token.is_cancelled
-            )
             self._active_cancel_token = None
-            self._commit_interrupted(chunks)
+            self._commit_interrupted(chunks, cancel_token)
             return
 
         self._active_cancel_token = None
         if self._on_assistant_complete is not None:
             self._on_assistant_complete("".join(chunks))
 
-    def _commit_interrupted(self, chunks: list[str]) -> None:
+    def _commit_interrupted(
+        self, chunks: list[str], cancel_token: CancelToken | None = None
+    ) -> None:
         rid = self._active_response_id
         # Prefer the value captured on the loop at confirm time
         # (interrupt_active_turn); only re-read if it was never captured
@@ -617,6 +677,7 @@ class VoiceConversationAdapter:
             prefix = "".join(chunks)
         outcome = self._session.commit_interrupted_turn(prefix)
         self._interrupted_count += 1
+        worker_stopped_now = cancel_token is not None and cancel_token.worker_stopped
         record = InterruptedTurn(
             reason="sustained_vad",
             at=time.monotonic(),
@@ -625,13 +686,16 @@ class VoiceConversationAdapter:
             outcome=outcome.value,
             spoken_chars=len(prefix.strip()) if outcome
             == InterruptedTurnOutcome.COMMITTED_SPOKEN_PREFIX else 0,
-            llm_cancel_completed=self._llm_cancel_completed,
+            llm_cancel_requested=(cancel_token is not None and cancel_token.is_cancelled),
+            provider_worker_stopped_at_commit=worker_stopped_now,
             interrupted_count_this_session=self._interrupted_count,
+            llm_cancel_completed=worker_stopped_now,  # back-compat alias
         )
         logger.info(
             f"nexa.voice_conversation: turn interrupted — response_id={rid}, "
             f"outcome={outcome.value}, spoken_chars={record.spoken_chars}, "
-            f"llm_cancel_completed={self._llm_cancel_completed}"
+            f"llm_cancel_requested={record.llm_cancel_requested}, "
+            f"worker_stopped_at_commit={worker_stopped_now}"
         )
         if self._on_turn_interrupted is not None:
             self._on_turn_interrupted(record)

@@ -91,6 +91,7 @@ class LlamaServerProvider(ModelProvider):
                 with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                     for raw_line in resp:
                         if cancel_token is not None and cancel_token.is_cancelled:
+                            cancel_token.mark_cancel_observed()
                             return
                         line = raw_line.strip()
                         if not line or not line.startswith(b"data:"):
@@ -110,6 +111,8 @@ class LlamaServerProvider(ModelProvider):
             except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as exc:
                 errors.append(exc)
             finally:
+                if cancel_token is not None:
+                    cancel_token.mark_worker_stopped()
                 loop.call_soon_threadsafe(queue.put_nowait, _DONE)
 
         threading.Thread(target=worker, daemon=True).start()

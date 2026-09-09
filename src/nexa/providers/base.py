@@ -20,10 +20,19 @@ class CancelToken:
 
     Per-request only — never shared mutable state across requests (legacy
     blocker B1, ADR-0002 D1 constraint 2).
+
+    M2.5B.1 also carries *completion* signals so a caller can measure how
+    long after ``cancel()`` the provider worker actually observed it and
+    stopped (on a 4-core Pi an old worker overlapping a new whisper.cpp
+    decode multiplies STT latency — R0029). ``worker_stopped`` is set by
+    the provider's worker thread in its ``finally``; ``cancel_observed`` the
+    moment the worker sees ``is_cancelled``.
     """
 
     def __init__(self) -> None:
         self._event = threading.Event()
+        self._cancel_observed = threading.Event()
+        self._worker_stopped = threading.Event()
 
     def cancel(self) -> None:
         self._event.set()
@@ -31,6 +40,27 @@ class CancelToken:
     @property
     def is_cancelled(self) -> bool:
         return self._event.is_set()
+
+    # -- provider-worker completion signals (M2.5B.1) --------------------- #
+    def mark_cancel_observed(self) -> None:
+        self._cancel_observed.set()
+
+    def mark_worker_stopped(self) -> None:
+        # a worker that finished without a cancel still "stopped"
+        self._worker_stopped.set()
+
+    @property
+    def cancel_observed(self) -> bool:
+        return self._cancel_observed.is_set()
+
+    @property
+    def worker_stopped(self) -> bool:
+        return self._worker_stopped.is_set()
+
+    def wait_worker_stopped(self, timeout: float) -> bool:
+        """Block up to ``timeout`` s for the worker to stop. Returns whether
+        it stopped in time. Safe to call from a worker thread (not the loop)."""
+        return self._worker_stopped.wait(timeout)
 
 
 @dataclass(frozen=True, slots=True)

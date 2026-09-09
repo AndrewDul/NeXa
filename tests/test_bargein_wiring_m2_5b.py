@@ -87,6 +87,8 @@ class _ScriptedProvider(ModelProvider):
                     except RuntimeError:
                         return
             finally:
+                if cancel_token is not None and hasattr(cancel_token, 'mark_worker_stopped'):
+                    cancel_token.mark_worker_stopped()
                 try:
                     loop.call_soon_threadsafe(q.put_nowait, done)
                 except RuntimeError:
@@ -259,6 +261,7 @@ class TestAdapterCommitThroughStack(unittest.IsolatedAsyncioTestCase):
             on_turn_interrupted=interrupts.append,
             response_id_source=stack.response_id_source,
             spoken_prefix_source=stack.spoken_prefix_source,
+            cancel_watch_timeout_s=1.0,
         )
         return a, sess, prov, interrupts
 
