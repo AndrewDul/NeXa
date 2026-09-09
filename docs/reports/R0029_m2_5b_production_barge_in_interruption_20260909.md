@@ -4,9 +4,11 @@
 - **Author:** Claude Code (agent), for Andrzej Dul
 - **Milestone:** M2 — Realtime Voice · **Substage M2.5B — production
   barge-in / interruption.**
-- **Status:** **IMPLEMENTED, deterministic + hardware-safe tests GREEN;
-  awaiting the live operator acceptance session.** `--no-bargein` (the
-  default) is byte-for-byte R0026. Not pushed.
+- **Status:** **IMPLEMENTED + wiring-audited; deterministic + integration +
+  hardware-safe tests GREEN; awaiting the live operator acceptance
+  session.** `--no-bargein` (the default) is byte-for-byte R0026. Not
+  pushed. (See *WIRING AUDIT* — both audited wires were already correct in
+  code; 3 hardenings + a single-source `build_bargein_stack` were added.)
 - **Related:** `R0028` (M2.5A architecture + real-hardware feasibility;
   **M2.5A COMPLETE / OPERATOR-CONFIRMED 2026-09-09**), `R0026` (the
   half-duplex behaviour this milestone replaces when enabled), `R0027`
@@ -36,9 +38,10 @@ premise). With the flag on:
   itself** for that response and the mic returns to R0026 whole-response
   suppression — loudly (telemetry), never a silent unsafe hot mic.
 
-**38 deterministic tests** (`tests/test_bargein_m2_5b.py`) + updated
-guards; **full suite `pytest` 659 / `unittest` 666, `ruff` clean, `git
-diff --check` clean**; a **hardware-safe integration smoke** (real
+**38 deterministic + 12 integration/wiring tests**
+(`tests/test_bargein_m2_5b.py`, `tests/test_bargein_wiring_m2_5b.py`) +
+updated guards; **full suite `pytest` 671 / `unittest` 678, `ruff` clean,
+`git diff --check` clean**; a **hardware-safe integration smoke** (real
 reSpeaker + real `aplay -D plug:respeaker`, operator absent) passed: AEC
 reference active, mic hot during a simulated reply, **0 false candidates /
 0 confirmations while silent**, clean teardown.
@@ -420,8 +423,8 @@ Mapped to the acceptance matrix:
 | 28 | `test_case28_default_gate_is_byte_for_byte_r0026` + whole existing suite unchanged |
 | 29 | `test_case29_nested_interruption_gets_a_fresh_monotonic_id` |
 
-Full suite: **`pytest` 659 passed / 7 skipped / 14 subtests** ·
-**`python -m unittest discover -s tests` 666 OK / 7 skipped** ·
+Full suite: **`pytest` 671 passed / 7 skipped / 14 subtests** ·
+**`python -m unittest discover -s tests` 678 OK / 7 skipped** ·
 **`ruff check src tests apps` clean** · **`git diff --check` clean**.
 
 **Hardware-safe integration smoke** (agent, operator absent): built
@@ -440,11 +443,68 @@ cancelling response_id=…`, `✂ interrupted turn committed — outcome=…,
 spoken_chars=…, llm_cancel_completed=…`, plus the existing per-turn
 language block, STT/queue stats and DROP_BUSY lines.
 
+## WIRING AUDIT (pre-live, 2026-09-09)
+
+A focused audit of the two wires most likely to be silently missing:
+
+**1. Is `AecReferenceFeeder` instantiated when `--bargein`? — YES.** It was
+already correct in the file at `97f4a84` (the earlier pasted diff excerpt
+was incomplete — it showed the `aec_feeder: … = None` declaration and the
+`if aec_feeder is not None: out_stages.append(...)` guard but not the
+`if bargein_on: aec_feeder = AecReferenceFeeder(...)` two lines above, nor
+`on_tts_text=_on_tts_text`). Verified: one `AecReferenceHealth` was shared
+by the gate, the controller and the feeder; the feeder sat after
+`tts_service` in `extra_output_stages`; the `on_tts_text` callback was
+passed to `TtsStatusObserver`; `TtsStatusObserver.process_frame` calls it
+on `TTSTextFrame` (`bridge.py:255`); `tracker.start_response` ran before
+any sentence (in `on_user_transcript`, top of `_run_turn_inner`).
+
+**No bug — but three hardenings + single-sourcing were done anyway:**
+
+- **`nexa.voice_tts.bargein_wiring.build_bargein_stack` (NEW).** The probe
+  and the M2.5B integration tests and the hardware-safe smoke now build
+  the barge-in stack through this **one** function — no chance of the probe
+  and a test diverging. It cross-wires the ONE `AecReferenceHealth` into
+  the gate + controller + feeder, and exposes the exact hooks the app
+  plugs in (`note_response_dispatched`, `note_tts_sentence`,
+  `note_interruption`, `response_id_source`, `spoken_prefix_source`,
+  `output_stages`). `enabled=False` → plain `HalfDuplexGate()`, no feeder,
+  no controller (R0026, byte-for-byte). The probe was refactored onto it;
+  the hand-rolled construction is gone.
+- **`InterruptionStateMachine.last_invalidated_response_id`.** `poll()`
+  nulls `active_response_id` on confirm; the controller now reads the
+  just-invalidated id from this dedicated field instead of a
+  telemetry-sync-order-dependent read.
+- **Adapter captures the spoken prefix on the loop at confirm time.**
+  `interrupt_active_turn()` now reads `spoken_prefix_source(response_id)`
+  **synchronously** (the instant the interruption confirms, before any
+  late `TTSTextFrame` or the next turn's `start_response` can touch the
+  tracker) into `_captured_interrupt_prefix`; `_commit_interrupted` uses
+  that captured value. Removes a theoretical stale-attribution window from
+  affecting committed history.
+
+**Stale response-id protection — verified** (test H): after `poll()`
+invalidates the id, `note_tts_sentence` credits the sentinel `-1` → the
+tracker drops it; the killed reply's accumulated prefix is unchanged; the
+next `note_response_dispatched` resets the tracker; a straggler cannot
+reach the new reply.
+
+**Hardware-safe wiring smoke (agent, operator absent, 2026-09-09) — via
+`build_bargein_stack` + `VoiceRuntime`, the probe's construction path:**
+`shared aec_health identity: True True True`; output stage order
+`PIPER → AecReferenceFeeder → OBS`; real `aplay -D plug:respeaker`
+started under `VoiceRuntime` → **`AEC REF ACTIVE`** (printed via the
+stack's `aec_status` callback); `barge_in_safe=True`,
+`gate.mic_suppressed=False` (hot) during a simulated reply; **6 s silent →
+`candidate_started=0`, `interrupt_confirmed=0`**; clean teardown
+(`AEC REF DOWN`, 0 failures). **PASS.**
+
 ## OPERATOR ACCEPTANCE STATUS
 
 **NOT YET RUN.** M2.5B is not `OPERATOR-CONFIRMED` until the live session
 (script below) passes. `--no-bargein` remains available and is
-byte-for-byte R0026.
+byte-for-byte R0026. The wiring audit above confirms the `--bargein` build
+reaches `✓ AEC REF ACTIVE` on the real `plug:respeaker` endpoint.
 
 ## FILES CHANGED
 
@@ -457,7 +517,11 @@ byte-for-byte R0026.
   `InterruptContext`.
 - `src/nexa/voice_tts/spoken_text.py` — `SpokenTextTracker`.
 - `src/nexa/voice_tts/aec_reference.py` — `AecReferenceFeeder` + `_PcmSink`.
+- `src/nexa/voice_tts/bargein_wiring.py` — `BargeInStack` +
+  `build_bargein_stack` (the single construction path; **wiring audit**).
 - `tests/test_bargein_m2_5b.py` — 38 deterministic cases.
+- `tests/test_bargein_wiring_m2_5b.py` — 12 integration/wiring cases (A–J
+  + probe-uses-the-builder parity).
 - `docs/reports/R0029_…md` — this report.
 
 **Changed:**
@@ -480,11 +544,15 @@ byte-for-byte R0026.
 - `src/nexa/voice_tts/continuity.py` — discard (not release) the held
   phrase on `InterruptionFrame`.
 - `src/nexa/voice_conversation/adapter.py` — per-turn `CancelToken` +
-  `response_id`, `interrupt_active_turn()`, `_commit_interrupted`,
-  `on_turn_interrupted` / `InterruptedTurn`, `response_id_source` /
-  `spoken_prefix_source`.
-- `apps/nexa_bilingual_voice_probe.py` — `--bargein` / `--no-bargein` +
-  full wiring + live surface.
+  `response_id`, `interrupt_active_turn()` (**+ capture the spoken prefix
+  on the loop at confirm time**), `_commit_interrupted` (**uses the
+  captured value**), `on_turn_interrupted` / `InterruptedTurn`,
+  `response_id_source` / `spoken_prefix_source`.
+- `src/nexa/voice/interruption.py` — **`last_invalidated_response_id`**
+  (wiring-audit hardening; the controller reads it in `_do_confirm`).
+- `apps/nexa_bilingual_voice_probe.py` — `--bargein` / `--no-bargein`;
+  **refactored onto `build_bargein_stack`** (the hand-rolled construction
+  removed); live surface.
 - `tests/test_voice_half_duplex_gate.py`,
   `tests/test_voice_architecture.py`,
   `tests/test_voice_tts_continuity.py` — three assertions updated for the
@@ -499,8 +567,10 @@ conversation brain, no new framework.
 
 ## COMMIT HASH
 
-`c1306b6` — this report. Implementation commits: `c3155ca` (barge-in
-core), `dcf0df4` (38 deterministic tests + continuity discard), `59141f6`
+`<pending>` — the wiring-audit commit (`build_bargein_stack` + 12
+integration tests + 3 hardenings + this report). Implementation commits:
+`c3155ca` (barge-in core), `dcf0df4` (38 deterministic tests + continuity
+discard), `59141f6`
 (probe wiring + AEC status callback). This hash-record edit lands in the
 immediately-following commit (R0026/R0027/R0028 pattern). Prior milestone
 tip: `2f23613` (M2.5A closure). Not pushed.
@@ -509,7 +579,8 @@ tip: `2f23613` (M2.5A closure). Not pushed.
 
 Branch `main`, **not pushed**. `git diff --check` clean. Sequence:
 `2f23613` (M2.5A closed) → `c3155ca` → `dcf0df4` → `59141f6` → `c1306b6`
-(this report). No `src/` change to any frozen component.
+→ `97f4a84` → wiring-audit commit (this edit). No `src/` change to any
+frozen component.
 
 ## RISKS
 

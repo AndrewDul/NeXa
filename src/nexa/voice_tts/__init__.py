@@ -19,6 +19,7 @@ from __future__ import annotations
 from nexa.voice import HalfDuplexGate
 
 from .aec_reference import AecReferenceFeeder
+from .bargein_wiring import BargeInStack, build_bargein_stack
 from .bridge import AssistantSpeechBridge, TtsStatusObserver, voice_for_language
 from .continuity import (
     DEFAULT_CONTINUITY_TARGET_S,
@@ -88,4 +89,6 @@ __all__ = [
     # M2.5B — barge-in support
     "SpokenTextTracker",
     "AecReferenceFeeder",
+    "BargeInStack",
+    "build_bargein_stack",
 ]

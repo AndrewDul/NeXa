@@ -226,7 +226,7 @@ class BargeInController(FrameProcessor):
             return
         self._confirming = True
         try:
-            invalidated = self.telemetry.active_response_id
+            invalidated = self._sm.last_invalidated_response_id
             self.telemetry.interrupt_confirmed += 1
             self.telemetry.last_interrupt_reason = reason
             self._sync_telemetry()

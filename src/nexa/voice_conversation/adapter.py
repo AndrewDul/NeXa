@@ -210,6 +210,18 @@ class VoiceConversationAdapter:
         if self._active_cancel_token is None or self._interrupt_requested:
             return False
         self._interrupt_requested = True
+        # Capture the delivered-text high-water mark NOW, on the event loop,
+        # the instant the interruption confirms — before any late
+        # ``TTSTextFrame`` or the next turn's ``start_response`` can touch
+        # the tracker. The committed interrupted-turn history uses this
+        # captured value, not a later re-read.
+        if self._spoken_prefix_source is not None:
+            try:
+                self._captured_interrupt_prefix = (
+                    self._spoken_prefix_source(self._active_response_id) or ""
+                )
+            except Exception:
+                self._captured_interrupt_prefix = ""
         self._active_cancel_token.cancel()
         if self._consume_task is not None and not self._consume_task.done():
             self._consume_task.cancel()
@@ -338,6 +350,7 @@ class VoiceConversationAdapter:
         # pre-M2.5B path.
         self._interrupt_requested = False
         self._llm_cancel_completed = False
+        self._captured_interrupt_prefix: str | None = None
         self._active_response_id = (
             self._response_id_source() if self._response_id_source is not None else None
         )
@@ -398,8 +411,11 @@ class VoiceConversationAdapter:
 
     def _commit_interrupted(self, chunks: list[str]) -> None:
         rid = self._active_response_id
-        prefix = ""
-        if self._spoken_prefix_source is not None:
+        # Prefer the value captured on the loop at confirm time
+        # (interrupt_active_turn); only re-read if it was never captured
+        # (e.g. interrupt requested without a spoken_prefix_source).
+        prefix = self._captured_interrupt_prefix
+        if prefix is None and self._spoken_prefix_source is not None:
             prefix = self._spoken_prefix_source(rid) or ""
         if not prefix:
             # fall back to the raw delivered tokens if no synthesized-sentence

@@ -70,6 +70,10 @@ class InterruptionStateMachine:
     _state: InterruptionState = field(default=InterruptionState.IDLE, init=False)
     _response_id: int = field(default=0, init=False)
     _active_response_id: int | None = field(default=None, init=False)
+    #: The id that ``poll`` most recently invalidated on a confirmed
+    #: interruption — read by the controller when it fires ``on_confirmed``
+    #: (``active_response_id`` is already ``None`` by then).
+    _last_invalidated_response_id: int | None = field(default=None, init=False)
     _candidate_started_at: float | None = field(default=None, init=False)
     # telemetry counters
     _ignored_speech_starts: int = field(default=0, init=False)
@@ -94,6 +98,11 @@ class InterruptionStateMachine:
         """The id of the reply currently in flight, or ``None`` when idle /
         while an interruption is being processed."""
         return self._active_response_id
+
+    @property
+    def last_invalidated_response_id(self) -> int | None:
+        """The reply id the most recent confirmation invalidated."""
+        return self._last_invalidated_response_id
 
     @property
     def candidate_started_at(self) -> float | None:
@@ -183,6 +192,7 @@ class InterruptionStateMachine:
             self._confirmed_interruptions += 1
             # The interrupted reply's id is now invalid — late tokens/frames
             # stamped with it must be dropped.
+            self._last_invalidated_response_id = self._active_response_id
             self._active_response_id = None
             return InterruptionEvent.INTERRUPT_CONFIRMED
         return InterruptionEvent.NONE
