@@ -100,6 +100,7 @@ class TestSpikesAreResearchOnly(unittest.TestCase):
         "spike_interruption_latency.py",
         "spike_bargein_live.py",
         "spike_playback_false_vad.py",
+        "spike_aec_nearfield_voice.py",
         "audio_mix.py",
     )
 
@@ -305,6 +306,143 @@ class TestPlaybackFalseVadAnalysis(unittest.TestCase):
         f = self.ns["verdict_300ms_safe"]
         trials = [{"playback_started": False, "max_continuous_speaking_s": 9.9}]
         self.assertTrue(f(trials)["safe"])
+
+
+def _load_aec_nearfield_pure() -> dict:
+    """Load the pure analysis helpers from spike_aec_nearfield_voice.py in an
+    isolated namespace (no pyaudio/pipecat/nexa import)."""
+    src = (SPIKE_DIR / "spike_aec_nearfield_voice.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    wanted = {"partition_vad_starts", "phase_stats", "summarize_trial",
+              "close_criteria", "_agg"}
+    picked = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
+    ns: dict = {"statistics": statistics}
+    exec(compile(ast.Module(body=picked, type_ignores=[]), "<aec_nf_pure>", "exec"), ns)  # noqa: S102
+    return ns
+
+
+class TestAecNearfieldAnalysis(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.ns = _load_aec_nearfield_pure()
+
+    def test_partition_quiet_prearm_accepted_postaccept(self) -> None:
+        f = self.ns["partition_vad_starts"]
+        # quiet window [10,15]; armed at 20.
+        r = f([12.0, 18.0, 21.0, 23.5], quiet_start=10.0, quiet_end=15.0, armed_at=20.0)
+        self.assertEqual(r["quiet_false_vad_count"], 1)   # 12.0
+        self.assertEqual(r["prearm_vad_count"], 1)        # 18.0 (not in quiet, before arm)
+        self.assertEqual(r["accepted_at"], 21.0)          # first >= armed_at
+        self.assertEqual(r["post_accept_vad_count"], 1)   # 23.5
+
+    def test_partition_never_promotes_a_quiet_or_prearm_start_to_accepted(self) -> None:
+        f = self.ns["partition_vad_starts"]
+        r = f([12.0, 18.0], quiet_start=10.0, quiet_end=15.0, armed_at=20.0)
+        self.assertIsNone(r["accepted_at"])              # no post-arm start -> not detected
+        self.assertEqual(r["quiet_false_vad_count"], 1)
+        self.assertEqual(r["prearm_vad_count"], 1)
+
+    def test_partition_boundary_start_exactly_at_armed_at_is_accepted(self) -> None:
+        f = self.ns["partition_vad_starts"]
+        r = f([20.0], quiet_start=10.0, quiet_end=15.0, armed_at=20.0)
+        self.assertEqual(r["accepted_at"], 20.0)
+
+    def test_phase_stats_empty_and_populated(self) -> None:
+        f = self.ns["phase_stats"]
+        self.assertEqual(f([], 0.0, 1.0), {"n_frames": 0})
+        frames = [
+            {"t": 0.1, "conf": 0.2, "vol": 0.4, "speaking": False},
+            {"t": 0.2, "conf": 0.9, "vol": 0.8, "speaking": True},
+        ]
+        s = f(frames, 0.0, 1.0)
+        self.assertEqual(s["n_frames"], 2)
+        self.assertEqual(s["conf_max"], 0.9)
+        self.assertEqual(s["vol_max"], 0.8)
+        self.assertEqual(s["speaking_frame_frac"], 0.5)
+
+    def test_summarize_trial_detected_reports_informational_latency_only(self) -> None:
+        summ = self.ns["summarize_trial"]
+        raw = {
+            "trial": 1, "phrase": "Czekaj.",
+            "main_playback_active": True, "aec_reference_active": True,
+            "aec_ref_spawn_delta_ms": 0.3,
+            "quiet_start": 100.0, "quiet_end": 105.0,
+            "prompt_printed": 105.0, "armed_at": 105.1,
+            "start_times": [106.0],
+            "aec_reference_active_at_detection": True,
+            "main_playback_active_at_detection": True,
+            "vad_events": [{"kind": "start", "t": 106.0}, {"kind": "stop", "t": 106.9}],
+            "frames": [
+                {"t": 101.0, "conf": 0.72, "vol": 0.52, "speaking": False},  # aec quiet
+                {"t": 106.1, "conf": 0.95, "vol": 0.80, "speaking": True},   # operator
+            ],
+        }
+        s = summ(raw)
+        self.assertTrue(s["post_arm_vad_detected"])
+        self.assertEqual(s["quiet_false_vad_count"], 0)
+        self.assertIn("prompt_to_vad_s_INFORMATIONAL", s)
+        self.assertAlmostEqual(s["prompt_to_vad_s_INFORMATIONAL"], 1.0, places=3)
+        self.assertTrue(s["trial_valid"])
+        self.assertEqual(s["conf_vol_operator_speech"]["n_frames"], 1)
+        self.assertEqual(s["conf_vol_aec_quiet"]["n_frames"], 1)
+
+    def test_summarize_trial_not_detected_has_none_latency(self) -> None:
+        summ = self.ns["summarize_trial"]
+        raw = {
+            "trial": 2, "phrase": "x",
+            "main_playback_active": True, "aec_reference_active": True,
+            "aec_ref_spawn_delta_ms": 0.2,
+            "quiet_start": 0.0, "quiet_end": 5.0,
+            "prompt_printed": 5.0, "armed_at": 5.1,
+            "start_times": [], "aec_reference_active_at_detection": None,
+            "main_playback_active_at_detection": None,
+            "vad_events": [], "frames": [],
+        }
+        s = summ(raw)
+        self.assertFalse(s["post_arm_vad_detected"])
+        self.assertIsNone(s["prompt_to_vad_s_INFORMATIONAL"])
+        self.assertIsNone(s["aec_reference_active_at_detection"])
+
+    def test_close_criteria_met_when_quiet_clean_and_operator_detected(self) -> None:
+        f = self.ns["close_criteria"]
+        trials = [
+            {"trial": 1, "trial_valid": True, "quiet_false_vad_count": 0,
+             "post_arm_vad_detected": True, "aec_reference_active_at_detection": True},
+            {"trial": 2, "trial_valid": True, "quiet_false_vad_count": 0,
+             "post_arm_vad_detected": True, "aec_reference_active_at_detection": True},
+        ]
+        r = f(trials)
+        self.assertTrue(r["m2_5a_close_criteria_met"])
+        self.assertEqual(r["operator_detected"], 2)
+        self.assertEqual(r["blocking_reasons"], [])
+
+    def test_close_criteria_blocks_on_quiet_false_vad(self) -> None:
+        f = self.ns["close_criteria"]
+        trials = [{"trial": 1, "trial_valid": True, "quiet_false_vad_count": 1,
+                   "post_arm_vad_detected": True,
+                   "aec_reference_active_at_detection": True}]
+        r = f(trials)
+        self.assertFalse(r["m2_5a_close_criteria_met"])
+        self.assertTrue(any("QUIET_AEC" in x for x in r["blocking_reasons"]))
+
+    def test_close_criteria_blocks_when_operator_not_detected(self) -> None:
+        f = self.ns["close_criteria"]
+        trials = [{"trial": 1, "trial_valid": True, "quiet_false_vad_count": 0,
+                   "post_arm_vad_detected": False,
+                   "aec_reference_active_at_detection": None}]
+        r = f(trials)
+        self.assertFalse(r["m2_5a_close_criteria_met"])
+        self.assertTrue(any("NOT detected" in x for x in r["blocking_reasons"]))
+
+    def test_close_criteria_ignores_invalid_trials_but_flags_them(self) -> None:
+        f = self.ns["close_criteria"]
+        trials = [
+            {"trial": 1, "trial_valid": False, "quiet_false_vad_count": 0,
+             "post_arm_vad_detected": False, "aec_reference_active_at_detection": None},
+        ]
+        r = f(trials)
+        self.assertFalse(r["m2_5a_close_criteria_met"])   # no valid trials
+        self.assertTrue(any("dead playback endpoint" in x for x in r["blocking_reasons"]))
 
 
 if __name__ == "__main__":
