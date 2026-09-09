@@ -196,10 +196,13 @@ class TestNoFakeVoiceState(unittest.TestCase):
 
 
 class TestNoBargeInLogicIntroduced(unittest.TestCase):
-    """M2.4 half-duplex is a *pause*, not barge-in. The gate and its
-    processor must never cancel/interrupt TTS, LLM generation, or the
-    ConversationSession, and must never synthesise interruption frames —
-    that is all M2.5."""
+    """M2.5B: the gate may now *observe* an ``InterruptionFrame`` (to close
+    out a killed reply's lifecycle so the interrupting utterance is not
+    DROP_BUSY'd) and expose a ``bargein_enabled`` flag — but it must stay a
+    passive boolean. It must never *produce* an interruption frame, never
+    cancel TTS / LLM generation / the ``ConversationSession``, and never
+    call Pipecat's interruption/cancellation machinery. Driving an
+    interruption is the ``BargeInController``'s job alone."""
 
     FORBIDDEN = {
         "StartInterruptionFrame",
@@ -207,11 +210,12 @@ class TestNoBargeInLogicIntroduced(unittest.TestCase):
         "BotInterruptionFrame",
         "EmulateUserStartedSpeakingFrame",
         "EmulateUserStoppedSpeakingFrame",
-        "InterruptionFrame",
         "InterruptionTaskFrame",
-        "cancel",
+        "broadcast_interruption",
+        "broadcast_frame",
         "cancel_task",
         "handle_interruptions",
+        "CancelToken",
     }
 
     def _names(self, rel_path: str) -> set[str]:

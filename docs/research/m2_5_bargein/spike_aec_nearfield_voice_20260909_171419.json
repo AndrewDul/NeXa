@@ -1,0 +1,279 @@
+{
+ "ts": "20260909_171419",
+ "phrase": "Wszechświat rozszerza się od około trzynastu miliardów ośmiuset milionów lat, a tempo tego rozszerzania opisuje stała Hubble'a. Galaktyki oddalają się od siebie tym szybciej, im większa jest dzieląca je odległość, co odkrył Edwin Hubble w tysiąc dziewięćset dwudziestym dziewiątym roku, obserwując przesunięcie ku czerwieni.",
+ "audio_s": 19.13,
+ "vad_params": {
+  "confidence": 0.7,
+  "start_secs": 0.2,
+  "stop_secs": 1.0,
+  "min_volume": 0.6
+ },
+ "params": {
+  "WARMUP_S": 3.0,
+  "PLAYBACK_LEADIN_S": 1.5,
+  "QUIET_AEC_S": 5.0,
+  "DETECT_TIMEOUT_S": 15.0
+ },
+ "trials_detail": [
+  {
+   "trial": 1,
+   "phrase": "Czekaj.",
+   "trial_start": 90368.334057667,
+   "audio_s": 19.13324263038549,
+   "aec_ref_spawn_delta_ms": 0.36,
+   "main_playback_active": true,
+   "aec_reference_active": true,
+   "main_playback_error": null,
+   "aec_reference_error": null,
+   "quiet_start": 90369.836320666,
+   "quiet_end": 90374.836588379,
+   "prompt_printed": 90374.83659462,
+   "armed_at": 90374.83662025,
+   "accepted_at": 90376.678370214,
+   "aec_reference_active_at_detection": true,
+   "main_playback_active_at_detection": true,
+   "vad_events": [
+    {
+     "t": 90376.678370214,
+     "kind": "start"
+    },
+    {
+     "t": 90377.918357601,
+     "kind": "stop"
+    }
+   ],
+   "start_times": [
+    90376.678370214
+   ],
+   "quiet_false_vad_count": 0,
+   "prearm_vad_count": 0,
+   "post_arm_vad_detected": true,
+   "post_accept_vad_count": 0,
+   "prompt_to_vad_s_INFORMATIONAL": 1.842,
+   "arm_to_vad_s_INFORMATIONAL": 1.842,
+   "conf_vol_aec_quiet": {
+    "n_frames": 156,
+    "conf_mean": 0.382,
+    "conf_p95": 0.8483,
+    "conf_max": 0.8961,
+    "vol_mean": 0.502,
+    "vol_p95": 0.5343,
+    "vol_max": 0.5421,
+    "speaking_frame_frac": 0.0
+   },
+   "conf_vol_operator_speech": {
+    "n_frames": 62,
+    "conf_mean": 0.3648,
+    "conf_p95": 0.9764,
+    "conf_max": 0.985,
+    "vol_mean": 0.587,
+    "vol_p95": 0.723,
+    "vol_max": 0.7274,
+    "speaking_frame_frac": 0.2258
+   },
+   "vad_events_rel_arm": [
+    {
+     "kind": "start",
+     "rel_arm_s": 1.842
+    },
+    {
+     "kind": "stop",
+     "rel_arm_s": 3.082
+    }
+   ],
+   "trial_valid": true
+  },
+  {
+   "trial": 2,
+   "phrase": "Stop, mam pytanie.",
+   "trial_start": 90380.768948748,
+   "audio_s": 19.13324263038549,
+   "aec_ref_spawn_delta_ms": 0.5,
+   "main_playback_active": true,
+   "aec_reference_active": true,
+   "main_playback_error": null,
+   "aec_reference_error": null,
+   "quiet_start": 90382.271932872,
+   "quiet_end": 90387.273154648,
+   "prompt_printed": 90387.273161574,
+   "armed_at": 90387.273188296,
+   "accepted_at": 90388.579065731,
+   "aec_reference_active_at_detection": true,
+   "main_playback_active_at_detection": true,
+   "vad_events": [
+    {
+     "t": 90388.579065731,
+     "kind": "start"
+    },
+    {
+     "t": 90390.519024148,
+     "kind": "stop"
+    }
+   ],
+   "start_times": [
+    90388.579065731
+   ],
+   "quiet_false_vad_count": 0,
+   "prearm_vad_count": 0,
+   "post_arm_vad_detected": true,
+   "post_accept_vad_count": 0,
+   "prompt_to_vad_s_INFORMATIONAL": 1.306,
+   "arm_to_vad_s_INFORMATIONAL": 1.306,
+   "conf_vol_aec_quiet": {
+    "n_frames": 157,
+    "conf_mean": 0.6385,
+    "conf_p95": 0.8995,
+    "conf_max": 0.9181,
+    "vol_mean": 0.4873,
+    "vol_p95": 0.5372,
+    "vol_max": 0.5445,
+    "speaking_frame_frac": 0.0
+   },
+   "conf_vol_operator_speech": {
+    "n_frames": 62,
+    "conf_mean": 0.6057,
+    "conf_p95": 0.987,
+    "conf_max": 0.9894,
+    "vol_mean": 0.7036,
+    "vol_p95": 0.8176,
+    "vol_max": 0.8222,
+    "speaking_frame_frac": 0.5323
+   },
+   "vad_events_rel_arm": [
+    {
+     "kind": "start",
+     "rel_arm_s": 1.306
+    },
+    {
+     "kind": "stop",
+     "rel_arm_s": 3.246
+    }
+   ],
+   "trial_valid": true
+  },
+  {
+   "trial": 3,
+   "phrase": "Actually, tell me something else.",
+   "trial_start": 90392.640737269,
+   "audio_s": 19.13324263038549,
+   "aec_ref_spawn_delta_ms": 0.49,
+   "main_playback_active": true,
+   "aec_reference_active": true,
+   "main_playback_error": null,
+   "aec_reference_error": null,
+   "quiet_start": 90394.142180505,
+   "quiet_end": 90399.142429275,
+   "prompt_printed": 90399.142435312,
+   "armed_at": 90399.142462923,
+   "accepted_at": 90401.639830628,
+   "aec_reference_active_at_detection": true,
+   "main_playback_active_at_detection": true,
+   "vad_events": [
+    {
+     "t": 90401.639830628,
+     "kind": "start"
+    },
+    {
+     "t": 90404.539847521,
+     "kind": "stop"
+    }
+   ],
+   "start_times": [
+    90401.639830628
+   ],
+   "quiet_false_vad_count": 0,
+   "prearm_vad_count": 0,
+   "post_arm_vad_detected": true,
+   "post_accept_vad_count": 0,
+   "prompt_to_vad_s_INFORMATIONAL": 2.497,
+   "arm_to_vad_s_INFORMATIONAL": 2.497,
+   "conf_vol_aec_quiet": {
+    "n_frames": 156,
+    "conf_mean": 0.1958,
+    "conf_p95": 0.5202,
+    "conf_max": 0.7987,
+    "vol_mean": 0.5005,
+    "vol_p95": 0.5366,
+    "vol_max": 0.5424,
+    "speaking_frame_frac": 0.0
+   },
+   "conf_vol_operator_speech": {
+    "n_frames": 62,
+    "conf_mean": 0.9548,
+    "conf_p95": 0.9927,
+    "conf_max": 0.9937,
+    "vol_mean": 0.6879,
+    "vol_p95": 0.7412,
+    "vol_max": 0.7677,
+    "speaking_frame_frac": 0.9355
+   },
+   "vad_events_rel_arm": [
+    {
+     "kind": "start",
+     "rel_arm_s": 2.497
+    },
+    {
+     "kind": "stop",
+     "rel_arm_s": 5.397
+    }
+   ],
+   "trial_valid": true
+  }
+ ],
+ "summary": {
+  "trials": 3,
+  "xvf3800_full_duplex": {
+   "xvf3800_full_duplex_ok": true,
+   "error": null
+  },
+  "aec_routing": "dual_aplay_time_adjacent (single-writer ALSA 'type multi' tee rejected: independent USB clocks fail slave negotiation)",
+  "main_playback_active": 3,
+  "aec_reference_active": 3,
+  "quiet_false_vad_total": 0,
+  "post_arm_vad_detected": 3,
+  "prearm_vad_total": 0,
+  "post_accept_vad_total": 0,
+  "aec_ref_spawn_delta_ms": {
+   "n": 3,
+   "mean": 0.45,
+   "median": 0.49,
+   "max": 0.5
+  },
+  "prompt_to_vad_s_INFORMATIONAL": {
+   "n": 3,
+   "mean": 1.882,
+   "median": 1.842,
+   "max": 2.497
+  },
+  "conf_vol_separation": {
+   "aec_quiet_conf_p95": {
+    "n": 3,
+    "mean": 0.756,
+    "median": 0.848,
+    "max": 0.899
+   },
+   "aec_quiet_vol_p95": {
+    "n": 3,
+    "mean": 0.536,
+    "median": 0.537,
+    "max": 0.537
+   },
+   "operator_speech_conf_p95": {
+    "n": 3,
+    "mean": 0.985,
+    "median": 0.987,
+    "max": 0.993
+   },
+   "operator_speech_vol_p95": {
+    "n": 3,
+    "mean": 0.761,
+    "median": 0.741,
+    "max": 0.818
+   }
+  },
+  "m2_5a_close_criteria_met": true,
+  "valid_trials": 3,
+  "operator_detected": 3,
+  "blocking_reasons": []
+ }
+}

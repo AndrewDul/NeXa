@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from nexa.voice import HalfDuplexGate
 
+from .aec_reference import AecReferenceFeeder
 from .bridge import AssistantSpeechBridge, TtsStatusObserver, voice_for_language
 from .continuity import (
     DEFAULT_CONTINUITY_TARGET_S,
@@ -38,6 +39,7 @@ from .metrics import (
 )
 from .preflight import ensure_sentence_tokenizer_data
 from .speech_planner import NexaSpeechPlanner, find_phrase_cut, normalize_for_speech
+from .spoken_text import SpokenTextTracker
 from .timed_tts import HttpSynthCall, TimedPiperHttpTTSService
 from .timing import TurnTiming, TurnTimingTracker
 
@@ -83,4 +85,7 @@ __all__ = [
     "ReleaseReason",
     "decide_release",
     "DEFAULT_CONTINUITY_TARGET_S",
+    # M2.5B — barge-in support
+    "SpokenTextTracker",
+    "AecReferenceFeeder",
 ]

@@ -46,3 +46,11 @@ class LocalAudioConfig:
     output_device_name: str = "usb_speaker"
     sample_rate: int = 16000
     channels: int = 1
+    #: M2.5B — enable production barge-in / interruption. **Default False =
+    #: R0026 whole-response half-duplex, byte-for-byte.** When True the app
+    #: must also wire the ``BargeInController`` + ``AecReferenceFeeder``
+    #: (XVF3800 AEC far-end reference); a hot mic during a reply without that
+    #: reference is unsafe (R0028 / M2.5A.1) and the gate stays in R0026
+    #: mode until the reference is confirmed active. ``--no-bargein`` on the
+    #: probes forces this back off.
+    bargein_enabled: bool = False

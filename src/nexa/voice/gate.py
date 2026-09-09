@@ -44,7 +44,10 @@ from pipecat.frames.frames import (
     EndFrame,
     ErrorFrame,
     Frame,
+    InterruptionFrame,
 )
+
+from .aec import AecReferenceHealth
 
 
 class HalfDuplexGate:
@@ -61,7 +64,27 @@ class HalfDuplexGate:
     assignment regardless.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        bargein_enabled: bool = False,
+        aec_health: AecReferenceHealth | None = None,
+    ) -> None:
+        # M2.5B — when True AND the XVF3800 AEC far-end reference is
+        # confirmed active, the microphone stays HOT for the whole response
+        # (think / generate / synth / playback) so the BargeInController can
+        # see the operator interrupt. If the AEC reference is NOT active this
+        # is UNSAFE (R0028 / M2.5A.1: 14/14 self-echo false-VAD), so the gate
+        # falls straight back to the R0026 whole-response suppression — never
+        # a silent unsafe hot mic. bargein_enabled=False (the default) is
+        # byte-for-byte the R0026 gate.
+        self._bargein_enabled = bargein_enabled
+        self._aec = aec_health or AecReferenceHealth()
+        # One-shot: allow exactly the next captured utterance through the
+        # DROP_BUSY gate even though a response is technically still winding
+        # down. Set by the controller on a confirmed interruption; consumed
+        # by the capture processor's drop decision.
+        self._admit_one_utterance = False
         # True strictly between BotStartedSpeakingFrame and
         # BotStoppedSpeakingFrame — real TTS audio is leaving the speaker.
         self._bot_speaking = False
@@ -94,17 +117,45 @@ class HalfDuplexGate:
         return False
 
     @property
+    def bargein_active(self) -> bool:
+        """M2.5B — barge-in is both enabled AND currently safe (the XVF3800
+        AEC far-end reference is confirmed active). Only then does the mic
+        stay hot during a response."""
+        return self._bargein_enabled and self._aec.barge_in_safe
+
+    @property
     def mic_suppressed(self) -> bool:
         """Whether microphone audio must not be allowed to start a new
         STT/conversation turn right now.
 
-        M2.4B.5A: this now covers the **whole** response, not just
-        playback. Before B.5A the mic stayed open through the
-        think/generation/TTS-synth window (see
-        ``notify_response_dispatched``'s original contract) — a 10–25 s
-        hole on ``gemma4:e4b`` during which TV audio backlogged the STT and
-        conversation queues (R0026). ``response_in_flight`` closes it."""
+        M2.4B.5A: covers the **whole** response (think/generate/synth/
+        playback) — R0026 fixed a 10–25 s hole where TV audio backlogged the
+        queues.
+
+        M2.5B: when ``bargein_active`` the mic is **hot** for the whole
+        response so the operator can interrupt (the BargeInController + the
+        AEC reference make that safe). If barge-in is enabled but the AEC
+        reference is down, this returns to the R0026 suppression — never a
+        silent unsafe hot mic."""
+        if self.bargein_active:
+            return False
         return self._bot_speaking or self.response_in_flight
+
+    def admit_next_utterance(self) -> None:
+        """M2.5B — let exactly the next captured utterance (the confirmed
+        interrupting one) through the DROP_BUSY gate, covering the brief
+        window between confirmation and the killed reply's lifecycle
+        actually closing."""
+        self._admit_one_utterance = True
+
+    def should_drop_busy_utterance(self) -> bool:
+        """Called by the capture processor for each completed utterance:
+        True => drop it (a response is in flight and this is not the admitted
+        interruption). Consumes the one-shot admit flag."""
+        if self._admit_one_utterance:
+            self._admit_one_utterance = False
+            return False
+        return self.response_in_flight
 
     # -- response lifecycle (from nexa.voice_tts.AssistantSpeechBridge) ------
 
@@ -141,6 +192,15 @@ class HalfDuplexGate:
             # otherwise this is just a gap between sentence chunks.
             if not self._response_generating and self._spoke_this_response:
                 self._response_playback_done = True
+        elif isinstance(frame, InterruptionFrame):
+            # M2.5B — a barge-in was confirmed; the reply is being torn down.
+            # Force-clear the reply lifecycle so the interrupting utterance
+            # is not DROP_BUSY'd, and let exactly the next utterance through.
+            self._bot_speaking = False
+            self._response_generating = False
+            self._spoke_this_response = False
+            self._response_playback_done = False
+            self._admit_one_utterance = True
         elif isinstance(frame, (EndFrame, CancelFrame, ErrorFrame)):
             # Pipeline is stopping or errored — never leave the mic latched shut.
             self._bot_speaking = False

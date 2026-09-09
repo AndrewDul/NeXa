@@ -40,6 +40,7 @@ from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
     ErrorFrame,
     Frame,
+    InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
@@ -93,13 +94,20 @@ class AssistantSpeechBridge(FrameProcessor):
         en_voice: str,
         pl_voice: str,
         gate: HalfDuplexGate | None = None,
+        on_interruption: Callable[[], None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._en_voice = en_voice
         self._pl_voice = pl_voice
         self._gate = gate
+        # M2.5B — invoked when an ``InterruptionFrame`` reaches this bridge
+        # (the ``BargeInController`` broadcast one). Wired to
+        # ``BargeInController.notify_response_finished`` so the interruption
+        # state machine + half-duplex gate close out the killed reply.
+        self._on_interruption = on_interruption
         self._current_voice: str | None = None
+        self._interrupted_frames_dropped = 0
         # M2.4B.5: set True by ``select_voice`` (driven by the voice
         # adapter's ``ResponseLanguageResolver``); when True, ``on_user_transcript``
         # does NOT re-derive the voice from the transcript text. Reset at
@@ -119,9 +127,46 @@ class AssistantSpeechBridge(FrameProcessor):
             self._worker_task = None
         await super().cleanup()
 
+    @property
+    def interrupted_frames_dropped(self) -> int:
+        """Queued LLM frames discarded this session by ``InterruptionFrame``
+        handling (M2.5B) — stale text that must never reach TTS/history."""
+        return self._interrupted_frames_dropped
+
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
+        if isinstance(frame, InterruptionFrame):
+            # M2.5B — the BargeInController confirmed a barge-in. Drain every
+            # queued LLM frame from the killed reply so no stale
+            # LLMTextFrame / trailing LLMFullResponseEndFrame can leak into
+            # the next response; reset per-turn voice state; then close the
+            # generation lifecycle (gate + interruption state machine) via
+            # the on_interruption hook. Forward the frame so the planner /
+            # continuity / TTS downstream also clear.
+            self._drain_queue()
+            self._explicit_voice_this_turn = False
+            if self._on_interruption is not None:
+                self._on_interruption()
         await self.push_frame(frame, direction)
+
+    def _drain_queue(self) -> None:
+        drained = 0
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if item is _SHUTDOWN:
+                # never discard the shutdown sentinel — put it back
+                self._queue.put_nowait(_SHUTDOWN)
+                break
+            drained += 1
+        self._interrupted_frames_dropped += drained
+        if drained:
+            logger.info(
+                f"nexa.voice_tts: InterruptionFrame — drained {drained} queued "
+                f"LLM frame(s) from the interrupted reply"
+            )
 
     async def _run(self) -> None:
         while True:

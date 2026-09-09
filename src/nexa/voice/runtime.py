@@ -259,7 +259,9 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
                 # is the belt for the edge where an utterance ends just as
                 # a response dispatches; the mic gate normally withholds
                 # the audio before it ever reaches here.
-                if self._gate is not None and self._gate.response_in_flight:
+                # M2.5B: ``should_drop_busy_utterance`` lets exactly the one
+                # confirmed interrupting utterance through (one-shot admit).
+                if self._gate is not None and self._gate.should_drop_busy_utterance():
                     self._drop_busy(audio)
                 else:
                     try:
@@ -365,6 +367,7 @@ class VoiceRuntime:
         on_utterance_dropped: Callable[[DroppedUtterance], None] | None = None,
         extra_output_stages: list[FrameProcessor] | None = None,
         half_duplex_gate: HalfDuplexGate | None = None,
+        bargein_controller: FrameProcessor | None = None,
     ) -> None:
         self.config = config or LocalAudioConfig()
         self.vad_params = vad_params or DEFAULT_VAD_PARAMS
@@ -388,6 +391,12 @@ class VoiceRuntime:
         # the exact M2.1/M2.2 pipeline unchanged.
         self._half_duplex_gate = half_duplex_gate
         self._mic_gate_processor: _MicGateFrameProcessor | None = None
+        # M2.5B — optional NeXa BargeInController, inserted right after
+        # VADProcessor (sees VAD frames first) and before utterance capture
+        # (so a confirmed interruption is decided before any STT/conversation
+        # work). Omitting it (the default) leaves the M2.1/M2.4 pipeline
+        # byte-for-byte unchanged.
+        self._bargein_controller = bargein_controller
 
     @property
     def max_observed_stt_concurrency(self) -> int | None:
@@ -456,6 +465,8 @@ class VoiceRuntime:
             self._mic_gate_processor = _MicGateFrameProcessor(self._half_duplex_gate)
             stages.append(self._mic_gate_processor)
         stages.append(vad_processor)
+        if self._bargein_controller is not None:
+            stages.append(self._bargein_controller)
         if self._transcriber is not None:
             self._capture_processor = _UtteranceCaptureFrameProcessor(
                 sample_rate=self.config.sample_rate,

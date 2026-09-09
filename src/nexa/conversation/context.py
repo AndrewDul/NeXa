@@ -44,6 +44,13 @@ from .turn import ConversationTurn, Role
 DEFAULT_MAX_TURNS = 20
 DEFAULT_MAX_CHARS = 12_000
 
+#: M2.5B — appended to an interrupted ASSISTANT turn's wire content ONLY
+#: (never to stored history). Deterministic + fixed: the same history
+#: rebuilds to a byte-identical message list every time, so Ollama /
+#: llama.cpp prompt-prefix KV-cache reuse is preserved exactly as for the
+#: response-language directive (see this module's header).
+INTERRUPTED_WIRE_SUFFIX = " […]"
+
 
 @dataclass(frozen=True, slots=True)
 class ConversationContext:
@@ -111,7 +118,14 @@ class ConversationContext:
             )
         langs = self.turn_response_languages or ((None,) * len(self.turns))
         for turn, resolved in zip(self.turns, langs, strict=True):
-            messages.append(ProviderMessage(role=turn.role.value, content=turn.content))
+            # M2.5B: an interrupted assistant turn's stored content is the
+            # clean spoken prefix; on the wire it gets a constant "cut off"
+            # marker so the model knows its previous answer did not finish.
+            # Deterministic → prompt prefix stays byte-stable across rebuilds.
+            wire_content = turn.content
+            if turn.role == Role.ASSISTANT and getattr(turn, "interrupted", False):
+                wire_content = turn.content + INTERRUPTED_WIRE_SUFFIX
+            messages.append(ProviderMessage(role=turn.role.value, content=wire_content))
             if turn.role == Role.USER:
                 # M2.4B.5: a resolved response language (explicit request /
                 # sticky preference) wins; otherwise the R0009 per-turn

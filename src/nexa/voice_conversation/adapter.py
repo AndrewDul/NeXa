@@ -32,6 +32,7 @@ already-resolved ``TranscriptionResult.language`` and its
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -41,7 +42,8 @@ from loguru import logger
 
 from nexa.conversation.response_language import ResponseLanguageResolver
 from nexa.conversation.response_mode import ResponseMode
-from nexa.conversation.session import ConversationSession
+from nexa.conversation.session import ConversationSession, InterruptedTurnOutcome
+from nexa.providers.base import CancelToken
 from nexa.stt.bilingual import LanguageDecision
 from nexa.stt.transcriber import TranscriptionResult
 
@@ -65,6 +67,20 @@ class DroppedTurn:
     input_speech_language: str | None
     conversation_queue_depth: int
     dropped_count_this_session: int
+
+
+@dataclass(frozen=True, slots=True)
+class InterruptedTurn:
+    """Telemetry for a reply cut short by a confirmed barge-in (M2.5B)."""
+
+    reason: str
+    at: float  # time.monotonic()
+    at_wall: str  # ISO-8601 UTC
+    invalidated_response_id: int | None
+    outcome: str  # InterruptedTurnOutcome value
+    spoken_chars: int
+    llm_cancel_completed: bool
+    interrupted_count_this_session: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,9 +116,12 @@ class VoiceConversationAdapter:
         on_conversation_error: Callable[[Exception], None] | None = None,
         on_turn_language: Callable[[TurnLanguage], None] | None = None,
         on_turn_dropped: Callable[[DroppedTurn], None] | None = None,
+        on_turn_interrupted: Callable[[InterruptedTurn], None] | None = None,
         response_language_resolver: ResponseLanguageResolver | None = None,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
         response_mode: ResponseMode = ResponseMode.VOICE,
+        response_id_source: Callable[[], int | None] | None = None,
+        spoken_prefix_source: Callable[[int | None], str] | None = None,
     ) -> None:
         # M2.4B.3.3: this adapter *is* the voice surface, so it defaults to
         # ``ResponseMode.VOICE`` — a transient per-request hint the same
@@ -117,9 +136,22 @@ class VoiceConversationAdapter:
         self._on_conversation_error = on_conversation_error
         self._on_turn_language = on_turn_language
         self._on_turn_dropped = on_turn_dropped
+        self._on_turn_interrupted = on_turn_interrupted
         # M2.4B.5: optional. Without it, the response language stays the
         # pre-B.5 R0009 per-turn text detection (byte-for-byte).
         self._resolver = response_language_resolver
+        # M2.5B — barge-in. Both None (the default) = R0026 behaviour,
+        # byte-for-byte: no per-turn CancelToken is created, ``interrupt_
+        # active_turn`` is inert. Wired only when the pipeline is built with
+        # ``bargein_enabled=True`` (BargeInController present).
+        self._response_id_source = response_id_source
+        self._spoken_prefix_source = spoken_prefix_source
+        self._active_response_id: int | None = None
+        self._active_cancel_token: CancelToken | None = None
+        self._consume_task: asyncio.Task | None = None
+        self._interrupt_requested = False
+        self._llm_cancel_completed = False
+        self._interrupted_count = 0
         self._queue = SerialConversationQueue(self._run_turn, max_queue_size=max_queue_size)
         # M2.4B.5A: strict pre-M2.5 half-duplex — True from the instant a
         # turn starts being handled until its assistant reply's generation
@@ -149,6 +181,39 @@ class VoiceConversationAdapter:
         """STT results dropped this session because a turn was already in
         flight (R0026 / strict pre-M2.5 half-duplex)."""
         return self._dropped_busy
+
+    @property
+    def interrupted_turns(self) -> int:
+        """Replies cut short by a confirmed barge-in this session (M2.5B)."""
+        return self._interrupted_count
+
+    @property
+    def active_response_id(self) -> int | None:
+        return self._active_response_id
+
+    def interrupt_active_turn(self) -> bool:
+        """M2.5B — the ``BargeInController.on_confirmed`` hook calls this
+        synchronously the instant an interruption is confirmed. It:
+
+        1. flips ``_interrupt_requested`` so the streaming loop stops
+           consuming and takes the interruption-history path;
+        2. calls ``CancelToken.cancel()`` — NOT merely closing the async
+           generator — so the Ollama worker thread observes it, ``return``s
+           and drops the HTTP stream (R0028: closing the generator alone
+           leaves the worker draining into a queue nobody reads);
+        3. cancels the consume task so a parked ``await`` unblocks
+           immediately and ``send()`` never records its own assistant turn.
+
+        Returns True iff there was an active turn to interrupt. Fast +
+        non-blocking by contract; the actual teardown/commit runs in
+        ``_run_turn_inner``."""
+        if self._active_cancel_token is None or self._interrupt_requested:
+            return False
+        self._interrupt_requested = True
+        self._active_cancel_token.cancel()
+        if self._consume_task is not None and not self._consume_task.done():
+            self._consume_task.cancel()
+        return True
 
     def start(self, task_factory: Callable[[Coroutine], object] | None = None) -> None:
         self._queue.start(task_factory)
@@ -263,22 +328,104 @@ class VoiceConversationAdapter:
         if turn_lang is not None and self._on_turn_language is not None:
             self._on_turn_language(turn_lang)
         if self._on_user_transcript is not None:
+            # This drives AssistantSpeechBridge.on_user_transcript ->
+            # gate.notify_response_dispatched() + (M2.5B) bargein.notify_
+            # response_dispatched(), which allocates this turn's response_id.
             self._on_user_transcript(text)
 
+        # M2.5B — per-turn cancellation identity. None sources = R0026: no
+        # token, interrupt_active_turn inert, path below is byte-for-byte the
+        # pre-M2.5B path.
+        self._interrupt_requested = False
+        self._llm_cancel_completed = False
+        self._active_response_id = (
+            self._response_id_source() if self._response_id_source is not None else None
+        )
+        cancel_token: CancelToken | None = None
+        if self._response_id_source is not None:
+            cancel_token = CancelToken()
+        self._active_cancel_token = cancel_token
+
         chunks: list[str] = []
-        try:
-            async for chunk in self._session.send(
-                text,
-                response_mode=self._response_mode,
-                response_language=response_language,
-            ):
+        gen = self._session.send(
+            text,
+            response_mode=self._response_mode,
+            response_language=response_language,
+            cancel_token=cancel_token,
+        )
+
+        async def _consume() -> None:
+            async for chunk in gen:
                 chunks.append(chunk)
                 if self._on_assistant_token is not None:
                     self._on_assistant_token(chunk)
-        except Exception as exc:  # ConversationSession/provider failures must reach the caller
+
+        normal_complete = False
+        try:
+            self._consume_task = asyncio.ensure_future(_consume())
+            try:
+                await self._consume_task
+                normal_complete = True  # send() recorded its own assistant turn
+            except asyncio.CancelledError:
+                normal_complete = False  # interrupted — see below
+        except Exception as exc:  # ConversationSession/provider failures reach the caller
             logger.error(f"nexa.voice_conversation: conversation turn failed: {exc}")
+            self._active_cancel_token = None
+            self._consume_task = None
             if self._on_conversation_error is not None:
                 self._on_conversation_error(exc)
             return
+        finally:
+            self._consume_task = None
+
+        if self._interrupt_requested and not normal_complete:
+            # GeneratorExit at send()'s yield -> it does NOT append its own
+            # assistant turn; we own the interrupted-history commit instead.
+            try:
+                await gen.aclose()
+            except Exception:
+                logger.debug("nexa.voice_conversation: aclose after interrupt raised")
+            self._llm_cancel_completed = (
+                cancel_token is not None and cancel_token.is_cancelled
+            )
+            self._active_cancel_token = None
+            self._commit_interrupted(chunks)
+            return
+
+        self._active_cancel_token = None
         if self._on_assistant_complete is not None:
             self._on_assistant_complete("".join(chunks))
+
+    def _commit_interrupted(self, chunks: list[str]) -> None:
+        rid = self._active_response_id
+        prefix = ""
+        if self._spoken_prefix_source is not None:
+            prefix = self._spoken_prefix_source(rid) or ""
+        if not prefix:
+            # fall back to the raw delivered tokens if no synthesized-sentence
+            # high-water mark is wired (deterministic-test / degraded path)
+            prefix = "".join(chunks)
+        outcome = self._session.commit_interrupted_turn(prefix)
+        self._interrupted_count += 1
+        record = InterruptedTurn(
+            reason="sustained_vad",
+            at=time.monotonic(),
+            at_wall=datetime.now(UTC).isoformat(timespec="milliseconds"),
+            invalidated_response_id=rid,
+            outcome=outcome.value,
+            spoken_chars=len(prefix.strip()) if outcome
+            == InterruptedTurnOutcome.COMMITTED_SPOKEN_PREFIX else 0,
+            llm_cancel_completed=self._llm_cancel_completed,
+            interrupted_count_this_session=self._interrupted_count,
+        )
+        logger.info(
+            f"nexa.voice_conversation: turn interrupted — response_id={rid}, "
+            f"outcome={outcome.value}, spoken_chars={record.spoken_chars}, "
+            f"llm_cancel_completed={self._llm_cancel_completed}"
+        )
+        if self._on_turn_interrupted is not None:
+            self._on_turn_interrupted(record)
+        if outcome == InterruptedTurnOutcome.NOTHING_TO_COMMIT:
+            # the reply had actually finished as the interrupt landed
+            if self._on_assistant_complete is not None:
+                self._on_assistant_complete("".join(chunks))

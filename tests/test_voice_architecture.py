@@ -83,6 +83,8 @@ class TestConfigIsExplicitAndTyped(unittest.TestCase):
                 "output_device_name": "str",
                 "sample_rate": "int",
                 "channels": "int",
+                # M2.5B — production barge-in switch; default False = R0026.
+                "bargein_enabled": "bool",
             },
         )
 

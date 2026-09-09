@@ -17,13 +17,14 @@ from .response_language import (
     detect_language_request,
 )
 from .response_mode import ResponseMode, voice_response_directive
-from .session import ConversationSession
+from .session import ConversationSession, InterruptedTurnOutcome
 from .streaming import StreamingResponse
 from .turn import ConversationTurn, Role
 
 __all__ = [
     "ConversationContext",
     "ConversationSession",
+    "InterruptedTurnOutcome",
     "ConversationTurn",
     "Role",
     "ResponseMode",

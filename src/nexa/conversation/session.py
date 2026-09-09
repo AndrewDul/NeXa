@@ -21,12 +21,28 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from ..providers.base import CancelToken, GenerationOptions, ModelProvider
 from .context import DEFAULT_MAX_CHARS, DEFAULT_MAX_TURNS, ConversationContext
 from .response_mode import ResponseMode
 from .streaming import StreamingResponse
 from .turn import ConversationTurn, Role
+
+
+class InterruptedTurnOutcome(StrEnum):
+    """What ``commit_interrupted_turn`` did to history."""
+
+    #: CASE A — the reply was cut before any assistant speech was released,
+    #: so the trailing USER turn (and its response-language slot) was rolled
+    #: back; the interrupting utterance will become the next clean user turn.
+    ROLLED_BACK_USER_TURN = "rolled_back_user_turn"
+    #: CASE B — assistant already spoke a prefix; that prefix was committed
+    #: as an ASSISTANT turn with ``interrupted=True``.
+    COMMITTED_SPOKEN_PREFIX = "committed_spoken_prefix"
+    #: Nothing to do (history empty, or the last turn is already an
+    #: assistant turn — the stream had finished normally).
+    NOTHING_TO_COMMIT = "nothing_to_commit"
 
 
 @dataclass
@@ -95,3 +111,44 @@ class ConversationSession:
 
         self._history.append(ConversationTurn(role=Role.ASSISTANT, content=response.text))
         self._response_languages.append(None)
+
+    def commit_interrupted_turn(
+        self, spoken_text: str | None
+    ) -> InterruptedTurnOutcome:
+        """M2.5B — record history for a reply cut short by a barge-in.
+
+        The caller (the voice adapter) invokes this exactly once, *after* it
+        has stopped consuming a ``send()`` stream early (so ``send`` never
+        appended its own assistant turn). ``spoken_text`` is the prefix NeXa
+        actually spoke, from the delivered-text high-water mark — ``None`` or
+        blank means nothing was spoken yet.
+
+        - **CASE A** (blank ``spoken_text``): the trailing USER turn and its
+          response-language slot are rolled back, so the next ``send()`` (the
+          interrupting utterance) starts from clean, aligned history — no
+          consecutive USER turns, no orphan.
+        - **CASE B** (non-blank): an ASSISTANT turn holding exactly that
+          spoken prefix is appended with ``interrupted=True``. The unspoken
+          remainder is never stored.
+
+        ``_history`` and ``_response_languages`` stay index-aligned in every
+        branch. Typed chat never calls this; the pre-M2.5B path is
+        byte-for-byte unchanged.
+        """
+        if not self._history:
+            return InterruptedTurnOutcome.NOTHING_TO_COMMIT
+        if self._history[-1].role == Role.ASSISTANT:
+            # The stream had already finished normally — not an interruption.
+            return InterruptedTurnOutcome.NOTHING_TO_COMMIT
+
+        prefix = (spoken_text or "").strip()
+        if not prefix:
+            self._history.pop()
+            self._response_languages.pop()
+            return InterruptedTurnOutcome.ROLLED_BACK_USER_TURN
+
+        self._history.append(
+            ConversationTurn(role=Role.ASSISTANT, content=prefix, interrupted=True)
+        )
+        self._response_languages.append(None)
+        return InterruptedTurnOutcome.COMMITTED_SPOKEN_PREFIX
