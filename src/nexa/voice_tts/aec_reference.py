@@ -119,19 +119,30 @@ class AecReferenceFeeder(FrameProcessor):
     # -- lifecycle ----------------------------------------------------- #
     async def setup(self, setup) -> None:
         await super().setup(setup)
+        self.begin()
+
+    async def cleanup(self) -> None:
+        await self.end()
+        await super().cleanup()
+
+    def begin(self) -> None:
+        """Start the reference feed. Called from ``setup`` in production;
+        callable directly in tests (no Pipecat task manager needed)."""
         self._start_sink(initial=True)
         self._writer_task = self.create_task(self._run_writer())
 
-    async def cleanup(self) -> None:
+    async def end(self) -> None:
         if self._writer_task is not None:
             await self._queue.put(None)  # stop sentinel
-            await self._writer_task
+            try:
+                await self._writer_task
+            except asyncio.CancelledError:
+                pass
             self._writer_task = None
         if self._sink is not None:
             self._sink.close()
             self._sink = None
         self._health.mark_stopped()
-        await super().cleanup()
 
     def _start_sink(self, *, initial: bool) -> None:
         try:

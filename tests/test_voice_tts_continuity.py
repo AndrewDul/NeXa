@@ -286,15 +286,17 @@ class TestArchitectureAndReset(_Harness):
         self.assertEqual(rel[-1].phrase_index, 0)
         self.assertIsNone(c.reserve_estimate_s())
 
-    async def test_20_interruption_flushes_held_and_is_safe(self) -> None:
+    async def test_20_interruption_discards_held_phrase(self) -> None:
+        # M2.5B — barge-in: a phrase still in the brief continuity hold when
+        # an InterruptionFrame arrives is DISCARDED, never spoken (it belongs
+        # to the reply being killed). The frame itself is forwarded.
         c, pushed, rel, clock = self._ctl(target_reserve_s=2.0)
         await self._start(c)
         await self._phrase_frame(c, "Zero.")
         await self._feed_audio(c, 5.0, clock)
         await self._phrase_frame(c, "Jeden trzymane.")  # HELD
         await c.process_frame(InterruptionFrame(), FrameDirection.DOWNSTREAM)
-        self.assertEqual(_spoken(pushed), ["Zero.", "Jeden trzymane."])
-        self.assertEqual(rel[-1].reason, ReleaseReason.RESET)
+        self.assertEqual(_spoken(pushed), ["Zero."])  # held phrase NOT spoken
         self.assertTrue(any(isinstance(f, InterruptionFrame) for f in pushed))
 
     async def test_20b_on_release_callback_raising_does_not_break_speech(self) -> None:

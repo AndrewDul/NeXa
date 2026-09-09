@@ -174,7 +174,9 @@ class InterruptionStateMachine:
         if (
             self._state == InterruptionState.INTERRUPT_CANDIDATE
             and self._candidate_started_at is not None
-            and now - self._candidate_started_at >= self.confirm_hold_secs
+            # 1 ns slop so a poll at exactly ``candidate_started + hold`` is
+            # not lost to float subtraction error (5.3 - 5.0 < 0.3).
+            and now - self._candidate_started_at >= self.confirm_hold_secs - 1e-9
         ):
             self._state = InterruptionState.INTERRUPTING
             self._candidate_started_at = None

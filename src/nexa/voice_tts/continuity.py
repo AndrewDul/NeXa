@@ -257,6 +257,22 @@ class NexaSpeechContinuityController(FrameProcessor):
                          received_at=received_at or _now_s(),
                          reserve_at_receive=res_recv, reason=reason)
 
+    async def _discard_held(self) -> None:
+        """M2.5B — drop the held phrase WITHOUT speaking it. Used only on an
+        ``InterruptionFrame``: the reply is being killed, so a phrase still
+        in the brief continuity hold is stale and must never reach TTS."""
+        if self._held is None and self._hold_task is None:
+            return
+        task, self._hold_task = self._hold_task, None
+        self._held = None
+        self._held_received_at = None
+        self._held_reserve_at_receive = None
+        if task is not None and not task.done() and task is not current_task():
+            try:
+                await self.cancel_task(task)
+            except Exception:  # pragma: no cover
+                pass
+
     async def _hold_then_release(self, delay: float) -> None:
         # The single, bounded, gated wait in this module. NOT pacing: it is a
         # release deadline computed as "when the estimated reserve reaches
@@ -322,7 +338,9 @@ class NexaSpeechContinuityController(FrameProcessor):
             return
 
         if isinstance(frame, InterruptionFrame):
-            await self._release_held(ReleaseReason.RESET)
+            # M2.5B — barge-in: DISCARD the held phrase (never speak stale
+            # text after an interrupt), then reset and forward.
+            await self._discard_held()
             self._reset_turn()
             await self.push_frame(frame, direction)
             return
