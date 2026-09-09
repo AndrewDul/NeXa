@@ -5,16 +5,120 @@
 - **Milestone:** M2 — Realtime Voice · **Substage M2.5A — barge-in /
   interruption architecture, capability audit, AEC / self-echo
   feasibility, interruption-semantics design, isolated hardware spikes.**
-- **Status:** **RESEARCH COMPLETE.** No production behaviour changed. The
-  half-duplex `HalfDuplexGate` (R0026) is untouched and still in force.
-  Deterministic tests added for the spike tooling. One confirmatory
-  hardware spike (**SPIKE B-live**) needs the operator — the exact
-  one-line command and the exact phrases to say are in
-  *OPERATOR ACTION REQUIRED* below. Not pushed.
+- **Status:** **RESEARCH COMPLETE; one confirmatory latency spike still
+  OPEN.** No production behaviour changed. The half-duplex `HalfDuplexGate`
+  (R0026) is untouched and still in force. Deterministic tests added for
+  the spike tooling. **SPIKE B-live was run once by the operator on
+  2026-09-09 (`spike_bargein_live_20260909_134647.json`). Its detection
+  result — near-field operator speech IS picked up by the reSpeaker +
+  Silero VAD — is kept; its latency figure (`mean=5.168 s`) is INVALID and
+  is withdrawn** (instrumentation faults: no arming window, playback never
+  actually ran, VAD→stop never measured — see *SPIKE B-live — FIRST RUN
+  (2026-09-09): WHY THE LATENCY IS INVALID*). `spike_bargein_live.py` has
+  been rewritten (v2); the operator must re-run it once. The exact
+  one-line command is in *OPERATOR ACTION REQUIRED* below. Not pushed.
 - **Related:** `R0026` (the half-duplex fix this milestone replaces),
   `R0027` (one-turn vs sticky response language — must survive barge-in),
   `R0024`/`R0025` (bilingual STT), `ADR-0003` D8 ("barge-in is M2.5"),
   `R0009` (KV-cache prefix discipline).
+
+---
+
+## SPIKE B-live — FIRST RUN (2026-09-09): WHY THE LATENCY IS INVALID
+
+The operator ran `spike_bargein_live.py` once on 2026-09-09
+(`spike_bargein_live_20260909_134647.json`, `VERDICT: detected 5/5;
+onset-after-prompt mean=5.168 s median=5.095 s max=11.606 s`). Raw-run
+inspection shows the latency number is not usable.
+
+**What the first run DID prove — kept as M2.5A evidence:**
+
+- Near-field operator speech **is detectable by the current reSpeaker
+  XVF3800 + Silero VAD** — a valid `USER_SPEAKING` transition fired in
+  every one of the 5 trials. This is consistent with the SPIKE A / headless
+  SPIKE B finding that only the *speaker→mic* self-echo path is below the
+  VAD floor; a live near-field voice is a much stronger signal and is seen.
+
+**Why `5.168 s` is INVALID / INCONCLUSIVE and is withdrawn:**
+
+1. **No arming window.** The harness accepted the *first-ever*
+   `USER_SPEAKING` transition. Trial 5 latched a VAD event that fired
+   ~2.6 s into the 3 s pre-playback warm-up (`rel_play_s: null`,
+   `onset_after_prompt_s: -2.359`) — before the prompt was printed, so it
+   cannot be an operator response. Trials 1 and 2 each contained multiple
+   start/stop cycles with no rule for which one counts.
+2. **Playback almost certainly never ran.** The spike played NeXa's speech
+   with a *second* `aplay` on `plug:usb_speaker`, a non-mixing raw-hw ALSA
+   device (`hw:CARD=UACDemoV10,DEV=0`, no `dmix`; `/etc/asound.conf`).
+   The old harness runs a full `VoiceRuntime`, whose audio-output transport
+   (`audio_out_enabled=True`, hard-wired in `_build_pipeline`) already holds
+   that device. A concurrent open returns **`Device or resource busy`** and
+   `aplay` exits in milliseconds — verified directly on this Pi. `aplay`'s
+   `stderr` was routed to `DEVNULL`, so the failure was silent. **So NeXa
+   produced no sound during the trials**, and "onset-after-prompt" is the
+   operator waiting against silence.
+3. **`playback killed None` every trial — root cause.** Because `aplay`
+   had already exited, `p.poll()` returned its exit code at every VAD
+   onset, so the `p.poll() is None` guard was false, `p.kill()` never ran,
+   `killed["t"]` stayed `None`, and `playback_stop_after_onset_s` printed
+   as `None` (`"Nones"`). Trial 5 had a second cause: its accepted event
+   fired before `subprocess.Popen` was even called (`proc_box["p"]` was
+   `None`). **The critical VAD-onset → playback-stopped latency was never
+   measured.**
+4. **`prompt → VAD` includes human reaction time.** Even with everything
+   else fixed, that metric bundles the operator's reaction to the prompt.
+   It is logged for reference; it is **not** system barge-in latency.
+
+**Trial-5 pre-prompt VAD — finding:** the event fired during the 3 s
+pipeline warm-up sleep, *before* playback start and *before* `Popen`. The
+data cannot further separate operator-speech-before-prompt from
+room-noise / a Silero startup transient. The v2 harness makes this moot —
+it counts pre-arm VAD starts (`prearm_vad_count`), discards them, and only
+ever measures a `VADUserStartedSpeakingFrame` at/after `trial_armed`. A
+pre-arm event now flags the trial (`prearm_contaminated`) instead of
+silently becoming the measurement.
+
+**Instrumentation repair (v2 — `spike_bargein_live.py`, no `src/` change):**
+
+- Builds a **VAD-only** Pipeline from the real production components
+  (`SileroVADAnalyzer` + `VADProcessor` + `DEFAULT_VAD_PARAMS`) with
+  `audio_out_enabled=False`, so this harness does **not** hold
+  `usb_speaker` and the trial `aplay` can actually open and drive it.
+  `VoiceRuntime` is not used because it cannot be told to release the
+  speaker. No production module is imported for mutation; nothing in `src/`
+  changes.
+- `aplay` runs with `stderr=PIPE`; each trial confirms playback is alive
+  (`poll()` after a 1.5 s lead-in) **before** arming and reports a
+  device-busy failure loudly (`playback_started: false` + captured stderr)
+  instead of proceeding silently.
+- Explicit per-trial window (A–J): start playback → confirm active →
+  discard & count pre-arm VAD → print `>>> SPEAK NOW <<<` → arm → accept
+  only the first post-arm `VADUserStartedSpeakingFrame` → record
+  `playback_stop_requested` and `proc.kill()` → `proc.wait()` → record
+  `playback_actually_stopped` → count later starts (`post_accept_vad_count`).
+- Timestamps recorded: `playback_started`, `prompt_printed`, `trial_armed`,
+  `vad_user_started`, `playback_stop_requested`, `playback_actually_stopped`.
+- Metrics derived:
+  - `prompt_to_vad_s` — operator reaction + VAD — **INFORMATIONAL ONLY**.
+  - `vad_to_stop_request_ms` — **system control-plane latency**
+    (VAD start → stop requested).
+  - `vad_to_playback_stopped_ms` — **media-stop latency**, labelled
+    **PLAYBACK TASK STOPPED** (the `aplay` process is reaped). This is
+    **not** the last physical speaker sample — this isolated spike has no
+    hardware-drain instrumentation and does not claim that precision.
+- No pass/fail threshold is baked in; the corrected numbers are to be read
+  first. Production target is unchanged: **< 1 s** from real user speech
+  onset to old audio stopped; the directly measurable control-plane metric
+  here (`VADUserStartedSpeakingFrame → playback stopped`) should be well
+  under that.
+- Pure metric derivation (`derive_trial_metrics`, `_agg`) is unit-tested
+  offline (`tests/test_bargein_spike.py`, +6): none-not-zero on
+  no-detection, control latency still reported when playback failed,
+  pre-arm events flag contamination without changing the measured event,
+  negative `prompt_to_vad_s` reported not clamped.
+
+**M2.5A status:** open only for the corrected latency confirmation.
+**M2.5B has not started.**
 
 ---
 
@@ -140,7 +244,13 @@
   plus a bounded audio-stop tail of one output chunk (~20–40 ms) +
   `cancel_task` latency for `handle_interruptions()`. **Target:
   < 1 s** speech-onset → last old audio frame. Whether the live hardware
-  meets it is unproven — **SPIKE B-live** measures it.
+  meets it is **still unproven**: SPIKE B-live's first run (2026-09-09)
+  proved near-field operator speech IS detected during a response (5/5) but
+  its latency figure (`5.168 s`) is **withdrawn as invalid** — no arming
+  window, `aplay` never actually opened the busy `plug:usb_speaker`, and
+  VAD-onset → playback-stopped was never measured (see *SPIKE B-live —
+  FIRST RUN*). `spike_bargein_live.py` v2 fixes the instrumentation;
+  operator re-run pending.
 - **RECOMMENDED M2.5B ARCHITECTURE:** see *RECOMMENDED PRODUCTION
   ARCHITECTURE* — a NeXa `BargeInController` frame processor that owns the
   `InterruptionState` machine and `response_id`, emits
@@ -148,20 +258,27 @@
   `CancelToken`, and coordinates the history commit; Pipecat owns media
   transport + audio-queue cancellation; the one `ConversationSession`
   stays the sole brain / history / model / language authority.
-- **OPERATOR ACTION REQUIRED? — YES, one spike.** Exactly one command and
-  three short phrases, in *OPERATOR ACTION REQUIRED*. Nothing else.
-- **TEST RESULTS:** `tests/test_bargein_spike.py` +10 (pure `mix_overlay`
-  maths + AST guards that the spikes import no conversation/provider/brain
-  module and never call `.send(` / touch `_history`). Full suite:
-  **`pytest` 597 passed / 7 skipped / 14 subtests**; **`unittest` 604
+- **OPERATOR ACTION REQUIRED? — YES, one re-run.** SPIKE B-live's
+  instrumentation was repaired (v2); the operator re-runs the **single
+  command** in *OPERATOR ACTION REQUIRED* (5 trials, one short phrase each
+  after `>>> SPEAK NOW <<<`). No TV test.
+- **TEST RESULTS:** `tests/test_bargein_spike.py` +16 total (+6 this
+  round: `derive_trial_metrics` / `_agg` — none-not-zero on no-detection,
+  control latency still reported when playback failed, pre-arm events flag
+  contamination without becoming the measurement, negative
+  `prompt_to_vad_s` reported not clamped). Full suite:
+  **`pytest` 603 passed / 7 skipped / 14 subtests**; **`unittest` 610
   OK / 7 skipped**; **`ruff check src tests apps
   docs/research/m2_5_bargein`** clean; **`git diff --check`** clean.
-- **COMMIT HASH:** `77c7c0f` (this hash-record edit lands in the
-  immediately-following commit — the R0026/R0027 pattern).
+- **COMMIT HASH:** _pending_ — the SPIKE B-live v2 repair commit is made
+  after this edit; its hash is recorded in the immediately-following commit
+  (the R0026/R0027 pattern). Prior R0028 tip: `22dc46b`.
 - **GIT STATUS:** branch `main`, not pushed.
-- **NEXT STEP:** run **SPIKE B-live** with the operator; fold its numbers
-  into this report; then implement **M2.5B** to the architecture below.
-  Do not start M2.5B before SPIKE B-live has produced evidence.
+- **NEXT STEP:** operator re-runs SPIKE B-live v2 (one command below); fold
+  the corrected `vad_to_stop_request_ms` / `vad_to_playback_stopped_ms`
+  numbers into this report; **then** implement **M2.5B** to the
+  architecture below. **M2.5B has not started and does not start before the
+  corrected latency evidence exists.**
 
 ---
 
@@ -682,8 +799,14 @@ onward, not only once audio is playing.
   `cancel_task`. **Target: < 1 s** speech-onset → last old audio frame.
 - **Measured capability vs target:** the target is **not yet proven** on
   the live hardware. `spike_bargein_live.py` (operator, near-field voice)
-  is the test that produces the real mean / median / max. Prepared,
-  pending — see below.
+  is the test that produces the real numbers. **First run (2026-09-09):
+  detection proven 5/5; latency INVALID and withdrawn** — the harness had
+  no arming window and its `aplay` could never open the busy
+  `plug:usb_speaker` that `VoiceRuntime` was already holding, so
+  VAD-onset → playback-stopped was never measured (full analysis in *SPIKE
+  B-live — FIRST RUN*). Rewritten to **v2** (VAD-only pipeline that holds no
+  speaker; explicit A–J window; `playback_actually_stopped` measured via
+  `kill()` + `wait()`). Operator re-run pending — see below.
 - Room-noise `BASE` runs were 0 `USER_SPEAKING` across all three
   self-echo runs → idle-room false-interruption rate is low without any
   extra gating.
@@ -823,8 +946,10 @@ beyond the existing policy):
 ## RISKS
 
 1. **Live near-field barge-in latency unproven.** The headless path
-   cannot measure it (self-echo floor). Mitigated by SPIKE B-live before
-   M2.5B.
+   cannot measure it (self-echo floor). SPIKE B-live's first run proved
+   *detection* (5/5) but its latency was invalid (see *SPIKE B-live —
+   FIRST RUN*); the v2 harness fixes the instrumentation. Still mitigated
+   by a corrected SPIKE B-live run before M2.5B.
 2. **Raw mic hot during a response** could still catch loud room audio
    the array does not fully suppress — a candidate that *passes* 300 ms.
    Mitigated by the single-candidate gate (worst case = 1 spurious turn,
@@ -855,12 +980,18 @@ beyond the existing policy):
   `read_wav_i16` / `write_wav_i16` (numpy + `wave` only).
 - `docs/research/m2_5_bargein/spike_interruption_latency.py` — SPIKE B
   headless; ran 2× (0/8 detections — documented negative result).
-- `docs/research/m2_5_bargein/spike_bargein_live.py` — SPIKE B-live
-  (operator), prepared, **not yet run**.
+- `docs/research/m2_5_bargein/spike_bargein_live.py` — SPIKE B-live.
+  **v1 ran once (2026-09-09), latency invalid; rewritten to v2** — VAD-only
+  pipeline (no audio output held), explicit arming window, captured `aplay`
+  stderr, `playback_actually_stopped` measured via `proc.kill()` +
+  `proc.wait()` ("PLAYBACK TASK STOPPED"), pre-/post-arm VAD counts. Still
+  research-only; no `src/` import for mutation. Operator re-run pending.
 - `docs/research/m2_5_bargein/spike_self_echo_2026090*.json`,
-  `spike_interruption_latency_2026090*.json` — raw spike output.
-- `tests/test_bargein_spike.py` — +10 deterministic (pure maths + AST
-  research-only guards).
+  `spike_interruption_latency_2026090*.json`,
+  `spike_bargein_live_20260909_134647.json` — raw spike output (the last is
+  v1's invalidated run, kept for the record).
+- `tests/test_bargein_spike.py` — +16 deterministic (pure maths + AST
+  research-only guards; +6 `derive_trial_metrics` / `_agg` this round).
 - `docs/reports/R0028_…md` — this report.
 
 **No `src/` change. No production behaviour change.** `HalfDuplexGate`,
@@ -873,34 +1004,45 @@ warm-up, Piper, `ggml-base-q8_0 -t4` — all untouched.
 
 ## TEST RESULTS
 
-- `tests/test_bargein_spike.py` — **10 new**, deterministic, offline:
-  `mix_overlay` offset / extension / int16-clip (no wrap) / gain-scales-
-  overlay-only / negative-start-rejected; WAV round-trip; stereo
-  downmix; AST guards that every spike imports **no**
-  `nexa.conversation` / `nexa.providers` / `nexa.voice_conversation` /
-  `nexa.memory` / `nexa.bootstrap` module, never contains `_history` or
-  `.send(`; `audio_mix` is `{__future__, wave, pathlib, numpy}` only.
-- Full suite: **`pytest` 597 passed / 7 skipped / 14 subtests** ·
-  **`python -m unittest discover -s tests` 604 OK / 7 skipped** ·
+- `tests/test_bargein_spike.py` — **16 deterministic, offline** (10 prior
+  + 6 this round):
+  - prior: `mix_overlay` offset / extension / int16-clip (no wrap) /
+    gain-scales-overlay-only / negative-start-rejected; WAV round-trip;
+    stereo downmix; AST guards that every spike imports **no**
+    `nexa.conversation` / `nexa.providers` / `nexa.voice_conversation` /
+    `nexa.memory` / `nexa.bootstrap` module, never contains `_history` or
+    `.send(`; `audio_mix` is `{__future__, wave, pathlib, numpy}` only.
+  - new (SPIKE B-live v2 metric derivation, loaded AST-isolated so no
+    pyaudio/pipecat import): happy-path `prompt_to_vad_s` /
+    `vad_to_stop_request_ms` / `vad_to_playback_stopped_ms`; no-detection
+    yields **`None`, not `0`**, latencies; playback-failed trial still
+    reports control latency but `None` media-stop; a pre-arm VAD event
+    flags `prearm_contaminated` **without** changing the measured
+    (post-arm) event; a negative `prompt_to_vad_s` is reported, never
+    clamped; `_agg` ignores `None` and reports `n`.
+- Full suite: **`pytest` 603 passed / 7 skipped / 14 subtests** ·
+  **`python -m unittest discover -s tests` 610 OK / 7 skipped** ·
   **`ruff check src tests apps docs/research/m2_5_bargein`** clean ·
   **`git diff --check`** clean.
+- SPIKE B-live v2 itself is **not** run in CI (needs the reSpeaker, the USB
+  DAC, real Piper, and the operator).
 
 ## OPERATOR ACTION REQUIRED
 
-**One spike — SPIKE B-live — measures the barge-in latency the headless
-path cannot.** Everything is prepared; run exactly this from the repo
-root:
+SPIKE B-live's instrumentation was repaired (v2). **Re-run it once** — the
+same single command, from the repo root:
 
 ```
 .venv/bin/python docs/research/m2_5_bargein/spike_bargein_live.py
 ```
 
-It runs **5 trials**. Each trial: NeXa speaks a ~18 s Polish sentence
-through the USB speaker; after ~2 s the terminal prints `>>> SPEAK NOW
-<<<`; **only then**, at a **normal speaking volume**, say **one short
-phrase** and stop. The script kills the playback the instant its VAD
-hears you and logs the timing. Suggested phrases (say one per trial,
-vary them):
+**5 trials.** Each trial NeXa speaks a ~19 s Polish sentence through the
+USB speaker; ~2 s after playback is confirmed active the terminal prints
+`>>> SPEAK NOW <<<`. **Only after that prompt**, at **normal speaking
+volume**, say **one short phrase** and stop. The harness accepts only the
+first VAD speech-start *after* it arms, immediately kills the playback, and
+waits for that process to exit. Suggested phrases (one per trial, vary
+them):
 
 1. `Stop.`
 2. `Czekaj.`
@@ -908,29 +1050,41 @@ vary them):
 4. `Nie, zapytam o coś innego.`
 5. `Hold on — what about gravity?`
 
+If a trial prints `!! PLAYBACK DID NOT START`, note it and keep going — the
+`VERDICT` block reports how many trials had playback confirmed active.
 It writes `docs/research/m2_5_bargein/spike_bargein_live_<ts>.json` and
-prints a `VERDICT:` line with detected count and onset-after-prompt
-mean / median / max. Paste that `VERDICT:` line (or the JSON) back and
-M2.5A closes with a real latency number.
-
-Do **not** start M2.5B before that number exists.
+prints a `VERDICT (<ts>):` block with: playback-confirmed-active count,
+post-arm-VAD-detected count, fully-measurable count, pre-arm / post-accept
+VAD counts, **`VAD start → stop requested` (control, ms)**, **`VAD start →
+PLAYBACK TASK STOPPED` (media-stop, ms)**, and `prompt → VAD` (seconds,
+**informational only — includes human reaction time**). Paste that block
+(or the JSON) back. **No TV test. Do not start M2.5B before that corrected
+evidence exists.**
 
 ## COMMIT HASH
 
-`77c7c0f` — `research: M2.5A barge-in / interruption architecture & feasibility (R0028)` (tip of `main`). This hash-record edit lands in the immediately-following commit (R0026/R0027 pattern). Not pushed.
+Prior R0028 tip: `22dc46b` — `docs: record R0028 commit hash`. The SPIKE
+B-live v2 instrumentation-repair commit is made immediately after this
+edit; its hash is recorded in the following commit (R0026/R0027 pattern).
+Not pushed.
 
 ## GIT STATUS
 
-Branch `main`. Not pushed. `ruff` clean for this stage's scope;
-`git diff --check` clean.
+Branch `main`. Not pushed. Working tree: `spike_bargein_live.py` rewritten
+(v2), `tests/test_bargein_spike.py` +6, this report updated, plus the
+untracked v1 raw output `spike_bargein_live_20260909_134647.json`. `ruff`
+clean for this stage's scope; `git diff --check` clean.
 
 ## NEXT STEP
 
-1. Operator runs **SPIKE B-live** (one command above); numbers folded
-   into this report.
+1. Operator **re-runs SPIKE B-live v2** (one command above); the corrected
+   `vad_to_stop_request_ms` / `vad_to_playback_stopped_ms` (and the
+   playback-confirmed-active count) are folded into this report. M2.5A
+   closes only then. **M2.5B has not started.**
 2. **M2.5B — production barge-in** to *RECOMMENDED PRODUCTION
    ARCHITECTURE* + *WHAT M2.5B MUST IMPLEMENT*, verified against the
    17-case matrix and a live operator session, `--no-bargein` keeping
-   the R0026 behaviour as fallback.
+   the R0026 behaviour as fallback. **Does not begin before step 1's
+   corrected evidence exists.**
 3. Still non-blocking and owed independently: the B.3.6 operator latency
    re-confirmation (STT latency + END_OF_TURN→first-audio).

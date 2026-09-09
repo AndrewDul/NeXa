@@ -133,5 +133,84 @@ class TestSpikesAreResearchOnly(unittest.TestCase):
         self.assertTrue(mods <= {"__future__", "wave", "pathlib", "numpy"}, mods)
 
 
+def _load_bargein_pure() -> tuple:
+    """Load only the pure helpers from spike_bargein_live.py without running
+    its heavy module-level imports (pyaudio / pipecat / nexa). We exec the
+    function sources in an isolated namespace."""
+    import ast
+
+    src = (SPIKE_DIR / "spike_bargein_live.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    wanted = {"derive_trial_metrics", "_agg"}
+    picked = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
+    ns: dict = {}
+    exec(compile(ast.Module(body=picked, type_ignores=[]), "<bargein_pure>", "exec"), ns)  # noqa: S102
+    return ns["derive_trial_metrics"], ns["_agg"]
+
+
+class TestBargeinLiveMetrics(unittest.TestCase):
+    def setUp(self) -> None:
+        self.derive, self.agg = _load_bargein_pure()
+
+    def _raw(self, **over) -> dict:
+        base = {
+            "playback_started": True,
+            "prompt_printed": 100.0,
+            "trial_armed": 100.2,
+            "vad_user_started": 101.0,
+            "playback_stop_requested": 101.004,
+            "playback_actually_stopped": 101.041,
+            "prearm_vad_count": 0,
+            "post_accept_vad_count": 0,
+        }
+        base.update(over)
+        return base
+
+    def test_happy_path_metrics(self) -> None:
+        m = self.derive(self._raw())
+        self.assertTrue(m["detected"])
+        self.assertTrue(m["playback_started"])
+        self.assertEqual(m["prompt_to_vad_s"], 1.0)          # incl. human reaction
+        self.assertEqual(m["arm_to_vad_s"], 0.8)
+        self.assertEqual(m["vad_to_stop_request_ms"], 4.0)   # control-plane
+        self.assertEqual(m["vad_to_playback_stopped_ms"], 41.0)  # PLAYBACK TASK STOPPED
+        self.assertFalse(m["prearm_contaminated"])
+
+    def test_no_detection_yields_none_latencies_not_zero(self) -> None:
+        m = self.derive(self._raw(vad_user_started=None, playback_stop_requested=None,
+                                  playback_actually_stopped=None))
+        self.assertFalse(m["detected"])
+        self.assertIsNone(m["prompt_to_vad_s"])
+        self.assertIsNone(m["vad_to_stop_request_ms"])
+        self.assertIsNone(m["vad_to_playback_stopped_ms"])
+
+    def test_playback_failed_still_reports_control_latency_but_no_media_stop(self) -> None:
+        m = self.derive(self._raw(playback_started=False, playback_actually_stopped=None))
+        self.assertTrue(m["detected"])
+        self.assertFalse(m["playback_started"])
+        self.assertEqual(m["vad_to_stop_request_ms"], 4.0)
+        self.assertIsNone(m["vad_to_playback_stopped_ms"])
+
+    def test_prearm_vad_events_flag_contamination_and_are_not_the_measurement(self) -> None:
+        # A pre-arm VAD event must never silently become the interruption:
+        # vad_user_started is still the post-arm timestamp; the trial is flagged.
+        m = self.derive(self._raw(prearm_vad_count=2))
+        self.assertTrue(m["prearm_contaminated"])
+        self.assertEqual(m["prearm_vad_count"], 2)
+        self.assertEqual(m["arm_to_vad_s"], 0.8)  # unchanged — post-arm event used
+
+    def test_negative_prompt_to_vad_is_impossible_but_not_silently_hidden(self) -> None:
+        # If the accepted event somehow predates the prompt, the number is
+        # simply reported negative (a red flag), never clamped to 0.
+        m = self.derive(self._raw(vad_user_started=99.5))
+        self.assertLess(m["prompt_to_vad_s"], 0)
+
+    def test_agg_ignores_none_and_reports_n(self) -> None:
+        self.assertEqual(self.agg([]), {"n": 0, "mean": None, "median": None,
+                                        "max": None, "min": None})
+        a = self.agg([10.0, None, 20.0, 30.0])
+        self.assertEqual((a["n"], a["mean"], a["max"], a["min"]), (3, 20.0, 30.0, 10.0))
+
+
 if __name__ == "__main__":
     unittest.main()

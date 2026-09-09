@@ -1,0 +1,187 @@
+{
+ "ts": "20260909_134647",
+ "phrase": "Wszechświat rozszerza się od około trzynastu miliardów ośmiuset milionów lat, a tempo tego rozszerzania opisuje stała Hubble'a. Galaktyki oddalają się od siebie tym szybciej, im większa jest dzieląca je odległość, co odkrył Edwin Hubble w tysiąc dziewięćset dwudziestym dziewiątym roku, obserwując przesunięcie ku czerwieni.",
+ "prompt_delay_s": 2.0,
+ "trials_detail": [
+  {
+   "trial": 1,
+   "detected": true,
+   "onset_after_playback_start_s": 13.607,
+   "onset_after_prompt_s": 11.606,
+   "playback_stop_after_onset_s": null,
+   "events": [
+    {
+     "to": "listening",
+     "rel_play_s": null
+    },
+    {
+     "to": "user_speaking",
+     "rel_play_s": 13.607
+    },
+    {
+     "to": "end_of_turn",
+     "rel_play_s": 14.628
+    },
+    {
+     "to": "listening",
+     "rel_play_s": 14.628
+    },
+    {
+     "to": "user_speaking",
+     "rel_play_s": 15.587
+    },
+    {
+     "to": "end_of_turn",
+     "rel_play_s": 16.607
+    },
+    {
+     "to": "listening",
+     "rel_play_s": 16.607
+    },
+    {
+     "to": "idle",
+     "rel_play_s": 24.962
+    }
+   ]
+  },
+  {
+   "trial": 2,
+   "detected": true,
+   "onset_after_playback_start_s": 7.095,
+   "onset_after_prompt_s": 5.095,
+   "playback_stop_after_onset_s": null,
+   "events": [
+    {
+     "to": "listening",
+     "rel_play_s": null
+    },
+    {
+     "to": "user_speaking",
+     "rel_play_s": 7.095
+    },
+    {
+     "to": "end_of_turn",
+     "rel_play_s": 8.955
+    },
+    {
+     "to": "listening",
+     "rel_play_s": 8.955
+    },
+    {
+     "to": "user_speaking",
+     "rel_play_s": 16.216
+    },
+    {
+     "to": "end_of_turn",
+     "rel_play_s": 18.776
+    },
+    {
+     "to": "listening",
+     "rel_play_s": 18.776
+    },
+    {
+     "to": "idle",
+     "rel_play_s": 24.962
+    }
+   ]
+  },
+  {
+   "trial": 3,
+   "detected": true,
+   "onset_after_playback_start_s": 12.135,
+   "onset_after_prompt_s": 10.134,
+   "playback_stop_after_onset_s": null,
+   "events": [
+    {
+     "to": "listening",
+     "rel_play_s": null
+    },
+    {
+     "to": "user_speaking",
+     "rel_play_s": 12.135
+    },
+    {
+     "to": "end_of_turn",
+     "rel_play_s": 14.455
+    },
+    {
+     "to": "listening",
+     "rel_play_s": 14.455
+    },
+    {
+     "to": "idle",
+     "rel_play_s": 24.963
+    }
+   ]
+  },
+  {
+   "trial": 4,
+   "detected": true,
+   "onset_after_playback_start_s": 3.363,
+   "onset_after_prompt_s": 1.362,
+   "playback_stop_after_onset_s": null,
+   "events": [
+    {
+     "to": "listening",
+     "rel_play_s": null
+    },
+    {
+     "to": "user_speaking",
+     "rel_play_s": 3.363
+    },
+    {
+     "to": "end_of_turn",
+     "rel_play_s": 4.443
+    },
+    {
+     "to": "listening",
+     "rel_play_s": 4.443
+    },
+    {
+     "to": "idle",
+     "rel_play_s": 24.963
+    }
+   ]
+  },
+  {
+   "trial": 5,
+   "detected": true,
+   "onset_after_playback_start_s": -0.358,
+   "onset_after_prompt_s": -2.359,
+   "playback_stop_after_onset_s": null,
+   "events": [
+    {
+     "to": "listening",
+     "rel_play_s": null
+    },
+    {
+     "to": "user_speaking",
+     "rel_play_s": null
+    },
+    {
+     "to": "end_of_turn",
+     "rel_play_s": 2.262
+    },
+    {
+     "to": "listening",
+     "rel_play_s": 2.262
+    },
+    {
+     "to": "idle",
+     "rel_play_s": 24.962
+    }
+   ]
+  }
+ ],
+ "summary": {
+  "trials": 5,
+  "detected": 5,
+  "onset_after_prompt_s": {
+   "mean": 5.168,
+   "median": 5.095,
+   "max": 11.606,
+   "min": -2.359
+  },
+  "note": "onset_after_prompt is an upper bound on VAD detection latency (includes the operator's own reaction time to the prompt)."
+ }
+}
