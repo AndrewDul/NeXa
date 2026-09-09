@@ -70,19 +70,28 @@ from nexa.tts.errors import (  # noqa: E402
     PiperVoiceNotFoundError,
     SentenceTokenizerDataMissingError,
 )
-from nexa.voice import HalfDuplexGate, LocalAudioConfig, VoiceRuntime  # noqa: E402
+from nexa.voice import (  # noqa: E402
+    AecReferenceHealth,
+    BargeInController,
+    HalfDuplexGate,
+    LocalAudioConfig,
+    VoiceRuntime,
+)
 from nexa.voice.state import VoiceEvent  # noqa: E402
 from nexa.voice_conversation import TurnLanguage, VoiceConversationAdapter  # noqa: E402
 from nexa.voice_tts import (  # noqa: E402
     DEFAULT_CONTINUITY_TARGET_S,
     DEFAULT_TTS_CONTEXT_TIMEOUT_S,
+    AecReferenceFeeder,
     AssistantSpeechBridge,
     NexaSpeechContinuityController,
     NexaSpeechPlanner,
+    SpokenTextTracker,
     TtsStatusObserver,
     ensure_sentence_tokenizer_data,
 )
 
+# _gate is (re)constructed in main() once we know whether --bargein is set.
 _gate = HalfDuplexGate()
 
 
@@ -110,6 +119,14 @@ def parse_args() -> argparse.Namespace:
         "and for sub-2s ambiguous utterances at the very start). Default: pl.",
     )
     p.add_argument("--piper-nice", type=int, default=DEFAULT_PIPER_NICE)
+    p.add_argument(
+        "--bargein", action=argparse.BooleanOptionalAction, default=False,
+        help="M2.5B production barge-in / interruption. Default OFF = R0026 "
+        "whole-response half-duplex. When ON, NeXa's TTS PCM is also fed to "
+        "the XVF3800 AEC far-end reference (plug:respeaker) so the mic can "
+        "stay hot; a sustained interruption cancels the reply. If the AEC "
+        "reference cannot start, barge-in disables itself for safety.",
+    )
     return p.parse_args()
 
 
@@ -158,7 +175,45 @@ async def main() -> None:
     )
     resolver = ResponseLanguageResolver()
 
-    bridge = AssistantSpeechBridge(en_voice=EN_VOICE, pl_voice=PL_VOICE, gate=_gate)
+    # ---- M2.5B barge-in wiring (only when --bargein) ---------------------
+    global _gate
+    bargein_on = bool(args.bargein)
+
+    def _aec_status(active: bool) -> None:
+        msg = "✓ AEC REF ACTIVE" if active else "✗ AEC REF DOWN — barge-in in R0026 safe mode"
+        print(f"\n  {msg}")
+
+    aec_health = AecReferenceHealth(on_change=_aec_status if bargein_on else None)
+    _gate = HalfDuplexGate(bargein_enabled=bargein_on, aec_health=aec_health)
+    tracker = SpokenTextTracker()
+    bargein_ctl: BargeInController | None = None
+    aec_feeder: AecReferenceFeeder | None = None
+
+    def _on_candidate(rid: int | None) -> None:
+        print(f"\n  ⟂ INTERRUPT CANDIDATE (response_id={rid}) — hold for 300 ms…")
+
+    def _on_candidate_rejected() -> None:
+        print("  ⟂ candidate rejected (speech stopped before 300 ms)")
+
+    def _on_confirmed(ctx) -> None:
+        print(f"  ✂ INTERRUPT CONFIRMED — cancelling response_id="
+              f"{ctx.invalidated_response_id} ({ctx.reason})")
+        adapter_ref[0].interrupt_active_turn()
+
+    if bargein_on:
+        bargein_ctl = BargeInController(
+            aec_health=aec_health,
+            on_confirmed=_on_confirmed,
+            on_candidate=_on_candidate,
+            on_candidate_rejected=_on_candidate_rejected,
+        )
+
+    bridge = AssistantSpeechBridge(
+        en_voice=EN_VOICE, pl_voice=PL_VOICE, gate=_gate,
+        on_interruption=(
+            (lambda: (bargein_ctl.notify_response_finished())) if bargein_on else None
+        ),
+    )
     planner = NexaSpeechPlanner(
         en_voice=EN_VOICE, pl_voice=PL_VOICE, default_language=bootstrap.value
     )
@@ -169,9 +224,27 @@ async def main() -> None:
         aiohttp_session=aiohttp_session,
         stop_frame_timeout_s=DEFAULT_TTS_CONTEXT_TIMEOUT_S,
     )
+    def _on_tts_text(sentence: str) -> None:
+        # M2.5B — accumulate the delivered-text high-water mark for the
+        # active reply so an interrupted turn commits exactly the spoken
+        # prefix. ``active_response_id`` is None once an interrupt confirms,
+        # so any later sentence is dropped by the tracker.
+        if bargein_ctl is not None:
+            tracker.add_synthesized_sentence(
+                bargein_ctl.active_response_id if bargein_ctl.active_response_id
+                is not None else -1,
+                sentence,
+            )
+
     tts_observer = TtsStatusObserver(
         on_tts_audio=lambda n, sr, ch: continuity.note_tts_audio(n, sr, ch),
+        on_tts_text=_on_tts_text if bargein_on else None,
     )
+    if bargein_on:
+        aec_feeder = AecReferenceFeeder(
+            aec_health=aec_health, sample_rate=LocalAudioConfig().sample_rate,
+            channels=LocalAudioConfig().channels,
+        )
 
     def on_turn_language(t: TurnLanguage) -> None:
         d = t.language_decision
@@ -196,7 +269,10 @@ async def main() -> None:
 
     def on_user_transcript(text: str) -> None:
         print("assistant: ", end="", flush=True)
-        bridge.on_user_transcript(text)
+        bridge.on_user_transcript(text)  # -> gate.notify_response_dispatched()
+        if bargein_ctl is not None:
+            rid = bargein_ctl.notify_response_dispatched()
+            tracker.start_response(rid)
 
     def on_assistant_token(tok: str) -> None:
         print(tok, end="", flush=True)
@@ -223,6 +299,12 @@ async def main() -> None:
               f"arrived mid-response (session total {rec.dropped_count_this_session}, "
               f"conv_queue_depth {rec.conversation_queue_depth})")
 
+    def on_turn_interrupted(rec) -> None:
+        print(f"  ✂ interrupted turn committed — outcome={rec.outcome}, "
+              f"spoken_chars={rec.spoken_chars}, "
+              f"llm_cancel_completed={rec.llm_cancel_completed} "
+              f"(session total {rec.interrupted_count_this_session})")
+
     adapter = VoiceConversationAdapter(
         session,
         response_language_resolver=resolver,
@@ -232,7 +314,14 @@ async def main() -> None:
         on_assistant_complete=on_assistant_complete,
         on_conversation_error=on_conversation_error,
         on_turn_dropped=on_turn_dropped,
+        on_turn_interrupted=(on_turn_interrupted if bargein_on else None),
         response_mode=ResponseMode.VOICE,
+        response_id_source=(
+            (lambda: bargein_ctl.active_response_id) if bargein_on else None
+        ),
+        spoken_prefix_source=(
+            (lambda rid: tracker.spoken_prefix(rid)) if bargein_on else None
+        ),
     )
     adapter_ref = [adapter]
     adapter.start()
@@ -243,18 +332,32 @@ async def main() -> None:
     def on_transcription_error(exc: Exception) -> None:
         adapter_ref[0].handle_transcription_error(exc)
 
+    out_stages = [bridge, planner, continuity, tts_service]
+    if aec_feeder is not None:
+        out_stages.append(aec_feeder)  # after TTS: sees TTSAudioRawFrame
+    out_stages.append(tts_observer)
+
     runtime = VoiceRuntime(
-        LocalAudioConfig(),
+        LocalAudioConfig(bargein_enabled=bargein_on),
         on_event=on_event,
         transcriber=bilingual,
         language=bootstrap,  # BilingualSpeechTranscriber treats this as bootstrap only
         on_transcription=on_transcription,
         on_transcription_error=on_transcription_error,
         on_utterance_dropped=on_utterance_dropped,
-        extra_output_stages=[bridge, planner, continuity, tts_service, tts_observer],
+        extra_output_stages=out_stages,
         half_duplex_gate=_gate,
+        bargein_controller=bargein_ctl,
     )
 
+    if bargein_on:
+        print("\nBARGE-IN: ON  — the mic stays hot during replies; feeding the "
+              "XVF3800 AEC far-end reference (plug:respeaker).")
+        print("           If 'AEC REF ACTIVE' does not appear below, barge-in "
+              "stays in the R0026 safe mode for safety.")
+    else:
+        print("\nBARGE-IN: OFF (R0026 whole-response half-duplex). Use --bargein "
+              "to enable.")
     print("\nSpeak naturally — mix Polish and English freely. Ctrl+C to stop.\n")
     try:
         await runtime.run()

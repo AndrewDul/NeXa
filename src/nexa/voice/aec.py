@@ -19,12 +19,22 @@ Pure: no audio, no I/O. Driven from the single event loop like
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 
 class AecReferenceHealth:
-    def __init__(self) -> None:
+    def __init__(self, *, on_change: Callable[[bool], None] | None = None) -> None:
         self._active = False
         self._failure_count = 0
         self._ever_started = False
+        self._on_change = on_change
+
+    def _changed(self, now_active: bool) -> None:
+        if now_active != self._active and self._on_change is not None:
+            try:
+                self._on_change(now_active)
+            except Exception:  # a status sink must never break audio
+                pass
 
     @property
     def active(self) -> bool:
@@ -49,6 +59,7 @@ class AecReferenceHealth:
     def mark_started(self) -> None:
         """The reference feed is confirmed running (audio actually flowing to
         ``plug:respeaker``)."""
+        self._changed(True)
         self._active = True
         self._ever_started = True
 
@@ -56,9 +67,11 @@ class AecReferenceHealth:
         """The reference feed failed to start, or died during a response."""
         if self._active or not self._ever_started:
             self._failure_count += 1
+        self._changed(False)
         self._active = False
 
     def mark_stopped(self) -> None:
         """The reference feed stopped as part of a normal shutdown (not a
         failure)."""
+        self._changed(False)
         self._active = False
