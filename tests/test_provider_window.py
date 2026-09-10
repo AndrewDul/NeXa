@@ -26,14 +26,26 @@ def _hist(n_exchanges: int) -> list[ConversationTurn]:
 
 class TestPolicy(unittest.TestCase):
     def test_rejects_bad_bounds(self) -> None:
+        ProviderWindow(keep_entries=0, soft_entries=20, hard_entries=30)  # keep=0 is valid
         with self.assertRaises(ValueError):
-            ProviderWindow(keep_entries=0, soft_entries=20, hard_entries=30)
+            ProviderWindow(keep_entries=-2, soft_entries=20, hard_entries=30)
         with self.assertRaises(ValueError):
             ProviderWindow(keep_entries=20, soft_entries=10, hard_entries=30)  # keep >= soft
         with self.assertRaises(ValueError):
             ProviderWindow(keep_entries=8, soft_entries=30, hard_entries=20)  # hard < soft
         with self.assertRaises(ValueError):
             ProviderWindow(keep_entries=7, soft_entries=20, hard_entries=30)  # odd keep
+
+    def test_keep_zero_reset_shows_only_the_current_turn(self) -> None:
+        w = ProviderWindow(keep_entries=0, soft_entries=20, hard_entries=24)
+        hist_len = 25  # odd — a new USER turn was just appended
+        self.assertTrue(w.needs_sync_rollover(hist_len))
+        nb = w.cutover_sync(hist_len)
+        self.assertEqual(nb, 24)                  # base == index of the new USER turn
+        self.assertEqual(w.window_entries(hist_len), 1)   # only the current turn is in view
+        self.assertEqual(w.rollovers_sync, 1)
+        # next turn: window regrows by append
+        self.assertEqual(w.window_entries(27), 3)
 
     def test_below_soft_no_maintenance(self) -> None:
         w = ProviderWindow(keep_entries=8, soft_entries=40, hard_entries=60)

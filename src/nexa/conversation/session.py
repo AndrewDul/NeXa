@@ -88,14 +88,17 @@ class ConversationSession:
 
     def _render_provider_window(self, response_mode: ResponseMode) -> list:
         """M2.5B.2 — render the bounded provider window, first consuming any
-        rollover the policy calls for (see ``ProviderWindow``).
+        reset the policy calls for (see ``ProviderWindow``).
 
-        A *pre-warmed* rollover is free (the divergence was paid off the
-        critical path). A *synchronous* rollover means this one turn eats a
-        bounded cold prompt prefill because a background pre-warm did not
-        finish in time — it is logged at WARNING so it is never silent, and
-        it is still vastly cheaper (and rarer) than the permanent
-        every-turn collapse the sliding cap caused.
+        A *pre-warmed* cutover is free (the divergence was paid off the
+        critical path — the seam exists but is not auto-fired in M2.5B.2).
+        A *synchronous* reset advances ``base`` so only the last
+        ``keep_entries`` entries stay in view; with the default
+        ``keep_entries = 0`` the reset turn's prompt is just the persona
+        prefix + the new user turn, so it cold-prefills only ~40-60 tokens
+        (~4-6 s, an ordinary turn). It is logged at WARNING so it is never
+        silent. Either way, vastly cheaper — and it never recurs — versus
+        the permanent every-turn collapse the sliding cap caused.
         """
         w = self.provider_window
         assert w is not None
@@ -104,16 +107,17 @@ class ConversationSession:
             old = w.base
             new = w.cutover_sync(n)
             logger.warning(
-                "nexa.conversation: provider-context SYNC rollover at %d entries "
-                "(base %d->%d, keeping last %d) — this turn pays a bounded cold "
-                "prefill; the background pre-warm did not complete in time",
+                "nexa.conversation: provider-context RESET at %d canonical entries "
+                "(base %d->%d, keeping last %d in view) — this turn re-prefills "
+                "only the retained entries + the new turn; canonical history is "
+                "unchanged",
                 n, old, new, w.keep_entries,
             )
         elif w.prewarm_ready(n):
             old = w.base
             new = w.cutover_background(n)
             logger.info(
-                "nexa.conversation: provider-context rollover (pre-warmed, cheap) "
+                "nexa.conversation: provider-context cutover (pre-warmed, cheap) "
                 "base %d->%d at %d entries", old, new, n,
             )
         return w.render(

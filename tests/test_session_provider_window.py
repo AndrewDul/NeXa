@@ -90,12 +90,40 @@ class TestWindowedSend(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("nexa.conversation.session", level="WARNING") as cm:
             for i in range(7):                  # 14 entries >= hard 12
                 await _drain(s.send(f"q{i}"))
-        self.assertTrue(any("SYNC rollover" in m for m in cm.output))
+        self.assertTrue(any("RESET" in m for m in cm.output))
         self.assertEqual(w.rollovers_sync, 1)
         self.assertEqual(w.rollovers_background, 0)
         # window bounded: keep_entries + at most one live exchange since the roll
         self.assertLessEqual(w.window_entries(len(s.history)), w.keep_entries + 2)
         self.assertEqual(len(s.history), 14)    # nothing lost
+
+    async def test_keep_zero_reset_shows_only_persona_plus_current_turn(self) -> None:
+        """The shipped default: at the hard limit the reset turn's prompt is
+        just [persona] + [the new user turn] — the persona prefix stays
+        cached, so on the real model it is an ordinary ~4-6 s turn, not a
+        stall. Canonical history stays complete."""
+        p = FakeModelProvider([["ok"]] * 40)
+        w = ProviderWindow(keep_entries=0, soft_entries=8, hard_entries=12)
+        s = ConversationSession(provider=p, system_prompt=SYS, provider_window=w)
+        with self.assertLogs("nexa.conversation.session", level="WARNING") as cm:
+            for i in range(7):                     # 14 entries >= hard 12
+                await _drain(s.send(f"q{i}"))
+        self.assertTrue(any("RESET" in m or "rollover" in m.lower() for m in cm.output))
+        self.assertEqual(w.rollovers_sync, 1)
+        reset_call = None
+        for c in p.calls:
+            users = [m for m in c if m.role == "user"]
+            if len(users) == 1 and users[0].content == "q6":  # the reset turn
+                reset_call = c
+        self.assertIsNotNone(reset_call)
+        # only the current user turn (+ its lang directive) after the system prompt
+        self.assertEqual([m.role for m in reset_call], ["system", "user", "system"])
+        self.assertEqual(reset_call[0].content, SYS)
+        self.assertEqual(reset_call[1].content, "q6")
+        self.assertEqual(len(s.history), 14)       # canonical history intact
+        # window regrows by append afterwards
+        await _drain(s.send("q7"))
+        self.assertGreater(w.window_entries(len(s.history)), 1)
 
     async def test_prefix_is_a_pure_extension_between_rollovers(self) -> None:
         p = FakeModelProvider([["ok"]] * 40)
