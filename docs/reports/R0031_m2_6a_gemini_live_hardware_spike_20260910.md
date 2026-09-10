@@ -621,8 +621,8 @@ no tracked dependency file changed · full suite not re-run (no
 
 - `f920315` / `b3c7c32` — earlier M2.6A commit + its hash record
   (R0031 v1 + connectivity smoke + probe v1 + R0030 Phase-0 corrections).
-- `<PENDING — this commit>` — operator-attempt-#1 diagnosis + probe fix +
-  R0031 update.
+- `d15e785` — operator-attempt-#1 diagnosis + probe fix (LLMRunFrame kickoff +
+  `inference_on_context_initialization=False` + empty context) + R0031 update.
 
 This hash-record note is finalised by the immediately-following commit
 (R0026–R0030 pattern). Prior tip: `b3c7c32`.
