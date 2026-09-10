@@ -6,7 +6,14 @@
   M2.6B plan and acceptance gates). The Gemini Live model, voice, and audio
   parameters are **the M2.6A-frozen v1 baseline, not permanently frozen** —
   they are replaceable behind the boundary this ADR defines.
-- **Date:** 2026-09-10
+  **Amended by [Amendment 1](#amendment-1--factual--api--terms-corrections-before-m26b-2026-09-10)
+  (2026-09-10) — four pre-implementation factual / API / terms corrections
+  (UK vs EEA and paid-services scope; `system_instruction` is immutable on
+  an open Live connection; Gemini-3.1 initial-history seeding shape;
+  session-resumption reconnect safety). No accepted decision is reversed;
+  where Amendment 1 supersedes wording the affected section carries an
+  inline pointer.**
+- **Date:** 2026-09-10 (Amendment 1: 2026-09-10)
 - **Deciders:** Andrzej Dul (owner / operator), Claude Sonnet 5 (research + drafting)
 - **Related:**
   `docs/decisions/ADR-0002_text_conversation_foundation.md`
@@ -85,12 +92,17 @@ official sources on 2026-09-10 where noted)
   `send_client_content` on 3.x seeds context at start only. Paid pricing
   (per 1M tokens): input $0.75 text / $3.00 audio; output $4.50 text /
   $12.00 audio; free tier free of charge.
+  *(Amendment 1 refines the initial-history-seeding mechanism — see
+  [Amendment 1 §3](#3--gemini-31-initial-history-seeding).)*
 - **`VERIFIED FACT`** (R0030 Phase-0, Google terms 2026-09-10) — data
   terms: outside the EEA / Switzerland / UK, unpaid-quota data is used to
   improve Google products; in the EEA / CH / UK the paid data terms apply to
   unpaid quota too, and a cloud voice *made available to* users in those
   regions must use Paid Services. This is a **terms** statement, not a legal
-  opinion.
+  opinion. *(Amendment 1 corrects the operator's region — United Kingdom,
+  not EEA — and splits "data treatment" from "making API Clients available
+  to users", and records that the Gemini API Free Tier is available in the
+  UK. See [Amendment 1 §1](#1--uk--eea--paid-services-correction).)*
 - **`OBSERVATION`** (community forum, not Google-confirmed) — one thread
   reports `gemini-3.1-flash-live-preview` native audio speaking Polish with
   a strong EN/US accent. R0031's operator sessions did **not** reproduce a
@@ -331,6 +343,18 @@ changes to add.
 
 ### Decision C — Gemini Live is the v1 `RealtimeVoiceProvider` implementation (charter C) — Accepted
 
+> **Amendment 1 (2026-09-10)** adds the required Gemini-3.1 session
+> start-up elements (configure initial-history support; setup /
+> `system_instruction`; seed the bounded `CloudContextSnapshot` recent
+> turns **once** via `clientContent`; begin realtime audio) and records
+> that `system_instruction` **cannot be updated on an open connection**.
+> Their exact composition/order against the M2.6A `LLMRunFrame` kickoff and
+> installed Pipecat 1.8.1 / `google-genai` 2.22.0 source is an
+> **M2.6B implementation-detail verification** — not assumed by this ADR.
+> See [Amendment 1 §2](#2--system-instruction-cannot-change-mid-connection)
+> and [§3](#3--gemini-31-initial-history-seeding). The Decision C baseline
+> (model / voice / rates / VAD / AEC / barge-in) is unchanged.
+
 `GeminiLiveProvider(RealtimeVoiceProvider)` in `src/nexa/realtime/gemini/`,
 wrapping and hardening Pipecat 1.8.1's `GeminiLiveLLMService` (ADR-0003 D1;
 R0030 "Option C"). **v1 baseline, unchanged from M2.6A** and **not**
@@ -375,10 +399,11 @@ Two distinct concepts, both NeXa-owned:
     content, task type, connectivity, latency, cost, and capability needs.
     **The decision classifier is NOT implemented in M2.6B.** In M2.6B `AUTO`
     is accepted as a stored value and resolves *provisionally* to
-    "`CLOUD_PREFERRED` semantics gated only on reachability + a configured
-    paid key + a healthy connectivity check" — no privacy/task/cost
-    classification yet — and this provisional behaviour is documented as
-    such. `AUTO` is **not** the default.
+    "`CLOUD_PREFERRED` semantics gated only on reachability + a satisfied
+    `ProviderEligibilityPolicy` (Decision K, as amended) + a healthy
+    connectivity check" — no privacy/task/cost classification yet — and this
+    provisional behaviour is documented as such. `AUTO` is **not** the
+    default.
 - **`active_provider`** (runtime state): `LOCAL` | `CLOUD` (extensible).
   Which provider is currently producing turns.
 
@@ -395,6 +420,18 @@ privacy classifier that was never designed.
 ---
 
 ### Decision E — `CloudContextSnapshot` contract (charter E) — Accepted
+
+> **Amendment 1 (2026-09-10):** the snapshot contract is unchanged, but two
+> mechanism details are corrected — (a) the `recent_turns` seed is delivered
+> **once at session start** through the Gemini-3.1 initial-history mechanism
+> (`clientContent` messages processed until `turnComplete`, no model call;
+> `history_config.initial_history_in_client_content = true` equivalent), not
+> as a general mid-session mechanism; (b) a sticky language-preference change
+> does **not** rewrite `system_instruction` on the open connection — it
+> updates NeXa canonical state immediately and is applied to the provider
+> setup only on the **next** new / resumed session. See
+> [Amendment 1 §2](#2--system-instruction-cannot-change-mid-connection) and
+> [§3](#3--gemini-31-initial-history-seeding).
 
 `CloudContextSnapshot` is a frozen dataclass in `src/nexa/realtime/`, a
 **pure derived projection** of canonical NeXa state, built by
@@ -446,6 +483,19 @@ turn-by-turn; sending memory "just in case"; putting the persona verbatim in
 
 ### Decision F — Language-routing authority (charter F, C6) — Accepted: **Option A default**, Option B is the measured fallback
 
+> **Amendment 1 (2026-09-10)** corrects the mid-session mechanism only.
+> `system_instruction` is immutable on an open Live connection (`VERIFIED
+> FACT`). So a sticky language command does **not** rewrite the cloud
+> `system_instruction` mid-connection. v1 rule: NeXa records the preference
+> in canonical state immediately; the spoken command also stays in Gemini's
+> own live context so Gemini may naturally keep following it for the rest of
+> that connection; NeXa's authoritative preference is guaranteed to reach
+> the provider setup on the **next** new / resumed session. A forced
+> turn-boundary reconnect purely to enforce a language change is **not**
+> required in M2.6B unless evidence shows it is needed. Option A / Option B /
+> Option C and the three distinct authorities are unchanged. See
+> [Amendment 1 §2](#2--system-instruction-cannot-change-mid-connection).
+
 **Measured basis (`VERIFIED FACT`, R0031 turn-local C6, Sulafat session):**
 the RAW input transcription was available before the first response audio in
 **3/3** valid turns (median margin ≈ 0.54 s); the PUSHED (aggregated)
@@ -461,11 +511,14 @@ into that same turn.
   judged good). NeXa runs `ResponseLanguageResolver` on the finalised input
   transcription **off the critical path**, records the per-turn language as
   canonical metadata (`_response_languages` alignment), owns the sticky
-  **preference**, and carries that preference into the **next** session's
-  `CloudContextSnapshot` (and into an updated `system_instruction` line when
-  a sticky command is detected mid-session). NeXa owns the language
-  **preference permanently.** Option A only delegates *same-turn native
-  mirroring* to Gemini.
+  **preference**, and carries that preference into the **next** new /
+  resumed session's provider setup (`system_instruction`) via a rebuilt
+  `CloudContextSnapshot`. *(Amendment 1: the earlier "updated
+  `system_instruction` line … mid-session" wording is superseded —
+  `system_instruction` is immutable on an open connection; the running
+  connection instead relies on Gemini's own live context retaining the
+  spoken command.)* NeXa owns the language **preference permanently.**
+  Option A only delegates *same-turn native mirroring* to Gemini.
 - **Option B (measured fallback).** Strict per-turn NeXa authority: hold
   `activityEnd` briefly to run a fast local language-ID on the utterance and
   set an explicit per-turn language before Gemini generates. **Cost:** adds
@@ -542,15 +595,35 @@ speech landed in it there, but it is now designed for, not left to luck).
 
 ### Decision I — GoAway / reconnect / session resumption (charter I) — Accepted
 
+> **Amendment 1 (2026-09-10)** tightens reconnect safety (`VERIFIED FACT`,
+> Live API reference): resumption **is not possible at some points**
+> (model generating / executing function calls) and using a handle then
+> **can lose data**; `SessionResumptionUpdate` carries `resumable` +
+> `newHandle`. Corrected rules: keep only the latest handle with
+> `resumable=true`; never use an empty / non-resumable handle; prefer a
+> safe turn boundary (`generationComplete`) for the transition; on `GoAway`
+> use `timeLeft` to schedule it; buffer inbound audio while `RECONNECTING`;
+> if a safe resumption is not possible, start a **fresh** provider session
+> from a rebuilt `CloudContextSnapshot` rather than risk corrupt provider
+> context. **Make-before-break overlap of two connections is not claimed as
+> supported** — exact socket sequencing is finalised in M2.6B after
+> inspecting Pipecat 1.8.1 + `google-genai` 2.22.0 and deterministic tests.
+> Local barge-in stays authoritative; the canonical `ConversationSession` is
+> never touched. See [Amendment 1 §4](#4--session-resumption--reconnect-safety).
+
 `ReconnectController` in `src/nexa/realtime/reconnect.py` (NeXa-owned;
 `GeminiLiveLLMService` has no GoAway handling — `VERIFIED FACT`).
 
 - **Proactive reconnect.** An age timer starts on connect. At
   `connection_age ≥ PROACTIVE_RECONNECT_AGE_S` (`≈ 8 min` — inside the
   ~10-min WebSocket lifetime and the 15-min audio-session cap), or on
-  `GoAway{timeLeft}` (schedule for `deadline − margin`), open a **new**
-  session using the **latest** session-resumption handle, transfer audio
-  routing, then close the old session.
+  `GoAway{timeLeft}` (schedule for `deadline − margin`), transition to a
+  reconnected session using the **latest `resumable=true`** handle, at a
+  safe turn boundary where possible. *(Amendment 1: whether this is done as
+  an overlapping make-before-break swap or a break-before-make transition is
+  deferred to M2.6B — the ADR no longer assumes overlap is supported.)* If no
+  safe resumption is possible, start a fresh session from a rebuilt
+  `CloudContextSnapshot`.
 - **Connection readiness** during the swap: cloud **output audio is muted**
   and inbound mic audio goes to the Decision H buffer; the swap targets a
   gap the user does not hear as a dropped turn.
@@ -620,6 +693,26 @@ failure; losing the in-flight turn on the switch.
 
 ### Decision K — Credential surface + region / paid-key policy (charter K) — Accepted
 
+> **Amendment 1 (2026-09-10)** corrects the region facts and removes the
+> "paid key" framing. The operator is in the **United Kingdom** (not the
+> EEA; Google's terms name the EEA, Switzerland and the UK as three
+> separate covered regions). Two Google-terms facts are now kept distinct:
+> **(A) data treatment** — for a developer in the EEA/CH/UK the Paid
+> Services "How Google uses Your Data" provisions apply to *all* Services
+> including AI Studio and unpaid Gemini API quota, even free of charge;
+> **(B) making API Clients available to users** — only Paid Services may be
+> used when making an API Client available to *users* in the EEA/CH/UK
+> (a distribution / user-facing requirement). The Gemini API **Free Tier is
+> available in the UK**, so private/internal M2.6B development is **not**
+> blocked by billing not being enabled. A Gemini API key is **not**
+> inherently a "paid key" — billing/tier belongs to the project/account and
+> is verified out-of-band, never inferred from the key string. The
+> credential loader therefore carries **no** paid/unpaid flag; eligibility
+> is a separate **deployment / provider-eligibility policy** input
+> (`distribution_mode` ∈ {`DEVELOPMENT`, `DISTRIBUTED`}; `billing_verified`
+> bool set out-of-band). The `CredentialSource` seam is unchanged. See
+> [Amendment 1 §1](#1--uk--eea--paid-services-correction).
+
 - **v1 production mechanism:** an XDG secret file
   `~/.config/nexa/secrets/gemini.env` (directory `700`, file `600`),
   containing `NEXA_GEMINI_API_KEY=<value>`. Loaded by
@@ -635,24 +728,46 @@ failure; losing the in-flight turn on the switch.
   is outside the repo tree; additionally add a defensive `.gitignore` rule
   for any `*.env` under a `secrets/` path if such a path is ever introduced
   in-repo.
-- **Region / Paid Services (state technical vs terms):**
+- **Region / Paid Services (technical vs terms — corrected by Amendment 1):**
   - **Technically required:** only a valid API key and a reachable endpoint
     to establish a Live session.
-  - **Terms requirement** (`VERIFIED FACT`, Google terms 2026-09-10): a
-    cloud voice *made available to* users in the EEA / Switzerland / UK must
-    use **Paid Services**; unpaid-quota data-use terms differ by region. This
-    is a **terms** statement — **not** a legal opinion, and no
-    stronger legal claim is made here.
-  - **NeXa's position:** because NeXa is privacy-first and the operator is in
-    the EEA, **v1 cloud voice must use a paid-tier key.** The credential
-    loader records (config, not the key) whether the configured key is
-    declared paid-tier; `CLOUD_PREFERRED` / `AUTO` refuse to start cloud
-    without that declaration.
+  - **Terms — data treatment** (`VERIFIED FACT`, Google Gemini API
+    Additional Terms 2026-09-10): "If you're in the European Economic Area,
+    Switzerland, or the United Kingdom, the terms under 'How Google uses
+    Your Data' in 'Paid Services' apply to all Services, including Google AI
+    Studio and unpaid quota in the Gemini API, even though they are offered
+    free of charge." (A **terms** statement, not a legal opinion.)
+  - **Terms — distribution** (`VERIFIED FACT`, same source): "You may use
+    only Paid Services when making API Clients available to users in the
+    European Economic Area, Switzerland, or the United Kingdom." This binds
+    a **user-facing / distributed** NeXa cloud mode, not private operator
+    development.
+  - **Free Tier availability** (`VERIFIED FACT`, Gemini API
+    available-regions / billing docs 2026-09-10): the United Kingdom is a
+    supported region and the Free Tier is available there; there is no
+    UK-specific Free-Tier exclusion.
+  - **NeXa's position — eligibility is a deployment policy input, not a key
+    property:**
+    - `distribution_mode = DEVELOPMENT` (private operator, not made
+      available to other users): may use whichever Gemini API tier the
+      project is enrolled in and the terms permit. **Not** blocked because
+      billing is not enabled. No artificial quota-exhaustion testing.
+    - `distribution_mode = DISTRIBUTED` **and** any target user is in the
+      EEA / CH / UK: **must** use Paid Services. Before such a release,
+      verify `billing_verified` (active billing / appropriate paid-service
+      status on the project) out-of-band. `CLOUD_PREFERRED` / `AUTO` in this
+      mode refuse to start cloud until `billing_verified` is true.
+    - The `credentials.py` loader carries **no** paid/unpaid flag and infers
+      nothing from the key string. `ProviderEligibilityPolicy`
+      (`distribution_mode`, `billing_verified`) lives with
+      `ConversationPolicy` config, not with the credential.
 - No dependency-file edits here (that is Decision L / M2.6B).
 
 **Forbids:** the key in the repo, in logs, in telemetry, in the ADR;
-unsupported legal assertions; starting cloud in a paid-required region on an
-unpaid key under `CLOUD_PREFERRED` / `AUTO`.
+unsupported legal assertions; inventing a cryptographic "paid key"
+property/prefix; blocking `DEVELOPMENT`-mode M2.6B work solely because
+billing is not enabled; starting a `DISTRIBUTED` EEA/CH/UK release without
+`billing_verified` under `CLOUD_PREFERRED` / `AUTO`.
 
 ---
 
@@ -919,8 +1034,12 @@ Normal completed cloud turn:
    `activityEnd`.
 4. `user_transcription(text, final=True)` arrives → held as the pending user
    turn text; `ResponseLanguageResolver` runs on it off the critical path
-   (Decision F) → per-turn language metadata; sticky-command detection may
-   update the preference + schedule a `system_instruction` refresh.
+   (Decision F) → per-turn language metadata; sticky-command detection
+   updates the canonical NeXa preference **immediately** and marks the next
+   new / resumed session's `CloudContextSnapshot` for rebuild.
+   *(Amendment 1: no `system_instruction` edit on the open connection —
+   Gemini's own live context retains the spoken command for the rest of
+   this connection.)*
 5. `assistant_audio(...)` frames stream to the speaker via
    `AecReferenceFeeder`; `SpokenTextTracker`-equivalent maintains the spoken
    high-water mark.
@@ -958,8 +1077,10 @@ before and after — continuity is automatic.
 
 LOCAL → CLOUD:
 1. Policy check: `ConversationPolicy != LOCAL_ONLY`; for
-   `CLOUD_PREFERRED` / `AUTO`, a paid-tier key is declared (Decision K) and
-   the connectivity check passes.
+   `CLOUD_PREFERRED` / `AUTO`, the `ProviderEligibilityPolicy` is satisfied
+   (Decision K as amended — `DEVELOPMENT` mode, or `DISTRIBUTED` +
+   `billing_verified` for EEA/CH/UK users) and the connectivity check
+   passes.
 2. Let the current local turn finish (or commit its spoken prefix if the
    user explicitly forced the switch mid-turn).
 3. `build_cloud_context_snapshot(session, …)` from current canonical state.
@@ -986,46 +1107,60 @@ switch-intent — **the router executes it.**
 
 ## Reconnect path
 
-See Decision I. Summary sequence for a proactive reconnect:
+See Decision I (as amended by Amendment 1 §4). Summary sequence for a
+proactive reconnect:
 
 ```
 age ≥ 8 min  OR  GoAway{timeLeft}
    │
-   ├─ open NEW Gemini session with latest resumption handle
-   ├─ mute cloud output; route mic → inbound buffer
-   ├─ NEW session READY?
-   │     ├─ yes, resumed(from_handle=True)  → resume routing; flush buffer; done
-   │     └─ resumption failed               → build FRESH CloudContextSnapshot
-   │                                           from canonical session → clean
-   │                                           start → resume routing; flush buffer
-   ├─ close OLD session
+   ├─ pick transition point: prefer a safe turn boundary (generationComplete);
+   │     on GoAway schedule within timeLeft
+   ├─ mute cloud output; route mic → inbound buffer (RECONNECTING)
+   ├─ latest handle has resumable=true ?
+   │     ├─ yes → attempt resumed session with that handle
+   │     │        ├─ resumed OK      → resume routing; flush buffer; done
+   │     │        └─ resume failed   → FRESH session: build FRESH
+   │     │                             CloudContextSnapshot from canonical
+   │     │                             session, seed once, resume routing,
+   │     │                             flush buffer
+   │     └─ no / empty / non-resumable → FRESH session (as above); never use
+   │                                     a non-resumable handle
+   ├─ tear down the old connection (overlap vs break-before-make = M2.6B decision;
+   │     this ADR does NOT assume make-before-break overlap is supported)
    └─ backoff+jitter on failure; after MAX_RECONNECT_ATTEMPTS → Decision J (→ LOCAL)
 ```
 
 `ConversationSession` is untouched throughout. No turn is spoken or
-committed twice. A barge-in mid-reconnect stops the speaker locally, cancels
-the in-flight cloud turn, commits its spoken prefix, and the new utterance
-lands in the inbound buffer for the new session.
+committed twice. Local barge-in stays authoritative during `RECONNECTING`:
+a barge-in stops the speaker locally, cancels the in-flight cloud turn,
+commits its spoken prefix, and the new utterance lands in the inbound
+buffer for the new session. Exact socket sequencing is finalised in M2.6B
+after inspecting Pipecat 1.8.1 + `google-genai` 2.22.0 behaviour with
+deterministic tests; no 10-minute quota-burning test is required now.
 
 ---
 
 ## `CloudContextSnapshot` contract (summary)
 
-See Decision E. One-line form: **a freshly built, bounded, privacy-filtered
-projection of canonical NeXa state — minimal role card, language preference,
-last ~12 turns, policy state — sent once per non-resumed session; never the
-full history, never memory, never the persona verbatim, never credentials or
-raw audio.**
+See Decision E (as amended). One-line form: **a freshly built, bounded,
+privacy-filtered projection of canonical NeXa state — minimal role card,
+language preference, last ~12 turns, policy state — seeded once at session
+start via the Gemini-3.1 initial-history mechanism (`clientContent` until
+`turnComplete`, no model call); never the full history, never memory, never
+the persona verbatim, never credentials or raw audio; never re-injected
+turn-by-turn.**
 
 ---
 
 ## Language routing decision (summary)
 
-See Decision F. **Option A is the production default:** Gemini mirrors the
-spoken language natively for the current turn; NeXa owns the language
-**preference** permanently (`ResponseLanguageResolver`), records per-turn
-language as canonical metadata, and carries the preference forward in the
-next snapshot / an updated `system_instruction` line. **Option B**
+See Decision F (as amended). **Option A is the production default:** Gemini
+mirrors the spoken language natively for the current turn; NeXa owns the
+language **preference** permanently (`ResponseLanguageResolver`), records
+per-turn language as canonical metadata, and carries the preference forward
+into the **next** new / resumed session's provider setup via a rebuilt
+`CloudContextSnapshot` — **not** by editing `system_instruction` on the open
+connection (Amendment 1 §2). **Option B**
 (delayed `activityEnd` + fast local language-ID, cost ≈ +1.1 s at turn
 close) is the measured fallback. **Option C** (parallel `whisper.cpp`) is
 rejected unless A and B both fail in M2.6B testing. Timing headroom (R0031:
@@ -1055,13 +1190,20 @@ session; no automatic mid-conversation return to cloud (anti-flap).
 
 ## Security / credential decision (summary)
 
-See Decision K. XDG secret file `~/.config/nexa/secrets/gemini.env`
-(`700`/`600`), `NEXA_GEMINI_API_KEY`, env-var-first loader with a
-`CredentialSource` seam for a future keychain. Key never printed / logged /
-committed / in telemetry; redaction helper. Terms (not legal opinion): a
-cloud voice offered to EEA/CH/UK users must use Paid Services — NeXa
-requires a paid-tier key for v1 cloud voice, enforced for
-`CLOUD_PREFERRED` / `AUTO`.
+See Decision K (as amended by Amendment 1 §1). XDG secret file
+`~/.config/nexa/secrets/gemini.env` (`700`/`600`), `NEXA_GEMINI_API_KEY`,
+env-var-first loader with a `CredentialSource` seam for a future keychain.
+Key never printed / logged / committed / in telemetry; redaction helper;
+**no paid/unpaid flag on the key** and nothing inferred from the key string.
+Terms (not legal opinion): the operator is in the **UK**; Google groups
+EEA / CH / UK. **Data treatment:** for a developer there the Paid-Services
+data provisions apply to all Services incl. unpaid quota. **Distribution:**
+only Paid Services may be used when making an API Client available to *users*
+in EEA/CH/UK. The Free Tier **is** available in the UK, so `DEVELOPMENT`-mode
+M2.6B work is not blocked by billing. Eligibility is a deployment policy
+input — `ProviderEligibilityPolicy(distribution_mode, billing_verified)`;
+`DISTRIBUTED` to EEA/CH/UK users requires `billing_verified` before
+`CLOUD_PREFERRED` / `AUTO` will start cloud.
 
 ---
 
@@ -1139,7 +1281,10 @@ boundary is stable.
 - `AUTO` ships provisional (no real classifier) — a documented gap.
 - Cloud dependency version pins (`google-genai`, `websockets`) add a
   maintenance point that interacts with Pipecat's constraints.
-- Paid-tier-key enforcement adds a config declaration users must set.
+- Provider eligibility adds deployment-policy configuration
+  (`distribution_mode` / `billing_verified`) that must be set correctly for
+  `DISTRIBUTED` deployments (Amendment 1 §1) — not a key property, so it
+  cannot be inferred; it is a config item someone must set right.
 - Reconnect / resumption cannot be fully proven without real-cloud time;
   M2.6B carries deterministic tests + a minimum of live validation.
 
@@ -1268,13 +1413,13 @@ reconciled with repo conventions during implementation.
 | # | Component | File (proposed) | Owning layer | Responsibility | Key dependencies | Tests | Failure cases | Touches frozen local voice? |
 |---|---|---|---|---|---|---|---|---|
 | 1 | `RealtimeVoiceProvider` ABC + event/lifecycle types + `ProviderReadiness` + `RealtimeProviderCapabilities` + typed errors | `src/nexa/realtime/provider.py` | NeXa boundary (no cloud dep) | Define the peer-of-`ModelProvider` contract | stdlib only | contract/abc tests; readiness state-machine transitions | n/a (definitions) | No |
-| 2 | `ConversationPolicy` + `ActiveProvider` + `NEXA_CONVERSATION_POLICY` loader | `src/nexa/realtime/policy.py`, `src/nexa/config.py` (additive) | NeXa | Persisted policy; runtime provider enum; fail-closed parse | `nexa.config` pattern | parse/default/invalid-value; `LOCAL_ONLY` default | invalid env value → raise (fail closed) | No (additive config) |
-| 3 | `CloudContextSnapshot` + `build_cloud_context_snapshot(...)` | `src/nexa/realtime/snapshot.py` | NeXa | Derived, bounded, privacy-filtered projection | `ConversationSession`, `ResponseLanguageResolver` | allow-list content; bound N turns + chars; never persona/memory/creds; freshness | empty history; over-long turns; missing preference | No (reads history) |
+| 2 | `ConversationPolicy` + `ActiveProvider` + `ProviderEligibilityPolicy` + `NEXA_CONVERSATION_POLICY` loader | `src/nexa/realtime/policy.py`, `src/nexa/config.py` (additive) | NeXa | Persisted policy; runtime provider enum; `ProviderEligibilityPolicy(distribution_mode ∈ {DEVELOPMENT,DISTRIBUTED}, billing_verified)` (Decision K as amended — separate from the credential); fail-closed parse | `nexa.config` pattern | parse/default/invalid-value; `LOCAL_ONLY` default; DISTRIBUTED+EEA/CH/UK requires `billing_verified` | invalid env value → raise (fail closed); DISTRIBUTED without `billing_verified` → cloud refused | No (additive config) |
+| 3 | `CloudContextSnapshot` + `build_cloud_context_snapshot(...)` | `src/nexa/realtime/snapshot.py` | NeXa | Derived, bounded, privacy-filtered projection; `recent_turns` shaped for one-time initial-history seeding (Amendment 1 §3), not turn-by-turn injection | `ConversationSession`, `ResponseLanguageResolver` | allow-list content; bound N turns + chars; never persona/memory/creds; freshness; seed-once shape | empty history; over-long turns; missing preference | No (reads history) |
 | 4 | `ProviderReadiness` inbound audio buffer (#5465) | `src/nexa/realtime/inbound_audio_buffer.py` | NeXa boundary | Bounded capture of mic PCM while `!= READY`; ordered flush; drop-oldest; per-utterance `delivered` flag | stdlib; audio frame type | fill/flush/overflow/drop metric; no dup after reconnect; ordering | overflow; flush during a second outage; reconnect mid-flush | No |
-| 5 | `ReconnectController` (GoAway + age timer + resumption) | `src/nexa/realtime/reconnect.py` | NeXa boundary | Proactive reconnect; handle GoAway; latest resumption handle; backoff; failure→Decision J | provider events; `snapshot.py` | mocked GoAway/socket-close; resumption success + failure→fresh snapshot; backoff cap; no double-commit | resumption fail; repeated flap; barge-in mid-reconnect | No |
+| 5 | `ReconnectController` (GoAway + age timer + resumption) | `src/nexa/realtime/reconnect.py` | NeXa boundary | Proactive reconnect at a safe turn boundary; handle GoAway via `timeLeft`; keep only the latest `resumable=true` handle; never use a non-resumable/empty handle; buffer inbound audio while `RECONNECTING`; fall back to a fresh seeded session when safe resumption isn't possible; backoff; failure→Decision J. Overlap vs break-before-make is a code-time decision here — the ADR does not assume make-before-break is supported | provider events; `snapshot.py` | mocked GoAway/socket-close; `resumable=false` → fresh session; resumption success + failure→fresh snapshot; backoff cap; no double-commit; no non-resumable-handle use | resumption fail; non-resumable handle; repeated flap; barge-in mid-reconnect | No |
 | 6 | `ProviderUsageEvent` + per-session aggregation + optional cost estimate | `src/nexa/realtime/usage.py` | NeXa | Authoritative usage from `usageMetadata`; labelled cost estimate; no raw audio retained | provider `usage()` events; price table (config) | aggregation; estimate math; no-audio-retention | missing `usageMetadata`; partial session | No |
-| 7 | `credentials.py` + `CredentialSource` seam | `src/nexa/realtime/gemini/credentials.py` | NeXa (cloud pkg) | Env-var-first load; XDG secret file fallback; redaction; paid-tier declaration | `os.environ`, file perms check | env path; file path; redaction; missing key → typed error; perms warning | missing/malformed file; unreadable; unpaid key where paid required | No |
-| 8 | `GeminiLiveProvider(RealtimeVoiceProvider)` wrapping Pipecat `GeminiLiveLLMService` | `src/nexa/realtime/gemini/service.py` | NeXa cloud pkg | Option C wrapper: `LLMRunFrame` kickoff, empty `LLMContext`, server VAD off, `activityStart/End` from Silero, event translation, resumption handle capture, `usageMetadata` surfacing, lazy `google.genai` import | `pipecat-ai[local]==1.8.1`, `google-genai` (extra) | dry object-graph build; mocked service lifecycle; event translation; readiness gating of `send_user_audio` | connect failure; auth failure; NOT_READY; server interruption; GoAway | No (parallel path) |
+| 7 | `credentials.py` + `CredentialSource` seam | `src/nexa/realtime/gemini/credentials.py` | NeXa (cloud pkg) | Env-var-first load; XDG secret file fallback; redaction. **No paid/unpaid flag; nothing inferred from the key string** (Amendment 1 §1 — eligibility is `ProviderEligibilityPolicy` in row 2) | `os.environ`, file perms check | env path; file path; redaction; missing key → typed error; perms warning; no key-string tier inference | missing/malformed file; unreadable key file | No |
+| 8 | `GeminiLiveProvider(RealtimeVoiceProvider)` wrapping Pipecat `GeminiLiveLLMService` | `src/nexa/realtime/gemini/service.py` | NeXa cloud pkg | Option C wrapper: architecturally-required start-up ELEMENTS = configure initial-history support, setup / `system_instruction` (immutable once open — Amendment 1 §2), seed `CloudContextSnapshot` recent turns **once** via `clientContent` until `turnComplete` (Amendment 1 §3), the `LLMRunFrame` kickoff (R0031), and realtime audio start — their exact composition/ORDER against installed Pipecat 1.8.1 + `google-genai` 2.22.0 source is an M2.6B implementation-detail verification, not assumed here; empty `LLMContext`; server VAD off; `activityStart/End` from Silero; event translation; capture only `resumable=true` handles; `usageMetadata` surfacing; lazy `google.genai` import | `pipecat-ai[local]==1.8.1`, `google-genai` (extra) | dry object-graph build; mocked service lifecycle; one-time seed (no repeated injection); event translation; readiness gating of `send_user_audio` | connect failure; auth failure; NOT_READY; server interruption; GoAway; non-resumable handle | No (parallel path) |
 | 9 | `gemini_voice_for_preference(...)` + voice preference storage | `src/nexa/realtime/gemini/voice.py`, preference store | NeXa | Provider-agnostic voice preference → Gemini voice name; default `warm_female`→`Sulafat`; `--voice` override | config/preference | mapping; default; override; unknown preference | unknown voice name from override | No |
 | 10 | `ConversationRouter` | `src/nexa/realtime/router.py` | NeXa | Resolve `ConversationPolicy`→`active_provider`; execute LOCAL↔CLOUD switch; consume provider event stream; apply Decision A commit rules; apply Decision J on failure; drive Silero turn markers to the active provider | `ConversationSession`, provider, `snapshot.py`, `reconnect.py`, local `VoiceRuntime` | `LOCAL_ONLY` never touches cloud; switch preserves continuity; no dup assistant turn; interrupted → spoken-prefix only; failure → LOCAL + notice | switch mid-turn; failure during switch; policy change mid-session | Additive wiring only; local path unchanged |
 | 11 | `ConversationSession.record_external_exchange(...)` (additive) + `SetConversationPolicy` command | `src/nexa/conversation/session.py` (additive), command surface | NeXa canonical | Append user/assistant turn(s) from a cloud turn keeping `_history`/`_response_languages` alignment and interrupted semantics; internal policy-set command | existing session invariants | additive-only; index alignment; interrupted cloud turn keeps user turn, commits spoken prefix / omits assistant if nothing spoken; `NOTHING_TO_COMMIT` parity | interrupted before any audio; missing assistant transcription; empty user transcription | **Additive method only**; existing `send()` / `commit_interrupted_turn()` byte-for-byte unchanged |
@@ -1321,9 +1466,10 @@ M2.6B is COMPLETE only when **all** of the following hold:
    reconnect (mocked GoAway / socket close), the canonical session is
    byte-identical to no-reconnect for the same turns; Gemini's restored
    context is not read back as authority.
-8. **Resumption failure rebuilds from `CloudContextSnapshot`** — when the
-   resumption handle is rejected, a fresh snapshot is built from canonical
-   state and the conversation continues coherently.
+8. **Resumption failure / non-resumable handle rebuilds from
+   `CloudContextSnapshot`** — when the resumption handle is rejected, empty,
+   or `resumable=false`, a fresh session is started and a fresh snapshot
+   seeded once; a non-resumable handle is never sent (deterministic test).
 9. **No API key leakage** — key never appears in logs, telemetry, result
    JSON, `history`, or the repo; redaction helper covered by a test; secret
    scan clean.
@@ -1351,11 +1497,25 @@ M2.6B is COMPLETE only when **all** of the following hold:
 17. **Real-hardware operator acceptance** — an operator cloud-path session
     on the real Pi + reSpeaker/XVF3800 is explicitly accepted **before**
     M2.6B is marked COMPLETE (as M2.6A required).
+18. **Initial history seeded exactly once; `system_instruction` never
+    mutated on an open connection** (Amendment 1 §2 / §3) — the bounded
+    `CloudContextSnapshot` recent turns are delivered once at session start
+    via the initial-history mechanism (no model call), never re-injected
+    turn-by-turn; a sticky language command updates canonical state
+    immediately and reaches the provider setup only on the next new /
+    resumed session (deterministic test).
+19. **Eligibility is a deployment policy, not a key property** (Amendment 1
+    §1) — `DEVELOPMENT` mode is not blocked when billing is disabled;
+    `DISTRIBUTED` mode with an EEA/CH/UK target user refuses to start cloud
+    under `CLOUD_PREFERRED` / `AUTO` unless `billing_verified` is true; the
+    credential loader never infers a tier from the key string
+    (deterministic test).
 
 **Reconnect testing:** deterministic / mocked first (GoAway, socket close,
-resumption reject, age-timer); a **minimum** of real-cloud validation
-after. **No artificial quota-exhaustion test is required** — the 429 path
-is covered by a mocked response and the Decision J table.
+resumption reject / `resumable=false`, age-timer); a **minimum** of
+real-cloud validation after. **No artificial quota-exhaustion test is
+required** — the 429 path is covered by a mocked response and the Decision J
+table.
 
 ---
 
@@ -1386,6 +1546,19 @@ is covered by a mocked response and the Decision J table.
   empty; `git diff -- tests` empty; `git diff -- pyproject.toml` empty; no
   dependency file changed; no Gemini conversation run; no reconnect / quota /
   stress test run.
+- **Amendment 1 (2026-09-10):** four pre-implementation factual / API /
+  terms corrections (see the Amendment 1 section). **No accepted decision is
+  reversed.** Explicitly preserved unchanged: one canonical
+  `ConversationSession`; `RealtimeVoiceProvider` as a peer of
+  `ModelProvider`; the `GeminiLiveProvider` wrapper; the `LOCAL_ONLY` /
+  `CLOUD_PREFERRED` / `AUTO` policy split and the `active_provider`
+  distinction; the privacy-filtered `CloudContextSnapshot`; Option A
+  native-mirroring default + Option B fallback; `Sulafat`; the NeXa-owned
+  #5465 protection; XVF3800 AEC; local Silero turn authority; local
+  speaker / barge-in authority; the optional `cloud-gemini` dependency;
+  tools gated by a future NeXa ActionRouter; Gemini session ≠ NeXa
+  identity / memory; Pipecat infrastructure-only authority. M2.6A remains
+  PASS / OPERATOR-CONFIRMED. M2.6B remains NEXT / NOT STARTED.
 
 ### Revisit triggers
 - M2.6B operator evidence contradicting Option A language routing → adopt
@@ -1398,3 +1571,198 @@ is covered by a mocked response and the Decision J table.
   here.
 - A second realtime voice provider being added → confirm the
   `RealtimeVoiceProvider` contract still fits; amend if not.
+
+---
+
+## Amendment 1 — factual / API / terms corrections before M2.6B (2026-09-10)
+
+Four pre-implementation corrections against **current** official Google
+Gemini documentation and the Gemini API Additional Terms (verified
+2026-09-10). **No accepted decision is reversed.** Original decision text is
+kept; each affected section above carries an inline pointer here.
+
+### Official facts verified (2026-09-10)
+
+| # | `VERIFIED FACT` | Source |
+|---|---|---|
+| 1 | "You may use only Paid Services when making API Clients available to users in the European Economic Area, Switzerland, or the United Kingdom." | Gemini API Additional Terms |
+| 1 | "If you're in the European Economic Area, Switzerland, or the United Kingdom, the terms under 'How Google uses Your Data' in 'Paid Services' apply to all Services, including Google AI Studio and unpaid quota in the Gemini API, even though they are offered free of charge." | Gemini API Additional Terms |
+| 1 | The United Kingdom is a supported Gemini API region; the available-regions / billing docs place no UK-specific Free-Tier exclusion — the Free Tier is available in the UK. | Gemini API available-regions / billing docs |
+| 2 | "You cannot update the configuration while the connection is open. However, you can change the configuration parameters, except the model, when pausing and resuming via the session resumption mechanism." (`BidiGenerateContentSetup` = `model`, `generationConfig`, `systemInstruction`, `tools[]`) | Live API WebSockets reference |
+| 3 | `HistoryConfig.initialHistoryInClientContent` (bool): "If true, after sending setupComplete, the server will wait and at first process clientContent messages until turnComplete is true. This initial history will not trigger a model call." | Live API WebSockets reference |
+| 4 | `SessionResumptionUpdate` = `newHandle` (string) + `resumable` (bool). "Resumption is not possible at some points in the session. For example, when the model is executing function calls or generating … such [resumption] will result in some data loss." | Live API WebSockets reference |
+| 4 | `GoAway.timeLeft` = "The remaining time before the connection will be terminated as ABORTED." | Live API WebSockets reference |
+
+### 1 — UK / EEA / Paid-Services correction
+
+**What the ADR said:** "the operator is in the EEA" and, from that, "v1
+cloud voice must use a **paid-tier key**"; the credential loader was to
+"record whether the configured key is declared paid-tier"; `CLOUD_PREFERRED`
+/ `AUTO` would "refuse to start cloud without that declaration".
+
+**Corrected:**
+
+- The operator is in the **United Kingdom**. The UK is **not** in the EEA.
+  Google's terms name the **European Economic Area, Switzerland and the
+  United Kingdom** as three separate covered regions. Correct every
+  occurrence.
+- Keep two distinct terms facts separate:
+  - **(A) Data treatment.** For a developer in the EEA / CH / UK, the Paid
+    Services "How Google uses Your Data" provisions apply to **all**
+    Services, including Google AI Studio and unpaid Gemini API quota, even
+    when free of charge. So the ADR must **not** state that a UK developer's
+    free quota is used for model improvement under the ordinary
+    unpaid-services rule.
+  - **(B) Making an API Client available to users.** Only Paid Services may
+    be used when making API Clients available to **users** in the EEA / CH /
+    UK. This is a **distribution / user-facing** requirement.
+- Do **not** convert (B) into "M2.6B private/internal development cannot run
+  unless the API project is already paid." The Gemini API **Free Tier is
+  available in the UK**. Development is not blocked by billing being
+  disabled, and no artificial quota-exhaustion testing is done.
+- A Gemini API key is **not** inherently a "paid key". Billing / tier
+  belongs to the associated **project / account**, verified out-of-band. Do
+  **not** invent a cryptographic property or prefix that marks a key as
+  paid.
+
+**Production rule (replaces the "paid-tier key" concept):**
+
+- `ProviderEligibilityPolicy` is a deployment-policy input, held with
+  `ConversationPolicy` config, **not** with the credential:
+  - `distribution_mode` ∈ { `DEVELOPMENT`, `DISTRIBUTED` }
+  - `billing_verified` : bool — set out-of-band from the project's billing /
+    paid-service status; never inferred from the key.
+- `distribution_mode = DEVELOPMENT` (private operator, not offered to other
+  users): may use whichever Gemini API tier the project is enrolled in and
+  the terms permit; **not** blocked because billing is not enabled.
+- `distribution_mode = DISTRIBUTED` **and** any target user is in the
+  EEA / CH / UK: **must** use Paid Services; `CLOUD_PREFERRED` / `AUTO`
+  refuse to start cloud until `billing_verified` is true; a release is
+  checked for active billing before it is made available to users.
+- The `credentials.py` loader carries **no** paid/unpaid flag. The
+  `CredentialSource` seam is unchanged.
+
+Affected above: Context evidence bullet; Decision D (`AUTO` provisional
+gate); Decision K (heading pointer + Region/Paid-Services bullets +
+Forbids); Provider switching path step 1; Security/credential summary;
+M2.6B plan rows 2 and 7; acceptance gate 19.
+
+### 2 — System instruction cannot change mid-connection
+
+**What the ADR said:** a sticky language-preference change could update the
+Gemini `system_instruction` "into an updated `system_instruction` line when
+a sticky command is detected mid-session" and the write-path could "schedule
+a `system_instruction` refresh".
+
+**Corrected (VERIFIED):** the `BidiGenerateContentSetup` message fixes
+`model`, `generationConfig`, `systemInstruction`, `tools` for the
+connection; the configuration **cannot be updated while the connection is
+open**; parameters other than `model` can change only when pausing/resuming
+via session resumption.
+
+**Production rule (Option A language routing is otherwise unchanged):**
+
+- Gemini performs native same-turn language mirroring.
+- NeXa permanently owns the sticky language preference and records it in
+  canonical state **immediately** when the spoken command is detected.
+- NeXa does **not** mutate `system_instruction` on the currently open
+  connection.
+- For v1, the simplest robust behaviour: the spoken sticky command itself
+  stays in Gemini's live conversational context, so Gemini may naturally
+  keep following it for later turns **in that connection**. NeXa's
+  authoritative preference is guaranteed to be applied to the Gemini setup /
+  system instruction on the **next** new or resumed / reconfigured
+  connection (via a rebuilt `CloudContextSnapshot`).
+- If strict, immediate, NeXa-enforced preference is ever required
+  independently of Gemini understanding the spoken command, schedule a
+  **controlled turn-boundary session reconfiguration / resumption** with the
+  updated setup. Do **not** force such a reconnect on every language command
+  in M2.6B unless evidence shows it is necessary.
+- Keep three things distinct: (a) Gemini following the user's spoken command
+  in its own live context; (b) NeXa canonical preference state; (c)
+  NeXa-enforced provider setup configuration.
+
+Affected above: Decision E (heading pointer + freshness); Decision F
+(heading pointer + the "next session" wording); Canonical write-path step 4;
+Language-routing summary; acceptance gate 18.
+
+### 3 — Gemini 3.1 initial history seeding
+
+**What the ADR said:** `CloudContextSnapshot.recent_turns` (~12 canonical
+turns) seeded "using `send_client_content`" as a one-time seed, with
+`send_client_content` described only as "seeds context at start only".
+
+**Corrected / made explicit (VERIFIED):** for
+`gemini-3.1-flash-live-preview`, initial context history is seeded by
+enabling the initial-history mode — `history_config.initial_history_in_client_content = true`
+(field `HistoryConfig.initialHistoryInClientContent`) — after which the
+server processes `clientContent` messages until `turnComplete` **without a
+model call**. After the first model turn, incremental text uses realtime
+input text, **not** `send_client_content` as a general mid-session history
+mechanism.
+
+**Production rule:**
+
+- **New, non-resumed Gemini session:**
+  1. configure initial-history support;
+  2. establish setup / `system_instruction`;
+  3. seed the bounded `CloudContextSnapshot` recent-turn history **once**
+     (`clientContent` until `turnComplete`; no model call);
+  4. begin realtime audio conversation.
+- **Resumed Gemini session:** do **not** duplicate the snapshot / history if
+  successful session resumption already restored the provider context.
+- **Resumption failure:** start a fresh session and seed a **fresh**
+  `CloudContextSnapshot` once.
+- **No repeated history injection turn-by-turn.**
+
+Affected above: Context evidence bullet; Decision C (heading pointer);
+Decision E (heading pointer + `recent_turns`); `CloudContextSnapshot`
+summary; M2.6B plan rows 3 and 8; acceptance gate 18.
+
+### 4 — Session resumption / reconnect safety
+
+**What the ADR said (Decision I / Reconnect path):** "open a **new** session
+using the **latest** session-resumption handle, transfer audio routing,
+then close the old session" — which reads as an assumed make-before-break
+overlap of two connections.
+
+**Corrected (VERIFIED):** `SessionResumptionUpdate` carries `resumable` and
+`newHandle`; **resumption is temporarily not possible** at some points
+(model generating or executing function calls) and using an earlier token in
+such a state **may cause data loss**; `GoAway.timeLeft` gives the controlled
+window before an `ABORTED` termination.
+
+**Amended Decision I rules:**
+
+- Maintain only the **latest handle for which `resumable=true`**.
+- **Never** treat an empty / non-resumable handle as usable.
+- Prefer a **safe turn boundary** (`generationComplete`) for the transition
+  where possible.
+- On `GoAway`, use `timeLeft` to schedule the controlled transition.
+- Buffer inbound user audio while `RECONNECTING`.
+- Local barge-in remains authoritative; the canonical `ConversationSession`
+  is never touched.
+- If safe resumption cannot occur, **fall back to a fresh provider session
+  built from a rebuilt `CloudContextSnapshot`** rather than risk corrupt
+  provider context.
+- Do **not** claim make-before-break connection overlap is supported unless
+  proven. The exact socket sequencing (overlap vs break-before-make) is
+  finalised in M2.6B after inspecting Pipecat 1.8.1 + `google-genai` 2.22.0
+  behaviour with deterministic tests.
+- No 10-minute quota-burning test at this point.
+
+Affected above: Decision I (heading pointer + proactive-reconnect bullet);
+Reconnect path diagram + prose; M2.6B plan row 5; acceptance gate 8.
+
+### Preserved unchanged by Amendment 1
+
+One canonical `ConversationSession`; `RealtimeVoiceProvider` as a peer of
+`ModelProvider`; the `GeminiLiveProvider` wrapper; `LOCAL_ONLY` /
+`CLOUD_PREFERRED` / `AUTO` policy split and the `active_provider`
+distinction; privacy-filtered `CloudContextSnapshot`; Gemini native
+language mirroring (Option A) + Option B fallback; `Sulafat`; NeXa-owned
+#5465 protection; XVF3800 AEC; local Silero turn authority; local speaker /
+barge-in authority; the optional `cloud-gemini` dependency; tools controlled
+by a future NeXa ActionRouter; Gemini session ≠ NeXa identity / memory;
+Pipecat infrastructure-only authority boundary. **M2.6A remains PASS /
+OPERATOR-CONFIRMED. M2.6B remains NEXT / NOT STARTED.**

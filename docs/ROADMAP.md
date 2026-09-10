@@ -129,17 +129,36 @@ unpaid-quota data is used to improve Google products.
   `LOCAL_ONLY` never leaves local; others fall back to `LOCAL` with the
   user informed; continuity survives); credentials = XDG secret file
   `~/.config/nexa/secrets/gemini.env` (700/600) + env-var-first loader +
-  `CredentialSource` seam, paid-tier key required for `CLOUD_PREFERRED`/
-  `AUTO` (EEA/CH/UK Paid-Services terms — stated as terms, not a legal
-  opinion); `google-genai>=2.22,<3` + `websockets>=15,<17` as an
-  **optional `cloud-gemini` extra** (`pip install .` stays Google-free;
-  `src/nexa/realtime/gemini/` imports `google.genai` lazily;
+  `CredentialSource` seam; `google-genai>=2.22,<3` + `websockets>=15,<17`
+  as an **optional `cloud-gemini` extra** (`pip install .` stays
+  Google-free; `src/nexa/realtime/gemini/` imports `google.genai` lazily;
   `pipecat-ai[local]==1.8.1` unchanged); `ProviderUsageEvent` from
   authoritative `usageMetadata`; Gemini function calling never the
   capability authority (event types defined, OFF in v1); Pipecat owns
   media/WS mechanics only. The ADR carries the ordered M2.6B
-  implementation plan (15 components) and 17 measurable M2.6B acceptance
+  implementation plan (15 components) and 19 measurable M2.6B acceptance
   gates. No `src/` / `tests/` / dependency-file change in the ADR task.
+  **Amendment 1 (2026-09-10)** — four pre-M2.6B factual/API/terms
+  corrections, **no decision reversed**: (1) operator is in the **UK**
+  (not the EEA — Google groups EEA/CH/UK); split "data treatment" from
+  "making an API Client available to users"; the Gemini API **Free Tier is
+  available in the UK** so `DEVELOPMENT`-mode M2.6B work is not blocked by
+  billing; a Gemini key is **not** a "paid key" — eligibility is a
+  deployment policy `ProviderEligibilityPolicy(distribution_mode,
+  billing_verified)`, nothing inferred from the key string, `DISTRIBUTED` +
+  EEA/CH/UK users requires `billing_verified`. (2) `system_instruction` is
+  **immutable on an open Live connection** — a sticky language command
+  updates NeXa canonical state immediately and reaches the provider setup
+  only on the **next** new/resumed session; no forced per-command reconnect
+  in M2.6B. (3) Gemini-3.1 recent-turn history is seeded **once** at
+  session start via the initial-history mechanism
+  (`history_config.initial_history_in_client_content=true`), never
+  turn-by-turn. (4) session-resumption reconnect keeps only the latest
+  `resumable=true` handle, never uses a non-resumable/empty handle, prefers
+  a safe turn boundary, uses `GoAway.timeLeft`, buffers inbound audio while
+  reconnecting, falls back to a fresh seeded session if safe resumption is
+  impossible — **make-before-break connection overlap is no longer
+  assumed** (socket sequencing → M2.6B).
 - **M2.6B** (next task) — production `RealtimeVoiceProvider` +
   `GeminiLiveProvider` + `ConversationRouter` + `ConversationPolicy` +
   `SetConversationPolicy` + `CloudContextSnapshot` + inbound #5465 buffer +
