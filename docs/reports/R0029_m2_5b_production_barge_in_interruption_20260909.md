@@ -1522,7 +1522,7 @@ status) → `c1306b6` → `97f4a84` → `20df578` (wiring audit +
   now *after* the transcript + replacement response, via a stale/zombie
   deadline task orphaned by the forced `INTERRUPTING→RESPONDING`
   transition in `notify_response_dispatched`.
-- `<PENDING v2>` — **v2.** Capture-generation-scoped timers: each
+- `be9f0cd` — **v2.** Capture-generation-scoped timers: each
   settle/deadline coroutine holds its `capture_id` by value and goes inert
   once `_active_capture_id` moves on (`_capture_stale`); one
   `_end_capture_phase(abandon=…)` closes the phase on every exit including
@@ -1534,8 +1534,7 @@ status) → `c1306b6` → `97f4a84` → `20df578` (wiring audit +
   v1 code). `bargein.py`, `adapter.py`, `bargein_wiring.py`, `runtime.py`.
 
 This hash-record edit lands in the immediately-following commit
-(R0026/R0027/R0028 pattern); it replaces the `<PENDING v2>` marker above
-with the M2.5B.3 v2 commit hash. Prior milestone tip: `2f23613` (M2.5A
+(R0026/R0027/R0028 pattern). Prior milestone tip: `2f23613` (M2.5A
 closure). **Not pushed.**
 
 ## GIT STATUS
@@ -1543,8 +1542,8 @@ closure). **Not pushed.**
 Branch `main`, **not pushed**. `git diff --check` clean. Sequence:
 `2f23613` (M2.5A closed) → … → `4a55a7e` → `893c8a3` (M2.5B.1) →
 `7f4e182` → `79a6899` → `b9f3738` (M2.5B.2) → `989f68f` (M2.5B.3 v1) →
-`0c45f57` (v1 hash record) → `<PENDING v2>` (M2.5B.3 v2 —
-capture-scoped timers) → hash-record commit (this edit). Frozen
+`0c45f57` (v1 hash record) → `be9f0cd` (M2.5B.3 v2 — capture-scoped
+timers) → hash-record commit (this edit). Frozen
 components (model / `num_thread` /
 `keep_alive` / `num_ctx` / whisper / Piper / `ResponseLanguageResolver`)
 untouched; the Ollama service was briefly reconfigured to
