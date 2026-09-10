@@ -1364,7 +1364,7 @@ status) → `c1306b6` → `97f4a84` → `20df578` (wiring audit +
 
 **M2.5B.3 (interruption-capture lifecycle):**
 
-- `<PENDING>` — settle armed at confirm + `_last_vad_activity`-driven
+- `989f68f` — settle armed at confirm + `_last_vad_activity`-driven
   (bargein.py); `_interrupt_open_segments` off the finalise gate + late
   segment-result grace (adapter.py); capture processor consults the state
   machine directly so no interruption segment is DROP_BUSY'd (runtime.py);
@@ -1379,7 +1379,7 @@ closure). **Not pushed.**
 
 Branch `main`, **not pushed**. `git diff --check` clean. Sequence:
 `2f23613` (M2.5A closed) → … → `4a55a7e` → `893c8a3` (M2.5B.1) →
-`7f4e182` → `79a6899` → `b9f3738` (M2.5B.2) → **`<PENDING>` (M2.5B.3)** →
+`7f4e182` → `79a6899` → `b9f3738` (M2.5B.2) → `989f68f` (M2.5B.3) →
 hash-record commit (this edit). Frozen components (model / `num_thread` /
 `keep_alive` / `num_ctx` / whisper / Piper / `ResponseLanguageResolver`)
 untouched; the Ollama service was briefly reconfigured to
