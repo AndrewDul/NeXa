@@ -825,9 +825,8 @@ full suite not re-run (no `src`/`tests` change).
 - `f920315` / `b3c7c32` — R0031 v1 + connectivity smoke + probe v1 + R0030
   Phase-0 corrections.
 - `d15e785` / `377e99a` — attempt-#1 diagnosis + `LLMRunFrame` fix.
-- `<PENDING — this commit>` — attempt-#2 PASS: corrected barge-in metrics
-  (`--recompute`), C6 instrumentation, `Sulafat` voice config, R0031 final
-  verdict.
+- `ddb7c70` — attempt-#2 PASS: corrected barge-in metrics (`--recompute`),
+  C6 instrumentation, `Sulafat` voice config, R0031 final verdict.
 
 This hash-record note is finalised by the immediately-following commit
 (R0026–R0030 pattern). Prior tip: `b3c7c32`.
