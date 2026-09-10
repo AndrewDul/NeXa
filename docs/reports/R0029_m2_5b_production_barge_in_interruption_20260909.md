@@ -32,19 +32,26 @@
   R0026.
   **M2.5B.3 (2026-09-10):** a real live `--bargein` conversation —
   **operator rates conversation quality, naturalness, voice, local
-  response speed and PL/EN switching GOOD / ACCEPTABLE.** One remaining
-  defect: the interruption-capture phase sometimes hung to the 12 s
-  controller hard cap + 15 s adapter timeout, and once busy-dropped
-  6360 ms of an interruption's own audio. **Root-caused + FIXED** — the
-  settle window was armed only on a VAD `INTERRUPT_SEGMENT_ENDED`, and
-  `broadcast_interruption()` flushes the `BargeInController`'s own frame
-  queue, so on a lagged Pi loop that segment-END could be dropped and the
-  phase could never settle. The settle is now armed at confirm and driven
-  by a `_last_vad_activity` timestamp (every VAD frame, incl.
-  `UserSpeakingFrame`); `_interrupt_open_segments` no longer gates
-  finalisation; a trailing segment of the confirmed interruption is never
-  DROP_BUSY'd. See *M2.5B.3*. **Still NOT operator-confirmed** — one short
-  live re-test of the interruption lifecycle is owed. Not pushed.
+  response speed and PL/EN switching GOOD / ACCEPTABLE** (do NOT redesign
+  barge-in). Remaining defect: the interruption-capture 12 s controller
+  hard cap + 15 s adapter timeout kept firing. **v1** (settle armed at
+  confirm, driven by every VAD frame incl. `UserSpeakingFrame`;
+  `_interrupt_open_segments` off the finalise gate) fixed the
+  *multi-segment capture* but the **first live re-test FAILED** — the cap
+  warnings still fired, and *after* the interruption had already produced
+  a canonical transcript + started the replacement response. **v2 root
+  cause:** a **stale/zombie `_capture_deadline` task** —
+  `notify_response_dispatched` force-flips the state machine
+  `INTERRUPTING → RESPONDING` without running the timer cleanup, so the
+  deadline coroutine for that capture was orphaned and warned ~12 s later
+  (and a trailing segment was busy-dropped → the 4600 ms). **v2 fix:**
+  **capture-generation-scoped timers** — every timer captures its
+  `capture_id` by value and goes inert the instant it no longer owns the
+  phase (`_active_capture_id`); a single `_end_capture_phase(abandon=…)`
+  closes the phase on *every* exit incl. the forced transition, telling
+  the adapter to abandon its own capture too. See *M2.5B.3*. **Still NOT
+  operator-confirmed** — one short live re-test of the interruption
+  lifecycle is owed. Not pushed.
 - **Related:** `R0028` (M2.5A architecture + real-hardware feasibility;
   **M2.5A COMPLETE / OPERATOR-CONFIRMED 2026-09-09**), `R0026` (the
   half-duplex behaviour this milestone replaces when enabled), `R0027`
@@ -1139,26 +1146,129 @@ with an injected clock:
 Test B **fails against the pre-fix code** (settle never fires) and passes
 with the fix.
 
+### M2.5B.3 v2 — first live re-test FAILED: stale/zombie capture-deadline task
+
+The first M2.5B.3 fix helped — a long multi-clause interruption was
+captured as **one** canonical transcript. **But the hard cap kept firing**
+(`capture[1..3,7,9..12] hit the 12.0s hard cap`), and once
+`DROP_BUSY … dropped 4600ms of audio`. Critically, **the cap warnings
+fired *after* the interruption had already produced its canonical
+transcript and the replacement response had started** — a *stale timer*,
+not "capture never settles".
+
+**Root cause (v2):** `_capture_deadline_task` was **one mutable field**,
+and `_capture_deadline` read `self._capture_id` at wake time, not a value
+captured at creation. `InterruptionStateMachine.notify_response_dispatched`
+forces `INTERRUPTING → RESPONDING` *unconditionally* (for the replacement
+turn), **without** going through `notify_interruption_complete` — so the
+controller's `_end_capture_phase` / `_cancel_settle_tasks` never ran for
+that capture. Also `_maybe_finalize_interrupt` could still return without
+finalising while `_interrupt_pending_results > 0` (a VAD segment-END
+counted an owed STT result that a flushed audio buffer never produced), so
+the adapter's own finalise/hook path never ran either. The deadline
+coroutine for capture N therefore stayed alive, woke ~12 s later, saw the
+SM no longer INTERRUPTING (harmless state-wise) **but still logged the
+warning** — and if the SM had been force-flipped mid-segment, a trailing
+segment of that same interruption was then busy-dropped (the 4600 ms;
+classification **C — misclassified because a stale/corrupted lifecycle
+state**).
+
+Answers: **1** yes — a coalesced turn + replacement could exist while
+`_capture_deadline_task` was still alive, because the phase was ended by
+the forced `notify_response_dispatched` transition that skipped timer
+cleanup. **2** no — not on the forced-transition path, nor when
+`_maybe_finalize` kept returning on `pending>0`. **3** no — it cancelled
+whatever the single field currently pointed at, which after a new confirm
+is capture N+1's task. **4** yes. **5** yes. **6** the cancellation was
+issued but to the wrong task / not at all. **7** it read mutable
+`self._capture_id` later — **now captured by value**. **8** not
+`broadcast_interruption` itself; the forced SM transition. **9** explained
+above — the deadline was orphaned by a cleanup-free `INTERRUPTING →
+RESPONDING`.
+
+**Fix (v2) — capture-generation-scoped timers:**
+
+1. `_capture_id` (+1 per confirm) is the generation; **`_active_capture_id`**
+   is the generation that currently *owns* the phase (`None` between
+   captures). Every timer coroutine (`_settle_after`, `_capture_deadline`)
+   **captures its `cid` by value** and first checks `_capture_stale(cid)`
+   (`cid is None or cid != _active_capture_id`) → **returns silently** — no
+   warning, no state mutation. A stale/orphaned/field-clobbered timer from
+   capture N is provably inert.
+2. **`_end_capture_phase(abandon=…)`** is the *single* place the phase
+   closes: nulls `_active_capture_id` + cancels the settle + hard-cap
+   tasks. Called by `notify_interruption_complete` (normal) **and** by
+   `notify_response_dispatched` when the SM is still `INTERRUPTING`
+   (`abandon=True`) **and** on `End/Cancel/ErrorFrame` (`abandon=True`).
+3. `abandon=True` invokes a new controller→adapter hook
+   `adapter.abandon_interrupt_capture()` — finalise now with whatever was
+   captured (so the operator's interruption text is not lost and the
+   adapter's 15 s timeout is cancelled); the coalesced turn, if any, just
+   queues behind the reply that ended the phase.
+4. The DROP_BUSY log now carries `InterruptionState`, `capture_id`,
+   `active_capture_id`, `response_id`, `gate.capturing_interrupt`,
+   `seg_started_during_INTERRUPTING`, `seg_duration_s` — and a segment that
+   **began** while `INTERRUPTING` is never busy-dropped even if its END
+   arrives after the phase closed (`_seg_started_during_interrupting` in
+   `_UtteranceCaptureFrameProcessor`).
+
+**Invariant now enforced + tested:** *finalised capture N → all its timers
+inert → capture N can never emit another lifecycle event* (no cap
+warning, no state change). The 12 s cap and 15 s timeout remain unchanged
+as guards and now fire only for a genuinely-still-active stuck capture.
+
+**4600 ms drop classification: C** — a trailing segment of the active
+confirmed interruption, dropped because the lifecycle was corrupted by the
+orphaned/forced transition (not a genuinely new utterance). The v2 fix
+prevents it: the SM is no longer force-flipped without cleanup, and a
+segment that began during `INTERRUPTING` is never dropped.
+
+### New regression tests (v2) — `tests/test_bargein_m2_5b3.py::TestCaptureScopedTimers` (9)
+
+| test | what it locks |
+|---|---|
+| A | capture N finalises normally, replacement starts, wait past the hard-cap: **no cap warning**, `_active_capture_id` cleared |
+| B | capture N's timers are stale/done **before** capture N+1 starts; capture N+1 gets an independent, non-stale timer |
+| C | 10 sequential interruptions — after each replacement dispatch, the previous capture has **zero** live lifecycle timers and `_active_capture_id is None` |
+| D | timer-field overwrite: an old deadline task whose field was clobbered wakes past its cap and **stays silent** (inert by generation check) |
+| E | cancellation race (cap ≈ settle): exactly one coalesced turn, **no warning after success** |
+| F | the hard cap **still fires** for a genuinely stuck, still-active capture |
+| G | with capture 1 stale and capture 2 active, **only `capture[2]`** may log a cap; capture 1's task is silent + done |
+| H | a late STT result for a segment that began during `INTERRUPTING` is **not** DROP_BUSY'd |
+| I | genuinely new speech after the replacement reply is active → normal barge-in `DROP_BUSY` |
+
+Tests A–D **fail against the v1 code** and pass with v2.
+
 ## OPERATOR ACCEPTANCE STATUS
 
 **LIVE SESSION 2026-09-10 — overall UX GOOD / ACCEPTED BY OPERATOR
 (conversation quality, naturalness, voice, local response speed, PL/EN
-switching). REMAINING DEFECT: interruption-capture lifecycle / timeout —
-root-caused + FIXED (M2.5B.3). NOT yet `OPERATOR-CONFIRMED` — one short
-live re-test of the interruption lifecycle is owed.**
+switching — do NOT redesign barge-in). REMAINING DEFECT: interruption-
+capture lifecycle / hard-cap warnings. M2.5B.3 v1 fixed multi-segment
+capture but the first live re-test FAILED (cap still firing, now via a
+stale/zombie deadline task); M2.5B.3 v2 (capture-generation-scoped
+timers) fixes that. NOT yet `OPERATOR-CONFIRMED` — one short live re-test
+of the interruption lifecycle is owed.**
 
-- M2.5B.3 interruption-capture lifecycle: the 12 s controller hard cap and
-  15 s adapter timeout were firing for ordinary interruptions because the
-  settle window was armed only on a VAD segment-END that
-  `broadcast_interruption()` can flush from the controller's frame queue on
-  a lagged Pi loop; the 6360 ms drop was a trailing segment of that same
-  interruption. Fixed: settle armed at confirm + driven by every VAD frame
-  (incl. `UserSpeakingFrame`); `_interrupt_open_segments` off the finalise
-  gate; `_do_confirm` enters capture before the `await`; the capture
-  processor never DROP_BUSY's a segment while the state machine is
-  `INTERRUPTING`. 9 new deterministic regression tests. The 12 s / 15 s
-  guards are retained (unchanged) and now fire **zero** times in a healthy
-  session.
+- M2.5B.3 v1: the 12 s / 15 s guards were firing for ordinary
+  interruptions because the settle window was armed only on a VAD
+  segment-END that `broadcast_interruption()` can flush from the
+  controller's frame queue on a lagged Pi loop. Fixed: settle armed at
+  confirm + driven by every VAD frame (incl. `UserSpeakingFrame`);
+  `_interrupt_open_segments` off the finalise gate; `_do_confirm` enters
+  capture before the `await`. **First live re-test FAILED** — cap still
+  firing, *after* the transcript + replacement started.
+- M2.5B.3 v2: **stale/zombie `_capture_deadline` task.**
+  `notify_response_dispatched` force-flips `INTERRUPTING → RESPONDING`
+  without the timer cleanup, orphaning that capture's deadline coroutine
+  (warns ~12 s later; a trailing segment busy-dropped → the 4600 ms).
+  Fixed: **capture-generation-scoped timers** — each timer captures its
+  `capture_id` by value and goes inert once `_active_capture_id` no longer
+  matches; one `_end_capture_phase(abandon=…)` closes the phase on every
+  exit incl. the forced transition; the adapter is told to abandon its own
+  capture. 9 more deterministic tests (`TestCaptureScopedTimers`). The
+  12 s / 15 s guards are retained unchanged and now fire only for a
+  genuinely-still-active stuck capture.
 - Problem 1 (fragmentation): fixed (capture/coalesce phase) + 13 regression
   tests including the exact live reproduction.
 - Problem 2 (late-session TTFT): root-caused on the real Pi — the context
@@ -1203,10 +1313,17 @@ shares the M2.5B.2 provider-context fix (no semantics change).
 - `tests/test_bargein_m2_5b1.py` — **13** M2.5B.1 cases (no-fragmentation,
   cancellation-overlap audit, bilingual interruption, `--no-bargein`
   unchanged, 15-cycle stress).
-- `tests/test_bargein_m2_5b3.py` — **9** M2.5B.3 interruption-capture
-  lifecycle cases (lost segment-END still settles / no 12 s cap / no 15 s
-  timeout; trailing segment never DROP_BUSY'd; delayed STT; missing
-  VAD+STT; repeated interruptions).
+- `tests/test_bargein_m2_5b3.py` — **9 + 9** M2.5B.3 interruption-capture
+  lifecycle cases. v1 (9): lost segment-END still settles / no 12 s cap /
+  no 15 s timeout; trailing segment never DROP_BUSY'd; delayed STT; missing
+  VAD+STT; repeated interruptions. v2 `TestCaptureScopedTimers` (9, A–I):
+  finalised capture N never warns after its replacement response starts;
+  capture N+1's timer is independent of N's; 10 sequential interruptions
+  leave zero live timers each; timer-field overwrite / cancellation race;
+  the hard cap still fires for a genuinely-stuck *active* capture; only the
+  active generation may log a cap; a segment started during `INTERRUPTING`
+  is never dropped; genuinely-new post-replacement audio follows normal
+  barge-in policy.
 - `src/nexa/voice_conversation/latency_ledger.py` — `LatencyLedger` /
   `TurnLedgerRecord` (M2.5B.1 per-turn latency instrumentation).
 - `src/nexa/conversation/provider_window.py` — **M2.5B.2: `ProviderWindow`**
@@ -1324,6 +1441,37 @@ shares the M2.5B.2 provider-context fix (no semantics change).
   Processor(is_capturing_interrupt=…)` — a segment is never DROP_BUSY'd
   while the `InterruptionStateMachine` is `INTERRUPTING`, regardless of the
   gate boolean.
+- `src/nexa/voice/bargein.py` — **M2.5B.3 v2:** capture-generation-scoped
+  timers. `_active_capture_id` (the one live generation); `_capture_stale
+  (cid)` (`cid is None or cid != _active_capture_id`); `_settle_after
+  (cid)` / `_capture_deadline(cid)` / `_notify_capture_settled(cid)` take
+  the generation **by value** and return early once stale — a timer for
+  capture N can never warn or mutate state after N ends. `_end_capture_
+  phase(abandon=…)` is the single phase-close point: clears
+  `_active_capture_id`, `_cancel_settle_tasks()`, and (when `abandon`)
+  fires `_on_capture_abandoned`. It runs on `notify_interruption_complete`,
+  on the **forced** `notify_response_dispatched` `INTERRUPTING→RESPONDING`
+  transition (the v2 leak — was flipping state with the deadline task still
+  live), and on End/Cancel/Error frames. `set_capture_hooks` gains a 4th
+  `on_capture_abandoned` arg; `capture_diagnostics()` for the DROP_BUSY
+  trace. The hard cap warning is now `capture[{cid}] hit the {N}s hard cap`.
+- `src/nexa/voice_conversation/adapter.py` — **M2.5B.3 v2:**
+  `abandon_interrupt_capture()` — the controller-driven counterpart to
+  `note_interrupt_capture_settled`; forces `settled=True`, reconciles
+  open/pending into `_late_interrupt_results`, and finalises the coalesced
+  turn now (so a force-abandoned capture still produces its one canonical
+  turn and cannot leak pending state into the next capture).
+- `src/nexa/voice_tts/bargein_wiring.py` — **M2.5B.3 v2:** `bind_adapter`
+  passes `adapter.abandon_interrupt_capture` as the 4th capture hook.
+- `src/nexa/voice/runtime.py` — **M2.5B.3 v2:** `_UtteranceCaptureFrame
+  Processor(bargein_diag=…)` + `_seg_started_during_interrupting` /
+  `_seg_started_at` tracking (set on `VADUserStartedSpeakingFrame`, cleared
+  after the stopped-speaking block). A segment that **started** during
+  `INTERRUPTING` is never DROP_BUSY'd even if the phase ends mid-segment.
+  The `DROP_BUSY_RESPONSE_IN_FLIGHT` log now carries `InterruptionState`,
+  `capture_id`, `active_capture_id`, `response_id`,
+  `gate.capturing_interrupt`, `seg_started_during_INTERRUPTING`,
+  `seg_duration_s`.
 
 **Unchanged (verified):** `gemma4:e4b` / `num_thread=2` / `keep_alive=30m`
 / warm-up, whisper `ggml-base-q8_0 -t4`, `LanguageIdGuard` thresholds,
@@ -1364,23 +1512,40 @@ status) → `c1306b6` → `97f4a84` → `20df578` (wiring audit +
 
 **M2.5B.3 (interruption-capture lifecycle):**
 
-- `989f68f` — settle armed at confirm + `_last_vad_activity`-driven
+- `989f68f` — **v1.** Settle armed at confirm + `_last_vad_activity`-driven
   (bargein.py); `_interrupt_open_segments` off the finalise gate + late
   segment-result grace (adapter.py); capture processor consults the state
   machine directly so no interruption segment is DROP_BUSY'd (runtime.py);
   `capture_id` lifecycle trace; 9 new regression tests
   (`test_bargein_m2_5b3.py`); this report's M2.5B.3 section.
+  **First live re-test (2026-09-10) FAILED** — the hard cap kept firing,
+  now *after* the transcript + replacement response, via a stale/zombie
+  deadline task orphaned by the forced `INTERRUPTING→RESPONDING`
+  transition in `notify_response_dispatched`.
+- `<PENDING v2>` — **v2.** Capture-generation-scoped timers: each
+  settle/deadline coroutine holds its `capture_id` by value and goes inert
+  once `_active_capture_id` moves on (`_capture_stale`); one
+  `_end_capture_phase(abandon=…)` closes the phase on every exit including
+  the forced transition and End/Cancel/Error frames;
+  `on_capture_abandoned` hook → `adapter.abandon_interrupt_capture()`;
+  `capture_diagnostics()` + enriched `DROP_BUSY_RESPONSE_IN_FLIGHT` trace;
+  a segment that started during `INTERRUPTING` is never dropped. 9 more
+  regression tests (`TestCaptureScopedTimers`, A–I; A–D fail against the
+  v1 code). `bargein.py`, `adapter.py`, `bargein_wiring.py`, `runtime.py`.
 
 This hash-record edit lands in the immediately-following commit
-(R0026/R0027/R0028 pattern). Prior milestone tip: `2f23613` (M2.5A
+(R0026/R0027/R0028 pattern); it replaces the `<PENDING v2>` marker above
+with the M2.5B.3 v2 commit hash. Prior milestone tip: `2f23613` (M2.5A
 closure). **Not pushed.**
 
 ## GIT STATUS
 
 Branch `main`, **not pushed**. `git diff --check` clean. Sequence:
 `2f23613` (M2.5A closed) → … → `4a55a7e` → `893c8a3` (M2.5B.1) →
-`7f4e182` → `79a6899` → `b9f3738` (M2.5B.2) → `989f68f` (M2.5B.3) →
-hash-record commit (this edit). Frozen components (model / `num_thread` /
+`7f4e182` → `79a6899` → `b9f3738` (M2.5B.2) → `989f68f` (M2.5B.3 v1) →
+`0c45f57` (v1 hash record) → `<PENDING v2>` (M2.5B.3 v2 —
+capture-scoped timers) → hash-record commit (this edit). Frozen
+components (model / `num_thread` /
 `keep_alive` / `num_ctx` / whisper / Piper / `ResponseLanguageResolver`)
 untouched; the Ollama service was briefly reconfigured to
 `OLLAMA_NUM_PARALLEL=2` for a measurement and **reverted** (back to
@@ -1444,16 +1609,20 @@ unchanged.
 ## NEXT STEP
 
 1. **Operator runs ONE short live re-test — the interruption-capture
-   lifecycle** (command + short interaction list below). PASS if: no
-   `interruption capture hit the 12.0s cap` line, no `interruption capture
-   timed out after 15.0s` line, no `DROP_BUSY … dropped …ms of audio` for
-   an interruption's own speech, and every interruption's replacement reply
-   still starts promptly (~1–3 s after you stop). On PASS: mark M2.5B
-   **OPERATOR-CONFIRMED**, update `CURRENT_STATE.md`, record the commit
-   hash.
+   lifecycle** (command + short interaction list below). The v1 re-test
+   FAILED; this is the v2 re-test. PASS if: no `capture[N] hit the 12.0s
+   hard cap` line, no `interruption capture timed out after 15.0s` line,
+   no `DROP_BUSY_RESPONSE_IN_FLIGHT … dropped …ms of audio` for an
+   interruption's own speech, **and specifically no cap/timeout line that
+   appears after the replacement response has started speaking**, and
+   every interruption's replacement reply still starts promptly (~1–3 s
+   after you stop). On PASS: mark M2.5B **OPERATOR-CONFIRMED**, update
+   `CURRENT_STATE.md`, record the commit hash.
 2. If the re-test still shows a 12 s / 15 s line, capture the terminal —
-   the `nexa.voice.bargein: capture[N] …` trace lines make one
-   interruption fully reconstructable.
+   the `nexa.voice.bargein: capture[N] …` trace lines plus the enriched
+   `DROP_BUSY_RESPONSE_IN_FLIGHT` line (now carrying `InterruptionState` /
+   `capture_id` / `active_capture_id` / `seg_started_during_INTERRUPTING`)
+   make one interruption fully reconstructable.
 3. Non-blocking, owed independently: the B.3.6 operator latency
    re-confirmation; a resource-safe non-blocking pre-warm to also remove
    the M2.5B.2 reset continuity dip.

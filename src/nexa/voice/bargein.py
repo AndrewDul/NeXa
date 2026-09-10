@@ -132,17 +132,28 @@ class BargeInController(FrameProcessor):
         self._on_seg_started = on_interrupt_segment_started
         self._on_seg_ended = on_interrupt_segment_ended
         self._on_capture_settled = on_interrupt_capture_settled
+        self._on_capture_abandoned: Callable[[], None] | None = None
         self._settle_secs = settle_secs
         self._max_capture_secs = max_capture_secs
         self._confirm_task: asyncio.Task | None = None
         self._settle_task: asyncio.Task | None = None
         self._capture_deadline_task: asyncio.Task | None = None
         self._confirming = False  # re-entrancy guard for _do_confirm
-        # M2.5B.3 — interruption-capture lifecycle bookkeeping. ``_capture_id``
-        # makes one interruption traceable end-to-end in the logs;
-        # ``_last_vad_activity`` drives the settle timer (see the module
-        # constant docstring).
+        # M2.5B.3 — interruption-capture lifecycle bookkeeping.
+        # ``_capture_id``       — monotonic generation, +1 per confirmed
+        #                         interruption, makes one interruption
+        #                         traceable end-to-end.
+        # ``_active_capture_id`` — the generation that currently OWNS the
+        #                         capture phase, or ``None`` between
+        #                         captures. Every capture timer coroutine
+        #                         captures its own id BY VALUE and becomes
+        #                         inert the instant it no longer matches —
+        #                         so a stale/orphaned timer from capture N
+        #                         can never log a cap or mutate state for
+        #                         capture N+1 (R0029 §M2.5B.3 v2 root cause).
+        # ``_last_vad_activity`` — drives the settle timer.
         self._capture_id = 0
+        self._active_capture_id: int | None = None
         self._last_vad_activity = 0.0
         self.telemetry = BargeInTelemetry()
 
@@ -173,17 +184,35 @@ class BargeInController(FrameProcessor):
         on_segment_started: Callable[[], None] | None,
         on_segment_ended: Callable[[], None] | None,
         on_capture_settled: Callable[[], None] | None,
+        on_capture_abandoned: Callable[[], None] | None = None,
     ) -> None:
         """M2.5B.1 — late-bind the interruption-capture callbacks (the
-        adapter that owns them is built after this controller)."""
+        adapter that owns them is built after this controller). M2.5B.3 v2
+        adds ``on_capture_abandoned`` — invoked when the capture phase is
+        force-ended (a reply dispatched while still INTERRUPTING, or a
+        pipeline stop) so the adapter drops its own capture state and its
+        15 s timeout instead of stranding them."""
         self._on_seg_started = on_segment_started
         self._on_seg_ended = on_segment_ended
         self._on_capture_settled = on_capture_settled
+        self._on_capture_abandoned = on_capture_abandoned
 
     # -- state the runtime / bridge drive ------------------------------- #
     @property
     def state_machine(self) -> InterruptionStateMachine:
         return self._sm
+
+    def capture_diagnostics(self) -> dict:
+        """M2.5B.3 v2 — a snapshot for the DROP_BUSY / trace log so a dropped
+        segment can be classified (trailing segment of the active
+        interruption vs. genuinely new speech)."""
+        return {
+            "state": self._sm.state.value,
+            "capture_id": self._capture_id,
+            "active_capture_id": self._active_capture_id,
+            "response_id": self._sm.active_response_id,
+            "interrupting": self._sm.state == InterruptionState.INTERRUPTING,
+        }
 
     @property
     def active_response_id(self) -> int | None:
@@ -195,11 +224,39 @@ class BargeInController(FrameProcessor):
     def notify_response_dispatched(self) -> int | None:
         """Called by ``AssistantSpeechBridge`` when a reply starts generating.
         Returns the freshly allocated ``response_id`` for the caller to stamp
-        onto its outgoing work."""
+        onto its outgoing work.
+
+        M2.5B.3 v2 — ``InterruptionStateMachine.notify_response_dispatched``
+        forces ``INTERRUPTING → RESPONDING`` unconditionally. If we were
+        still in the capture phase, a reply has been dispatched *for* this
+        interruption (or a stray turn slipped through) — the capture phase
+        is over. **End it here** so its settle + hard-cap timers are
+        cancelled and cannot fire later; without this the deadline task
+        from that capture is orphaned and logs a spurious cap ~12 s after
+        the replacement response already started."""
+        if self._sm.state == InterruptionState.INTERRUPTING:
+            self._trace("capture_phase_ended_on_response_dispatch")
+            self._end_capture_phase(abandon=True)
         self._sm.notify_response_dispatched()
         self.telemetry.response_started += 1
         self._sync_telemetry()
         return self._sm.active_response_id
+
+    def _end_capture_phase(self, *, abandon: bool = False) -> None:
+        """M2.5B.3 v2 — the single place that closes the capture phase:
+        invalidate the generation id (so every in-flight capture timer is
+        inert) and cancel the settle + hard-cap tasks. ``abandon=True``
+        also tells the adapter to drop its own capture state + 15 s
+        timeout — used when the phase is force-ended (a reply dispatched
+        while still INTERRUPTING, or a pipeline stop), NOT on the normal
+        adapter-driven completion (the adapter is already done then)."""
+        self._active_capture_id = None
+        self._cancel_settle_tasks()
+        if abandon and self._on_capture_abandoned is not None:
+            try:
+                self._on_capture_abandoned()
+            except Exception:
+                logger.exception("nexa.voice.bargein: on_capture_abandoned hook raised")
 
     def notify_response_finished(self) -> None:
         """A reply finished normally. **No-op while ``INTERRUPTING``** (the
@@ -215,7 +272,7 @@ class BargeInController(FrameProcessor):
         """M2.5B.1 — the adapter has coalesced + submitted the one canonical
         interruption turn. End the capture phase and cancel every capture
         timer (settle + hard cap)."""
-        self._cancel_settle_tasks()
+        self._end_capture_phase()
         ev = self._sm.notify_interruption_complete()
         if ev == InterruptionEvent.RESPONSE_FINISHED:
             self.telemetry.response_finished += 1
@@ -227,11 +284,12 @@ class BargeInController(FrameProcessor):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, StartFrame):
+            self._active_capture_id = None
             self._sm.reset()
             self._sync_telemetry()
         elif isinstance(frame, (EndFrame, CancelFrame, ErrorFrame)):
             self._cancel_confirm_task()
-            self._cancel_settle_tasks()
+            self._end_capture_phase(abandon=True)
             self._sm.reset()
             self._sync_telemetry()
         elif isinstance(frame, InterruptionFrame):
@@ -326,10 +384,13 @@ class BargeInController(FrameProcessor):
             self._confirm_task.cancel()
         self._confirm_task = None
 
-    # -- M2.5B.1 interruption-capture settle phase --------------------- #
+    # -- M2.5B.1/.3 interruption-capture settle phase ----------------- #
     def _arm_settle(self) -> None:
         self._cancel_settle_task()
-        self._settle_task = self.create_task(self._settle_after())
+        # capture the owning generation BY VALUE — the coroutine goes inert
+        # the instant _active_capture_id no longer matches.
+        cid = self._active_capture_id
+        self._settle_task = self.create_task(self._settle_after(cid))
 
     def _cancel_settle_task(self) -> None:
         if self._settle_task is not None and not self._settle_task.done():
@@ -342,35 +403,53 @@ class BargeInController(FrameProcessor):
             self._capture_deadline_task.cancel()
         self._capture_deadline_task = None
 
-    async def _settle_after(self) -> None:
-        """M2.5B.3 — one long-lived task: fire ``settle_secs`` after the
-        *last* VAD activity, re-checking rather than being cancelled/rearmed
-        per frame. Robust to a lost segment-END."""
+    def _capture_stale(self, cid: int | None) -> bool:
+        """M2.5B.3 v2 — this timer belongs to a capture that is no longer
+        the active one (completed, superseded, or reset). It must do
+        nothing: no warning, no state mutation."""
+        return cid is None or cid != self._active_capture_id
+
+    async def _settle_after(self, cid: int | None) -> None:
+        """M2.5B.3 — one long-lived task per capture generation ``cid``:
+        fire ``settle_secs`` after the *last* VAD activity, re-checking
+        rather than being cancelled/rearmed per frame. Robust to a lost
+        segment-END. Inert once ``cid`` is no longer the active capture."""
         try:
             while True:
+                if self._capture_stale(cid):
+                    return
                 remaining = self._settle_secs - (self._now() - self._last_vad_activity)
                 if remaining <= 0:
                     break
                 await asyncio.sleep(remaining)
         except asyncio.CancelledError:
             return
-        self._settle_task = None
+        if self._settle_task is not None and self._settle_task.done():
+            self._settle_task = None
+        if self._capture_stale(cid):
+            return
         self._trace("settle_fired")
-        self._notify_capture_settled()
+        self._notify_capture_settled(cid)
 
-    async def _capture_deadline(self) -> None:
+    async def _capture_deadline(self, cid: int | None) -> None:
         try:
             await asyncio.sleep(self._max_capture_secs)
         except asyncio.CancelledError:
             return
+        if self._capture_stale(cid):
+            # capture ``cid`` already finalised (or a newer one took over) —
+            # this is a stale/orphaned timer: stay silent.
+            return
         logger.warning(
-            f"nexa.voice.bargein: capture[{self._capture_id}] hit the "
+            f"nexa.voice.bargein: capture[{cid}] hit the "
             f"{self._max_capture_secs}s hard cap — forcing settle (this should "
             "not happen in ordinary use; see R0029 §M2.5B.3)"
         )
-        self._notify_capture_settled()
+        self._notify_capture_settled(cid)
 
-    def _notify_capture_settled(self) -> None:
+    def _notify_capture_settled(self, cid: int | None = None) -> None:
+        if cid is not None and self._capture_stale(cid):
+            return
         if self._sm.state != InterruptionState.INTERRUPTING:
             return
         self._sync_telemetry()
@@ -392,6 +471,7 @@ class BargeInController(FrameProcessor):
         try:
             invalidated = self._sm.last_invalidated_response_id
             self._capture_id += 1
+            self._active_capture_id = self._capture_id  # this generation now owns the phase
             self.telemetry.interrupt_confirmed += 1
             self.telemetry.last_interrupt_reason = reason
             self._sync_telemetry()
@@ -420,7 +500,9 @@ class BargeInController(FrameProcessor):
             self._last_vad_activity = self._now()
             self._arm_settle()
             self._trace("settle_armed", settle_secs=self._settle_secs)
-            self._capture_deadline_task = self.create_task(self._capture_deadline())
+            self._capture_deadline_task = self.create_task(
+                self._capture_deadline(self._capture_id)
+            )
             self._trace("deadline_armed", cap_secs=self._max_capture_secs)
             # Pipecat: cancel + recreate the output audio task, drop queued
             # PCM. (This also clears this processor's own frame queue — hence

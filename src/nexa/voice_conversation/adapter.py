@@ -416,6 +416,28 @@ class VoiceConversationAdapter:
                 self._interrupt_open_segments -= 1
             self._interrupt_pending_results += 1
 
+    def abandon_interrupt_capture(self) -> None:
+        """M2.5B.3 v2 — called by ``BargeInController`` when it force-ends the
+        capture phase (a reply was dispatched while still INTERRUPTING, or the
+        pipeline stopped). Finalise now with whatever was captured (so the
+        operator's interruption text is not silently lost and the 15 s
+        adapter timeout is cancelled) — the coalesced turn, if any, just
+        queues behind the reply that ended the phase."""
+        if not self._capturing_interrupt:
+            return
+        logger.info(
+            "nexa.voice_conversation: interruption capture ABANDONED by the "
+            f"controller ({len(self._interrupt_segments)} segment(s) captured, "
+            f"pending={self._interrupt_pending_results}) — finalising now"
+        )
+        self._interrupt_capture_settled = True
+        self._late_interrupt_results += max(
+            self._interrupt_open_segments, self._interrupt_pending_results
+        )
+        self._interrupt_open_segments = 0
+        self._interrupt_pending_results = 0
+        self._finalize_interrupt_turn()
+
     def note_interrupt_capture_settled(self) -> None:
         """Called by ``BargeInController`` — ``settle_secs`` elapsed with no
         VAD activity of any kind. The interruption utterance is definitively

@@ -101,6 +101,7 @@ class BargeInStack:
                 adapter.note_interrupt_segment_started,
                 adapter.note_interrupt_segment_ended,
                 adapter.note_interrupt_capture_settled,
+                adapter.abandon_interrupt_capture,
             )
 
     def response_id_source(self) -> int | None:

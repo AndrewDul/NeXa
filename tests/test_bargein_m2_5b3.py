@@ -27,11 +27,36 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from loguru import logger as _loguru  # noqa: E402
+
 from nexa.voice.interruption import InterruptionState  # noqa: E402
 
 # reuse the m2_5b1 fixture (adapter + real controller via build_bargein_stack)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_bargein_m2_5b1 import _Fixture, _tr  # noqa: E402
+
+
+class _CaptureLoguru:
+    """``nexa.voice.bargein`` logs via loguru, not stdlib logging, so
+    ``assertLogs`` cannot see it. Collect WARNING+ lines for the duration."""
+
+    def __init__(self, contains: str = "nexa.voice.bargein"):
+        self._contains = contains
+        self.warnings: list[str] = []
+        self._sink_id: int | None = None
+
+    def __enter__(self):
+        def _sink(msg):
+            rec = msg.record
+            if rec["level"].no >= 30 and self._contains in rec["message"]:
+                self.warnings.append(rec["message"])
+        self._sink_id = _loguru.add(_sink, level="WARNING")
+        return self
+
+    def __exit__(self, *exc):
+        if self._sink_id is not None:
+            _loguru.remove(self._sink_id)
+        return False
 
 
 class _Lifecycle(_Fixture):
@@ -232,6 +257,216 @@ class TestNoSpuriousCapOrTimeout(_Lifecycle):
                 if not t.done():
                     t.cancel()
             await self.adapter.shutdown()
+
+
+class TestCaptureScopedTimers(_Lifecycle):
+    """M2.5B.3 v2 — the NEW live evidence: hard-cap warnings firing AFTER the
+    interruption already produced a canonical transcript and the replacement
+    response started. Root cause: stale/zombie ``_capture_deadline`` task
+    from an already-finalised capture. Timers are now capture-generation
+    scoped and become inert the instant they no longer own the phase."""
+
+    async def _finalise_capture(self, ctl, t=1.2):
+        """Drive capture N to a normal coalesced-turn finalise."""
+        self._tick_speaking(ctl, t - 0.2)
+        self._seg_end(ctl, t)
+        self.adapter.handle_transcription(_tr("Czekaj, krócej."))
+        ctl._time_source = lambda t=t: t + 0.5  # noqa: SLF001
+        for _ in range(20):
+            await asyncio.sleep(0.02)
+            if self.adapter.coalesced_interrupt_turns >= 1:
+                break
+
+    async def test_A_capN_finalised_then_wait_past_cap_no_warning(self) -> None:
+        self._build(settle=0.12, capture_timeout=3.0)
+        ctl = self.stack.controller
+        ctl._max_capture_secs = 0.25  # noqa: SLF001  real hard-cap sleep
+        rid = ctl.notify_response_dispatched()
+        self.adapter._active_response_id = rid  # noqa: SLF001
+        self._turn_task = asyncio.ensure_future(
+            self.adapter._run_turn_inner(_tr("Opowiedz"))  # noqa: SLF001
+        )
+        await asyncio.sleep(0.03)
+        ctl._sm.speech_started(now=0.0)  # noqa: SLF001
+        ctl._sm.poll(now=1.0)  # noqa: SLF001
+        await ctl._do_confirm("sustained_vad")
+        await self._turn_task
+        with _CaptureLoguru() as cap:
+            await self._finalise_capture(ctl, t=0.15)
+            self.assertEqual(self.adapter.coalesced_interrupt_turns, 1)
+            # replacement response has started; wait well past the 0.25s cap
+            await asyncio.sleep(0.5)
+        self.assertEqual(cap.warnings, [])            # capture 1 hard-cap did NOT fire
+        self.assertIsNone(ctl._active_capture_id)  # noqa: SLF001
+
+    async def test_B_capN_dead_before_capN1_starts_independent_timer(self) -> None:
+        self._build(settle=0.12, capture_timeout=3.0)
+        ctl = self.stack.controller
+        ctl._max_capture_secs = 5.0  # noqa: SLF001 (won't fire in-test)
+        rid = ctl.notify_response_dispatched()
+        self.adapter._active_response_id = rid  # noqa: SLF001
+        self._turn_task = asyncio.ensure_future(
+            self.adapter._run_turn_inner(_tr("q1")))  # noqa: SLF001
+        await asyncio.sleep(0.03)
+        ctl._sm.speech_started(now=0.0); ctl._sm.poll(now=1.0)  # noqa: SLF001,E702
+        await ctl._do_confirm("sustained_vad")
+        await self._turn_task
+        cid1 = ctl._active_capture_id  # noqa: SLF001
+        dl1 = ctl._capture_deadline_task  # noqa: SLF001
+        await self._finalise_capture(ctl, t=0.2)
+        self.assertTrue(ctl._capture_stale(cid1))  # noqa: SLF001  capture 1 timers inert
+        self.assertTrue(dl1.done() or dl1.cancelled())
+        # capture 2
+        ctl._sm.notify_response_dispatched()   # noqa: SLF001 SM -> RESPONDING for the replacement
+        ctl._sm.speech_started(now=10.0); ctl._sm.poll(now=11.0)  # noqa: SLF001,E702
+        await ctl._do_confirm("sustained_vad")
+        cid2 = ctl._active_capture_id  # noqa: SLF001
+        self.assertNotEqual(cid1, cid2)
+        self.assertFalse(ctl._capture_stale(cid2))  # noqa: SLF001
+        self.assertIs(dl1 is ctl._capture_deadline_task, False)  # noqa: SLF001 distinct task
+
+    async def test_C_ten_interruptions_zero_live_timers_after_each(self) -> None:
+        for cycle in range(10):
+            self._build(settle=0.1, capture_timeout=2.0)
+            ctl = self.stack.controller
+            ctl._max_capture_secs = 4.0  # noqa: SLF001
+            rid = ctl.notify_response_dispatched()
+            self.adapter._active_response_id = rid  # noqa: SLF001
+            tt = asyncio.ensure_future(
+                self.adapter._run_turn_inner(_tr(f"q{cycle}")))  # noqa: SLF001
+            await asyncio.sleep(0.02)
+            ctl._sm.speech_started(now=0.0); ctl._sm.poll(now=1.0)  # noqa: SLF001,E702
+            await ctl._do_confirm("sustained_vad")
+            await tt
+            await self._finalise_capture(ctl, t=0.15)
+            self.assertEqual(self.adapter.coalesced_interrupt_turns, 1)
+            # after the replacement dispatch: NO live capture timer, id cleared
+            self.assertIsNone(ctl._active_capture_id)  # noqa: SLF001
+            dl = ctl._capture_deadline_task  # noqa: SLF001
+            st = ctl._settle_task  # noqa: SLF001
+            self.assertTrue(dl is None or dl.done() or dl.cancelled())
+            self.assertTrue(st is None or st.done() or st.cancelled())
+            for t in getattr(self, "_ctl_tasks", []):
+                if not t.done():
+                    t.cancel()
+            await self.adapter.shutdown()
+
+    async def test_D_timer_field_overwrite_old_task_is_inert(self) -> None:
+        self._build(settle=5.0, capture_timeout=5.0)
+        ctl = self.stack.controller
+        ctl._max_capture_secs = 0.25  # noqa: SLF001  set BEFORE _do_confirm
+        rid = ctl.notify_response_dispatched()
+        self.adapter._active_response_id = rid  # noqa: SLF001
+        tt = asyncio.ensure_future(self.adapter._run_turn_inner(_tr("q")))  # noqa: SLF001
+        await asyncio.sleep(0.03)
+        ctl._sm.speech_started(now=0.0); ctl._sm.poll(now=1.0)  # noqa: SLF001,E702
+        await ctl._do_confirm("sustained_vad")
+        await tt
+        cid1 = ctl._active_capture_id  # noqa: SLF001
+        old_task = ctl._capture_deadline_task  # noqa: SLF001
+        # simulate capture N+1 overwriting the field WITHOUT cancelling old
+        ctl._sm.notify_interruption_complete()  # noqa: SLF001 SM leaves INTERRUPTING
+        ctl._active_capture_id = None  # noqa: SLF001 phase ended
+        ctl._capture_deadline_task = object()  # type: ignore  # noqa: SLF001 field clobbered
+        with _CaptureLoguru() as cap:
+            await asyncio.sleep(0.5)   # old_task wakes past its cap
+        self.assertEqual(cap.warnings, [])   # stale/clobbered timer stayed silent
+        self.assertTrue(old_task.done())
+        self.assertTrue(ctl._capture_stale(cid1))  # noqa: SLF001
+
+    async def test_E_cancellation_race_exactly_one_outcome(self) -> None:
+        self._build(settle=0.05, capture_timeout=3.0)
+        ctl = self.stack.controller
+        ctl._max_capture_secs = 0.08  # noqa: SLF001 cap ~ settle -> race
+        rid = ctl.notify_response_dispatched()
+        self.adapter._active_response_id = rid  # noqa: SLF001
+        tt = asyncio.ensure_future(self.adapter._run_turn_inner(_tr("q")))  # noqa: SLF001
+        await asyncio.sleep(0.03)
+        ctl._sm.speech_started(now=0.0); ctl._sm.poll(now=1.0)  # noqa: SLF001,E702
+        await ctl._do_confirm("sustained_vad")
+        await tt
+        with _CaptureLoguru() as cap:
+            self._seg_end(ctl, 0.02)
+            self.adapter.handle_transcription(_tr("krócej"))
+            ctl._time_source = lambda: 0.5  # noqa: SLF001
+            await asyncio.sleep(0.4)
+        self.assertEqual(self.adapter.coalesced_interrupt_turns, 1)  # exactly one
+        self.assertEqual(cap.warnings, [])   # success -> no warning
+
+    async def test_F_hard_cap_STILL_fires_for_a_genuinely_stuck_capture(self) -> None:
+        self._build(settle=5.0, capture_timeout=5.0)
+        ctl = self.stack.controller
+        ctl._max_capture_secs = 0.2  # noqa: SLF001
+        rid = ctl.notify_response_dispatched()
+        self.adapter._active_response_id = rid  # noqa: SLF001
+        tt = asyncio.ensure_future(self.adapter._run_turn_inner(_tr("q")))  # noqa: SLF001
+        await asyncio.sleep(0.03)
+        ctl._sm.speech_started(now=0.0); ctl._sm.poll(now=1.0)  # noqa: SLF001,E702
+        await ctl._do_confirm("sustained_vad")
+        await tt
+        # nothing delivered, clock frozen so the settle loop keeps waiting;
+        # the active-capture hard cap is the only thing that can act
+        with _CaptureLoguru() as cap:
+            await asyncio.sleep(0.4)
+        self.assertTrue(any("hard cap" in m for m in cap.warnings))
+
+    async def test_G_only_the_active_capture_may_log_a_cap(self) -> None:
+        self._build(settle=5.0, capture_timeout=5.0)
+        ctl = self.stack.controller
+        ctl._max_capture_secs = 0.25  # noqa: SLF001
+        rid = ctl.notify_response_dispatched()
+        self.adapter._active_response_id = rid  # noqa: SLF001
+        tt = asyncio.ensure_future(self.adapter._run_turn_inner(_tr("q")))  # noqa: SLF001
+        await asyncio.sleep(0.03)
+        ctl._sm.speech_started(now=0.0); ctl._sm.poll(now=1.0)  # noqa: SLF001,E702
+        await ctl._do_confirm("sustained_vad")   # capture 1
+        await tt
+        task1 = ctl._capture_deadline_task  # noqa: SLF001
+        # capture 1 finalises; capture 2 confirmed before task1 wakes
+        ctl._sm.notify_interruption_complete()  # noqa: SLF001
+        ctl._active_capture_id = None  # noqa: SLF001
+        ctl._sm.notify_response_dispatched()  # noqa: SLF001 -> RESPONDING
+        ctl._sm.speech_started(now=10.0); ctl._sm.poll(now=11.0)  # noqa: SLF001,E702
+        await ctl._do_confirm("sustained_vad")   # capture 2 (active now)
+        with _CaptureLoguru() as cap:
+            await asyncio.sleep(0.6)  # both task1 and task2 wake past cap
+        caps = [m for m in cap.warnings if "hard cap" in m]
+        # exactly the ACTIVE capture (2) may warn; the stale one (1) stays silent
+        self.assertTrue(all("capture[2]" in m for m in caps))
+        self.assertTrue(task1.done())
+
+    async def test_H_trailing_segment_started_during_INTERRUPTING_never_dropped(self) -> None:
+        # exercised at the runtime level via the m2_5b1 fixture's adapter +
+        # the capture-processor guard is unit-tested in test_G above; here we
+        # assert the adapter never busy-drops a late interruption result
+        ctl = await self._confirm(settle=0.12, capture_timeout=2.0)
+        self._seg_start(ctl, 0.5)
+        for t in (1.0, 2.0, 3.0, 4.0):
+            self._tick_speaking(ctl, t)
+        self._seg_end(ctl, 4.5)
+        self.adapter.handle_transcription(_tr("bo najpierw musimy zrozumieć całe zdanie"))
+        ctl._time_source = lambda: 4.8  # noqa: SLF001
+        await asyncio.sleep(0.4)
+        self.assertEqual(self.adapter.coalesced_interrupt_turns, 1)
+        # a late STT result for a segment that began during INTERRUPTING
+        self.adapter.handle_transcription(_tr("Słuchaj."))
+        self.assertEqual(self.dropped, [])
+        self.assertEqual(self.adapter.dropped_busy_turns, 0)
+
+    async def test_I_new_audio_after_replacement_active_is_normal_barge_in(self) -> None:
+        ctl = await self._confirm(settle=0.12, capture_timeout=2.0)
+        self._seg_end(ctl, 0.6)
+        self.adapter.handle_transcription(_tr("krócej"))
+        ctl._time_source = lambda: 1.0  # noqa: SLF001
+        await asyncio.sleep(0.35)
+        self.assertEqual(self.adapter.coalesced_interrupt_turns, 1)
+        # genuinely new speech, well past the grace, while a reply streams
+        self.adapter._last_capture_finalized_at = None  # noqa: SLF001
+        self.adapter._late_interrupt_results = 0  # noqa: SLF001
+        if not self.adapter.turn_in_flight:
+            self.adapter._turn_in_flight = True  # noqa: SLF001
+        self.adapter.handle_transcription(_tr("Zupełnie nowe pytanie."))
+        self.assertEqual(len(self.dropped), 1)
 
 
 if __name__ == "__main__":

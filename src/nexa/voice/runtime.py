@@ -175,6 +175,7 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
         half_duplex_gate: HalfDuplexGate | None = None,
         on_utterance_dropped: Callable[[DroppedUtterance], None] | None = None,
         is_capturing_interrupt: Callable[[], bool] | None = None,
+        bargein_diag: Callable[[], dict] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -192,6 +193,12 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
         # interruption is NEVER busy-dropped even if the gate's own boolean
         # has already flipped (R0029 §M2.5B.3: the live 6360 ms drop).
         self._is_capturing_interrupt = is_capturing_interrupt
+        # M2.5B.3 v2 — a snapshot getter for the DROP_BUSY diagnostic log.
+        self._bargein_diag = bargein_diag
+        # whether the utterance currently being captured began while the
+        # interruption state machine was INTERRUPTING, and when.
+        self._seg_started_during_interrupting = False
+        self._seg_started_at: float | None = None
         self._on_utterance_dropped = on_utterance_dropped
         self._dropped_busy = 0
         self._queue = SerialTranscriptionQueue(
@@ -233,10 +240,24 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
             stt_queue_depth=self._queue.queue_size,
             dropped_count_this_session=self._dropped_busy,
         )
+        # M2.5B.3 v2 — classify: gate/state snapshot so a dropped utterance
+        # can be told apart from a trailing segment of a live interruption.
+        diag = self._bargein_diag() if self._bargein_diag is not None else {}
+        gate_cap = getattr(self._gate, "capturing_interrupt", None)
+        seg_dur = (
+            round(time.monotonic() - self._seg_started_at, 2)
+            if self._seg_started_at is not None
+            else None
+        )
         logger.info(
             f"nexa.voice: {DROP_BUSY_RESPONSE_IN_FLIGHT} — dropped {audio_ms}ms utterance "
             f"captured while a response is in flight (session total {self._dropped_busy}); "
-            f"stt_queue_depth={record.stt_queue_depth}"
+            f"stt_queue_depth={record.stt_queue_depth}; "
+            f"InterruptionState={diag.get('state')} capture_id={diag.get('capture_id')} "
+            f"active_capture_id={diag.get('active_capture_id')} "
+            f"response_id={diag.get('response_id')} gate.capturing_interrupt={gate_cap} "
+            f"seg_started_during_INTERRUPTING={self._seg_started_during_interrupting} "
+            f"seg_duration_s={seg_dur}"
         )
         if self._on_utterance_dropped is not None:
             self._on_utterance_dropped(record)
@@ -256,6 +277,11 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
             self._buffer.append_audio(frame.audio)
         elif isinstance(frame, VADUserStartedSpeakingFrame):
             self._buffer.mark_speech_started()
+            self._seg_started_during_interrupting = bool(
+                self._is_capturing_interrupt is not None
+                and self._is_capturing_interrupt()
+            )
+            self._seg_started_at = time.monotonic()
         elif isinstance(frame, VADUserStoppedSpeakingFrame):
             audio = self._buffer.mark_speech_stopped()
             if audio:
@@ -277,8 +303,12 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
                     self._is_capturing_interrupt is not None
                     and self._is_capturing_interrupt()
                 )
+                # M2.5B.3 v2 — a segment that BEGAN during INTERRUPTING is a
+                # segment of that confirmed interruption; never drop it even
+                # if its END arrives after the phase closed.
                 if (
                     not capturing
+                    and not self._seg_started_during_interrupting
                     and self._gate is not None
                     and self._gate.should_drop_busy_utterance()
                 ):
@@ -288,6 +318,8 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
                         self._queue.submit(audio, self._language)
                     except SttQueueOverflowError as exc:
                         self._handle_stt_error(exc)
+            self._seg_started_during_interrupting = False
+            self._seg_started_at = None
         elif isinstance(frame, (ErrorFrame, EndFrame, CancelFrame)):
             self._buffer.reset()
 
@@ -489,6 +521,7 @@ class VoiceRuntime:
             stages.append(self._bargein_controller)
         if self._transcriber is not None:
             _is_capturing = None
+            _bargein_diag = None
             if self._bargein_controller is not None:
                 from nexa.voice.interruption import InterruptionState as _IS
 
@@ -496,6 +529,8 @@ class VoiceRuntime:
 
                 def _is_capturing() -> bool:
                     return _ctl.state_machine.state == _IS.INTERRUPTING
+
+                _bargein_diag = _ctl.capture_diagnostics
 
             self._capture_processor = _UtteranceCaptureFrameProcessor(
                 sample_rate=self.config.sample_rate,
@@ -506,6 +541,7 @@ class VoiceRuntime:
                 half_duplex_gate=self._half_duplex_gate,
                 on_utterance_dropped=self._on_utterance_dropped,
                 is_capturing_interrupt=_is_capturing,
+                bargein_diag=_bargein_diag,
             )
             stages.append(self._capture_processor)
         stages.append(state_processor)
