@@ -5,11 +5,57 @@ Runtime / test evidence outranks anything else in this repo.
 
 ---
 
-- **Last verified:** 2026-09-09
+- **Last verified:** 2026-09-10
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0028_m2_5a_bargein_interruption_architecture_feasibility_20260909.md`
+- **Latest report:** `docs/reports/R0029_m2_5b_production_barge_in_interruption_20260909.md`
+  (**M2.5B — Production Barge-In / Interruption — COMPLETE / OPERATOR-CONFIRMED
+  (2026-09-10).** Production barge-in ships behind
+  `LocalAudioConfig.bargein_enabled` (default `False` = byte-for-byte R0026;
+  probe `--bargein` turns it on).
+  **Final live acceptance (2026-09-10, real Raspberry Pi,
+  `apps/nexa_bilingual_voice_probe.py --bargein`):** `✓ AEC REF ACTIVE`;
+  one continuous ~7-minute session with repeated natural + nested
+  interruptions across multiple consecutive responses. Deliberate
+  interruptions confirmed; old answer stopped; replacement started
+  normally; a long Polish interruption captured as **one** canonical turn;
+  PL/EN routing correct; no stale response resumed; no queue accumulation.
+  **Zero** `capture[N] hit the 12.0s hard cap`, **zero** `interruption
+  capture timed out after 15.0s`, **zero** `DROP_BUSY_RESPONSE_IN_FLIGHT`.
+  Final telemetry: busy-drop (utterances at capture) 0; busy-drop (STT
+  results at adapter) 0; STT queue depth 0; conversation queue depth 0;
+  max concurrent STT 1; max concurrent turns 1. The one `✗ AEC REF DOWN`
+  was after operator `Ctrl+C` on shutdown (expected).
+  **Operator UX (unchanged from the 2026-09-10 acceptance):** pleasant,
+  natural, fluent, good conversational quality, acceptable local response
+  speed — accepted local voice UX, **not re-tuned**. Ordinary whisper
+  `base-q8_0` recognition slips remain, known / accepted, **not a
+  blocker**; STT model selection is not reopened.
+  **Substages:** **M2.5B.1** interrupt-utterance capture/coalesce (one
+  interruption → one canonical turn, `2460463`) + responsive Ollama
+  cancellation (`cancel → worker-stop` ~2 s → **251 ms**, `4a55a7e`) —
+  DONE. **M2.5B.2** `nexa.conversation.ProviderWindow` (`7f4e182` →
+  `79a6899`) — a prefix-stable bounded provider-facing window over the
+  still-complete canonical `ConversationSession.history`, boundary =
+  `keep_entries=0` **context reset** (reset turn re-prefills persona
+  (cached) + new user turn → ~3.4 s ordinary turn) — removes the permanent
+  long-session KV-cache cliff; steady-state ~4 s for the whole session;
+  `OLLAMA_NUM_PARALLEL=2` measured on the Pi + **rejected** (gemma4 SWA →
+  concurrent foreground turn cold-reprocesses ~49 s); real-Pi 112-turn /
+  10-reset benchmark retained — DONE. **M2.5B.3** interruption-capture
+  lifecycle: **v1** (`989f68f`) fixed multi-segment capture but its live
+  re-test FAILED (spurious 12 s / 15 s warnings after the replacement
+  response — a stale/zombie `_capture_deadline` task orphaned by the forced
+  `INTERRUPTING → RESPONDING` transition); **v2** (`be9f0cd`)
+  capture-generation-scoped timers — every timer holds its `capture_id` by
+  value and goes inert once `_active_capture_id` moves on; one
+  `_end_capture_phase(abandon=…)` closes the phase on every exit incl. the
+  forced transition; `adapter.abandon_interrupt_capture()` — **v2 passed
+  the live re-test above** — DONE.
+  `pytest` 732 passed / 7 skipped; `unittest` 739 OK / 7 skipped; `ruff`
+  clean; `git diff --check` clean. Not pushed.)
+- **Prior report:** `docs/reports/R0028_m2_5a_bargein_interruption_architecture_feasibility_20260909.md`
   (**M2.5A — Barge-In / Interruption Architecture & Real-Hardware Feasibility
   — COMPLETE / OPERATOR-CONFIRMED (2026-09-09).** No `src/` change in M2.5A.
   Key facts for M2.5B: **(1)** on the bare `plug:usb_speaker` route NeXa's
@@ -256,10 +302,14 @@ Runtime / test evidence outranks anything else in this repo.
   M2.4B.1A CPU spike + metric fixes; `R0013` = M2.4B.1 instrumentation;
   `R0012` = M2.4B research; `R0011` = M2.4)
 - **Current milestone:** **M1 — Natural Text Conversation — COMPLETE**;
-  **M2 — Realtime Voice — IN PROGRESS** (M2.1, M2.2, M2.3, M2.4, M2.4B
-  COMPLETE, `OPERATOR-CONFIRMED`; **M2.5A — barge-in/interruption
+  **M2 — Realtime Voice — LOCAL VOICE COMPLETE** (M2.1, M2.2, M2.3, M2.4,
+  M2.4B COMPLETE, `OPERATOR-CONFIRMED`; **M2.5A — barge-in/interruption
   architecture & feasibility — COMPLETE / OPERATOR-CONFIRMED (2026-09-09),
-  `R0028`**; **active: M2.5B — production barge-in / interruption, `R0029`**)
+  `R0028`**; **M2.5B — production barge-in / interruption — COMPLETE /
+  OPERATOR-CONFIRMED (2026-09-10), `R0029`**). **Local realtime voice with
+  production barge-in is done.** **Next planned stage — CLOUD REALTIME
+  VOICE (Google Gemini Live, `gemini-3.1-flash-live-preview`) — recorded
+  in ROADMAP, NOT STARTED.**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
   M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1 local
   baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. M2
@@ -486,21 +536,21 @@ Runtime / test evidence outranks anything else in this repo.
   (InputSpeechLanguage / ResponseLanguage / ResponseLanguagePreference).
   +18 `tests/test_response_language_override_vs_sticky.py`; `pytest` 587 /
   `unittest` 594; ruff + diff-check clean. Nothing else moved.
-  **→ M2.4B is COMPLETE (2026-09-09); no blocker remains.** The active
-  voice milestone is now **M2.5 — barge-in / interruption**, opening with
-  the **M2.5A architecture / feasibility spike** (`R0028`).
-- **Current objective:** **M2.5A — barge-in / interruption architecture &
-  real-hardware feasibility** (`R0028`) — research + architecture audit +
-  Pipecat capability audit + AEC/self-echo feasibility + interruption
-  semantics design + small isolated spikes. NOT the production
-  implementation (that is M2.5B). Replaces the temporary R0026
-  whole-response `HalfDuplexGate` **without** reintroducing the backlog
-  bug. Non-blocking, deferred: the B.3.6 operator latency re-confirmation
-  (STT latency + END_OF_TURN→first-audio). `gemma4:e4b` + `num_thread=2` +
-  `keep_alive=30m` + warm-up + `ggml-base-q8_0` / `-t 4` /
-  `LanguageIdGuard` / `ResponseLanguageResolver` / Piper / SpeechPlanner /
-  continuity all unchanged; the plain explicit `WhisperCppTranscriber`
-  path (`--language pl|en`) still supported alongside the bilingual one.
+  **→ M2.4B is COMPLETE (2026-09-09); no blocker remains.**
+- **Current objective:** **none open — LOCAL VOICE is closed.** M2.5A
+  (`R0028`) and **M2.5B — production barge-in / interruption (`R0029`) are
+  COMPLETE / OPERATOR-CONFIRMED (2026-09-10).** Production barge-in
+  replaces the temporary R0026 whole-response `HalfDuplexGate` (behind
+  `bargein_enabled`, default off) **without** reintroducing the backlog
+  bug. `gemma4:e4b` + `num_thread=2` + `keep_alive=30m` + warm-up +
+  `ggml-base-q8_0` / `-t 4` / `LanguageIdGuard` / `ResponseLanguageResolver`
+  / Piper / SpeechPlanner / continuity / `ProviderWindow keep_entries=0`
+  all frozen; the plain explicit `WhisperCppTranscriber` path
+  (`--language pl|en`) still supported alongside the bilingual one.
+  **Next planned stage (recorded, NOT started): CLOUD REALTIME VOICE** —
+  see ROADMAP. Non-blocking, owed independently of M2.5B: the B.3.6
+  operator latency re-confirmation; a resource-safe non-blocking pre-warm
+  to remove the M2.5B.2 reset continuity dip.
 
 ---
 
@@ -510,6 +560,43 @@ Runtime / test evidence outranks anything else in this repo.
   (`python -m unittest discover -s tests`).
 - Documentation + ADR + report systems in place (`R0001`–`R0011`; `ADR-0001`,
   `ADR-0002` + its M1.0B amendment + Amendment 2, `ADR-0003`).
+- **M2.5B — production barge-in / interruption complete, `OPERATOR-CONFIRMED`
+  (2026-09-10)** (`R0029`). Behind `LocalAudioConfig.bargein_enabled`
+  (default `False` = byte-for-byte R0026; probe `--bargein`). **Accepted
+  LOCAL VOICE baseline:** audio input → Pipecat local transport → Silero
+  VAD → whisper.cpp `base/q8_0` → bilingual PL/EN guard → `ConversationSession`
+  → `ProviderWindow` → `gemma4:e4b` via Ollama → `NexaSpeechPlanner` →
+  Piper → audio output. **Production barge-in:** XVF3800 AEC far-end
+  reference (TTS PCM teed to `plug:respeaker` so the mic stays hot safely);
+  sustained-VAD (≥ 300 ms, no intervening stop) interruption confirmation;
+  responsive Ollama cancellation (`cancel → worker-stop` ~251 ms);
+  interruption capture/coalescing (one interruption = one canonical turn,
+  multi-segment safe); **capture-generation-scoped timers** (`_active_capture_id`
+  + `_capture_stale(cid)`; each settle / hard-cap timer holds its
+  `capture_id` by value and goes inert once superseded; one
+  `_end_capture_phase(abandon=…)` on every exit incl. the forced
+  `INTERRUPTING → RESPONDING`); correct interrupted-history semantics
+  (CASE A rollback / CASE B `interrupted=True` prefix); PL/EN
+  response-language routing preserved across an interruption; no stale
+  audio resumes; a segment that began during `INTERRUPTING` is never
+  busy-dropped. If the AEC feed cannot start or dies, barge-in disables
+  itself for that response and the mic falls back to R0026 suppression —
+  loudly (telemetry), never a silent unsafe hot mic. **ProviderWindow
+  (M2.5B.2):** canonical `ConversationSession.history` stays complete;
+  provider-facing context is a prefix-stable bounded window;
+  `keep_entries=0` context reset at the boundary; no permanent
+  long-session KV-cache cliff; reset turns ~ordinary latency in the
+  shipped `keep=0` config; real-Pi 112-turn / 10-reset benchmark retained.
+  The LLM (`gemma4:e4b`) is a **replaceable conversation / reasoning
+  engine**, not NeXa's identity. Live acceptance 2026-09-10: ~7-minute
+  continuous `--bargein` session, repeated / nested interruptions, zero
+  `12.0s cap` / `15.0s timeout` / `DROP_BUSY_RESPONSE_IN_FLIGHT`, all
+  telemetry clean. `pytest` 732 / `unittest` 739 / `ruff` clean.
+- **M2.5A — barge-in / interruption architecture & real-hardware
+  feasibility complete, `OPERATOR-CONFIRMED` (2026-09-09)** (`R0028`).
+  No `src/` change. Established the AEC far-end-reference prerequisite,
+  the Pipecat 1.8.1 interruption capability audit, and the media-stop
+  latency (VAD start → playback task stopped 28.5 ms mean / 37.4 ms max).
 - **M2.4 — streaming local Piper TTS complete, `OPERATOR-CONFIRMED`**
   (`R0011`; `docs/architecture/M2_4_STREAMING_TTS_ARCHITECTURE.md`):
   `src/nexa/tts/` (external `python -m piper.http_server` process on
@@ -769,11 +856,13 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## What is not implemented (by design)
 
-- **Barge-in / interruption (M2.5)** — not built. While NeXa speaks, the
-  temporary M2.4 half-duplex gate withholds mic input entirely; the user
-  cannot interrupt her, and nothing (TTS / LLM / `ConversationSession`) is
-  cancelled on user speech. M2.5 replaces the gate with true full-duplex
-  handling (interruption, own-TTS acoustic suppression, echo handling).
+- **Cloud realtime voice** — not built. Next planned stage after LOCAL
+  VOICE closure (see ROADMAP): Google Gemini Live
+  (`gemini-3.1-flash-live-preview`) as a **replaceable** conversation
+  provider behind NeXa's own router. Modes AUTO / LOCAL ONLY / CLOUD
+  PREFERRED, switchable by natural voice command ("Przełącz na chmurę." /
+  "Rozmawiaj lokalnie." / "Używaj najlepszego trybu."). The model may
+  identify the intent; NeXa's core executes the switch. **Not started.**
 - **Natural speech flow / streaming pacing (`M2.4B`)** — not built. M2.4's
   spoken output is per-sentence Piper synthesis with audible gaps between
   chunks and occasional bad phrase-boundary splits (incl. Polish
@@ -1028,58 +1117,48 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Current focus
 
-- None active. M1 (Natural Text Conversation) is a complete,
-  operator-confirmed chain through M1.1. M2's research (`R0005`) →
-  feasibility spikes (`R0006`) → architecture decision (`ADR-0003`) → M2.1
-  (`R0007`) → M2.2 (`R0008`) → M2.3 (`R0009`) → M2.4A spike (`R0010`) →
-  M2.4 (`R0011`) implementations, all operator-confirmed on real hardware,
-  are now complete. The M2.4 functional baseline is frozen by its commit.
-  **M2.4B is in progress** — research frozen (`f8c3964`/`R0012`); M2.4B.1
-  instrumentation (`R0013`), M2.4B.1A CPU spike + metric fixes (`R0014`),
-  M2.4B.2 speech planner (`R0015`) + M2.4B.2A LaTeX/truncation-tail fix
-  (`R0016`, `OPERATOR-CONFIRMED` 2026-09-07), M2.4B.3.1 Piper `nice +10` +
-  TTS context-timeout 8 s (`R0017`), M2.4B.3.2A speech rate-budget
-  research (`R0018`: `realtime_text_ratio ≈ 0.53`), M2.4B.3.2 continuity
-  controller (`R0019` — no-op on today's rate), and M2.4B.3.3
-  conversational voice response policy (`R0020` — `ResponseMode`) done.
-  **Operator voice-session confirmation of B.3.3, then the ~2×
-  faster-generation / model-serving track — is next.**
+- **None active. LOCAL REALTIME VOICE is complete and operator-confirmed.**
+  M1 (Natural Text Conversation) through M1.1, and M2 through
+  **M2.5B — production barge-in / interruption (`R0029`, COMPLETE /
+  OPERATOR-CONFIRMED 2026-09-10)** — research (`R0005`) → spikes (`R0006`)
+  → `ADR-0003` → M2.1 (`R0007`) → M2.2 (`R0008`) → M2.3 (`R0009`) → M2.4A
+  (`R0010`) → M2.4 (`R0011`) → M2.4B natural-speech-flow (`R0012`–`R0027`)
+  → M2.5A feasibility (`R0028`) → M2.5B (`R0029`) — are all
+  operator-confirmed on real hardware. The accepted LOCAL VOICE baseline
+  and the production barge-in stack are recorded under
+  *What works (VERIFIED FACT)* above.
+- **Next planned stage — CLOUD REALTIME VOICE — recorded, NOT started**
+  (see ROADMAP). Initial provider decision: Google Gemini Live,
+  `gemini-3.1-flash-live-preview`. Architecture principle: **NeXa remains
+  the single authority; cloud and local are replaceable conversation
+  providers.** Future modes AUTO / LOCAL ONLY / CLOUD PREFERRED,
+  switchable by natural voice command ("Przełącz na chmurę." / "Rozmawiaj
+  lokalnie." / "Używaj najlepszego trybu."); the provider may identify the
+  intent, NeXa's own router/core executes the switch. After local + cloud
+  voice: memory / identity / personality / capabilities → full graphical
+  UI → typed chat in that UI on the **same** `ConversationSession` / NeXa
+  brain as voice (never a separate voice-NeXa and chat-NeXa).
 
 ## Exact next recommended task
 
-**Operator voice-session confirmation of M2.4B.3.3** (an ordinary voice
-question with no "krótko"; an English turn; a "rozwiń" / "tell me more"
-follow-up to check the explicit-detail override live). Then the **~2×
-faster-generation / model-serving track** — R0018's asymptotic fix
-(target ~15.9 generated chars/s, ~≥5 tok/s sustained). At today's
-`realtime_text_ratio ≈ 0.53` (gemma4:e4b produces spoken text at ~53% of
-the rate pl_PL-gosia-medium consumes it, 8.5 vs 15.5 chars/s) a finite
-buffer CANNOT make an arbitrarily long reply continuous — a prebuffer
-only relocates silence to the front (`wall_to_finish` invariant);
-batching cannot move the first underrun (can't synthesize non-existent
-text); `length_scale <= 1.10` closes <= 11% of the deficit. B.3.3
-reduced the *number* of long spoken replies (ordinary voice answers are
-now 1–3 sentences — `R0020`), but faster generation is the only path to
-continuity on a genuinely long answer.
+**Begin CLOUD REALTIME VOICE research / architecture** (do not implement
+before its own report): Google Gemini Live (`gemini-3.1-flash-live-preview`)
+as a replaceable conversation provider behind NeXa's own router; the
+AUTO / LOCAL ONLY / CLOUD PREFERRED mode model; natural-language provider
+switching executed by NeXa's core, not the model. Local realtime voice
+with production barge-in (`R0029`) is the frozen baseline it builds on —
+do not destabilise it; `bargein_enabled` default stays `False`.
 
-The B.3.2 continuity controller (`src/nexa/voice_tts/continuity.py`) is
-shipped and correct for when the LLM gets faster (phrase 0 immediate;
-phrases 1..N held ≤ 0.4 s only while the estimated reserve is healthy);
-it makes 0 holds at today's rate. Non-blocking: Ollama `keep_alive` for
-first-token eviction; STT quality (whisper.cpp "horyzont zdarzen" ->
-"chory zezdarzyn" etc., R0016); `GenerationOptions.num_predict = 200`
-truncation (it truncated both TEXT-mode long answers mid-word in the
-B.3.3 A/B). The B.2 planner tunables, the B.3.1 values
-(`DEFAULT_PIPER_NICE`, `DEFAULT_TTS_CONTEXT_TIMEOUT_S`), the B.3.2 target
-and the B.3.3 `voice_response_directive()` wording are CANDIDATE and may
-be adjusted here. `length_scale` 1.05-1.10 is an optional minor assist
-(analysis only in R0018).
+Non-blocking, owed independently (not gating cloud): the B.3.6 operator
+latency re-confirmation (STT latency + END_OF_TURN → first-audio); a
+resource-safe non-blocking pre-warm of the small post-reset
+`ProviderWindow` to also remove the M2.5B.2 `keep_entries=0` reset
+continuity dip (the `prewarm_provider_context` / `cutover_background`
+seam is built and tested; `OLLAMA_NUM_PARALLEL=2` was measured on this Pi
+and rejected — gemma4 SWA → concurrent foreground turn cold-reprocesses
+~49 s).
 
-Then **M2.5 — barge-in / interruption / own-TTS suppression / echo
-handling**, replacing the temporary half-duplex gate.
-
-Original M2.4B goals (from `R0012`), for reference — build on M2.4, do not
-destabilise it:
+Original M2.4B goals (from `R0012`), for historical reference:
 
 - Buffered / look-ahead generation so TTS is not driven one isolated
   sentence at a time; a continuous coherent spoken response rather than
@@ -1096,12 +1175,14 @@ destabilise it:
 - Thread-budget discipline (ADR-0003 D7) still applies — STT + LLM + TTS
   are three concurrent CPU consumers.
 
-Then **M2.5 — barge-in / interruption / own-TTS suppression / echo
-handling**, replacing the temporary half-duplex gate.
+**M2.5 — barge-in / interruption / own-TTS suppression / echo handling —
+DONE (`R0028` feasibility, `R0029` production, COMPLETE / OPERATOR-CONFIRMED
+2026-09-10).** The temporary half-duplex gate is replaced by production
+barge-in behind `bargein_enabled` (default off = R0026 unchanged).
 
-Separate, any time after the pipeline is stable (NOT M2.4B): voice-model
-selection research (the operator would eventually prefer a softer/cozier
-voice than `pl_PL-gosia-medium` / `en_GB-jenny_dioco-medium`).
+Separate, any time (NOT a voice blocker): voice-model selection research
+(the operator would eventually prefer a softer/cozier voice than
+`pl_PL-gosia-medium` / `en_GB-jenny_dioco-medium`).
 
 Optional, non-blocking, can run any time: a scoped Parakeet/Canary
 conversion + benchmark spike (license and Polish support are confirmed

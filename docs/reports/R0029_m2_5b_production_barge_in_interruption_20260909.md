@@ -4,54 +4,49 @@
 - **Author:** Claude Code (agent), for Andrzej Dul
 - **Milestone:** M2 — Realtime Voice · **Substage M2.5B — production
   barge-in / interruption.**
-- **Status:** **LIVE ACCEPTANCE FAILED once (2026-09-09) → M2.5B.1
-  (interrupt integrity + cancellation) done; M2.5B.2 (long-session context
-  / KV-cache stability) IN PROGRESS. NOT operator-confirmed.** The first
-  `--bargein` operator session showed: AEC healthy; barge-in cancellation
-  worked; PL↔EN switching worked — **but** (1) an interrupting utterance
-  spoken as two VAD segments was **fragmented** — **FIXED** (M2.5B.1,
-  capture/coalesce phase); and (2) model time-to-first-token degraded to
-  tens of seconds later in the session. **Root cause of (2):** the context
-  window evicting its oldest turn every turn once history exceeds the cap
-  permanently collapses Ollama's prompt-prefix KV-cache reuse (78 s at cap
-  20, 154 s at cap 40). M2.5B.1's `max_turns` 20→40 only *moved* that
-  cliff. **M2.5B.2** `ProviderWindow` — a prefix-stable, bounded
-  *provider-facing* window over the (still complete) canonical
-  `ConversationSession.history` — **eliminates the permanent collapse**:
-  steady-state turns stay ~4 s for the whole session, and a real-Pi
-  110-turn run showed no drift and no permanent regime. The **residual**
-  is the window's boundary crossing: the first M2.5B.2 implementation left
-  a ~20–32 s synchronous "rollover" turn, which is **not acceptable** for
-  NeXa (a persistent companion runs for hundreds of exchanges). The fix
-  under way is a **context reset** (`keep_entries = 0`) so the boundary
-  turn re-prefills only the persona prefix (cached) + the new user turn —
-  an ordinary ~4–6 s turn. `OLLAMA_NUM_PARALLEL=2` was measured on the Pi
-  and **rejected** (SWA cache interference → concurrent foreground turn
-  cold-reprocesses ~49 s). Responsive cancellation (`cancel → worker-stop`
-  ~2 s → 251 ms) stands. `--no-bargein`'s mic policy is byte-for-byte
-  R0026.
-  **M2.5B.3 (2026-09-10):** a real live `--bargein` conversation —
-  **operator rates conversation quality, naturalness, voice, local
-  response speed and PL/EN switching GOOD / ACCEPTABLE** (do NOT redesign
-  barge-in). Remaining defect: the interruption-capture 12 s controller
-  hard cap + 15 s adapter timeout kept firing. **v1** (settle armed at
-  confirm, driven by every VAD frame incl. `UserSpeakingFrame`;
-  `_interrupt_open_segments` off the finalise gate) fixed the
-  *multi-segment capture* but the **first live re-test FAILED** — the cap
-  warnings still fired, and *after* the interruption had already produced
-  a canonical transcript + started the replacement response. **v2 root
-  cause:** a **stale/zombie `_capture_deadline` task** —
-  `notify_response_dispatched` force-flips the state machine
-  `INTERRUPTING → RESPONDING` without running the timer cleanup, so the
-  deadline coroutine for that capture was orphaned and warned ~12 s later
-  (and a trailing segment was busy-dropped → the 4600 ms). **v2 fix:**
-  **capture-generation-scoped timers** — every timer captures its
-  `capture_id` by value and goes inert the instant it no longer owns the
-  phase (`_active_capture_id`); a single `_end_capture_phase(abandon=…)`
-  closes the phase on *every* exit incl. the forced transition, telling
-  the adapter to abandon its own capture too. See *M2.5B.3*. **Still NOT
-  operator-confirmed** — one short live re-test of the interruption
-  lifecycle is owed. Not pushed.
+- **Status:** **M2.5B — COMPLETE / OPERATOR-CONFIRMED 2026-09-10.** A
+  ~7-minute continuous real-Pi `--bargein` session with repeated natural
+  and nested interruptions passed on every axis: deliberate interruptions
+  confirmed, the old answer stopped, the replacement started normally, a
+  long Polish interruption was captured as one canonical turn, PL/EN
+  routing stayed correct, no stale response resumed, no queue
+  accumulation. **Zero** `capture[N] hit the 12.0s hard cap`, **zero**
+  `interruption capture timed out after 15.0s`, **zero**
+  `DROP_BUSY_RESPONSE_IN_FLIGHT` for the whole session; final telemetry
+  all clean (busy-drops 0 / 0, STT + conversation queue depth 0, max
+  concurrent STT 1, max concurrent turns 1). The one `✗ AEC REF DOWN`
+  came after operator `Ctrl+C` during normal shutdown and is expected.
+  The operator's earlier UX assessment stands — conversation quality,
+  naturalness, fluency, voice and local response speed **pleasant /
+  natural / acceptable**; do NOT redesign or re-tune the accepted voice
+  UX, do NOT reopen STT model selection. Ordinary whisper `base-q8_0`
+  recognition slips remain, known and accepted, not a blocker.
+  **How it got here (historical, all superseded by the pass above):** the
+  first `--bargein` operator session (2026-09-09) FAILED — an interrupting
+  utterance spoken as two VAD segments was fragmented, and model
+  time-to-first-token degraded to tens of seconds late in the session.
+  **M2.5B.1** added the interruption capture/coalesce phase (one
+  interruption → one canonical turn) and responsive Ollama cancellation
+  (`cancel → worker-stop` ~2 s → 251 ms); its `max_turns` 20→40 only
+  *moved* the TTFT cliff. **M2.5B.2** `ProviderWindow` — a prefix-stable
+  bounded *provider-facing* window over the still-complete canonical
+  `ConversationSession.history` with a `keep_entries = 0` context reset at
+  the boundary — eliminated the permanent KV-cache collapse (steady-state
+  ~4 s for the whole session; reset turns ~ordinary latency;
+  `OLLAMA_NUM_PARALLEL=2` measured on the Pi and rejected).
+  **M2.5B.3 v1** moved the interruption settle to confirm time
+  (`_last_vad_activity`-driven) and fixed multi-segment capture, but its
+  live re-test FAILED — the 12 s / 15 s warnings still fired, *after* the
+  replacement response had started. **M2.5B.3 v2** root-caused that to a
+  **stale/zombie `_capture_deadline` task** (`notify_response_dispatched`
+  force-flips `INTERRUPTING → RESPONDING` without the timer cleanup) and
+  fixed it with **capture-generation-scoped timers** — every timer holds
+  its `capture_id` by value and goes inert the instant it no longer owns
+  the phase (`_active_capture_id`); one `_end_capture_phase(abandon=…)`
+  closes the phase on every exit incl. the forced transition, telling the
+  adapter to abandon its own capture too. **v2 is the code that passed
+  the 2026-09-10 live re-test.** `--no-bargein`'s mic policy remains
+  byte-for-byte R0026. Not pushed.
 - **Related:** `R0028` (M2.5A architecture + real-hardware feasibility;
   **M2.5A COMPLETE / OPERATOR-CONFIRMED 2026-09-09**), `R0026` (the
   half-duplex behaviour this milestone replaces when enabled), `R0027`
@@ -63,20 +58,25 @@
 
 ## TASK RESULT
 
-**IMPLEMENTED; LIVE ACCEPTANCE FAILED once; M2.5B.1 done, M2.5B.2 done
-(pending its final benchmark run).** Production barge-in is implemented
-end-to-end behind `LocalAudioConfig.bargein_enabled` (default `False`).
-With the flag off the M1/M2.1/M2.4/R0026 pipeline is **byte-for-byte
-unchanged**. The first live `--bargein` session (2026-09-09) surfaced two
-defects — **Problem 1** interrupt-utterance fragmentation (**FIXED**,
-commit `2460463`, regression-tested) and **Problem 2** late-session model
-TTFT collapse. Problem 2 was **root-caused** (a context-window eviction
-that permanently breaks Ollama prompt-prefix KV-cache reuse — 78 s at cap
-20, 154 s at cap 40); M2.5B.1's `max_turns` 20→40 only *moved* the cliff;
-**M2.5B.2** (`ProviderWindow` — a prefix-stable bounded provider-facing
-window over the complete canonical history, boundary crossing = a
-`keep_entries=0` **context reset** costing one ~3.4 s ordinary turn)
-**eliminates it**. **Not `OPERATOR-CONFIRMED`.** With the flag on:
+**COMPLETE / OPERATOR-CONFIRMED 2026-09-10. M2.5B.1 done, M2.5B.2 done,
+M2.5B.3 done (v1 re-test failed → v2 passed the live re-test).**
+Production barge-in is implemented end-to-end behind
+`LocalAudioConfig.bargein_enabled` (default `False`). With the flag off
+the M1/M2.1/M2.4/R0026 pipeline is **byte-for-byte unchanged**. The first
+live `--bargein` session (2026-09-09) surfaced two defects — **Problem 1**
+interrupt-utterance fragmentation (**FIXED**, commit `2460463`,
+regression-tested) and **Problem 2** late-session model TTFT collapse.
+Problem 2 was **root-caused** (a context-window eviction that permanently
+breaks Ollama prompt-prefix KV-cache reuse — 78 s at cap 20, 154 s at cap
+40); M2.5B.1's `max_turns` 20→40 only *moved* the cliff; **M2.5B.2**
+(`ProviderWindow` — a prefix-stable bounded provider-facing window over
+the complete canonical history, boundary crossing = a `keep_entries=0`
+**context reset** costing one ~3.4 s ordinary turn) **eliminates it**.
+**M2.5B.3** removed the last defect (spurious interruption-capture 12 s /
+15 s warnings) — v1 fixed multi-segment capture but its live re-test
+failed; **v2** (capture-generation-scoped timers) passed the 2026-09-10
+live re-test with zero cap / timeout / busy-drop lines. **Milestone
+`OPERATOR-CONFIRMED`.** With the flag on:
 
 - NeXa's TTS PCM is teed to the XVF3800 AEC far-end reference
   (`plug:respeaker`) so the microphone can safely stay hot during a reply;
@@ -97,11 +97,19 @@ reSpeaker + real `aplay -D plug:respeaker`, operator absent) passed: AEC
 reference active, mic hot during a simulated reply, **0 false candidates /
 0 confirmations while silent**, clean teardown.
 
-**Remaining:** one short live operator session (below). The Problem 2
-analysis is done (real Pi, `gemma4:e4b`): the cause was **context-window
-eviction breaking KV-cache prefix reuse**, fixed by resizing the window;
-no cancellation barrier / summarisation needed. Nothing is
-`OPERATOR-CONFIRMED` until the live session passes.
+**Live acceptance: PASSED (2026-09-10).** A ~7-minute continuous real-Pi
+`--bargein` session with repeated natural + nested interruptions —
+deliberate interruptions confirmed, old answer stopped, replacement
+started normally, a long Polish interruption captured as one canonical
+turn, PL/EN routing correct, no stale audio, no queue accumulation, and
+**zero** `12.0s hard cap` / `15.0s timeout` / `DROP_BUSY_RESPONSE_IN_FLIGHT`
+lines for the whole session (final telemetry: busy-drops 0 / 0, STT +
+conversation queue depth 0, max concurrent STT 1, max concurrent turns 1).
+The one `✗ AEC REF DOWN` came after operator `Ctrl+C` on shutdown and is
+expected. The Problem 2 analysis is done (real Pi, `gemma4:e4b`): the
+cause was **context-window eviction breaking KV-cache prefix reuse**,
+fixed by the `ProviderWindow`; no cancellation barrier / summarisation
+needed. **M2.5B is `OPERATOR-CONFIRMED`.**
 
 ## M2.5A CLOSURE
 
@@ -998,6 +1006,15 @@ a window; canonical history stays complete throughout.
 
 ## M2.5B.3 — INTERRUPTION-CAPTURE LIFECYCLE
 
+**Status: DONE.** v1 (`989f68f`) fixed multi-segment capture; its live
+re-test FAILED (spurious 12 s / 15 s warnings after the replacement
+response — a stale/zombie deadline task). v2 (`be9f0cd`,
+capture-generation-scoped timers) **passed the 2026-09-10 live re-test**
+— one continuous ~7-minute session, repeated / nested interruptions, and
+**zero** `capture[N] hit the 12.0s hard cap` / `interruption capture
+timed out after 15.0s` / `DROP_BUSY_RESPONSE_IN_FLIGHT` lines. This
+section records the reconstruction and both fixes in order.
+
 ### Live session (2026-09-10) — overall UX
 
 A real live `--bargein` conversation. **Operator assessment: conversation
@@ -1239,35 +1256,66 @@ segment that began during `INTERRUPTING` is never dropped.
 
 Tests A–D **fail against the v1 code** and pass with v2.
 
+### v2 live re-test — PASSED (2026-09-10)
+
+The v2 code (`be9f0cd`) was then run live on the real Pi: one continuous
+~7-minute `--bargein` session, repeated natural and nested interruptions
+across multiple consecutive responses, `✓ AEC REF ACTIVE`. **Zero**
+`capture[N] hit the 12.0s hard cap`, **zero** `interruption capture timed
+out after 15.0s`, **zero** `DROP_BUSY_RESPONSE_IN_FLIGHT` for the whole
+session. A long Polish interruption was captured as one canonical turn;
+old answers stopped, replacements started normally; PL/EN routing correct;
+no stale response resumed; no queue accumulation. Final telemetry all
+clean (busy-drops 0 / 0, STT + conversation queue depth 0, max concurrent
+STT 1, max concurrent turns 1). **This closes M2.5B.3 and M2.5B.**
+
 ## OPERATOR ACCEPTANCE STATUS
 
-**LIVE SESSION 2026-09-10 — overall UX GOOD / ACCEPTED BY OPERATOR
-(conversation quality, naturalness, voice, local response speed, PL/EN
-switching — do NOT redesign barge-in). REMAINING DEFECT: interruption-
-capture lifecycle / hard-cap warnings. M2.5B.3 v1 fixed multi-segment
-capture but the first live re-test FAILED (cap still firing, now via a
-stale/zombie deadline task); M2.5B.3 v2 (capture-generation-scoped
-timers) fixes that. NOT yet `OPERATOR-CONFIRMED` — one short live re-test
-of the interruption lifecycle is owed.**
+**M2.5B — COMPLETE / OPERATOR-CONFIRMED 2026-09-10.**
 
-- M2.5B.3 v1: the 12 s / 15 s guards were firing for ordinary
-  interruptions because the settle window was armed only on a VAD
-  segment-END that `broadcast_interruption()` can flush from the
-  controller's frame queue on a lagged Pi loop. Fixed: settle armed at
-  confirm + driven by every VAD frame (incl. `UserSpeakingFrame`);
-  `_interrupt_open_segments` off the finalise gate; `_do_confirm` enters
-  capture before the `await`. **First live re-test FAILED** — cap still
-  firing, *after* the transcript + replacement started.
-- M2.5B.3 v2: **stale/zombie `_capture_deadline` task.**
-  `notify_response_dispatched` force-flips `INTERRUPTING → RESPONDING`
-  without the timer cleanup, orphaning that capture's deadline coroutine
-  (warns ~12 s later; a trailing segment busy-dropped → the 4600 ms).
-  Fixed: **capture-generation-scoped timers** — each timer captures its
-  `capture_id` by value and goes inert once `_active_capture_id` no longer
-  matches; one `_end_capture_phase(abandon=…)` closes the phase on every
-  exit incl. the forced transition; the adapter is told to abandon its own
-  capture. 9 more deterministic tests (`TestCaptureScopedTimers`). The
-  12 s / 15 s guards are retained unchanged and now fire only for a
+**FINAL LIVE RE-TEST — 2026-09-10 (real Raspberry Pi,
+`.venv/bin/python apps/nexa_bilingual_voice_probe.py --bargein`):**
+`✓ AEC REF ACTIVE`. One continuous ~7-minute session, repeated natural
+interruptions across multiple consecutive responses. Observed: deliberate
+interruptions confirmed correctly; old answer stopped; replacement answer
+started normally; a long Polish interruption captured as **one** canonical
+turn; repeated / nested interruptions stable; PL conversation correct;
+EN/PL routing functional; no stale response resumed; no queue
+accumulation. **Across the entire session: ZERO `capture[N] hit the
+12.0s hard cap`, ZERO `interruption capture timed out after 15.0s`, ZERO
+`DROP_BUSY_RESPONSE_IN_FLIGHT`.** Final telemetry — busy-drop (utterances
+at capture) 0; busy-drop (STT results at adapter) 0; final STT queue
+depth 0; final conversation queue depth 0; max concurrent STT 1; max
+concurrent turns 1. The single `✗ AEC REF DOWN` occurred **after**
+operator `Ctrl+C` during normal pipeline shutdown and is expected.
+**This supersedes the M2.5B.3 v1 live failure below.**
+
+**UX (operator, unchanged from the 2026-09-10 acceptance):** pleasant,
+natural, fluent, good conversational quality, acceptable local response
+speed. Do not redesign or re-tune the accepted voice UX. Ordinary
+whisper `base-q8_0` recognition slips remain — known / accepted, **not a
+blocker**; STT model selection is not reopened.
+
+- M2.5B.3 v1 (`989f68f`, historical — this re-test FAILED): the 12 s /
+  15 s guards were firing for ordinary interruptions because the settle
+  window was armed only on a VAD segment-END that `broadcast_interruption()`
+  can flush from the controller's frame queue on a lagged Pi loop. Fixed:
+  settle armed at confirm + driven by every VAD frame (incl.
+  `UserSpeakingFrame`); `_interrupt_open_segments` off the finalise gate;
+  `_do_confirm` enters capture before the `await`. **First live re-test
+  (2026-09-10) FAILED** — cap still firing, *after* the transcript +
+  replacement started.
+- M2.5B.3 v2 (`be9f0cd`, the code that PASSED): **stale/zombie
+  `_capture_deadline` task.** `notify_response_dispatched` force-flips
+  `INTERRUPTING → RESPONDING` without the timer cleanup, orphaning that
+  capture's deadline coroutine (warns ~12 s later; a trailing segment
+  busy-dropped → the 4600 ms). Fixed: **capture-generation-scoped
+  timers** — each timer captures its `capture_id` by value and goes inert
+  once `_active_capture_id` no longer matches; one
+  `_end_capture_phase(abandon=…)` closes the phase on every exit incl. the
+  forced transition; the adapter is told to abandon its own capture. 9
+  more deterministic tests (`TestCaptureScopedTimers`). The 12 s / 15 s
+  guards are retained unchanged and now fire only for a
   genuinely-still-active stuck capture.
 - Problem 1 (fragmentation): fixed (capture/coalesce phase) + 13 regression
   tests including the exact live reproduction.
@@ -1607,30 +1655,35 @@ unchanged.
 
 ## NEXT STEP
 
-1. **Operator runs ONE short live re-test — the interruption-capture
-   lifecycle** (command + short interaction list below). The v1 re-test
-   FAILED; this is the v2 re-test. PASS if: no `capture[N] hit the 12.0s
-   hard cap` line, no `interruption capture timed out after 15.0s` line,
-   no `DROP_BUSY_RESPONSE_IN_FLIGHT … dropped …ms of audio` for an
-   interruption's own speech, **and specifically no cap/timeout line that
-   appears after the replacement response has started speaking**, and
-   every interruption's replacement reply still starts promptly (~1–3 s
-   after you stop). On PASS: mark M2.5B **OPERATOR-CONFIRMED**, update
-   `CURRENT_STATE.md`, record the commit hash.
-2. If the re-test still shows a 12 s / 15 s line, capture the terminal —
-   the `nexa.voice.bargein: capture[N] …` trace lines plus the enriched
-   `DROP_BUSY_RESPONSE_IN_FLIGHT` line (now carrying `InterruptionState` /
-   `capture_id` / `active_capture_id` / `seg_started_during_INTERRUPTING`)
-   make one interruption fully reconstructable.
-3. Non-blocking, owed independently: the B.3.6 operator latency
+**M2.5B is closed** — COMPLETE / OPERATOR-CONFIRMED 2026-09-10 (see
+*Operator acceptance status* above and `docs/CURRENT_STATE.md`). The v2
+capture-generation-scoped-timer code (`be9f0cd`) passed the live re-test
+with zero cap / timeout / busy-drop lines. Nothing in M2.5B is owed.
+
+Recorded but **not started** (see `docs/CURRENT_STATE.md` roadmap):
+
+1. **Next stage — CLOUD REALTIME VOICE.** Initial provider decision:
+   Google Gemini Live, `gemini-3.1-flash-live-preview`. NeXa's own
+   router/core executes the provider switch; cloud/local are replaceable
+   conversation providers, never NeXa's identity. Modes AUTO / LOCAL ONLY
+   / CLOUD PREFERRED, switchable by natural voice command
+   ("Przełącz na chmurę." / "Rozmawiaj lokalnie." / "Używaj najlepszego
+   trybu."). **Do not implement in this task.**
+2. After local + cloud voice: memory / identity / personality /
+   capabilities → full graphical UI → typed chat in that UI on the **same**
+   `ConversationSession` / NeXa brain as voice (never a separate
+   chat-NeXa).
+3. Non-blocking, owed independently of M2.5B: the B.3.6 operator latency
    re-confirmation; a resource-safe non-blocking pre-warm to also remove
    the M2.5B.2 reset continuity dip.
 
 ---
 
-## OPERATOR ACTION REQUIRED — ONE LIVE SESSION
+## LIVE ACCEPTANCE — DONE (2026-09-10)
 
-From the repo root:
+**This session was run and PASSED** — see *Operator acceptance status*.
+The script below is retained as the acceptance procedure of record (and
+for any future regression check). From the repo root:
 
 ```
 .venv/bin/python apps/nexa_bilingual_voice_probe.py --bargein

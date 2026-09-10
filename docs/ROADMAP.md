@@ -38,6 +38,31 @@ Voice as an interaction mode over the M1 conversation core. Transport / framewor
 must remain replaceable behind an internal boundary. STT and TTS are provider
 abstractions.
 
+**M2 — LOCAL REALTIME VOICE: COMPLETE / OPERATOR-CONFIRMED (2026-09-10).**
+M2.1 Pipecat + local audio + Silero VAD → M2.2 whisper.cpp STT → M2.3 voice →
+`ConversationSession` adapter → M2.4 streaming Piper TTS → M2.4B natural speech
+flow → M2.5A barge-in feasibility (`R0028`) → **M2.5B production barge-in /
+interruption (`R0029`)**. Accepted local voice baseline: audio in → Pipecat local
+transport → Silero VAD → whisper.cpp `base/q8_0` → bilingual PL/EN guard →
+`ConversationSession` → `ProviderWindow` (`keep_entries=0`) → `gemma4:e4b` via
+Ollama → `NexaSpeechPlanner` → Piper → audio out. Production barge-in: XVF3800 AEC
+far-end reference, sustained-VAD confirmation, ~251 ms Ollama cancellation,
+interruption capture/coalescing, capture-generation-scoped timers, correct
+interrupted-history semantics, PL/EN routing preserved.
+
+**Next sub-stage — CLOUD REALTIME VOICE (planned, not started).** Initial provider
+decision: Google Gemini Live (`gemini-3.1-flash-live-preview`). Architecture
+principle: **NeXa remains the single authority; cloud and local are replaceable
+conversation providers, never NeXa's identity.** Modes: AUTO / LOCAL ONLY / CLOUD
+PREFERRED, switchable by natural voice command ("Przełącz na chmurę.", "Rozmawiaj
+lokalnie.", "Używaj najlepszego trybu."). A model/provider may recognise the
+intent, but NeXa's own router/core executes the provider switch.
+
+**Then, after local + cloud voice are both complete, in order:** memory / identity
+/ personality / capabilities → full graphical UI → typed chat in that UI using the
+**same** `ConversationSession` / NeXa brain as voice. There must never be separate
+voice-NeXa and chat-NeXa brains.
+
 ---
 
 ## M3 — Robust Context
