@@ -1084,7 +1084,7 @@ status) → `c1306b6` → `97f4a84` → `20df578` (wiring audit +
 
 **M2.5B.2 (long-session context / KV-cache stability):**
 
-- `<PENDING>` — `nexa.conversation.ProviderWindow`: prefix-stable bounded
+- `7f4e182` — `nexa.conversation.ProviderWindow`: prefix-stable bounded
   provider-facing window over the (complete) canonical history; bounded
   logged synchronous rollover; `ConversationSession.provider_window` +
   `prewarm_provider_context()`; probe sets it; 25 regression tests; the
@@ -1100,7 +1100,7 @@ closure). **Not pushed.**
 Branch `main`, **not pushed**. `git diff --check` clean. Sequence:
 `2f23613` (M2.5A closed) → `c3155ca` → `dcf0df4` → `59141f6` → `c1306b6`
 → `97f4a84` → `20df578` → `69e8828` → `2460463` → `5e6f877` → `4a55a7e` →
-`893c8a3` → **`<PENDING>` (M2.5B.2)** → hash-record commit (this edit).
+`893c8a3` → `7f4e182` (M2.5B.2) → hash-record commit (this edit).
 Frozen components (model / `num_thread` / `keep_alive` / `num_ctx` /
 whisper / Piper / resolver / `ResponseLanguageResolver`) untouched.
 `DEFAULT_MAX_TURNS` / `DEFAULT_MAX_CHARS` (M2.5B.1) and the new
