@@ -4,9 +4,13 @@
 - **Author:** Claude Code (agent), for Andrzej Dul
 - **Milestone:** M2 — Realtime Voice · **new branch M2.6 — Cloud Realtime
   Voice.** Research / architecture only. **No production `src/` change.**
-- **Status:** **RESEARCH COMPLETE. GO for a minimal real-hardware spike
-  (proposed name M2.6A).** No implementation started. No API key created.
-  Not pushed.
+- **Status:** **RESEARCH COMPLETE. GO for the M2.6A real-hardware spike.**
+  Phase-0 fact corrections applied (see *PHASE 0 CORRECTIONS* below);
+  M2.6A probe implemented + `--dry` validated; `google-genai 2.22.0`
+  installed (research venv only, no tracked dep file changed); an
+  authenticated Live-API connectivity smoke **passed** (449 ms handshake,
+  no audio); operator-provided key stored outside the repo. **Awaiting the
+  M2.6A operator live session** — see `R0031`. Not pushed.
 - **Related:** `R0029` (M2.5B — production local barge-in, COMPLETE /
   OPERATOR-CONFIRMED 2026-09-10 — the frozen local baseline this builds
   *beside*), `ADR-0003` (realtime-voice foundation; D2 "one
@@ -21,12 +25,182 @@
 
 ---
 
+## PHASE 0 CORRECTIONS (2026-09-10, before M2.6A)
+
+Re-checked against **current official Google sources** on 2026-09-10, per
+the "research wins over previous documentation" rule. **The statements in
+this section supersede any conflicting text later in the report.**
+
+### C1 — UK / EEA / Switzerland data treatment (was over-stated)
+
+**VERIFIED (official, `https://ai.google.dev/gemini-api/terms`, fetched
+2026-09-10):**
+
+- **Unpaid Services:** *"Google uses the content you submit to the
+  Services and any generated responses to provide, improve, and develop
+  Google products and services"* including *"machine learning
+  technologies."*
+- **Paid Services:** *"Google doesn't use your prompts … or responses to
+  improve our products, and will process your prompts and responses in
+  accordance with the Data Processing Addendum."*
+- **EEA / Switzerland / UK exception (verbatim):** *"If you're in the
+  European Economic Area, Switzerland, or the United Kingdom, the terms
+  under 'How Google uses Your Data' in 'Paid Services' apply to all
+  Services, including Google AI Studio and unpaid quota in the Gemini
+  API, even though they are offered free of charge."*
+- **Separate API-Client restriction (verbatim):** *"You may use only Paid
+  Services when making API Clients available to users in the European
+  Economic Area, Switzerland, or the United Kingdom."*
+
+**Correction.** The blanket claim *"free-tier conversations are used for
+product improvement / human review, therefore M2.6A requires a paid tier
+for privacy"* is **withdrawn**. The correct picture, keeping to what the
+Terms say (no legal interpretation beyond that):
+
+| Concern | For an operator **in** EEA/CH/UK | For an operator **outside** EEA/CH/UK |
+|---|---|---|
+| **Data-use treatment** of an internal/dev spike | Paid-Services data terms already apply on unpaid quota → inputs/outputs **not** used to improve Google products | Unpaid-quota inputs/outputs **are** used to improve Google products (and may be human-reviewed) |
+| **Billing requirement** for the M2.6A spike | none for an internal spike (one operator, not "making an API Client available to users") | none for an internal spike |
+| **Billing requirement** for a future NeXa cloud voice **made available to EEA/CH/UK users** | **Paid Services required** (Terms clause above) — an ADR-0004 / M2.6B item | Paid Services not mandated by this clause; still recommended |
+
+**M2.6A decision (unchanged in effect, corrected in reasoning):** the
+spike uses **only scripted, non-sensitive test conversation**, so it is
+safe on either tier. The provided key is used as-is. Whether M2.6B needs
+a paid key is an **ADR-0004** decision driven by (a) the operator's
+region and (b) whether NeXa cloud voice will be "made available to users"
+in EEA/CH/UK.
+
+### C2 — Audio chunk size (was OPEN — now resolved)
+
+**VERIFIED (`https://ai.google.dev/gemini-api/docs/live-api/best-practices`,
+fetched 2026-09-10):** *"Send audio in chunks of 20ms to 40ms."* and
+*"Don't buffer input audio significantly (such as 1 second) before
+sending. Send small chunks (20ms - 100ms) to minimize latency."*
+
+**M2.6A baseline = 20 ms.** 40 ms may be measured as a cheap comparison.
+This is **no longer an OPEN QUESTION**; OPEN QUESTION #3 in R0030 is
+closed.
+
+### C3 — Session-resumption token validity (was "24 h vs 2 h" contradiction)
+
+**VERIFIED (same best-practices page, 2026-09-10):** *"Resumption tokens
+are valid for 2 hours after the last session terminates."*
+
+**Correction.** The "resume within 24 hours" reading is **dropped** — no
+current official Google page consulted on 2026-09-10 still states 24 h.
+**CURRENT VERIFIED FACT: 2 hours.** OPEN QUESTION #4 and RISK R10 are
+closed to "verify what a resumed native-audio session actually restores"
+only.
+
+Same page also VERIFIED: **connection lifetime ≈ 10 minutes**; without
+compression, **audio-only sessions are limited to 15 minutes**
+(audio-video to 2 minutes); **`contextWindowCompression` extends sessions
+to unlimited duration**; **audio tokens accumulate at ≈ 25 tokens per
+second**; **`GoAway` includes `timeLeft`** and the client *"should listen
+for this message and use the `timeLeft` field to gracefully wrap up or
+reconnect before the connection closes."*
+
+### C4 — Current official pricing (was a "sources disagree" spread)
+
+**VERIFIED (`https://ai.google.dev/gemini-api/docs/pricing`, fetched
+2026-09-10) — `gemini-3.1-flash-live-preview`:**
+
+| | Free tier | Paid tier |
+|---|---|---|
+| **Input** | Free of charge | **$0.75 / 1M text tokens**; **$3.00 / 1M audio tokens** (≈ **$0.005 / min** audio) |
+| **Output** | Free of charge | **$4.50 / 1M text tokens**; **$12.00 / 1M audio tokens** (≈ **$0.018 / min** audio) |
+| **Data used to improve products** | Yes | No |
+| **Grounding w/ Google Search** | 5,000 free requests/month (shared across all Gemini 3.x models), then **$14 / 1,000** | same |
+
+Combined with C3's **≈ 25 audio tokens/second**: ≈ 1,500 audio tokens per
+minute each way. The earlier "≈ 600 in / ≈ 1,200 out tokens per minute"
+figure (borrowed from OpenAI's ratio) is **replaced** by this official
+rate. **No prompt caching** on this model (VERIFIED earlier) — every
+reconnect re-seed is billed in full. The M2.6A probe's cost estimate uses
+these official numbers.
+
+### C5 — Polish pronunciation risk (retagged: external report, not platform fact)
+
+The Polish-accent regression comes from a **Google AI Developers Forum**
+thread (`.../177436`), not from the model specification. Google staff on
+2026-08-18 replied only *"we've passed your feedback to the relevant
+product teams"* — an acknowledgement of the report, **not** an official
+confirmation that the regression is real, reproduced, or a known issue.
+
+**Retag:** this is **EXTERNAL REPORTED RISK / COMMUNITY EVIDENCE**, not a
+VERIFIED PLATFORM FACT. Everywhere R0030 (or CURRENT_STATE / ROADMAP)
+implies Google has confirmed a Polish regression, read it as "one
+external report, unverified by Google." **The authoritative answer for
+NeXa is the real M2.6A operator test** — an operator listening to
+`gemini-3.1-flash-live-preview` speak Polish and judging pronunciation /
+accent / naturalness. It remains a **High**-priority risk to *test*; it
+is no longer stated as a settled fact.
+
+### C6 — CRITICAL architecture question missed in R0030: language routing vs. input-transcription timing
+
+R0030's canonical-history + language-routing design assumed NeXa's
+`ResponseLanguageResolver` can read Gemini's **input transcription** and
+still be the language-routing authority *for the same response*. But a
+native speech-to-speech model **may start generating and speaking before
+the complete input transcription has reached NeXa** — in which case the
+resolver cannot steer *that* response without deliberately adding
+latency.
+
+**This is now an explicit OPEN QUESTION that M2.6A must MEASURE**, not
+hand-wave. The probe instruments the ordering on one monotonic clock:
+
+```
+LOCAL_VAD_START
+LOCAL_VAD_EOT               (Silero end-of-turn → activity_end sent)
+INPUT_TRANSCRIPTION_FIRST   (first serverContent.inputTranscription chunk)
+INPUT_TRANSCRIPTION_FLUSHED (Pipecat flushes the aggregated user sentence)
+FIRST_SERVER_CONTENT        (first serverContent of the reply)
+FIRST_AUDIO_RECEIVED        (first TTSAudioRawFrame from Gemini)
+FIRST_AUDIO_PLAYED          (BotStartedSpeakingFrame from the output transport)
+```
+
+Questions the spike answers **experimentally** (not decided here):
+
+- **A.** Does the *complete* input transcription arrive **before** the
+  first model audio? (i.e. is `INPUT_TRANSCRIPTION_FLUSHED` before
+  `FIRST_AUDIO_RECEIVED`?)
+- **B.** If not, can a text / instruction update sent *after* the
+  transcription still steer the **same** in-flight response?
+- **C.** How does Gemini behave with the global instruction *"respond in
+  the language spoken by the user"* (the spike's system instruction)?
+- **D.** Does PL → EN → PL switching work reliably on native Gemini
+  language understanding **alone** (no NeXa STT)?
+- **E.** How would NeXa **sticky** language commands ("From now on speak
+  English") fit without a second STT?
+- **F.** To keep strict `ResponseLanguageResolver` authority, what would
+  it take — a local lightweight language-ID, a parallel whisper.cpp, a
+  deliberate `activity_end` delay, or something else?
+- **G.** What latency does each of those options add?
+
+**M2.6A is allowed to temporarily let Gemini mirror the spoken language
+natively** purely to assess cloud speech quality. The production
+language-routing authority decision is an **ADR-0004** item, made *after*
+these measurements — not now.
+
+### C7 — Not a correction: connectivity confirmed
+
+**MEASURED FACT (2026-09-10, this task):** the provided credential is
+accepted, `gemini-3.1-flash-live-preview` exists and is reachable, the
+Live API WebSocket opened and completed setup in **449 ms**, clean
+disconnect, no secret leaked. (`m2_6a_connect_smoke.py`.) R0030's
+"no cloud call was made" no longer holds — this one no-audio handshake
+was made.
+
+---
+
 ## FACT TAGGING
 
 - **VERIFIED FACT** — confirmed in an official doc or by direct
   inspection of installed code, with the source recorded.
 - **MEASURED FACT** — a number produced by running something on this
-  hardware. *There are none in this report* — no cloud call was made.
+  hardware. The original report had none; *PHASE 0 · C7* adds one (a
+  449 ms no-audio Live-API handshake). The audio-latency numbers are
+  still M2.6A's job.
 - **INFERENCE** — a conclusion the agent drew from verified facts.
 - **DESIGN DECISION** — a choice this report proposes (not yet ratified;
   an ADR-0004 is owed before production).
@@ -87,14 +261,18 @@
 6. **Recommended next task: M2.6A — minimal Gemini Live real-hardware
    spike.** Prove *only*: reSpeaker mic → existing AEC/local audio path →
    Gemini Live → native streamed cloud audio → existing speaker, plus
-   latency + Polish-quality metrics. No memory, identity, router, tools or
-   GUI. Needs a **paid-tier** key (free-tier conversations are used for
-   product improvement — VERIFIED). An **ADR-0004** is owed before any
-   production cloud code.
+   latency + Polish-quality + event-ordering metrics. No memory, identity,
+   router, tools or GUI. **Key/tier:** see *PHASE 0 CORRECTIONS · C1* —
+   the spike runs on scripted non-sensitive phrases and is safe on either
+   tier; whether M2.6B needs a paid key is an ADR-0004 decision driven by
+   the operator's region and whether NeXa cloud voice is "made available
+   to users" in EEA/CH/UK. An **ADR-0004** is owed before any production
+   cloud code.
 
 **GO / NO-GO: GO for the M2.6A spike. NO-GO for production cloud code,
 the router, or ADR-0004 ratification until the spike has measured
-end-to-end latency and an operator has judged Polish audio quality.**
+end-to-end latency, the input-transcription-vs-first-audio ordering
+(*PHASE 0 · C6*), and an operator has judged Polish audio quality.**
 
 ---
 
@@ -269,11 +447,11 @@ All **VERIFIED** from G1–G5 unless tagged. Field names quoted from G3
 - **Output (VERIFIED G1):** raw PCM **24 kHz** in
   `serverContent.modelTurn.parts[].inlineData` (Pipecat emits it as
   `TTSAudioRawFrame(sample_rate=24000)`).
-- **Chunk size:** **OPEN QUESTION** — G1 gives no recommended chunk; "best
-  practice is continuous streaming without large buffering." Pipecat sends
-  whatever the transport produces (typ. 10–20 ms frames). **INFERENCE:**
-  20 ms @ 16 kHz mono ≈ 640 bytes is a safe default; measure jitter in the
-  spike.
+- **Chunk size (VERIFIED — *PHASE 0 · C2*, best-practices page,
+  2026-09-10):** *"Send audio in chunks of 20ms to 40ms."* / *"Don't
+  buffer input audio significantly (such as 1 second) before sending. Send
+  small chunks (20ms - 100ms)…"* **M2.6A baseline = 20 ms** (≈ 640 bytes @
+  16 kHz mono); 40 ms as a cheap comparison. No longer an OPEN QUESTION.
 
 ### Turn detection — three modes (VERIFIED G1)
 
@@ -343,10 +521,11 @@ All **VERIFIED** from G1–G5 unless tagged. Field names quoted from G3
   `triggerTokens`): unlimited** session duration.
 - **Session resumption:** `sessionResumption: {handle}` in setup; server
   streams `sessionResumptionUpdate {newHandle, resumable}`; on reconnect,
-  pass the last `newHandle` and the server restores context.
-  **DISCREPANCY (OPEN QUESTION):** G2 body says "resume within 24 hours"
-  in one place and "resumption tokens valid for 2 hr after the last
-  session's termination" in another — verify the real window at spike time.
+  pass the last `newHandle` and the server restores context. **VALIDITY
+  (VERIFIED — *PHASE 0 · C3*, best-practices page 2026-09-10):**
+  *"Resumption tokens are valid for 2 hours after the last session
+  terminates."* (The "24 hours" reading is withdrawn.) Still open: what a
+  resumed native-audio session actually restores.
 - **`GoAway {timeLeft}`** — server's advance warning that it will close
   the connection (as `ABORTED`) in `timeLeft`. Intended for a **proactive**
   reconnect. **Pipecat 1.8.1 does NOT handle `GoAway`** (VERIFIED, spike):
@@ -968,6 +1147,10 @@ finding).
 
 ## PRIVACY / SECURITY / COST
 
+> **Superseded in part by *PHASE 0 CORRECTIONS* (C1 data terms, C4
+> pricing).** Read this section through those. The Phase-0 text is the
+> authority where they conflict.
+
 ### API-key handling (VERIFIED practice, G5/G7)
 
 - **DESIGN DECISION:** key via environment variable
@@ -984,35 +1167,30 @@ finding).
   `git diff --check` + manual grep in the R0030 validation) is prudent;
   this report's own validation does exactly that.
 
-### Free vs paid data use (VERIFIED, privacy trackers + Google terms)
+### Free vs paid data use — **see *PHASE 0 · C1* (this is the corrected version)**
 
-- **Free tier (AI Studio unpaid key):** Google **uses inputs and outputs
-  to provide, improve, and develop products**; **human reviewers may see
-  them**; content may enter training data.
-- **Paid tier (billing enabled):** prompts and responses **are not used
-  to improve Google products** / not used for training; normal security /
-  retention / abuse review still applies.
-- **EEA / Switzerland / UK:** the paid-service data terms apply to **all**
-  services, including free.
-- **DESIGN DECISION:** the M2.6A spike uses a **paid-tier key** (billing
-  enabled → Tier 1). If only a free key is available, the spike is
-  restricted to **non-sensitive scripted phrases** and that limitation is
-  stated in the spike report. NeXa is privacy-first; a companion's real
-  conversations must never go to a free-tier endpoint.
-- **OPEN QUESTION:** re-confirm the exact current wording at
-  `https://ai.google.dev/gemini-api/terms` at spike time (trackers lag).
+- **Outside EEA/CH/UK:** unpaid-quota inputs/outputs **are** used "to
+  provide, improve, and develop Google products" and may be
+  human-reviewed; paid-tier not used for training.
+- **In EEA/CH/UK:** the Paid-Services data terms apply to **all** services
+  including unpaid quota — inputs/outputs **not** used to improve Google
+  products. Separately, a NeXa cloud voice *made available to users* in
+  EEA/CH/UK must use Paid Services.
+- **DESIGN DECISION:** the M2.6A spike uses **only scripted non-sensitive
+  phrases** → safe on either tier / region. The M2.6B paid-key decision
+  is an ADR-0004 item driven by region + distribution (C1 table).
 
-### Billing model + cost dynamics (VERIFIED range; INFERENCE on dynamics)
+### Billing model + cost dynamics — **see *PHASE 0 · C4* for the official table**
 
-- Pricing sources **disagree** as of 2026-09-10: one line item quotes the
-  Gemini Live API at ~**$1 / 1M input tokens**; another quotes
-  `gemini-3.1-flash-live` audio at ~**$3.00 / 1M audio-in**, ~**$12.00 /
-  1M audio-out** (≈ $0.005/min in, $0.018/min out). **Both agree it is
-  ~an order of magnitude cheaper than OpenAI Realtime** (`gpt-realtime`
-  ≈ $32 / $64 per 1M audio in/out; ~$0.05–0.15 /min).
-- **Native audio token accumulation:** input + output audio both bill as
-  tokens continuously while streaming; ~1 min speech ≈ 600 (in) / 1,200
-  (out) tokens (order-of-magnitude, from OpenAI's published ratio).
+- **Official (2026-09-10), `gemini-3.1-flash-live-preview`, paid:** input
+  **$0.75 / 1M text**, **$3.00 / 1M audio** (≈ $0.005/min); output
+  **$4.50 / 1M text**, **$12.00 / 1M audio** (≈ $0.018/min); free tier
+  free of charge. Grounding w/ Search: 5,000 free/month (shared across
+  Gemini 3.x), then $14 / 1,000. Still ~an order of magnitude cheaper than
+  OpenAI `gpt-realtime` (≈ $32 / $64 per 1M audio in/out).
+- **Native audio token accumulation (VERIFIED — *PHASE 0 · C3*):** audio
+  tokens accrue at **≈ 25 tokens/second** each way (≈ 1,500 tok/min). The
+  earlier "≈ 600 in / 1,200 out per minute" (OpenAI-derived) is replaced.
 - **Context compounding:** every turn re-charges the running context as
   prompt tokens; a long session's prompt cost grows with turn count.
 - **No prompt caching on `gemini-3.1-flash-live-preview`** (G4) — the
@@ -1116,16 +1294,16 @@ billing enabled. No multi-account setup. **Not created in this task.**
 
 | # | Risk | Severity | Mitigation / status |
 |---|---|---|---|
-| R1 | **Polish audio quality** — `gemini-3.1-flash-live-preview` speaks Polish with a strong EN/US accent (G8, unresolved). NeXa is bilingual PL/EN. | **High** | Spike PASS gate includes explicit operator Polish-quality judgement. Options if it fails: cloud EN-only first; route PL turns to local (`AUTO` per-turn by language); wait for Google fix; try `gemini-2.5` native audio (better Polish, weaker reasoning). |
+| R1 | **Polish audio quality** — **one external forum report** (G8) says `gemini-3.1-flash-live-preview` native audio speaks Polish with a strong EN/US accent; Google only acknowledged the report, did not confirm the regression (*PHASE 0 · C5*). NeXa is bilingual PL/EN. | **High (to test)** | The M2.6A operator test is the authoritative check. Options if it fails there: cloud EN-only first; route PL turns to local (`AUTO` per-turn by language); wait for a Google fix; try `gemini-2.5` native audio. |
 | R2 | **Preview-model instability** — G9: first-audio 16–26 s latency incidents, "dial-up" audio distortion, `quota exceeded`. Preview, not GA; Google changes it under us. | High | Pin the model string; monitor the model page + forum; the spike is explicitly a *feasibility* check, not a ship decision. `AUTO` fallback to local absorbs an outage. |
 | R3 | **Pipecat #5465** — silent drop of user audio/text/tool-results during the reconnect window; **no `GoAway` handling** (both VERIFIED). | Med (spike) / High (prod) | Spike: log the window, keep sessions short. Prod: NeXa wrapper adds a not-ready send buffer + proactive `GoAway`/age-timer reconnect; track PR #5497. |
 | R4 | **Cost compounding** — no caching on 3.x, per-turn context re-charge, native-audio token rates. | Med | `contextWindowCompression` on; bounded `CloudContextSnapshot`; per-session wall-clock + turn caps; running `usageMetadata` tally; measure a 30-min PL/EN session in the spike. |
-| R5 | **Privacy** — free-tier conversations used for training + human review (VERIFIED). | High if mishandled | Paid-tier key only for real use; spike uses paid key or scripted non-sensitive phrases; `CloudContextSnapshot` privacy filter; raw audio not retained; `LOCAL_ONLY` fully bypasses cloud. |
+| R5 | **Privacy / data use** — *outside* EEA/CH/UK, unpaid-quota inputs/outputs are used to improve Google products + may be human-reviewed; *in* EEA/CH/UK the Paid-Services data terms already apply to unpaid quota (*PHASE 0 · C1*). | Med | M2.6A: scripted non-sensitive phrases only (safe on either tier). M2.6B: `CloudContextSnapshot` privacy filter; raw audio not retained; `LOCAL_ONLY` fully bypasses cloud; paid-key / region decision in ADR-0004. |
 | R6 | **Canonical-transcript drift** — output transcription runs ahead of spoken audio; interruption truncation is approximate (VERIFIED P1 note). | Med | Spoken-audio high-water mark (reuse local `SpokenTextTracker` pattern); measure over-run distance on real barge-ins in the spike; store transcription text, discard unspoken remainder. |
 | R7 | **New dependency + credential surface** — `pipecat-ai[google]` / `google-genai`; a cloud key in the repo's runtime. | Med | Import-guarded, cloud-stage-only; env-var key; ADR-0004 before production; secret-scan in validation. |
 | R8 | **Two turn detectors** if server VAD is left on. | Low | Disable server VAD (`GeminiVADParams(disabled=True)`); local Silero is the sole authority; server signals observed only. |
 | R9 | **Language-routing authority** — Gemini may ignore the "respond in X" instruction; the resolver can't fix a rendering-level accent. | Med | Resolver still decides + tells Gemini; measure adherence in the spike; R1 covers the rendering side. |
-| R10 | **Session-resumption window discrepancy** (24 h vs 2 h in G2). | Low | Verify at spike time; design already re-seeds from fresh snapshot whenever canonical history changed (case H) — resumption is a nice-to-have, not load-bearing. |
+| R10 | **Session-resumption** — token validity is **2 h after the last session terminates** (*PHASE 0 · C3*, resolved); what a resumed native-audio session actually restores is still unverified. | Low | Design re-seeds from a fresh snapshot whenever canonical history changed (case H) — resumption is a nice-to-have, not load-bearing. Confirm restore behaviour in the reconnect phase. |
 | R11 | **Scope creep** — cloud voice invites building memory / identity / router / tools "while we're here". | Med | Explicit: M2.6A proves native cloud conversation quality + latency **only**. Router, memory, tools, GUI are later, separate, each with its own report/ADR. |
 
 ---
@@ -1134,31 +1312,39 @@ billing enabled. No multi-account setup. **Not created in this task.**
 
 1. **Polish audio quality** — is `gemini-3.1-flash-live-preview` native
    Polish acceptable to the operator *today*, or must PL route to local?
-   (Spike PASS gate.)
+   (Spike PASS gate; *PHASE 0 · C5*.)
 2. **End-to-end latency on this Pi + this network** — EOT → first audible
    cloud audio. Target median 0.8–1.5 s (**not** guaranteed). (Spike.)
-3. **Recommended input chunk size / cadence** — G1 gives none. Measure
-   jitter and underruns at 10 / 20 / 40 ms frames. (Spike.)
-4. **Session-resumption validity window** — 24 h or 2 h? What exactly does
-   a resumed native-audio session restore? (G2 is contradictory; a forum
-   thread asks the same — verify.)
+3. ~~Input chunk size~~ — **CLOSED (*PHASE 0 · C2*):** 20–40 ms per
+   official best-practices; M2.6A baseline 20 ms, optional 40 ms compare.
+4. ~~Session-resumption validity window~~ — **CLOSED (*PHASE 0 · C3*):**
+   2 h after the last session terminates. Still open: *what* a resumed
+   native-audio session restores (reconnect phase).
 5. **Transcription surcharge** — does enabling input/output transcription
-   add token cost? (Pricing page at spike time.)
-6. **`contextWindowCompression` effect** — latency / cost / quality delta
+   add token cost? (Pricing page at spike time — the C4 table did not
+   itemise it.)
+6. **Language routing vs input-transcription timing** — *PHASE 0 · C6*
+   questions A–G. The single most important thing M2.6A must measure for
+   ADR-0004.
+7. **`contextWindowCompression` effect** — latency / cost / quality delta
    vs compression-off, over a 30-min PL/EN session. (Spike, both modes.)
-7. **Tier-1 concurrent-session + RPM limits** for the preview model —
+8. **Tier-1 concurrent-session + RPM limits** for the preview model —
    read in AI Studio during setup.
-8. **Barge-in during a pending synchronous tool call** — does the model
+9. **Barge-in during a pending synchronous tool call** — does the model
    wedge? (Later; no tools in M2.6A.)
-9. **Output-transcription look-ahead distance on interruption** — how many
-   words does it over-run the played audio? Determines high-water-mark
-   granularity. (Spike.)
-10. **Exact current Gemini API data-use terms** — re-read
-    `ai.google.dev/gemini-api/terms` (trackers lag).
-11. **Does `pipecat-ai[google]` pull heavy transitive deps** (gRPC,
-    protobuf already present) onto the Pi venv? Size + import time.
-    (Spike setup.)
-12. **Interaction with NeXa's local `BargeInController`** — in cloud mode
+10. **Output-transcription look-ahead distance on interruption** — how many
+    words does it over-run the played audio? Determines high-water-mark
+    granularity. (Spike.)
+11. ~~Exact current Gemini API data-use terms~~ — **CLOSED (*PHASE 0 ·
+    C1*):** read verbatim from `ai.google.dev/gemini-api/terms` on
+    2026-09-10.
+12. ~~`pipecat-ai[google]` transitive-dep weight~~ — **CLOSED (this
+    task):** installed only `google-genai 2.22.0` (not the full extra) +
+    10 transitive packages; venv **+32 MiB** (~+5 %); `google.genai`
+    import ~608 ms; **`websockets` downgraded 17.1 → 16.1.1** (within
+    pipecat's `>=13.1`; `pip check` clean; spot-check voice tests pass).
+    No tracked dependency file changed.
+13. **Interaction with NeXa's local `BargeInController`** — in cloud mode
     the local streaming-TTS barge-in machinery is not in the path; confirm
     the reused *concepts* (interruption state, `commit_interrupted_turn`,
     AEC feed) compose cleanly without the `broadcast_interruption()` /
@@ -1362,12 +1548,17 @@ untouched; no API key, no `google-genai`, no `pipecat-ai[google]`.
   unknowns are exactly what a spike is for (latency, Polish audio quality,
   cost, reconnect behaviour on real hardware).
 
-**NO-GO** (until the spike reports) for: adding `pipecat-ai[google]` to
-the project deps, writing any `src/nexa/**` cloud code, the
-`ConversationRouter` / `SetConversationPolicy`, `append_external_turn`,
-and ratifying **ADR-0004**. Those wait on M2.6A's measured latency and the
-operator's Polish-audio judgement.
+**NO-GO** (until the spike reports) for: adding `google-genai` /
+`pipecat-ai[google]` to the **tracked** project deps (`pyproject.toml`),
+writing any `src/nexa/**` cloud code, the `ConversationRouter` /
+`SetConversationPolicy`, `append_external_turn`, and ratifying
+**ADR-0004**. Those wait on M2.6A's measured latency, the
+input-transcription-vs-audio ordering (*PHASE 0 · C6*), and the operator's
+Polish-audio judgement.
 
-**Prerequisite before M2.6A starts:** one paid-tier Google AI Studio /
-Gemini API key (billing enabled), provided by the operator, in
-`NEXA_GEMINI_API_KEY`. **Not created in this task.**
+**Prerequisite status:** the operator has provided one Gemini API key
+(Google project `591383313359`); it is stored **outside the repo** at
+`~/.config/nexa/secrets/gemini.env` (dir `700`, file `600`), variable
+`NEXA_GEMINI_API_KEY`. The connectivity smoke used it successfully. Its
+tier / region and whether M2.6B needs a paid key is an ADR-0004 decision
+(*PHASE 0 · C1*). **The key value appears nowhere in the repo.**

@@ -50,8 +50,9 @@ far-end reference, sustained-VAD confirmation, ~251 ms Ollama cancellation,
 interruption capture/coalescing, capture-generation-scoped timers, correct
 interrupted-history semantics, PL/EN routing preserved.
 
-**M2.6 — CLOUD REALTIME VOICE.** Research / architecture **COMPLETE** (`R0030`,
-2026-09-10; research-only, no `src/` change). Initial provider **frozen for v1**:
+**M2.6 — CLOUD REALTIME VOICE.** Research / architecture + Phase-0 fact
+corrections **COMPLETE** (`R0030`, 2026-09-10; no `src/` change, no tracked-
+dependency change). Initial provider **frozen for v1**:
 Google Gemini Live `gemini-3.1-flash-live-preview` (VERIFIED real + current;
 Preview; native audio-to-audio; synchronous-only function calling; no prompt
 caching). Integration = Pipecat **OPTION C** (wrap + harden the installed 1.8.1
@@ -67,19 +68,30 @@ persisted), distinct from runtime `active_provider` = LOCAL / CLOUD. Switchable
 by natural voice command ("Przełącz na chmurę.", "Rozmawiaj lokalnie.", "Używaj
 najlepszego trybu.") — a model/provider may recognise the intent, **NeXa's own
 router/core executes the switch**. HYBRID audio: keep the XVF3800 AEC + local
-Silero as the turn authority, Gemini server VAD off. **Known provider RISK:**
-`gemini-3.1-flash-live-preview` native audio currently speaks Polish with a
-strong EN/US accent (Google-acknowledged 2026-08-18, unresolved). Real use
-requires a paid-tier key (free-tier data is used for product improvement).
+Silero as the turn authority, Gemini server VAD off. Verified facts
+(official docs, 2026-09-10): 16-kHz PCM in / 24-kHz out, **20–40 ms audio
+chunks**, ~10-min connection lifetime, **session-resumption tokens valid
+2 h**, `GoAway.timeLeft`, `contextWindowCompression` → unlimited session;
+paid pricing input $0.75/1M text · $3.00/1M audio, output $4.50/1M text ·
+$12.00/1M audio, free tier free. **EXTERNAL REPORTED RISK (community, not
+Google-confirmed):** one forum thread reports `gemini-3.1-flash-live-preview`
+native audio speaking Polish with a strong EN/US accent — the M2.6A
+operator test is the authoritative check. **Data terms:** in EEA/CH/UK the
+paid data terms apply to unpaid quota too, and a cloud voice made
+available to such users must use Paid Services; outside those regions
+unpaid-quota data is used to improve Google products.
 
-- **M2.6A** (next implementation task) — minimal Gemini Live real-hardware
-  spike: reSpeaker → existing AEC/local audio path → Gemini Live → native
+- **M2.6A** (in progress) — minimal Gemini Live real-hardware spike:
+  reSpeaker → existing AEC/local audio path → Gemini Live → native
   streamed cloud audio → existing speaker, plus latency / Polish-quality /
-  reconnect / cost metrics (PASS/WARN/FAIL table in `R0030`). No memory,
-  identity, router, tools or GUI. → report `R0031`.
-- **ADR-0004** — ratify the provider boundary, the cloud credential surface,
-  and the `pipecat-ai[google]` / `google-genai` dependency. Owed **before**
-  M2.6B.
+  reconnect / cost / **event-ordering** metrics (PASS/WARN/FAIL table in
+  `R0030`). No memory, identity, router, tools or GUI. Probe implemented +
+  connectivity smoke passed; **awaiting the operator live session**
+  → report `R0031` (READY_FOR_OPERATOR_TEST / NOT OPERATOR-CONFIRMED).
+- **ADR-0004** — ratify the provider boundary, the cloud credential
+  surface, `google-genai` as a tracked dependency, and the production
+  language-routing authority (input-transcription timing, R0030 C6). Owed
+  **before** M2.6B.
 - **M2.6B** — production `RealtimeVoiceProvider` + `ConversationRouter` +
   `SetConversationPolicy` + `CloudContextSnapshot` + reconnect hardening.
 

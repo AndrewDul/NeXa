@@ -10,22 +10,45 @@ Runtime / test evidence outranks anything else in this repo.
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
 - **Latest report:** `docs/reports/R0030_cloud_realtime_voice_research_architecture_20260910.md`
-  (**M2.6 — Cloud Realtime Voice — RESEARCH / ARCHITECTURE ONLY (2026-09-10).**
-  No `src/` change; no API key; not pushed. **VERIFIED:** the recorded model
-  `gemini-3.1-flash-live-preview` is real + current (Preview, 131k/65k
-  context, native audio-to-audio, **synchronous-only** function calling, **no
-  prompt caching**); Gemini Live = WebSocket, 16-kHz PCM in / 24-kHz PCM out,
-  ~10-min connection lifetime, session resumption + `GoAway.timeLeft`,
-  `contextWindowCompression` → unlimited session. **Pipecat 1.8.1
-  `GeminiLiveLLMService`** (installed) has two real unfixed gaps — GitHub
-  **#5465** (user audio/text/tool-results silently dropped during the
-  reconnect window; fix PR #5497 OPEN, unmerged) and **no `GoAway`
-  handling** (reactive reconnect only) — both bounded for a short spike,
-  must be wrapped for production. **Provider-side RISK:**
-  `gemini-3.1-flash-live-preview` native audio currently speaks **Polish with
-  a strong EN/US accent** (Google-acknowledged 2026-08-18, unresolved).
-  **Privacy:** free-tier Gemini conversations are used for product
-  improvement + human review → real use needs a **paid-tier** key.
+  (**M2.6 — Cloud Realtime Voice — RESEARCH / ARCHITECTURE + Phase-0 fact
+  corrections + M2.6A probe implemented (2026-09-10).** No `src/` change;
+  no tracked-dependency change; not pushed. See R0030 *PHASE 0 CORRECTIONS*
+  — supersedes the body where they conflict. **VERIFIED (official docs,
+  2026-09-10):** model `gemini-3.1-flash-live-preview` is real + current
+  (Preview, 131k/65k context, native audio-to-audio, **synchronous-only**
+  function calling, **no prompt caching**); Gemini Live = WebSocket,
+  16-kHz PCM in / 24-kHz PCM out, **audio chunks 20–40 ms**, ~10-min
+  connection lifetime, **session-resumption tokens valid 2 h** after the
+  last session ends, `GoAway.timeLeft`, `contextWindowCompression` →
+  unlimited session, audio tokens accrue **≈25 tok/s**. **Official pricing
+  (paid):** input $0.75/1M text · $3.00/1M audio (~$0.005/min); output
+  $4.50/1M text · $12.00/1M audio (~$0.018/min); free tier free of charge.
+  **Data terms:** outside EEA/CH/UK unpaid-quota data is used to improve
+  Google products; in EEA/CH/UK the paid data terms apply to unpaid quota
+  too, and a cloud voice *made available to* EEA/CH/UK users must use Paid
+  Services (ADR-0004 decision). **Pipecat 1.8.1 `GeminiLiveLLMService`**
+  (installed) has two real unfixed gaps — GitHub **#5465** (user
+  audio/text/tool-results silently dropped during the reconnect window;
+  fix PR #5497 OPEN, unmerged) and **no `GoAway` handling** — bounded for
+  a short spike, must be wrapped for production. **EXTERNAL REPORTED RISK
+  (community, not a Google-confirmed fact):** one forum thread reports
+  `gemini-3.1-flash-live-preview` native audio speaking Polish with a
+  strong EN/US accent — Google only acknowledged the report. The
+  authoritative check is the M2.6A operator test.
+  **Connectivity smoke PASSED (2026-09-10):** the operator-provided key is
+  accepted, model reachable, Live WebSocket setup in 449 ms, clean
+  disconnect (no audio). `google-genai 2.22.0` installed in the research
+  venv (+~32 MiB; `websockets` 17.1→16.1.1 within pipecat's range; pip
+  check clean; no tracked dep file changed). M2.6A probe
+  (`docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py`)
+  implemented + `--dry` validated. Key stored **outside the repo** at
+  `~/.config/nexa/secrets/gemini.env` (700/600), var `NEXA_GEMINI_API_KEY`.
+  **CRITICAL OPEN QUESTION for M2.6A to MEASURE (R0030 C6):** whether the
+  complete input transcription reaches NeXa *before* first cloud audio —
+  if not, `ResponseLanguageResolver` cannot steer the same response
+  without added latency; M2.6A temporarily lets Gemini mirror the spoken
+  language natively; production language-routing authority is decided in
+  ADR-0004 after measurement.
   **Architecture (design, ADR-0004 owed):** `ConversationSession` stays the
   one authority; cloud is a NEW `RealtimeVoiceProvider` boundary (not a
   `ModelProvider` — that's a text stream) handed a NeXa-derived, privacy-
@@ -38,9 +61,11 @@ Runtime / test evidence outranks anything else in this repo.
   it**; keep XVF3800 AEC + local Silero as the turn authority (HYBRID,
   server VAD off), NeXa keeps final authority over the speaker.
   **Recommendation: GO for M2.6A — minimal Gemini Live real-hardware spike**
-  (prove native cloud audio quality + latency only; no memory / identity /
-  router / tools / GUI); then R0031 + ADR-0004 before M2.6B production.
-  Pipecat static-audit spike: `docs/research/m2_6_cloud_realtime_voice/`.)
+  (prove native cloud audio quality + latency + event ordering only; no
+  memory / identity / router / tools / GUI); then R0031 + ADR-0004 before
+  M2.6B production. Spike dir: `docs/research/m2_6_cloud_realtime_voice/`
+  (offline Pipecat static audit, connectivity smoke, M2.6A probe).
+  **M2.6A: READY FOR OPERATOR TEST — NOT OPERATOR-CONFIRMED** (`R0031`).)
 - **Prior report:** `docs/reports/R0029_m2_5b_production_barge_in_interruption_20260909.md`
   (**M2.5B — Production Barge-In / Interruption — COMPLETE / OPERATOR-CONFIRMED
   (2026-09-10).** Production barge-in ships behind
@@ -584,14 +609,20 @@ Runtime / test evidence outranks anything else in this repo.
   research / architecture COMPLETE (`R0030`, 2026-09-10)** — provider
   frozen to Gemini Live `gemini-3.1-flash-live-preview`, Pipecat OPTION C,
   one `ConversationSession` + `RealtimeVoiceProvider` + `CloudContextSnapshot`,
-  HYBRID audio, `ConversationPolicy` vs `active_provider`. **Recommended
-  next task: `M2.6A` — minimal Gemini Live real-hardware spike** (native
-  cloud audio quality + latency only; PASS/WARN/FAIL table in R0030). Then
-  `R0031` + **`ADR-0004`** before `M2.6B` production. **Prerequisite: one
-  paid-tier Gemini API key** (`NEXA_GEMINI_API_KEY`; free-tier data is used
-  for product improvement) — not created. Non-blocking, owed independently:
-  the B.3.6 operator latency re-confirmation; a resource-safe non-blocking
-  pre-warm to remove the M2.5B.2 reset continuity dip.
+  HYBRID audio, `ConversationPolicy` vs `active_provider`. **Phase-0
+  fact corrections applied** (R0030 *PHASE 0 CORRECTIONS*: UK/EEA/CH data
+  terms; 20–40 ms chunks; 2 h resumption tokens; official pricing;
+  Polish-accent retagged as an unverified community report; a critical
+  input-transcription-vs-audio-ordering question for M2.6A to measure).
+  **M2.6A probe IMPLEMENTED + connectivity smoke PASSED (449 ms).
+  READY FOR OPERATOR TEST — NOT OPERATOR-CONFIRMED** (`R0031`). Then
+  `R0031` results + **`ADR-0004`** before `M2.6B` production.
+  **Credential:** operator-provided key stored at
+  `~/.config/nexa/secrets/gemini.env` (outside the repo, 700/600), var
+  `NEXA_GEMINI_API_KEY`; tier/region + paid-key decision is an ADR-0004
+  item. Non-blocking, owed independently: the B.3.6 operator latency
+  re-confirmation; a resource-safe non-blocking pre-warm to remove the
+  M2.5B.2 reset continuity dip.
 
 ---
 
@@ -1158,8 +1189,10 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Current focus
 
-- **M2.6 — Cloud Realtime Voice. Research / architecture COMPLETE
-  (`R0030`, 2026-09-10); no implementation started.** LOCAL REALTIME VOICE
+- **M2.6 — Cloud Realtime Voice. Research + Phase-0 corrections COMPLETE
+  (`R0030`); M2.6A feasibility probe IMPLEMENTED + connectivity smoke
+  PASSED; awaiting the M2.6A operator live session (`R0031`,
+  READY_FOR_OPERATOR_TEST / NOT OPERATOR-CONFIRMED).** LOCAL REALTIME VOICE
   is complete and operator-confirmed: M1 through M1.1, and M2 through
   **M2.5B (`R0029`, COMPLETE / OPERATOR-CONFIRMED 2026-09-10)** — research
   (`R0005`) → spikes (`R0006`) → `ADR-0003` → M2.1 (`R0007`) → M2.2
@@ -1184,9 +1217,17 @@ Runtime / test evidence outranks anything else in this repo.
   runtime `active_provider` (LOCAL / CLOUD); the model may classify a
   switch intent, **NeXa executes it**. HYBRID audio — keep XVF3800 AEC +
   local Silero as the turn authority, Gemini server VAD off, NeXa keeps
-  final authority over the speaker. **Provider-side RISK:** Polish native
-  audio currently has a strong EN/US accent (Google-acknowledged, open).
-  **Privacy:** real use needs a paid-tier key.
+  final authority over the speaker. **EXTERNAL REPORTED RISK (community,
+  not Google-confirmed):** one forum thread reports Polish native audio
+  with a strong EN/US accent — the M2.6A operator test is the
+  authoritative check. **Data terms:** in EEA/CH/UK the paid data terms
+  apply to unpaid quota too, and a cloud voice *made available to* such
+  users must use Paid Services; outside those regions unpaid-quota data is
+  used to improve Google products. Paid-key decision → ADR-0004. **M2.6A
+  probe implemented; connectivity smoke PASSED (449 ms).** **CRITICAL
+  M2.6A measurement (R0030 C6):** input-transcription-vs-first-audio
+  ordering (decides whether `ResponseLanguageResolver` can steer the same
+  cloud response) — ADR-0004 settles production language routing.
 - **After local + cloud voice** (unchanged plan): memory / identity /
   personality / capabilities → full graphical UI → typed chat in that UI
   on the **same** `ConversationSession` / NeXa brain as voice (never a
@@ -1194,20 +1235,26 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Exact next recommended task
 
-**M2.6A — minimal Gemini Live real-hardware spike** (`R0030` "PROPOSED
-NEXT SPIKE"). Prove ONLY: reSpeaker mic → existing XVF3800 AEC / local
-audio path → Gemini Live (`gemini-3.1-flash-live-preview`) → native
-streamed cloud audio → existing speaker, plus the latency + Polish-audio
-+ reconnect + cost metrics in R0030's PASS/WARN/FAIL table. **No** memory,
-identity system, full router, `SetConversationPolicy` NL matching, tools,
-GUI, LiveKit, or `src/nexa/**` cloud code — a bounded disposable probe
-(`apps/nexa_cloud_voice_probe.py` or a `docs/research/` harness). Then
-**`R0031`** (spike results) and **`ADR-0004`** (provider boundary + cloud
-credential surface + dependency) before **`M2.6B`** production. Local
-realtime voice with production barge-in (`R0029`) is the frozen baseline
-it builds beside — do not destabilise it; `bargein_enabled` default stays
-`False`. **Prerequisite:** one paid-tier Google AI Studio / Gemini API key
-(`NEXA_GEMINI_API_KEY`), operator-provided — **not created in R0030**.
+**Run the M2.6A operator live session** (`R0031` "OPERATOR LIVE TEST" —
+one launch command, ~5-turn PL/EN scripted script, then a separate
+reconnect phase only if the short session passes). The probe
+(`docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py`) is
+implemented, `--dry`-validated, and the Live-API connectivity smoke
+passed (449 ms). The operator judges: Polish pronunciation/accent,
+English naturalness, EOT→first-audible latency, PL↔EN switching, and the
+probe records the event timeline (incl. the C6 input-transcription-vs-
+first-audio ordering), the #5465 NOT_READY audio accounting, AEC-ref
+health, and a token/cost estimate → timestamped JSON under the spike dir.
+
+After the operator returns terminal evidence: update `R0031` with the
+measured results, then **`ADR-0004`** (provider boundary + cloud
+credential surface + `google-genai` as a tracked dependency + production
+language-routing authority) before **`M2.6B`** production. Local realtime
+voice with production barge-in (`R0029`) is the frozen baseline this
+builds beside — do not destabilise it; `bargein_enabled` default stays
+`False`; no `src/nexa/**` cloud code until ADR-0004.
+**Credential:** operator-provided key at `~/.config/nexa/secrets/gemini.env`
+(outside the repo, 700/600), var `NEXA_GEMINI_API_KEY`.
 
 Non-blocking, owed independently (not gating cloud): the B.3.6 operator
 latency re-confirmation (STT latency + END_OF_TURN → first-audio); a
