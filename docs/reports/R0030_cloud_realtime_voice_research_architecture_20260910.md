@@ -1327,10 +1327,14 @@ voice baseline (R0029), `bargein_enabled` default.
 
 ## COMMIT HASH
 
-`<PENDING — this report is committed in the same commit; the hash is
-recorded by the immediately-following doc commit, R0026–R0029 pattern>`
+- `b82c3bd` — `research: M2.6 Cloud Realtime Voice — architecture &
+  Gemini Live audit (R0030)` (this report + the
+  `docs/research/m2_6_cloud_realtime_voice/` spike + the
+  `CURRENT_STATE` / `ROADMAP` M2.6 updates).
 
-Prior tip: `788a64d` (M2.5B closure).
+This hash-record edit lands in the immediately-following commit
+(R0026–R0029 pattern). Prior tip: `788a64d` (M2.5B closure). **Not
+pushed.**
 
 ---
 
