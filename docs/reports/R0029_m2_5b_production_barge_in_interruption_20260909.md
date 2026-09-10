@@ -1152,7 +1152,7 @@ status) → `c1306b6` → `97f4a84` → `20df578` (wiring audit +
 - `7f4e182` — `nexa.conversation.ProviderWindow` (first cut): prefix-stable
   bounded provider-facing window; `keep_entries` 2/4 verbatim carry across
   a synchronous rollover (~10–20 s reset turn — superseded).
-- `<PENDING>` — **`keep_entries = 0` context reset** (the reset turn
+- `79a6899` — **`keep_entries = 0` context reset** (the reset turn
   re-prefills only persona + the new user turn → ~3.4 s ordinary turn);
   `OLLAMA_NUM_PARALLEL=2` measured + rejected; `bench_provider_window_
   reset.py` real-Pi `keep_entries` sweep + 112-turn / 10-reset run; this
@@ -1166,7 +1166,7 @@ closure). **Not pushed.**
 
 Branch `main`, **not pushed**. `git diff --check` clean. Sequence:
 `2f23613` (M2.5A closed) → … → `4a55a7e` → `893c8a3` (M2.5B.1) →
-`7f4e182` → **`<PENDING>` (M2.5B.2 context reset)** → hash-record commit
+`7f4e182` → `79a6899` (M2.5B.2 context reset) → hash-record commit
 (this edit). Frozen components (model / `num_thread` / `keep_alive` /
 `num_ctx` / whisper / Piper / `ResponseLanguageResolver`) untouched; the
 Ollama service was briefly reconfigured to `OLLAMA_NUM_PARALLEL=2` for a
