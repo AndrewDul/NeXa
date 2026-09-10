@@ -29,7 +29,22 @@
   and **rejected** (SWA cache interference → concurrent foreground turn
   cold-reprocesses ~49 s). Responsive cancellation (`cancel → worker-stop`
   ~2 s → 251 ms) stands. `--no-bargein`'s mic policy is byte-for-byte
-  R0026. Not pushed.
+  R0026.
+  **M2.5B.3 (2026-09-10):** a real live `--bargein` conversation —
+  **operator rates conversation quality, naturalness, voice, local
+  response speed and PL/EN switching GOOD / ACCEPTABLE.** One remaining
+  defect: the interruption-capture phase sometimes hung to the 12 s
+  controller hard cap + 15 s adapter timeout, and once busy-dropped
+  6360 ms of an interruption's own audio. **Root-caused + FIXED** — the
+  settle window was armed only on a VAD `INTERRUPT_SEGMENT_ENDED`, and
+  `broadcast_interruption()` flushes the `BargeInController`'s own frame
+  queue, so on a lagged Pi loop that segment-END could be dropped and the
+  phase could never settle. The settle is now armed at confirm and driven
+  by a `_last_vad_activity` timestamp (every VAD frame, incl.
+  `UserSpeakingFrame`); `_interrupt_open_segments` no longer gates
+  finalisation; a trailing segment of the confirmed interruption is never
+  DROP_BUSY'd. See *M2.5B.3*. **Still NOT operator-confirmed** — one short
+  live re-test of the interruption lifecycle is owed. Not pushed.
 - **Related:** `R0028` (M2.5A architecture + real-hardware feasibility;
   **M2.5A COMPLETE / OPERATOR-CONFIRMED 2026-09-09**), `R0026` (the
   half-duplex behaviour this milestone replaces when enabled), `R0027`
@@ -974,11 +989,176 @@ only**; prefix is a pure extension between resets; response-language slots
 stay aligned across a reset; CASE-A interrupted rollback still works with
 a window; canonical history stays complete throughout.
 
+## M2.5B.3 — INTERRUPTION-CAPTURE LIFECYCLE
+
+### Live session (2026-09-10) — overall UX
+
+A real live `--bargein` conversation. **Operator assessment: conversation
+quality, naturalness, voice, local response speed and PL/EN switching —
+GOOD / ACCEPTABLE.** Repeated interruptions succeeded, old answer stopped,
+Jenny/Gosia mapping and follow-up context all correct. The accepted local
+voice-UX baseline stands and is **not** revisited here.
+
+**Remaining defect — interruption-capture lifecycle.** The terminal
+repeatedly printed `nexa.voice.bargein: interruption capture hit the
+12.0s cap — forcing settle`, once `nexa.voice_conversation: interruption
+capture timed out after 15.0s — finalising with what we have`, and once
+`DROP_BUSY_RESPONSE_IN_FLIGHT: dropped 6360ms of audio captured while NeXa
+is answering (session total 1, stt_queue_depth 0)` around a long operator
+utterance (*"Słuchaj, źle to robimy, bo ty nie uruchamiasz angielskiego
+modelu, tylko…"*).
+
+### Root cause (reconstructed from code + Pipecat 1.8.1 source)
+
+The interruption-capture phase finalised only when **all three** of
+`_interrupt_capture_settled`, `_interrupt_open_segments == 0` and
+`_interrupt_pending_results == 0` held. `_interrupt_capture_settled` was
+set **only** by the controller's settle window, and that window was armed
+**only** on a VAD `INTERRUPT_SEGMENT_ENDED`
+(`BargeInController._handle_speech_stopped`). `_do_confirm` explicitly
+cancelled any settle task and armed only the 12 s hard cap.
+
+`FrameProcessor.broadcast_interruption()` (Pipecat 1.8.1) calls
+`self.__reset_process_task()` → **clears the calling processor's own frame
+queue**, and pushes `InterruptionFrame` up/down where every other
+processor's `_start_interruption()` cancels+recreates its process task and
+flushes *its* queue. `_do_confirm` normally runs from the
+`_confirm_after_hold` task, so while it `await`s `broadcast_interruption()`
+the `BargeInController`'s process task is live and pulling frames — and on
+a Pi whose event loop is saturated by the in-flight LLM decode, a
+`VADUserStoppedSpeakingFrame` for the interrupting utterance's current
+segment can already be **queued** and is then **discarded** by that
+flush. (The `VADController._audio_idle_handler` — force-stop after 1.0 s
+of no audio while `SPEAKING` — can likewise be perturbed by the flush and
+mis-sequence a start/stop pair.)
+
+**Consequence chain:**
+
+1. the lost `VADUserStoppedSpeakingFrame` ⟹ no `INTERRUPT_SEGMENT_ENDED`
+   ⟹ `_arm_settle()` **never called** ⟹ the settle window **never fires**
+   ⟹ `_interrupt_capture_settled` **never set** by the normal path;
+2. `_interrupt_open_segments` was seeded to 1 for the in-progress segment
+   and its decrement (`note_interrupt_segment_ended`) is the same lost
+   event ⟹ it **stays ≥ 1**; a VAD re-segmentation of the ongoing speech
+   then adds an unmatched `note_interrupt_segment_started` ⟹ **stuck non-zero
+   after STT has completed**;
+3. → the **12 s controller hard cap** (`_capture_deadline`) fires (it
+   calls `_notify_capture_settled`, which sets `settled` but cannot clear
+   the stuck `open` count);
+4. → the **15 s adapter timeout** (`_capture_timeout_guard`) force-zeros
+   the counters and finalises;
+5. if the operator is still mid-segment when step 4 dispatches the
+   replacement turn, `HalfDuplexGate.notify_response_dispatched()` clears
+   `capturing_interrupt`, so the segment's `VADUserStoppedSpeakingFrame`
+   (buffered ≈ **6360 ms**) reaches `_UtteranceCaptureFrameProcessor` with
+   `should_drop_busy_utterance()` now `True` ⟹ **DROP_BUSY**.
+
+### Answers to the seven questions
+
+| # | Answer |
+|---|---|
+| 1 | A normal interruption leaves the 12 s deadline alive when its **only** `VADUserStoppedSpeakingFrame` (or the one for the segment in progress at confirm) is flushed from the `BargeInController` queue by `broadcast_interruption()` on a lagged loop — the settle window was armed *only* by that event, so it never fires and `notify_interruption_complete()` (which cancels the deadline) is never reached. |
+| 2 | **Yes** — the settle was armed *only* on `INTERRUPT_SEGMENT_ENDED` and cancelled on `INTERRUPT_SEGMENT_STARTED`; a lost END means it is never (re)armed at all, and `_do_confirm` itself cancels it. It was never armed at confirm. |
+| 3 | **Yes** — `_interrupt_open_segments` is seeded to 1 and only a matched segment-END decrements it; a lost END plus a VAD re-segmentation of the ongoing speech leaves it ≥ 1 permanently, *after* the STT result for the actual utterance has already arrived. |
+| 4 | **Yes** — `notify_interruption_complete()` is only reached from `_finalize_interrupt_turn()`, which is gated on the three converged counters; with a stuck `open` count it is reached only via the 15 s force-finalise (too late) — the 12 s cap in between does not reach it. |
+| 5 | **Yes, but only via the timeout.** A new response is dispatched when the 15 s `_capture_timeout_guard` force-finalises while capture state was still (nominally) active — and the coalesced turn's `on_user_transcript` → `notify_response_dispatched` is what then clears the still-lingering gate/SM capture flags. In ordinary operation (fix in place) no response is dispatched while capture is active. |
+| 6 | **Yes, transiently.** `HalfDuplexGate.capturing_interrupt` is set by the `InterruptionFrame` (via the mic-gate processor) and cleared by `notify_response_dispatched`; `VoiceConversationAdapter._capturing_interrupt` is set in `_begin_interrupt_capture` and cleared in `_finalize_interrupt_turn`. After a force-finalise the adapter clears first; the gate stays `True` until the queued replacement turn runs — a window in which a segment is submitted to STT (gate says capture) but its result is then handled as non-capture (adapter). |
+| 7 | **A — the dropped 6360 ms was part of the SAME confirmed interruption** (the operator's continued speech / a trailing VAD segment of *"Słuchaj, źle to robimy…"*), dropped because the 15 s force-finalise closed the capture window while that segment was still being spoken. It is a downstream symptom of the same lifecycle bug, not a genuine new utterance. |
+
+### Fix (minimal — no accepted-UX change)
+
+`src/nexa/voice/bargein.py`, `…/adapter.py`, `…/runtime.py`:
+
+1. **The settle window is armed at *confirm*** (in `_do_confirm`, before
+   `broadcast_interruption()`) and is a **single long-lived task** that
+   fires `settle_secs` after `_last_vad_activity` — a timestamp bumped on
+   **every** VAD frame during `INTERRUPTING`: `VADUserStartedSpeakingFrame`,
+   `VADUserStoppedSpeakingFrame`, **and `UserSpeakingFrame`** (the "still
+   speaking" tick, emitted ~5×/s). A lost segment-END no longer prevents
+   settling — the `UserSpeakingFrame` ticks keep the deadline pushed out
+   until ~`settle_secs` after the operator actually stops.
+2. **`_interrupt_open_segments` no longer gates finalisation.** It is
+   diagnostic only. `_maybe_finalize` gates on `settled AND
+   pending_results == 0`. On settle, any lingering `open` count is
+   reconciled to 0 (VAD silent for the whole settle window ⟹ nothing is
+   open) and recorded as *expected-late* STT results.
+3. **`_do_confirm` reorder** — the adapter enters `_capturing_interrupt`
+   and the settle + hard-cap are armed **synchronously, before** the
+   `await broadcast_interruption()`. No VAD segment callback can land in a
+   "state machine INTERRUPTING but adapter not capturing" gap.
+4. **`_UtteranceCaptureFrameProcessor` consults the state machine
+   directly** (`state == INTERRUPTING`), not just the gate boolean: a VAD
+   segment of a still-confirmed interruption is **always** submitted to
+   STT, **never** DROP_BUSY'd — killing the 6360 ms drop.
+5. **Late STT result grace** — an STT result arriving within one decode of
+   a finalise, *when an unmatched segment-start was reconciled*, is
+   discarded quietly (INFO, no `DroppedTurn`) as a known artefact, not a
+   busy-drop.
+6. **Instrumentation** — a `capture_id` per confirmed interruption; one
+   concise `nexa.voice.bargein: capture[N] <event> …` line per lifecycle
+   step (`interrupt_confirmed`, `settle_armed`, `deadline_armed`,
+   `segment_started/ended`, `settle_fired`, `interruption_complete
+   deadline_cancelled`) plus the adapter's `interruption capture ready …`
+   summary. The 12 s cap and 15 s timeout log at WARNING with "this should
+   not happen in ordinary use".
+
+The 12 s cap and the 15 s adapter timeout are **retained unchanged as
+safety guards** — not raised, not removed. In a healthy session they now
+fire **zero** times.
+
+### Why the fix does not change accepted voice UX
+
+Steady-state, non-interruption behaviour is untouched. For an
+interruption: the replacement reply still dispatches ~`settle_secs`
+(1.2 s) after the operator stops + the STT decode — exactly as intended;
+the only observable change is that a rare interruption that used to stall
+to 12–15 s now settles promptly. Multi-segment coalescing, one-canonical-
+turn, PL/EN routing, Jenny/Gosia, `--no-bargein` R0026, the
+`ProviderWindow` latency fix, `gemma4:e4b` / `num_thread=2` /
+`keep_alive=30m` / Whisper / Piper / `ResponseLanguageResolver` — all
+unchanged.
+
+### New regression tests — `tests/test_bargein_m2_5b3.py` (9)
+
+Built on the M2.5B.1 fixture (real `BargeInController` + adapter via
+`build_bargein_stack`), driving VAD frames + `UserSpeakingFrame` ticks
+with an injected clock:
+
+| test | what it locks |
+|---|---|
+| A | single-segment interruption: settles promptly from ticks + a delivered END; the 12 s deadline task is cancelled, never fired |
+| B | **the live bug:** the *only* segment-END is LOST — capture still settles from the ticks; **no WARNING logged** (no 12 s cap, no 15 s timeout); the coalesced turn carries the text |
+| B2 | lost first segment-END + more speech → ONE coalesced turn; a late STT result for the lost segment is discarded quietly, **not** DROP_BUSY'd |
+| C | when the replacement response begins, all capture state (adapter + gate + state machine counters) is already cleared |
+| D | a genuinely new utterance after the replacement reply (past the late-result grace) is a normal `DROP_BUSY` |
+| E | delayed STT: settle fires, capture waits for the owed result, then finalises **exactly once** |
+| F | missing VAD **and** STT: only the hard timeout acts; state released, machine not latched, no crash |
+| G | a ~6 s second segment of the confirmed interruption is **not dropped** — its text reaches the coalesced turn |
+| H | 4 repeated interruptions: no stale deadline/timeout task from cycle N fires during cycle N+1 |
+
+Test B **fails against the pre-fix code** (settle never fires) and passes
+with the fix.
+
 ## OPERATOR ACCEPTANCE STATUS
 
-**FAILED once (2026-09-09). M2.5B.1 done; M2.5B.2 done pending its final
-long-session benchmark; ONE live re-test owed. NOT `OPERATOR-CONFIRMED`.**
+**LIVE SESSION 2026-09-10 — overall UX GOOD / ACCEPTED BY OPERATOR
+(conversation quality, naturalness, voice, local response speed, PL/EN
+switching). REMAINING DEFECT: interruption-capture lifecycle / timeout —
+root-caused + FIXED (M2.5B.3). NOT yet `OPERATOR-CONFIRMED` — one short
+live re-test of the interruption lifecycle is owed.**
 
+- M2.5B.3 interruption-capture lifecycle: the 12 s controller hard cap and
+  15 s adapter timeout were firing for ordinary interruptions because the
+  settle window was armed only on a VAD segment-END that
+  `broadcast_interruption()` can flush from the controller's frame queue on
+  a lagged Pi loop; the 6360 ms drop was a trailing segment of that same
+  interruption. Fixed: settle armed at confirm + driven by every VAD frame
+  (incl. `UserSpeakingFrame`); `_interrupt_open_segments` off the finalise
+  gate; `_do_confirm` enters capture before the `await`; the capture
+  processor never DROP_BUSY's a segment while the state machine is
+  `INTERRUPTING`. 9 new deterministic regression tests. The 12 s / 15 s
+  guards are retained (unchanged) and now fire **zero** times in a healthy
+  session.
 - Problem 1 (fragmentation): fixed (capture/coalesce phase) + 13 regression
   tests including the exact live reproduction.
 - Problem 2 (late-session TTFT): root-caused on the real Pi — the context
@@ -996,9 +1176,10 @@ long-session benchmark; ONE live re-test owed. NOT `OPERATOR-CONFIRMED`.**
   cache interference → ~49 s cold foreground). Not a queue, not a reload,
   not interrupted-history mutation, not an un-cancelled worker.
 - Responsive cancellation: `cancel → worker-stop` ~2 s → 251 ms.
-- Automated evidence: `pytest` 714 / `unittest` 721 / `ruff` clean;
-  repeated-interruption stress stable; 7.28 s STT explained; M2.5B.2
-  reset-cost benchmark — see *M2.5B.2*.
+- Automated evidence: `pytest` 723 / `unittest` 730 / `ruff` clean /
+  `git diff --check` clean; repeated-interruption stress stable; 7.28 s STT
+  explained; M2.5B.2 reset-cost benchmark — see *M2.5B.2*; M2.5B.3
+  interruption-lifecycle tests — see *M2.5B.3*.
 
 `--no-bargein`'s mic/half-duplex policy remains byte-for-byte R0026; it
 shares the M2.5B.2 provider-context fix (no semantics change).
@@ -1022,6 +1203,10 @@ shares the M2.5B.2 provider-context fix (no semantics change).
 - `tests/test_bargein_m2_5b1.py` — **13** M2.5B.1 cases (no-fragmentation,
   cancellation-overlap audit, bilingual interruption, `--no-bargein`
   unchanged, 15-cycle stress).
+- `tests/test_bargein_m2_5b3.py` — **9** M2.5B.3 interruption-capture
+  lifecycle cases (lost segment-END still settles / no 12 s cap / no 15 s
+  timeout; trailing segment never DROP_BUSY'd; delayed STT; missing
+  VAD+STT; repeated interruptions).
 - `src/nexa/voice_conversation/latency_ledger.py` — `LatencyLedger` /
   `TurnLedgerRecord` (M2.5B.1 per-turn latency instrumentation).
 - `src/nexa/conversation/provider_window.py` — **M2.5B.2: `ProviderWindow`**
@@ -1121,6 +1306,24 @@ shares the M2.5B.2 provider-context fix (no semantics change).
   `tests/test_voice_architecture.py`,
   `tests/test_voice_tts_continuity.py` — three assertions updated for the
   M2.5B premise (documented above).
+- `src/nexa/voice/bargein.py` — **M2.5B.3:** settle armed at confirm,
+  driven by `_last_vad_activity` (bumped on every VAD frame incl.
+  `UserSpeakingFrame`), single long-lived re-checking `_settle_after`;
+  `_do_confirm` enters capture (`_on_confirmed` + arm settle + arm cap)
+  **before** `await broadcast_interruption()`; `capture_id` + concise
+  lifecycle trace (`_trace`); the hard cap logs at WARNING as a guard.
+- `src/nexa/voice_conversation/adapter.py` — **M2.5B.3:**
+  `_maybe_finalize_interrupt` gates on `settled AND pending == 0` only
+  (`_interrupt_open_segments` is diagnostic); `note_interrupt_capture_
+  settled` reconciles a lingering open count to 0 + records
+  `_late_interrupt_results`; a late interruption-segment STT result within
+  one decode of finalise is discarded quietly (not a `DroppedTurn`);
+  `_finalize_interrupt_turn` logs a "capture ready" summary; the 15 s
+  timeout logs at WARNING as a guard.
+- `src/nexa/voice/runtime.py` — **M2.5B.3:** `_UtteranceCaptureFrame
+  Processor(is_capturing_interrupt=…)` — a segment is never DROP_BUSY'd
+  while the `InterruptionStateMachine` is `INTERRUPTING`, regardless of the
+  gate boolean.
 
 **Unchanged (verified):** `gemma4:e4b` / `num_thread=2` / `keep_alive=30m`
 / warm-up, whisper `ggml-base-q8_0 -t4`, `LanguageIdGuard` thresholds,
@@ -1157,6 +1360,16 @@ status) → `c1306b6` → `97f4a84` → `20df578` (wiring audit +
   `OLLAMA_NUM_PARALLEL=2` measured + rejected; `bench_provider_window_
   reset.py` real-Pi `keep_entries` sweep + 112-turn / 10-reset run; this
   report's M2.5B.2 rewrite; 27 regression tests.
+- `b9f3738` — M2.5B.2 hash record.
+
+**M2.5B.3 (interruption-capture lifecycle):**
+
+- `<PENDING>` — settle armed at confirm + `_last_vad_activity`-driven
+  (bargein.py); `_interrupt_open_segments` off the finalise gate + late
+  segment-result grace (adapter.py); capture processor consults the state
+  machine directly so no interruption segment is DROP_BUSY'd (runtime.py);
+  `capture_id` lifecycle trace; 9 new regression tests
+  (`test_bargein_m2_5b3.py`); this report's M2.5B.3 section.
 
 This hash-record edit lands in the immediately-following commit
 (R0026/R0027/R0028 pattern). Prior milestone tip: `2f23613` (M2.5A
@@ -1166,14 +1379,16 @@ closure). **Not pushed.**
 
 Branch `main`, **not pushed**. `git diff --check` clean. Sequence:
 `2f23613` (M2.5A closed) → … → `4a55a7e` → `893c8a3` (M2.5B.1) →
-`7f4e182` → `79a6899` (M2.5B.2 context reset) → hash-record commit
-(this edit). Frozen components (model / `num_thread` / `keep_alive` /
-`num_ctx` / whisper / Piper / `ResponseLanguageResolver`) untouched; the
-Ollama service was briefly reconfigured to `OLLAMA_NUM_PARALLEL=2` for a
-measurement and **reverted** (back to `-np 1`, swap back to baseline).
-`DEFAULT_MAX_TURNS` / `DEFAULT_MAX_CHARS` (M2.5B.1) and the new
-`ProviderWindow` (M2.5B.2) are deliberate context-policy changes, never on
-the frozen list; canonical `ConversationSession.history` semantics
+`7f4e182` → `79a6899` → `b9f3738` (M2.5B.2) → **`<PENDING>` (M2.5B.3)** →
+hash-record commit (this edit). Frozen components (model / `num_thread` /
+`keep_alive` / `num_ctx` / whisper / Piper / `ResponseLanguageResolver`)
+untouched; the Ollama service was briefly reconfigured to
+`OLLAMA_NUM_PARALLEL=2` for a measurement and **reverted** (back to
+`-np 1`, swap back to baseline). `DEFAULT_MAX_TURNS` / `DEFAULT_MAX_CHARS`
+(M2.5B.1) and the new `ProviderWindow` (M2.5B.2) are deliberate
+context-policy changes, never on the frozen list; the M2.5B.3 change is
+internal interruption-capture bookkeeping only — no conversation-semantics
+or accepted-UX change. Canonical `ConversationSession.history` semantics
 unchanged.
 
 ## RISKS
@@ -1228,15 +1443,17 @@ unchanged.
 
 ## NEXT STEP
 
-1. **Operator runs the live acceptance session** (below) — now also a
-   long-session check: keep talking past ~44 exchanges and confirm turns
-   stay in the ~3–10 s band the whole time, with no creep toward tens of
-   seconds. A `provider-context RESET` line in the terminal should
-   coincide with an ordinary-speed turn, possibly a briefly less
-   context-aware answer. On PASS: mark M2.5B **OPERATOR-CONFIRMED**,
-   update `CURRENT_STATE.md`, record the commit hash.
-2. If cases 1/A–F expose a tuning need, adjust `confirm_hold_secs` /
-   response-time VAD profile only — no architecture change.
+1. **Operator runs ONE short live re-test — the interruption-capture
+   lifecycle** (command + short interaction list below). PASS if: no
+   `interruption capture hit the 12.0s cap` line, no `interruption capture
+   timed out after 15.0s` line, no `DROP_BUSY … dropped …ms of audio` for
+   an interruption's own speech, and every interruption's replacement reply
+   still starts promptly (~1–3 s after you stop). On PASS: mark M2.5B
+   **OPERATOR-CONFIRMED**, update `CURRENT_STATE.md`, record the commit
+   hash.
+2. If the re-test still shows a 12 s / 15 s line, capture the terminal —
+   the `nexa.voice.bargein: capture[N] …` trace lines make one
+   interruption fully reconstructable.
 3. Non-blocking, owed independently: the B.3.6 operator latency
    re-confirmation; a resource-safe non-blocking pre-warm to also remove
    the M2.5B.2 reset continuity dip.

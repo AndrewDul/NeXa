@@ -53,6 +53,13 @@ from .queue import DEFAULT_MAX_QUEUE_SIZE, ConversationQueueOverflowError, Seria
 #: turn is already in flight and is therefore dropped (not enqueued).
 DROP_BUSY_RESPONSE_IN_FLIGHT = "DROP_BUSY_RESPONSE_IN_FLIGHT"
 
+#: M2.5B.3 — an STT result arriving within this window after an interruption
+#: capture finalised is treated as a late segment of that same interruption
+#: (its VAD segment-END was delivered late / flushed by
+#: ``broadcast_interruption()``), discarded quietly rather than counted as a
+#: busy-drop. Sized to cover one whisper.cpp decode.
+_LATE_INTERRUPT_RESULT_GRACE_S = 6.0
+
 
 @dataclass(frozen=True, slots=True)
 class DroppedTurn:
@@ -205,8 +212,17 @@ class VoiceConversationAdapter:
         self._capturing_interrupt = False
         self._interrupt_segments: list[str] = []
         self._interrupt_pending_results = 0   # segments ended, result not yet in
-        self._interrupt_open_segments = 0     # segments started, not yet ended
+        # M2.5B.3 — diagnostic only; no longer gates finalisation. VAD
+        # segment start/end frames are not reliably paired across a
+        # ``broadcast_interruption()`` frame-queue flush on the Pi, so a
+        # non-zero "open" count must never be able to hang the capture.
+        self._interrupt_open_segments = 0
         self._interrupt_capture_settled = False
+        #: M2.5B.3 — monotonic when the last interruption capture finalised;
+        #: a late STT result for one of its segments arriving just after is
+        #: an expected artefact (logged at INFO), not a busy-drop.
+        self._last_capture_finalized_at: float | None = None
+        self._late_interrupt_results = 0
         self._interrupt_last_decision: LanguageDecision | None = None
         self._interrupt_last_language: str | None = None
         self._interrupt_reason: str = "sustained_vad"
@@ -347,6 +363,7 @@ class VoiceConversationAdapter:
         self._interrupt_pending_results = pending_results
         self._interrupt_open_segments = open_segments
         self._interrupt_capture_settled = False
+        self._late_interrupt_results = 0
         self._interrupt_last_decision = None
         self._interrupt_last_language = None
         self._cancel_capture_timeout()
@@ -365,9 +382,16 @@ class VoiceConversationAdapter:
         if self._capturing_interrupt:
             logger.warning(
                 "nexa.voice_conversation: interruption capture timed out after "
-                f"{self._interrupt_capture_timeout_s}s — finalising with what we have"
+                f"{self._interrupt_capture_timeout_s}s — finalising with what we have "
+                "(this should not happen in ordinary use; see R0029 §M2.5B.3). "
+                f"open(diag)={self._interrupt_open_segments}, "
+                f"pending={self._interrupt_pending_results}"
             )
             self._interrupt_capture_settled = True
+            # any still-owed / unmatched result may arrive after this
+            self._late_interrupt_results += max(
+                self._interrupt_open_segments, self._interrupt_pending_results
+            )
             self._interrupt_open_segments = 0
             self._interrupt_pending_results = 0
             self._finalize_interrupt_turn()
@@ -393,10 +417,23 @@ class VoiceConversationAdapter:
             self._interrupt_pending_results += 1
 
     def note_interrupt_capture_settled(self) -> None:
-        """Called by ``BargeInController`` — the settle window elapsed with no
-        new speech. Finalise once every owed segment result is also in."""
+        """Called by ``BargeInController`` — ``settle_secs`` elapsed with no
+        VAD activity of any kind. The interruption utterance is definitively
+        over: any lingering "open segment" count is frame-pairing drift
+        (M2.5B.3), so reconcile it to zero. Finalise once every *owed STT
+        result* is also in."""
         if self._capturing_interrupt:
             self._interrupt_capture_settled = True
+            if self._interrupt_open_segments:
+                logger.info(
+                    "nexa.voice_conversation: capture settled with "
+                    f"{self._interrupt_open_segments} unmatched segment-start(s) — "
+                    "reconciling to 0 (VAD silent for the settle window); "
+                    "their STT results, if any, will arrive after finalise"
+                )
+                # each unmatched start may still yield one late STT result
+                self._late_interrupt_results += self._interrupt_open_segments
+                self._interrupt_open_segments = 0
             self._maybe_finalize_interrupt()
 
     def _accumulate_interrupt_segment(self, result: object) -> None:
@@ -425,7 +462,10 @@ class VoiceConversationAdapter:
             return
         if not self._interrupt_capture_settled:
             return
-        if self._interrupt_open_segments > 0 or self._interrupt_pending_results > 0:
+        # M2.5B.3 — gate on the settle + owed STT results ONLY. The "open
+        # segments" count is diagnostic; a lost VAD segment-END must never
+        # keep this from finalising.
+        if self._interrupt_pending_results > 0:
             return
         self._finalize_interrupt_turn()
 
@@ -433,9 +473,16 @@ class VoiceConversationAdapter:
         if not self._capturing_interrupt:
             return
         self._capturing_interrupt = False
+        self._last_capture_finalized_at = time.monotonic()
         self._cancel_capture_timeout()
         text = " ".join(s for s in self._interrupt_segments if s).strip()
         n = len(self._interrupt_segments)
+        logger.info(
+            f"nexa.voice_conversation: interruption capture ready — {n} segment(s), "
+            f"settled={self._interrupt_capture_settled}, "
+            f"open(diag)={self._interrupt_open_segments}, "
+            f"pending={self._interrupt_pending_results}"
+        )
         if not text:
             logger.info(
                 "nexa.voice_conversation: interruption produced no transcript — "
@@ -496,6 +543,27 @@ class VoiceConversationAdapter:
         if not text:
             logger.debug(
                 "nexa.voice_conversation: empty/whitespace transcript — no conversation turn"
+            )
+            return
+
+        # M2.5B.3 — an STT result for a segment of the interruption we JUST
+        # finalised whose VAD segment-END frame arrived late / was flushed by
+        # ``broadcast_interruption()`` (so it was never a matched, owed
+        # result). We only expect these when a segment-start went unmatched
+        # (``_late_interrupt_results`` > 0) AND within one decode of finalise.
+        # Discard quietly — this is NOT a busy-drop.
+        if (
+            self._late_interrupt_results > 0
+            and self._last_capture_finalized_at is not None
+            and (time.monotonic() - self._last_capture_finalized_at)
+            < _LATE_INTERRUPT_RESULT_GRACE_S
+        ):
+            self._late_interrupt_results -= 1
+            logger.info(
+                "nexa.voice_conversation: late interruption-segment STT result "
+                f"({text[:40]!r}) discarded — capture already finalised "
+                f"{round(time.monotonic() - self._last_capture_finalized_at, 1)}s ago "
+                f"({self._late_interrupt_results} more expected)"
             )
             return
         # M2.4B.5A: strict pre-M2.5 half-duplex — if a turn is already in

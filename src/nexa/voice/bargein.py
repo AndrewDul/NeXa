@@ -39,6 +39,7 @@ from pipecat.frames.frames import (
     Frame,
     InterruptionFrame,
     StartFrame,
+    UserSpeakingFrame,
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
@@ -53,14 +54,23 @@ from .interruption import (
 )
 
 #: M2.5B.1 — after a confirmed barge-in, how long the interruption-capture
-#: phase waits after the *last* VAD segment ends with no new speech before
-#: it declares the interruption utterance settled. Long enough to bridge a
-#: mid-sentence pause ("Czekaj." <pause> "tylko jak powstaje."), which VAD's
-#: ``stop_secs=1.0`` has already turned into two segments. In the common
-#: single-segment case this overlaps the segment's STT decode entirely and
-#: adds ~0 latency (the adapter still waits for STT).
+#: phase waits with **no VAD activity of any kind** (segment start, segment
+#: end, or a ``UserSpeakingFrame``) before it declares the interruption
+#: utterance settled. Long enough to bridge a mid-sentence pause
+#: ("Czekaj." <pause> "tylko jak powstaje."), which VAD's ``stop_secs=1.0``
+#: has already turned into two segments. In the common single-segment case
+#: this overlaps the segment's STT decode entirely and adds ~0 latency (the
+#: adapter still waits for STT).
+#:
+#: M2.5B.3 — the settle timer is armed at *confirm* time and driven by a
+#: ``_last_vad_activity`` timestamp updated on every VAD frame, not by a
+#: segment-END alone. A single lost/flushed ``VADUserStoppedSpeakingFrame``
+#: (which ``broadcast_interruption()`` can drop from a lagged frame queue on
+#: the Pi) therefore no longer prevents the phase from ever settling — the
+#: root cause of the live 12 s-cap / 15 s-timeout hits (R0029 §M2.5B.3).
 DEFAULT_INTERRUPT_SETTLE_SECS = 1.2
-#: Hard cap on the capture phase — it can never hang.
+#: Hard cap on the capture phase — a safety guard that must never fire in
+#: ordinary use.
 DEFAULT_MAX_CAPTURE_SECS = 12.0
 
 
@@ -128,7 +138,35 @@ class BargeInController(FrameProcessor):
         self._settle_task: asyncio.Task | None = None
         self._capture_deadline_task: asyncio.Task | None = None
         self._confirming = False  # re-entrancy guard for _do_confirm
+        # M2.5B.3 — interruption-capture lifecycle bookkeeping. ``_capture_id``
+        # makes one interruption traceable end-to-end in the logs;
+        # ``_last_vad_activity`` drives the settle timer (see the module
+        # constant docstring).
+        self._capture_id = 0
+        self._last_vad_activity = 0.0
         self.telemetry = BargeInTelemetry()
+
+    # -- M2.5B.3 lifecycle trace --------------------------------------- #
+    def _trace(self, event: str, **fields: object) -> None:
+        """One concise, deterministic line per interruption-capture lifecycle
+        event, keyed by ``capture_id`` so a single interruption is traceable.
+        Driven by the same calls the deterministic tests drive."""
+        extra = " ".join(f"{k}={v}" for k, v in fields.items())
+        logger.info(
+            f"nexa.voice.bargein: capture[{self._capture_id}] {event}"
+            + (f" {extra}" if extra else "")
+        )
+
+    def _note_vad_activity(self) -> None:
+        """M2.5B.3 — any VAD frame during INTERRUPTING pushes the settle
+        deadline out. The settle timer is a single long-lived task; it
+        re-checks ``_last_vad_activity`` rather than being cancelled/rearmed
+        per frame."""
+        self._last_vad_activity = self._now()
+        if self._sm.state == InterruptionState.INTERRUPTING and (
+            self._settle_task is None or self._settle_task.done()
+        ):
+            self._arm_settle()
 
     def set_capture_hooks(
         self,
@@ -175,11 +213,13 @@ class BargeInController(FrameProcessor):
 
     def notify_interruption_complete(self) -> None:
         """M2.5B.1 — the adapter has coalesced + submitted the one canonical
-        interruption turn. End the capture phase."""
+        interruption turn. End the capture phase and cancel every capture
+        timer (settle + hard cap)."""
         self._cancel_settle_tasks()
         ev = self._sm.notify_interruption_complete()
         if ev == InterruptionEvent.RESPONSE_FINISHED:
             self.telemetry.response_finished += 1
+            self._trace("interruption_complete deadline_cancelled")
         self._sync_telemetry()
 
     # -- Pipecat entry point ----------------------------------------- #
@@ -200,6 +240,13 @@ class BargeInController(FrameProcessor):
             self._handle_speech_started()
         elif isinstance(frame, VADUserStoppedSpeakingFrame):
             self._handle_speech_stopped()
+        elif isinstance(frame, UserSpeakingFrame):
+            # M2.5B.3 — a "still speaking" tick. During INTERRUPTING it keeps
+            # the settle deadline pushed out even if the segment-END frame is
+            # later lost/flushed, so the phase always settles ~settle_secs
+            # after the user actually stops.
+            if self._sm.state == InterruptionState.INTERRUPTING:
+                self._note_vad_activity()
 
         # time-driven confirmation, checked on every frame too (belt for the
         # scheduled wake-up)
@@ -242,9 +289,11 @@ class BargeInController(FrameProcessor):
         elif ev == InterruptionEvent.IGNORED_SPEECH:
             self.telemetry.ignored_speech_starts += 1
         elif ev == InterruptionEvent.INTERRUPT_SEGMENT_STARTED:
-            # more of the same interruption utterance — hold off settling
+            # more of the same interruption utterance — the settle deadline
+            # is pushed out by the fresh VAD activity.
             self.telemetry.interrupt_segments += 1
-            self._cancel_settle_task()
+            self._note_vad_activity()
+            self._trace("segment_started", open=self._sm.capture_open_segments)
             if self._on_seg_started is not None:
                 self._on_seg_started()
         self._sync_telemetry()
@@ -258,10 +307,14 @@ class BargeInController(FrameProcessor):
                 self._on_candidate_rejected()
         elif ev == InterruptionEvent.INTERRUPT_SEGMENT_ENDED:
             # a segment of the interruption finished — an STT result is owed
-            # for it; (re)arm the settle window from here.
+            # for it. The settle deadline is driven by _last_vad_activity, so
+            # this is not the *only* thing that keeps the phase alive.
+            self._note_vad_activity()
+            self._trace(
+                "segment_ended", ended=self._sm.capture_segments_ended
+            )
             if self._on_seg_ended is not None:
                 self._on_seg_ended()
-            self._arm_settle()
         self._sync_telemetry()
 
     def _schedule_confirm(self) -> None:
@@ -290,11 +343,19 @@ class BargeInController(FrameProcessor):
         self._capture_deadline_task = None
 
     async def _settle_after(self) -> None:
+        """M2.5B.3 — one long-lived task: fire ``settle_secs`` after the
+        *last* VAD activity, re-checking rather than being cancelled/rearmed
+        per frame. Robust to a lost segment-END."""
         try:
-            await asyncio.sleep(self._settle_secs)
+            while True:
+                remaining = self._settle_secs - (self._now() - self._last_vad_activity)
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(remaining)
         except asyncio.CancelledError:
             return
         self._settle_task = None
+        self._trace("settle_fired")
         self._notify_capture_settled()
 
     async def _capture_deadline(self) -> None:
@@ -303,8 +364,9 @@ class BargeInController(FrameProcessor):
         except asyncio.CancelledError:
             return
         logger.warning(
-            "nexa.voice.bargein: interruption capture hit the "
-            f"{self._max_capture_secs}s cap — forcing settle"
+            f"nexa.voice.bargein: capture[{self._capture_id}] hit the "
+            f"{self._max_capture_secs}s hard cap — forcing settle (this should "
+            "not happen in ordinary use; see R0029 §M2.5B.3)"
         )
         self._notify_capture_settled()
 
@@ -329,27 +391,41 @@ class BargeInController(FrameProcessor):
         self._confirming = True
         try:
             invalidated = self._sm.last_invalidated_response_id
+            self._capture_id += 1
             self.telemetry.interrupt_confirmed += 1
             self.telemetry.last_interrupt_reason = reason
             self._sync_telemetry()
-            logger.info(
-                f"nexa.voice.bargein: INTERRUPT CONFIRMED (reason={reason}, "
-                f"invalidated response_id={invalidated})"
+            self._trace(
+                "interrupt_confirmed", reason=reason, invalidated_response_id=invalidated
             )
-            # Pipecat: cancel + recreate the output audio task, drop queued PCM.
-            await self.broadcast_interruption()
-            # NeXa: cancel the LLM turn, begin interruption capture.
-            # Synchronous + fast by contract.
+            logger.info(
+                f"nexa.voice.bargein: INTERRUPT CONFIRMED (capture[{self._capture_id}], "
+                f"reason={reason}, invalidated response_id={invalidated})"
+            )
+            # M2.5B.3 — enter the capture phase FIRST, before any ``await``:
+            # NeXa cancels the LLM turn and the adapter enters
+            # ``_capturing_interrupt`` synchronously, then the settle timer +
+            # hard cap are armed. Only then do we yield to
+            # ``broadcast_interruption()``. Previously the ``await`` sat
+            # between the state-machine entering INTERRUPTING and the adapter
+            # entering capture, so any VAD segment callback in that gap was a
+            # silent no-op (R0029 §M2.5B.3 root cause).
             try:
                 self._on_confirmed(
                     InterruptContext(invalidated_response_id=invalidated, reason=reason)
                 )
             except Exception:
                 logger.exception("nexa.voice.bargein: on_confirmed hook raised")
-            # M2.5B.1 — capture phase begins. Arm the hard cap now; the
-            # settle window is armed each time a segment ends.
             self._cancel_settle_tasks()
+            self._last_vad_activity = self._now()
+            self._arm_settle()
+            self._trace("settle_armed", settle_secs=self._settle_secs)
             self._capture_deadline_task = self.create_task(self._capture_deadline())
+            self._trace("deadline_armed", cap_secs=self._max_capture_secs)
+            # Pipecat: cancel + recreate the output audio task, drop queued
+            # PCM. (This also clears this processor's own frame queue — hence
+            # the capture state above is set BEFORE it.)
+            await self.broadcast_interruption()
         finally:
             self._confirming = False
 

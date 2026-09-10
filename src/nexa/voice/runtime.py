@@ -174,6 +174,7 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
         on_transcription_error: Callable[[Exception], None] | None,
         half_duplex_gate: HalfDuplexGate | None = None,
         on_utterance_dropped: Callable[[DroppedUtterance], None] | None = None,
+        is_capturing_interrupt: Callable[[], bool] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -185,6 +186,12 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
         # in flight is DROPPED here — it never reaches the STT queue,
         # `ConversationSession`, or history. Not barge-in (M2.5).
         self._gate = half_duplex_gate
+        # M2.5B.3 — authoritative "an interruption is being captured" check,
+        # read straight off the InterruptionStateMachine (state ==
+        # INTERRUPTING). Used so a trailing VAD segment of a confirmed
+        # interruption is NEVER busy-dropped even if the gate's own boolean
+        # has already flipped (R0029 §M2.5B.3: the live 6360 ms drop).
+        self._is_capturing_interrupt = is_capturing_interrupt
         self._on_utterance_dropped = on_utterance_dropped
         self._dropped_busy = 0
         self._queue = SerialTranscriptionQueue(
@@ -259,9 +266,22 @@ class _UtteranceCaptureFrameProcessor(FrameProcessor):
                 # is the belt for the edge where an utterance ends just as
                 # a response dispatches; the mic gate normally withholds
                 # the audio before it ever reaches here.
-                # M2.5B: ``should_drop_busy_utterance`` lets exactly the one
-                # confirmed interrupting utterance through (one-shot admit).
-                if self._gate is not None and self._gate.should_drop_busy_utterance():
+                # M2.5B: a confirmed interruption's utterance (all its VAD
+                # segments) is always admitted; ``should_drop_busy_utterance``
+                # then drops any *other* busy-period speech.
+                # M2.5B.3: check the interruption state machine directly —
+                # the gate boolean can flip to False (replacement turn
+                # dispatched) before VAD delivers the final segment boundary
+                # of a still-in-progress interruption.
+                capturing = (
+                    self._is_capturing_interrupt is not None
+                    and self._is_capturing_interrupt()
+                )
+                if (
+                    not capturing
+                    and self._gate is not None
+                    and self._gate.should_drop_busy_utterance()
+                ):
                     self._drop_busy(audio)
                 else:
                     try:
@@ -468,6 +488,15 @@ class VoiceRuntime:
         if self._bargein_controller is not None:
             stages.append(self._bargein_controller)
         if self._transcriber is not None:
+            _is_capturing = None
+            if self._bargein_controller is not None:
+                from nexa.voice.interruption import InterruptionState as _IS
+
+                _ctl = self._bargein_controller
+
+                def _is_capturing() -> bool:
+                    return _ctl.state_machine.state == _IS.INTERRUPTING
+
             self._capture_processor = _UtteranceCaptureFrameProcessor(
                 sample_rate=self.config.sample_rate,
                 transcriber=self._transcriber,
@@ -476,6 +505,7 @@ class VoiceRuntime:
                 on_transcription_error=self._on_transcription_error,
                 half_duplex_gate=self._half_duplex_gate,
                 on_utterance_dropped=self._on_utterance_dropped,
+                is_capturing_interrupt=_is_capturing,
             )
             stages.append(self._capture_processor)
         stages.append(state_processor)
