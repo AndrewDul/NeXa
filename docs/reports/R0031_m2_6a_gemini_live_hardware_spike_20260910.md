@@ -971,9 +971,8 @@ full suite not re-run (no `src`/`tests` change).
 - `d15e785` / `377e99a` — attempt-#1 diagnosis + `LLMRunFrame` fix.
 - `ddb7c70` / `3346256` — attempt-#2 PASS + corrected barge-in metrics
   (`--recompute`) + C6 instrumentation + `Sulafat` proposed.
-- `<PENDING — this commit>` — **Sulafat OPERATOR-CONFIRMED**; turn-local
-  reconstruction (latency + C6); turn-local C6 analysis + architectural
-  conclusion.
+- `5fe17ba` — **Sulafat OPERATOR-CONFIRMED**; turn-local reconstruction
+  (latency + C6); turn-local C6 analysis + architectural conclusion.
 
 This hash-record note is finalised by the immediately-following commit
 (R0026–R0030 pattern). Prior tip: `3346256`.
