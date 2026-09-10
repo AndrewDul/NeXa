@@ -419,10 +419,12 @@ empty · full suite **not** re-run (no `src`/`tests` change; last green at
 
 ## COMMIT HASH
 
-`<PENDING — filled by the immediately-following hash-record commit,
-R0026–R0030 pattern>`
+- `f920315` — `research: M2.6A gemini-live spike + R0030 Phase-0 corrections (R0031)`
+  (this report + `m2_6a_connect_smoke.py` + `m2_6a_gemini_live_probe.py` +
+  the R0030 Phase-0 corrections + `CURRENT_STATE` / `ROADMAP` updates).
 
-Prior tip: `a4f9266` (R0030 hash record).
+This hash-record edit lands in the immediately-following commit
+(R0026–R0030 pattern). Prior tip: `a4f9266` (R0030 hash record).
 
 ## GIT STATUS
 
