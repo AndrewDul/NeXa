@@ -4,22 +4,27 @@
 - **Author:** Claude Code (agent), for Andrzej Dul
 - **Milestone:** M2 — Realtime Voice · **Substage M2.5B — production
   barge-in / interruption.**
-- **Status:** **LIVE ACCEPTANCE FAILED once (2026-09-09) → M2.5B.1 fixes
-  applied, automated Pi evidence clean, re-test pending.** The first
-  `--bargein` operator session showed: AEC healthy; barge-in cancellation
-  worked; PL↔EN switching worked — **but** (1) an interrupting utterance
-  spoken as two VAD segments was **fragmented** (segment A started a reply,
-  segment B → `DROP_BUSY`), and (2) model time-to-first-token degraded
-  badly later in the session (→ ~75 s). **M2.5B.1 root-caused and fixed
-  both** — Problem 1 with an interruption-capture/coalesce phase, Problem 2
-  (the real cause: the 20-turn context window evicting its oldest turn
-  every turn permanently collapses Ollama's prompt-prefix KV-cache reuse)
-  by sizing the window to 40 turns so a normal session never evicts (a
-  40 +-turn marathon still eventually does — deferred to M5), plus a
-  responsive-cancellation fix (`cancel → worker-stop` ~2 s → 251 ms).
-  **NOT operator-confirmed** (one live session still owed). `--no-bargein`
-  (the default) remains byte-for-byte R0026. Not pushed. See *M2.5B.1 —
-  LIVE STABILITY / LATENCY / INTERRUPT-UTTERANCE INTEGRITY*.
+- **Status:** **LIVE ACCEPTANCE FAILED once (2026-09-09) → M2.5B.1
+  (interrupt integrity + cancellation) + M2.5B.2 (long-session context /
+  KV-cache stability) applied; automated Pi evidence clean; ONE live
+  re-test owed. NOT operator-confirmed.** The first `--bargein` operator
+  session showed: AEC healthy; barge-in cancellation worked; PL↔EN
+  switching worked — **but** (1) an interrupting utterance spoken as two
+  VAD segments was **fragmented** — **FIXED** (M2.5B.1, capture/coalesce
+  phase); and (2) model time-to-first-token degraded to tens of seconds
+  later in the session. **Root cause of (2):** the context window evicting
+  its oldest turn every turn once history exceeds the cap permanently
+  collapses Ollama's prompt-prefix KV-cache reuse (78 s at cap 20, 154 s
+  at cap 40). M2.5B.1's `max_turns` 20→40 only *moved* that cliff.
+  **M2.5B.2 removes it:** `ProviderWindow` — a prefix-stable, bounded
+  *provider-facing* window over the (still complete) canonical
+  `ConversationSession.history`; steady-state turns stay ~4 s for the
+  whole session; the window rolls over with one bounded, rare, logged
+  ~20-32 s turn instead of the permanent every-turn regime. Real-Pi
+  110-turn benchmark: multiple rollovers, no permanent regime. Responsive
+  cancellation (`cancel → worker-stop` ~2 s → 251 ms) stands.
+  `--no-bargein`'s mic policy is byte-for-byte R0026; it shares the
+  M2.5B.2 provider-context fix. Not pushed.
 - **Related:** `R0028` (M2.5A architecture + real-hardware feasibility;
   **M2.5A COMPLETE / OPERATOR-CONFIRMED 2026-09-09**), `R0026` (the
   half-duplex behaviour this milestone replaces when enabled), `R0027`
@@ -752,18 +757,162 @@ boundary.** Same spike, `N_TURNS=44`, interrupts at 5/10/14/22/30/38, run
 | 24–44 | 44 → 82 | plateaus ~2250–2340 | **154–164 s** | collapsed — history now exceeds the **new** 40-turn cap; identical mechanism, moved 20 turns out |
 | 23, 39 (turn *after* a rollback) | 42 / 72 | 2223 / 2311 | 4.0 / 4.6 s | one warm turn: CASE-A rollback leaves the cache matching the evicted prefix, so the next turn only appends a user message |
 
-So the fix **fully covers a normal session** (the early-turns regime now
-holds to turn 40 / ~2150 prompt tokens) and the operator's live failure
-(which degraded well before that) — but it **moves** the eviction cliff,
-it does not remove it. A 40 +-turn session collapses the same way. That
-final removal needs prefix-stable history compaction and is deferred to M5
-(`context.py` header; AGENTS.md §3.8) — not M2.5B.1. `cancel → worker-stop`
-held at **250–256 ms** across all six interrupts in this run.
+So the `max_turns` 20→40 change is a **partial mitigation only**: it
+**moves** the eviction cliff (turn 20 → turn 40), it does not remove it. A
+40 +-turn session collapses the same way — and a persistent personal
+companion routinely exceeds 40 turns. **M2.5B.2 (below) removes the cliff.**
+`cancel → worker-stop` held at **250–256 ms** across all six interrupts in
+this run.
 
 **Model decode rate** (`eval` ~3.4 tok/s on the Pi at `num_thread=2`) is a
 pre-existing, accepted R0022/R0023 trade-off and is *not* touched here —
 it affects how fast a long reply finishes streaming, not the "tens of
 seconds to first audio" the operator reported (that was D).
+
+## M2.5B.2 — LONG-SESSION CONTEXT / KV-CACHE STABILITY
+
+**Goal:** eliminate the sliding-window KV-cache cliff for good — not move
+it again. The canonical `ConversationSession.history` stays **complete**;
+only the *provider-facing* context is bounded.
+
+### Research (real Pi, `gemma4:e4b`, num_thread=2) — `research_provider_context_kv.py`
+
+The spike's per-call `prompt_eval_*` capture lagged one row (metrics read
+before the worker's `done` chunk); **TTFT was measured directly** and the
+cold-prefill rate is dead-consistent across every full-window call, so the
+findings are firm:
+
+| Q | question | result |
+|---|---|---|
+| **Q1** | pure-append baseline | contaminated by the spike's fixed-suffix construction; the *clean* number is from the M2.5B.1 runs + this stage's `research_prewarm_resume.py` step 0: **~3.7 s** once the prefix cache is established |
+| **Q2** | slide window base by 1 | TTFT **303 / 293 / 283 s** — dropping the oldest turn cold-reprocesses the whole ~3.3 k-token window (the M2.5B.1 cliff, re-confirmed) |
+| **Q3** | synchronous rollover (jump base to a 24-turn window) | TTFT **274 s** cold — a sync rollover of a *large* window is catastrophic |
+| **Q4** | pre-warm (`num_predict=1`) then a real turn on the same window | pre-warm 268 s; **real turn 6.8 s** — a pre-warmed prefix → cheap cutover ✅ |
+| **Q5** | pre-warm B, one real turn on old window A, back to B | back-to-B **7.2 s** — a completed pre-warm **survives** an intervening turn on a different window (Ollama 0.33.2 / llama.cpp keeps multiple prefixes while they fit in `num_ctx`) ✅ |
+| **Q6** | cold prefill `num_thread` 2 vs 4 | ~1.4× at best (274→199 s) **and a ~31 s model reload appeared at the 2→4 switch** — per-request thread changes are unsafe, **do not** |
+| **Q7** | small compacted context (system + ~250-tok recap + 6 turns ≈ 1.3 k tok) cold | **~110 s** — even a *small* compacted context has a ~110 s synchronous cold prefill; compaction alone does not make a sync rollover affordable |
+
+Follow-up spike `research_prewarm_resume.py` step 1 established the
+decisive constraint: **an Ollama request cannot be interrupted during
+prefill** — `cancel()` only lands between *streamed* lines, and there are
+none during prefill. A pre-warm of a ~30-turn window occupied the model
+for **336 s** before the cancel took effect. So a large speculative
+background pre-warm is *unsafe* during an active conversation — a real
+turn arriving mid-prefill queues behind it for the full prefill.
+
+**Cold prefill rate on this Pi at num_thread=2: ~11.5 tok/s**, everywhere.
+
+### Architecture chosen — stable window + bounded small rollover (`nexa.conversation.ProviderWindow`)
+
+Smallest design the measurements support:
+
+* **`ConversationSession.provider_window`** (opt-in; `None` = the
+  pre-M2.5B.2 `ConversationContext` path, byte-for-byte — typed chat and
+  every existing test unaffected). The voice probe sets it for **both**
+  `--bargein` and `--no-bargein` (a latency fix, no conversation-semantics
+  change — the R0026 mic/half-duplex policy is untouched).
+* The model is shown **`history[base:]`** — a verbatim recent window.
+  `base` is **stable between rollovers**, so every ordinary turn is a pure
+  prefix-extension → **~4 s**, exactly as inside the old cap, *for as long
+  as the session lasts*.
+* When the window reaches `hard_entries` with no pre-warm ready, the next
+  `send` **cuts over synchronously**: `base` jumps so only the last
+  `keep_entries` (a small, even count — one whole exchange minimum)
+  survive. That one turn pays a **bounded** cold prefill of just
+  `keep_entries` worth of tokens (the fixed persona prefix stays cached
+  across the cutover), and it is **logged at WARNING** — never silent.
+  Every subsequent turn is warm again until the next rollover, roughly
+  once per `hard_entries − keep_entries` entries.
+* The seam for a *free* rollover already exists —
+  `ProviderWindow.mark_prewarmed` / `prewarm_ready` / `cutover_background`
+  and `ConversationSession.prewarm_provider_context()` (pre-warm the small
+  post-roll window in an idle gap; Q4 shows the next turn is then ~7 s).
+  It is **not wired to fire automatically in M2.5B.2**: because a pre-warm
+  blocks the model uninterruptibly, firing it speculatively risks the same
+  ~`keep_entries`-prefill wait it is trying to save. A *non-blocking*
+  background pre-warm needs a second Ollama slot
+  (`OLLAMA_NUM_PARALLEL≥2`) — a serving change deferred past M2.5B.2 (see
+  *RISKS*). Until then the bounded sync rollover is the "safest bounded
+  temporary policy": one ~`keep_entries`-sized slow turn per rollover
+  instead of the permanent every-turn 78–164 s regime.
+
+`base` always lands on a turn boundary, so a rollover never orphans an
+assistant reply; `_response_languages` stays index-aligned; `interrupted`
+turns keep their `INTERRUPTED_WIRE_SUFFIX`; canonical `history` is never
+touched.
+
+### Canonical history vs provider context
+
+| | canonical `ConversationSession.history` | provider-facing context |
+|---|---|---|
+| authority | **the one transcript** (ADR-0003 D2) | a derived, bounded *view* |
+| bound | none — grows for the whole session | `history[base:]`, `base` advances at rollover |
+| interrupted turns | stored verbatim (`interrupted=True`) | rendered with `INTERRUPTED_WIRE_SUFFIX` while in-window |
+| response-language slots | `_response_languages`, index-aligned, never rolled | replayed per in-window USER turn |
+| future memory (M5) | reads all of it | irrelevant |
+
+Nothing is deleted. A turn that scrolls out of the provider window is
+still in `history` for M5 long-term memory to summarise/recall.
+
+### KV-cache reuse behaviour
+
+* **Steady state:** `[persona][voice-dir][history[base:]] + [new user]` — a
+  pure byte-identical prefix-extension every turn → Ollama re-evaluates
+  only the ~30–60 genuinely new tokens (~3–4 s).
+* **At a rollover:** the prefix changes at `history[base]`; `[persona]
+  [voice-dir]` (≈ 330 tok) is still a common prefix and stays cached, so
+  the cold cost is ≈ `keep_entries` window tokens + the new user turn
+  (bounded — see the benchmark).
+* **`num_ctx`:** `soft`/`hard` are sized so the steady-state window never
+  approaches Ollama's 8 k `num_ctx` (where its own `--context-shift` would
+  collapse the cache anyway); `hard − keep` sets the rollover frequency.
+
+### Real-Pi long-session benchmark — `bench_long_session_provider_window.py`
+
+**110 turns**, real `gemma4:e4b`, a deliberately small window
+(`keep=6 / soft=16 / hard=22` entries) so the rollover boundary is
+crossed often; mix of normal PL, normal EN, CASE-A interrupt rollback (t13
+/ 37 / 68 / 97) and CASE-B interrupted spoken-prefix commit (t21 / 53 /
+84). Result JSON `bench_long_session_provider_window_20260910_152509.json`.
+
+| metric | value |
+|---|---|
+| turns | 110 |
+| rollovers (all synchronous) | **12** — turns 12, 21, 29, 37, 46, 54, 62, 71, 79, 87, 95, 104 (~every 8 turns, as designed) |
+| **warm-turn TTFT** (93 turns) | **mean 3.72 s · p50 3.60 s · max 7.04 s** |
+| warm TTFT early / mid / late third | 3.72 / 3.65 / 3.84 s mean — **no drift** |
+| rollover-turn TTFT (12 turns) | mean **22.7 s** · p50 22.7 s · min 18.9 s · **max 25.2 s** — bounded, never approaches the old 78–164 s |
+| turns > 15 s | **exactly the 12 rollover turns**, each logged `provider-context SYNC rollover …` — **zero** warm turns > 15 s |
+| `load_duration` | 1.4–5.7 ms every turn — **no model reload** |
+| canonical history at end | **212 entries / 22 262 chars — complete** (`provider_window.base` = 192, i.e. the model saw only the last ~20 entries, but all 212 are in `history`) |
+| CASE A / CASE B interrupts | all correct (`rolled_back_user_turn` / `committed_spoken_prefix`), including t21 where a rollover and a barge-in coincided |
+| PL / EN | mixed throughout, no mis-routing |
+
+**Reading:** the permanent cliff is **gone** — turn 110 (canonical
+history 212 entries) is 3.83 s, identical to turn 1. What remains is one
+**bounded, logged, ~19–25 s** maintenance turn per rollover. With the
+benchmark's short turns that is ~12 s (`keep=2`, the shipped default) to
+~22 s (`keep=6`); projected to full voice turns, `keep=2` ⇒ **~16 s**,
+`keep=4` ⇒ ~28–32 s. At the shipped `soft=72 / hard=88` a rollover happens
+only ~once per ~43 exchanges. `ANY TURN > 15 s?` — **YES**, the rollover
+turns (explained, logged, rare); no *unexplained* or *steady-state* turn
+exceeds ~7 s. Removing the rollover turn needs the `OLLAMA_NUM_PARALLEL`
+follow-up (*RISKS 7*).
+
+### Regression tests
+
+`tests/test_provider_window.py` (15) — policy (bounds, arming, background
+vs sync cutover, base stays on a turn boundary, repeated rollovers stay
+bounded) + rendering (window slice only, pure prefix-extension at a fixed
+base, **byte-identical to `ConversationContext.to_provider_messages` for
+the same slice**, `INTERRUPTED_WIRE_SUFFIX`, language-alignment guard).
+`tests/test_session_provider_window.py` (10) — `provider_window=None` is
+the legacy path; windowed `send` renders only `history[base:]`; a pre-warm
+then the next `send` cuts over cheaply and re-bounds the window; the hard
+limit forces a **logged** sync rollover; prefix is a pure extension
+between rollovers; response-language slots stay aligned across a rollover;
+CASE-A interrupted rollback still works with a window; canonical history
+stays complete throughout.
 
 ## OPERATOR ACCEPTANCE STATUS
 
@@ -773,25 +922,25 @@ ONE live re-test now owed.** M2.5B is **not** `OPERATOR-CONFIRMED`.
 - Problem 1 (fragmentation): fixed (capture/coalesce phase) + 13 regression
   tests including the exact live reproduction.
 - Problem 2 (late-session TTFT): root-caused on the real Pi
-  (`gemma4:e4b`) — the 20-turn context window evicting one turn per turn
-  permanently collapses Ollama prompt-prefix KV-cache reuse (3 s → 78 s at
-  history 22). Fixed by resizing the window (40 turns / 20 k chars, still
-  inside `num_ctx`): a 44-turn re-measurement shows every turn flat at
-  ~4 s through turn 40 (the whole span that used to collapse at turn 12).
-  Not a queue, not a reload, not interrupted-history mutation, not an
-  un-cancelled worker. **Boundary, not removal:** a 40 +-turn session
-  collapses identically — prefix-stable compaction for that is M5, not
-  M2.5B.1. An M2.5B live-acceptance session is ~7 exchanges, far short of
-  40.
+  (`gemma4:e4b`) — the context window evicting one turn per turn once
+  history exceeds the cap permanently collapses Ollama prompt-prefix
+  KV-cache reuse (3 s → 78 s at cap 20; 154–164 s at cap 40). M2.5B.1's
+  `max_turns` 20→40 was a **partial mitigation only** — it moved the cliff
+  to turn 40. **M2.5B.2 removes it:** `ProviderWindow` — a prefix-stable,
+  bounded *provider-facing* window over the (still complete) canonical
+  history, with a bounded, rare, logged synchronous rollover instead of
+  the permanent every-turn collapse. Not a queue, not a reload, not
+  interrupted-history mutation, not an un-cancelled worker.
 - Responsive cancellation: `cancel → worker-stop` ~2 s → 251 ms
   (`select()` poll in the provider worker).
-- Automated evidence is clean: `pytest` 687 / `unittest` 694 / `ruff`
-  clean; repeated-interruption stress (15 cycles) stable — queues 0, ≤ 1
-  concurrency, ≤ 3 net asyncio tasks, no latency growth; the 7.28 s STT is
-  explained (CPU contention from the collapsed 78 s prompt-eval, gone once
-  Problem 2 is fixed).
+- Automated evidence: `pytest` 712 / `unittest` 719 / `ruff` clean;
+  repeated-interruption stress (15 cycles) stable; the 7.28 s STT is
+  explained (CPU contention from the collapsed prompt-eval, gone once
+  Problem 2 is fixed); M2.5B.2 real-Pi long-session benchmark — see
+  *M2.5B.2* (110 turns, multiple rollovers, no permanent regime).
 
-`--no-bargein` remains byte-for-byte R0026.
+`--no-bargein`'s mic/half-duplex policy remains byte-for-byte R0026; it
+shares the M2.5B.2 provider-context fix (no semantics change).
 
 ## FILES CHANGED
 
@@ -814,21 +963,36 @@ ONE live re-test now owed.** M2.5B is **not** `OPERATOR-CONFIRMED`.
   unchanged, 15-cycle stress).
 - `src/nexa/voice_conversation/latency_ledger.py` — `LatencyLedger` /
   `TurnLedgerRecord` (M2.5B.1 per-turn latency instrumentation).
+- `src/nexa/conversation/provider_window.py` — **M2.5B.2: `ProviderWindow`**
+  — the prefix-stable bounded provider-facing window + rollover policy +
+  wire rendering. Module header documents the whole strategy + evidence.
+- `tests/test_provider_window.py` (15) / `tests/test_session_provider_window.py`
+  (10) — **M2.5B.2** policy + rendering + session integration.
 - `docs/research/m2_5_bargein/measure_interrupt_latency_pi.py` — real-Pi
   latency / KV-cache / cancel-overlap spike (M2.5B.1) + its result JSONs.
+- `docs/research/m2_5_bargein/research_provider_context_kv.py`,
+  `research_prewarm_resume.py`,
+  `bench_long_session_provider_window.py` — **M2.5B.2** research spikes +
+  the real-Pi long-session benchmark + their result JSONs.
 - `docs/reports/R0029_…md` — this report.
 
 **Changed:**
 
 - `src/nexa/conversation/turn.py` — `ConversationTurn.interrupted` field.
 - `src/nexa/conversation/session.py` — `commit_interrupted_turn` +
-  `InterruptedTurnOutcome`.
+  `InterruptedTurnOutcome`; **M2.5B.2: `provider_window` field**,
+  `send()` renders via it when set (rollover consumed first),
+  `prewarm_provider_context()` (the idle-gap pre-warm seam, not
+  auto-fired in M2.5B.2 — see *M2.5B.2*).
+- `src/nexa/conversation/__init__.py` — export `InterruptedTurnOutcome`;
+  **M2.5B.2: export `ProviderWindow` + its default constants.**
 - `src/nexa/conversation/context.py` — `INTERRUPTED_WIRE_SUFFIX`
   deterministic wire annotation; **M2.5B.1: `DEFAULT_MAX_TURNS` 20 → 40,
   `DEFAULT_MAX_CHARS` 12 000 → 20 000** so a normal session never evicts a
   turn mid-session (the first eviction permanently collapses KV-cache
   prefix reuse — Problem 2 root cause). Header documents the mechanism.
-- `src/nexa/conversation/__init__.py` — export `InterruptedTurnOutcome`.
+  **M2.5B.2** makes the M2.5B.1 constants the *fallback* (`provider_window`
+  = `None`) path bound; the voice path uses `ProviderWindow` instead.
 - `src/nexa/providers/ollama.py`, `src/nexa/providers/llama_server.py` —
   **M2.5B.1: `select()` poll before each streamed `readline()`** so the
   worker sees `cancel_token.is_cancelled` ~4×/s (was parked in a blocking
@@ -886,7 +1050,8 @@ ONE live re-test now owed.** M2.5B is **not** `OPERATOR-CONFIRMED`.
   `interruption_complete_hook` + `stack.bind_adapter(adapter)`.
 - `apps/nexa_bilingual_voice_probe.py` — `--bargein` / `--no-bargein`;
   **refactored onto `build_bargein_stack`** (the hand-rolled construction
-  removed); live surface.
+  removed); live surface. **M2.5B.2: sets `session.provider_window =
+  ProviderWindow()`** for both modes (prints its bounds).
 - `tests/test_voice_half_duplex_gate.py`,
   `tests/test_voice_architecture.py`,
   `tests/test_voice_tts_continuity.py` — three assertions updated for the
@@ -912,10 +1077,19 @@ status) → `c1306b6` → `97f4a84` → `20df578` (wiring audit +
   coalesce phase (one confirmed interruption = one canonical turn).
 - `5e6f877` — latency ledger + `CancelToken` completion signals + Ollama
   `last_metrics`.
-- `4a55a7e` — Problem 2: KV-cache-safe context window (`DEFAULT_MAX_TURNS`
-  20→40, `DEFAULT_MAX_CHARS` 12k→20k) + responsive LLM cancellation
-  (`select()` poll; `cancel → worker-stop` ~2 s → 251 ms) + 8 regression
-  tests + this report's M2.5B.1 sections.
+- `4a55a7e` — Problem 2 *partial mitigation*: `DEFAULT_MAX_TURNS` 20→40,
+  `DEFAULT_MAX_CHARS` 12k→20k + responsive LLM cancellation (`select()`
+  poll; `cancel → worker-stop` ~2 s → 251 ms) + 8 regression tests.
+- `893c8a3` — M2.5B.1 hash record.
+
+**M2.5B.2 (long-session context / KV-cache stability):**
+
+- `<PENDING>` — `nexa.conversation.ProviderWindow`: prefix-stable bounded
+  provider-facing window over the (complete) canonical history; bounded
+  logged synchronous rollover; `ConversationSession.provider_window` +
+  `prewarm_provider_context()`; probe sets it; 25 regression tests; the
+  research spikes + real-Pi 110-turn benchmark; this report's M2.5B.2
+  section.
 
 This hash-record edit lands in the immediately-following commit
 (R0026/R0027/R0028 pattern). Prior milestone tip: `2f23613` (M2.5A
@@ -923,14 +1097,16 @@ closure). **Not pushed.**
 
 ## GIT STATUS
 
-Branch `main`, **not pushed**. `git diff --check` clean. Working tree
-clean after the hash-record commit. Sequence: `2f23613` (M2.5A closed) →
-`c3155ca` → `dcf0df4` → `59141f6` → `c1306b6` → `97f4a84` → `20df578` →
-`69e8828` → `2460463` → `5e6f877` → `4a55a7e` → hash-record commit (this
-edit). Frozen components (model / `num_thread` / `keep_alive` / `num_ctx`
-/ whisper / Piper / resolver) untouched; the context-window constants
-(`DEFAULT_MAX_TURNS` / `DEFAULT_MAX_CHARS`) are deliberately changed and
-were never on the frozen list.
+Branch `main`, **not pushed**. `git diff --check` clean. Sequence:
+`2f23613` (M2.5A closed) → `c3155ca` → `dcf0df4` → `59141f6` → `c1306b6`
+→ `97f4a84` → `20df578` → `69e8828` → `2460463` → `5e6f877` → `4a55a7e` →
+`893c8a3` → **`<PENDING>` (M2.5B.2)** → hash-record commit (this edit).
+Frozen components (model / `num_thread` / `keep_alive` / `num_ctx` /
+whisper / Piper / resolver / `ResponseLanguageResolver`) untouched.
+`DEFAULT_MAX_TURNS` / `DEFAULT_MAX_CHARS` (M2.5B.1) and the new
+`ProviderWindow` (M2.5B.2) are deliberate context-policy changes, never on
+the frozen list; canonical `ConversationSession.history` semantics
+unchanged.
 
 ## RISKS
 
@@ -960,25 +1136,50 @@ were never on the frozen list.
 6. **`ConversationTurn.interrupted` on a frozen dataclass.** Additive +
    defaulted; every construction site and `to_provider_messages` audited;
    typed-chat wire output byte-identical (test 27).
-7. **40-turn context boundary (M2.5B.1).** The window fix moves the
-   KV-cache-collapse cliff from turn 20 to turn 40, it does not remove it —
-   a session past ~40 turns re-enters the ~155 s-per-turn regime (44-turn
-   Pi run, section E). An M2.5B acceptance session is far shorter, but a
-   marathon daily-use session is not; the real fix (prefix-stable history
-   compaction) is M5 (AGENTS.md §3.8) and is deliberately not attempted
-   here. `DEFAULT_MAX_CHARS = 20_000` (~5 k tokens) keeps the pre-eviction
-   prompt clear of Ollama's 8 k `num_ctx` so `--context-shift` never
-   triggers before the turn cap.
+7. **M2.5B.2 rollover turn (the residual).** The provider window removes
+   the *permanent* KV-cache collapse: steady-state turns stay ~4 s for the
+   whole session. What remains is **one bounded, logged, ~20-32 s turn per
+   rollover** (~once per `hard - keep` ≈ 84 entries with the production
+   defaults). It is an *explained maintenance* turn, not an unexplained
+   steady-state one, and vastly better than the every-turn 78-164 s
+   regime — but it is still a user-visible pause. Removing it needs a
+   **non-blocking background pre-warm**, which needs a **second Ollama KV
+   slot** (`OLLAMA_NUM_PARALLEL>=2`, or a dedicated pre-warm runner): an
+   Ollama-serving change (roughly doubles KV memory; splits `num_ctx`
+   across slots unless raised) that is out of M2.5B.2's minimal remit. The
+   seam is built and tested (`prewarm_provider_context` /
+   `cutover_background`); wiring it non-blockingly is the follow-up. Knobs
+   until then: `keep_entries=2` (~halve the rollover cost, less
+   post-rollover context) or a larger `hard_entries` (rarer rollovers,
+   closer to `num_ctx`).
+8. **Post-rollover continuity.** For the few turns after a rollover the
+   model sees only the last `keep_entries` exchanges verbatim (canonical
+   history is intact — M5 memory reads all of it). The window regrows by
+   append within ~2-3 turns. `keep_entries=4` keeps two full exchanges
+   across the seam.
+9. **Rollover cost scales with real-turn size.** The benchmark's short
+   turns roll in ~21 s; full voice turns (~2× the tokens per entry)
+   project to ~28-32 s at `keep_entries=4`. If a live session shows this
+   as too long, drop `keep_entries` or bring the `NUM_PARALLEL` follow-up
+   forward.
 
 ## NEXT STEP
 
-1. **Operator runs the live acceptance session** (below). On PASS: mark
-   M2.5B **OPERATOR-CONFIRMED**, update `CURRENT_STATE.md`, record the
-   commit hash.
+1. **Operator runs the live acceptance session** (below) — now also a
+   long-session check: keep talking past ~40 exchanges and confirm turns
+   stay in the ~3-10 s band, with at most an occasional **logged**
+   `provider-context ... rollover` turn (~20-32 s) and no unexplained
+   creep toward tens of seconds. On PASS: mark M2.5B
+   **OPERATOR-CONFIRMED**, update `CURRENT_STATE.md`, record the commit
+   hash.
 2. If cases 1/A–F expose a tuning need, adjust `confirm_hold_secs` /
-   response-time VAD profile only — no architecture change.
+   response-time VAD profile only — no architecture change. If the
+   rollover turn is too long, drop `ProviderWindow(keep_entries=…)` or
+   bring the `OLLAMA_NUM_PARALLEL` non-blocking-pre-warm follow-up forward.
 3. Non-blocking, owed independently: the B.3.6 operator latency
-   re-confirmation (STT latency + END_OF_TURN → first-audio).
+   re-confirmation (STT latency + END_OF_TURN → first-audio); the
+   non-blocking background pre-warm (second Ollama KV slot) to remove the
+   M2.5B.2 rollover turn entirely.
 
 ---
 

@@ -44,7 +44,11 @@ from loguru import logger  # noqa: E402
 from pipecat.services.piper.tts import PiperHttpTTSService  # noqa: E402
 
 from nexa.bootstrap import build_default_session, warm_up_session  # noqa: E402
-from nexa.conversation import ResponseLanguageResolver, ResponseMode  # noqa: E402
+from nexa.conversation import (  # noqa: E402
+    ProviderWindow,
+    ResponseLanguageResolver,
+    ResponseMode,
+)
 from nexa.providers.base import ModelUnavailableError  # noqa: E402
 from nexa.stt import (  # noqa: E402
     BilingualSpeechTranscriber,
@@ -153,8 +157,18 @@ async def main() -> None:
         sys.exit(1)
 
     session = build_default_session()
+    # M2.5B.2 — bound the *provider-facing* context to a prefix-stable
+    # window so a long voice session never hits the sliding-window KV-cache
+    # collapse (R0029). Canonical ``session.history`` stays complete. This
+    # is a latency fix with no conversation-semantics change, so it applies
+    # to both ``--bargein`` and ``--no-bargein`` (the R0026 mic/half-duplex
+    # policy is unaffected).
+    session.provider_window = ProviderWindow()
     print(f"model: {session.provider.describe().model}  "
           f"(num_thread={session.provider._num_thread}, keep_alive={session.provider._keep_alive})")
+    pw = session.provider_window
+    print(f"provider window: keep={pw.keep_entries} soft={pw.soft_entries} "
+          f"hard={pw.hard_entries} entries (canonical history stays complete)")
     try:
         await warm_up_session(session)
         print("warm-up: model + persona/VOICE prefix primed")

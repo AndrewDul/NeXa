@@ -8,6 +8,12 @@ answer" pipeline, no MAS in the simple turn.
 from __future__ import annotations
 
 from .context import ConversationContext
+from .provider_window import (
+    DEFAULT_PROVIDER_WINDOW_HARD,
+    DEFAULT_PROVIDER_WINDOW_KEEP,
+    DEFAULT_PROVIDER_WINDOW_SOFT,
+    ProviderWindow,
+)
 from .response_language import (
     LanguageRequest,
     ResponseLanguageDecision,
@@ -25,6 +31,10 @@ __all__ = [
     "ConversationContext",
     "ConversationSession",
     "InterruptedTurnOutcome",
+    "ProviderWindow",
+    "DEFAULT_PROVIDER_WINDOW_KEEP",
+    "DEFAULT_PROVIDER_WINDOW_SOFT",
+    "DEFAULT_PROVIDER_WINDOW_HARD",
     "ConversationTurn",
     "Role",
     "ResponseMode",

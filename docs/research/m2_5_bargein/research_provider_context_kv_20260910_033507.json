@@ -1,0 +1,198 @@
+{
+ "ts": "20260910_033507",
+ "persona_chars": 1042,
+ "q1_baseline_append": [
+  {
+   "label": "append upto=4",
+   "msgs": 16,
+   "ttft_s": 114.37,
+   "prompt_eval_count": 982,
+   "prompt_eval_ms": 81597.1,
+   "prefill_tok_per_s": 12.0,
+   "load_ms": 32402.0
+  },
+  {
+   "label": "append upto=8",
+   "msgs": 28,
+   "ttft_s": 41.64,
+   "prompt_eval_count": null,
+   "prompt_eval_ms": 0.0,
+   "prefill_tok_per_s": null,
+   "load_ms": 0.0
+  },
+  {
+   "label": "append upto=12",
+   "msgs": 40,
+   "ttft_s": 42.48,
+   "prompt_eval_count": 1407,
+   "prompt_eval_ms": 41308.3,
+   "prefill_tok_per_s": 34.1,
+   "load_ms": 5.4
+  },
+  {
+   "label": "append upto=16",
+   "msgs": 52,
+   "ttft_s": 43.6,
+   "prompt_eval_count": 1835,
+   "prompt_eval_ms": 42163.7,
+   "prefill_tok_per_s": 43.5,
+   "load_ms": 1.7
+  },
+  {
+   "label": "append upto=20",
+   "msgs": 64,
+   "ttft_s": 44.62,
+   "prompt_eval_count": 2689,
+   "prompt_eval_ms": 44260.5,
+   "prefill_tok_per_s": 60.8,
+   "load_ms": 1.8
+  },
+  {
+   "label": "append upto=24",
+   "msgs": 76,
+   "ttft_s": 45.81,
+   "prompt_eval_count": null,
+   "prompt_eval_ms": 0.0,
+   "prefill_tok_per_s": null,
+   "load_ms": 0.0
+  },
+  {
+   "label": "append upto=28",
+   "msgs": 88,
+   "ttft_s": 46.87,
+   "prompt_eval_count": 3115,
+   "prompt_eval_ms": 45430.7,
+   "prefill_tok_per_s": 68.6,
+   "load_ms": 2.0
+  }
+ ],
+ "q2_slide_by_one": [
+  {
+   "label": "slide base=1 upto=28",
+   "msgs": 85,
+   "ttft_s": 303.66,
+   "prompt_eval_count": 3541,
+   "prompt_eval_ms": 46477.3,
+   "prefill_tok_per_s": 76.2,
+   "load_ms": 1.9
+  },
+  {
+   "label": "slide base=2 upto=28",
+   "msgs": 82,
+   "ttft_s": 292.64,
+   "prompt_eval_count": 3416,
+   "prompt_eval_ms": 303224.2,
+   "prefill_tok_per_s": 11.3,
+   "load_ms": 1.9
+  },
+  {
+   "label": "slide base=3 upto=28",
+   "msgs": 79,
+   "ttft_s": 282.64,
+   "prompt_eval_count": 3328,
+   "prompt_eval_ms": 292207.9,
+   "prefill_tok_per_s": 11.4,
+   "load_ms": 2.5
+  }
+ ],
+ "q3_sync_rollover": [
+  {
+   "label": "cold window[24:48]",
+   "msgs": 76,
+   "ttft_s": 274.16,
+   "prompt_eval_count": 3199,
+   "prompt_eval_ms": 282208.4,
+   "prefill_tok_per_s": 11.3,
+   "load_ms": 1.9
+  }
+ ],
+ "q4_prewarm_then_real": {
+  "prewarm": {
+   "label": "PREWARM window[50:74] np=1",
+   "msgs": 74,
+   "ttft_s": 268.22,
+   "prompt_eval_count": 3064,
+   "prompt_eval_ms": 268132.7,
+   "prefill_tok_per_s": 11.4,
+   "load_ms": 1.8
+  },
+  "real_turn": {
+   "label": "REAL turn on prewarmed window[50:74]",
+   "msgs": 76,
+   "ttft_s": 6.83,
+   "prompt_eval_count": null,
+   "prompt_eval_ms": 0.0,
+   "prefill_tok_per_s": null,
+   "load_ms": 0.0
+  }
+ },
+ "q5_intervening_eviction": {
+  "prewarmB": {
+   "label": "PREWARM window[52:76] np=1",
+   "msgs": 74,
+   "ttft_s": 269.29,
+   "prompt_eval_count": 3066,
+   "prompt_eval_ms": 269193.7,
+   "prefill_tok_per_s": 11.4,
+   "load_ms": 1.8
+  },
+  "intervening_A": {
+   "label": "intervening turn on OLD window[0:30]",
+   "msgs": 94,
+   "ttft_s": 66.99,
+   "prompt_eval_count": null,
+   "prompt_eval_ms": 0.0,
+   "prefill_tok_per_s": null,
+   "load_ms": 0.0
+  },
+  "back_to_B": {
+   "label": "back to window[52:76] (evicted?)",
+   "msgs": 76,
+   "ttft_s": 7.23,
+   "prompt_eval_count": 3751,
+   "prompt_eval_ms": 66530.2,
+   "prefill_tok_per_s": 56.4,
+   "load_ms": 1.9
+  }
+ },
+ "q6_threads_prefill": {
+  "nt2_cold": {
+   "label": "cold window[26:50] nt=2",
+   "msgs": 76,
+   "ttft_s": 274.28,
+   "prompt_eval_count": 3113,
+   "prompt_eval_ms": 6785.7,
+   "prefill_tok_per_s": 458.8,
+   "load_ms": 1.9
+  },
+  "nt4_cold": {
+   "label": "cold window[28:52] nt=4",
+   "msgs": 76,
+   "ttft_s": 199.39,
+   "prompt_eval_count": null,
+   "prompt_eval_ms": 0.0,
+   "prefill_tok_per_s": null,
+   "load_ms": 0.0
+  },
+  "nt4_warm": {
+   "label": "warm window[28:52] nt=4 (reload check)",
+   "msgs": 76,
+   "ttft_s": 0.82,
+   "prompt_eval_count": 3111,
+   "prompt_eval_ms": 167425.7,
+   "prefill_tok_per_s": 18.6,
+   "load_ms": 31504.2
+  }
+ },
+ "q7_small_compacted": [
+  {
+   "label": "cold small compacted ctx",
+   "msgs": 23,
+   "ttft_s": 139.59,
+   "prompt_eval_count": 1314,
+   "prompt_eval_ms": 109917.8,
+   "prefill_tok_per_s": 12.0,
+   "load_ms": 29359.1
+  }
+ ]
+}

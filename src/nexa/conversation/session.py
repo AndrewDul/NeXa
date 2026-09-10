@@ -18,16 +18,20 @@ model replied, nothing else.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from ..providers.base import CancelToken, GenerationOptions, ModelProvider
 from .context import DEFAULT_MAX_CHARS, DEFAULT_MAX_TURNS, ConversationContext
+from .provider_window import ProviderWindow
 from .response_mode import ResponseMode
 from .streaming import StreamingResponse
 from .turn import ConversationTurn, Role
+
+logger = logging.getLogger(__name__)
 
 
 class InterruptedTurnOutcome(StrEnum):
@@ -52,6 +56,12 @@ class ConversationSession:
     options: GenerationOptions = field(default_factory=GenerationOptions)
     max_turns: int = DEFAULT_MAX_TURNS
     max_chars: int = DEFAULT_MAX_CHARS
+    #: M2.5B.2 — when set, the *provider-facing* context is this bounded,
+    #: prefix-stable window over ``history`` instead of the
+    #: ``ConversationContext`` turn/char bound. Canonical ``history`` is
+    #: unchanged either way. ``None`` (default, and always for typed chat)
+    #: keeps the pre-M2.5B.2 path byte-for-byte.
+    provider_window: ProviderWindow | None = None
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     _history: list[ConversationTurn] = field(default_factory=list, init=False, repr=False)
     # M2.4B.5: per-history-entry resolved response language, index-aligned
@@ -75,6 +85,100 @@ class ConversationSession:
             max_chars=self.max_chars,
             response_languages=self._response_languages,
         )
+
+    def _render_provider_window(self, response_mode: ResponseMode) -> list:
+        """M2.5B.2 — render the bounded provider window, first consuming any
+        rollover the policy calls for (see ``ProviderWindow``).
+
+        A *pre-warmed* rollover is free (the divergence was paid off the
+        critical path). A *synchronous* rollover means this one turn eats a
+        bounded cold prompt prefill because a background pre-warm did not
+        finish in time — it is logged at WARNING so it is never silent, and
+        it is still vastly cheaper (and rarer) than the permanent
+        every-turn collapse the sliding cap caused.
+        """
+        w = self.provider_window
+        assert w is not None
+        n = len(self._history)
+        if w.needs_sync_rollover(n):
+            old = w.base
+            new = w.cutover_sync(n)
+            logger.warning(
+                "nexa.conversation: provider-context SYNC rollover at %d entries "
+                "(base %d->%d, keeping last %d) — this turn pays a bounded cold "
+                "prefill; the background pre-warm did not complete in time",
+                n, old, new, w.keep_entries,
+            )
+        elif w.prewarm_ready(n):
+            old = w.base
+            new = w.cutover_background(n)
+            logger.info(
+                "nexa.conversation: provider-context rollover (pre-warmed, cheap) "
+                "base %d->%d at %d entries", old, new, n,
+            )
+        return w.render(
+            self.system_prompt,
+            self._history,
+            self._response_languages,
+            response_mode=response_mode,
+        )
+
+    async def prewarm_provider_context(
+        self,
+        *,
+        cancel_token: CancelToken,
+        response_mode: ResponseMode = ResponseMode.TEXT,
+    ) -> str:
+        """M2.5B.2 — if the provider window has grown past ``soft_entries``,
+        pre-warm the small post-rollover window ``history[-keep_entries:]``
+        with a ``num_predict=1`` request so the next real turn cuts over
+        cheaply (~7 s instead of a bounded cold prefill).
+
+        Call this only when the conversation is idle (no ``send`` in
+        flight). It occupies the model for the duration of that small
+        prefill and **cannot be interrupted mid-prefill** — keep
+        ``keep_entries`` small. ``cancel_token`` still lets the caller stop
+        it between the prefill and the single generated token, and marks it
+        so a partially-done attempt is retried next idle gap.
+
+        Returns: ``"no_window"`` / ``"not_needed"`` / ``"prewarmed"`` /
+        ``"cancelled"`` / ``"error"``.
+        """
+        w = self.provider_window
+        if w is None:
+            return "no_window"
+        n = len(self._history)
+        if not w.needs_prewarm(n):
+            return "not_needed"
+        target_base = w.next_base(n)
+        w.prewarm_attempts += 1
+        messages = w.render(
+            self.system_prompt,
+            self._history,
+            self._response_languages,
+            response_mode=response_mode,
+            base=target_base,
+        )
+        warm_options = replace(self.options, num_predict=1)
+        try:
+            async for _ in self.provider.generate(
+                messages, warm_options, cancel_token=cancel_token
+            ):
+                pass
+        except Exception as exc:  # noqa: BLE001 — pre-warm is best-effort
+            logger.warning(
+                "nexa.conversation: provider-context pre-warm failed: %r", exc
+            )
+            return "error"
+        if cancel_token.is_cancelled:
+            return "cancelled"
+        w.mark_prewarmed(target_base)
+        logger.info(
+            "nexa.conversation: provider-context pre-warmed window base=%d "
+            "(keep last %d of %d entries) — next rollover is cheap",
+            target_base, w.keep_entries, n,
+        )
+        return "prewarmed"
 
     async def send(
         self,
@@ -101,8 +205,11 @@ class ConversationSession:
         self._history.append(ConversationTurn(role=Role.USER, content=user_text))
         self._response_languages.append(response_language)
 
-        context = self.build_context()
-        messages = context.to_provider_messages(response_mode=response_mode)
+        if self.provider_window is not None:
+            messages = self._render_provider_window(response_mode)
+        else:
+            context = self.build_context()
+            messages = context.to_provider_messages(response_mode=response_mode)
 
         raw_stream = self.provider.generate(messages, self.options, cancel_token=cancel_token)
         response = StreamingResponse(raw_stream)
