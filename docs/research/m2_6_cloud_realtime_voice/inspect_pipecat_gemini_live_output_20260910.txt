@@ -1,0 +1,49 @@
+==============================================================================
+R0030 spike — Pipecat GeminiLiveLLMService static audit
+==============================================================================
+pipecat version : 1.8.1
+source file     : /home/devdul/Projects/NeXa_IkiGai/.venv/lib/python3.13/site-packages/pipecat/services/google/gemini_live/llm.py
+source size     : 2181 lines
+google-genai    : NOT installed (expected for this research task)
+------------------------------------------------------------------------------
+[PRESENT ] silent_guard_send_user_audio
+           issue #5465: _send_user_audio bare-returns (drops mic audio) when not ready
+[PRESENT ] silent_guard_send_user_text
+           issue #5465: _send_user_text bare-returns (drops text) when not ready
+[PRESENT ] silent_guard_send_user_video
+           issue #5465: _send_user_video bare-returns when not ready
+[PRESENT ] reconnect_implemented
+           reactive reconnect on connection error is implemented
+[PRESENT ] session_resumption
+           session resumption handle is passed on (re)connect
+[PRESENT ] resumption_update_captured
+           sessionResumptionUpdate.newHandle is captured
+[PRESENT ] max_consecutive_failures
+           reconnect gives up after 3 consecutive failures (then push_error)
+[ABSENT  ] goaway_handled
+           GoAway (imminent-disconnect warning with time_left) is handled
+[ABSENT  ] proactive_reconnect_on_goaway
+           GoAway.time_left proactively triggers a reconnect before the socket drops
+[PRESENT ] gemini3_blocks_async_tools
+           Gemini 3.x async/non-blocking function calls are NOT supported (documented in-source)
+[PRESENT ] interrupted_context_may_hold_unspoken_text
+           in-source note: on interruption the recorded context can contain never-spoken text
+[PRESENT ] local_vad_activity_markers
+           local-VAD mode: activity_start/activity_end markers are sent from Silero turn frames
+[PRESENT ] no_user_speaking_frames
+           service does NOT emit UserStarted/StoppedSpeakingFrame
+------------------------------------------------------------------------------
+VERDICT — GitHub issue #5465 (silent drop while reconnecting):
+  CONFIRMED in this installed version: at least one send path
+  bare-returns (drops the payload) when the session is not ready,
+  which is exactly the reconnect window. No fix present.
+
+VERDICT — GoAway handling:
+  ABSENT: no GoAway handling. Reconnect is purely REACTIVE (waits
+  for the ~10-min socket to actually error). A proactive
+  pre-expiry reconnect is a NeXa-side gap to close.
+
+VERDICT — Gemini 3.x async / non-blocking function calls:
+  NOT SUPPORTED (in-source): synchronous tool calls only on
+  gemini-3.x. cancel_on_interruption=False cannot work there.
+==============================================================================

@@ -50,13 +50,38 @@ far-end reference, sustained-VAD confirmation, ~251 ms Ollama cancellation,
 interruption capture/coalescing, capture-generation-scoped timers, correct
 interrupted-history semantics, PL/EN routing preserved.
 
-**Next sub-stage — CLOUD REALTIME VOICE (planned, not started).** Initial provider
-decision: Google Gemini Live (`gemini-3.1-flash-live-preview`). Architecture
-principle: **NeXa remains the single authority; cloud and local are replaceable
-conversation providers, never NeXa's identity.** Modes: AUTO / LOCAL ONLY / CLOUD
-PREFERRED, switchable by natural voice command ("Przełącz na chmurę.", "Rozmawiaj
-lokalnie.", "Używaj najlepszego trybu."). A model/provider may recognise the
-intent, but NeXa's own router/core executes the provider switch.
+**M2.6 — CLOUD REALTIME VOICE.** Research / architecture **COMPLETE** (`R0030`,
+2026-09-10; research-only, no `src/` change). Initial provider **frozen for v1**:
+Google Gemini Live `gemini-3.1-flash-live-preview` (VERIFIED real + current;
+Preview; native audio-to-audio; synchronous-only function calling; no prompt
+caching). Integration = Pipecat **OPTION C** (wrap + harden the installed 1.8.1
+`GeminiLiveLLMService`; known gaps: GitHub #5465 silent reconnect-window drops,
+no `GoAway` handling). Architecture principle: **NeXa remains the single
+authority; cloud and local are replaceable conversation providers, never NeXa's
+identity.** Cloud is a NEW `RealtimeVoiceProvider` boundary (not a
+`ModelProvider`) fed a NeXa-derived, privacy-filtered `CloudContextSnapshot`;
+canonical transcript stays in `ConversationSession`; raw cloud audio not
+retained; minimal cloud system instruction (role card, not identity). Modes:
+`ConversationPolicy` = AUTO / LOCAL_ONLY / CLOUD_PREFERRED (NeXa-owned,
+persisted), distinct from runtime `active_provider` = LOCAL / CLOUD. Switchable
+by natural voice command ("Przełącz na chmurę.", "Rozmawiaj lokalnie.", "Używaj
+najlepszego trybu.") — a model/provider may recognise the intent, **NeXa's own
+router/core executes the switch**. HYBRID audio: keep the XVF3800 AEC + local
+Silero as the turn authority, Gemini server VAD off. **Known provider RISK:**
+`gemini-3.1-flash-live-preview` native audio currently speaks Polish with a
+strong EN/US accent (Google-acknowledged 2026-08-18, unresolved). Real use
+requires a paid-tier key (free-tier data is used for product improvement).
+
+- **M2.6A** (next implementation task) — minimal Gemini Live real-hardware
+  spike: reSpeaker → existing AEC/local audio path → Gemini Live → native
+  streamed cloud audio → existing speaker, plus latency / Polish-quality /
+  reconnect / cost metrics (PASS/WARN/FAIL table in `R0030`). No memory,
+  identity, router, tools or GUI. → report `R0031`.
+- **ADR-0004** — ratify the provider boundary, the cloud credential surface,
+  and the `pipecat-ai[google]` / `google-genai` dependency. Owed **before**
+  M2.6B.
+- **M2.6B** — production `RealtimeVoiceProvider` + `ConversationRouter` +
+  `SetConversationPolicy` + `CloudContextSnapshot` + reconnect hardening.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

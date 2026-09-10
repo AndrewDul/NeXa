@@ -9,7 +9,39 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
-- **Latest report:** `docs/reports/R0029_m2_5b_production_barge_in_interruption_20260909.md`
+- **Latest report:** `docs/reports/R0030_cloud_realtime_voice_research_architecture_20260910.md`
+  (**M2.6 — Cloud Realtime Voice — RESEARCH / ARCHITECTURE ONLY (2026-09-10).**
+  No `src/` change; no API key; not pushed. **VERIFIED:** the recorded model
+  `gemini-3.1-flash-live-preview` is real + current (Preview, 131k/65k
+  context, native audio-to-audio, **synchronous-only** function calling, **no
+  prompt caching**); Gemini Live = WebSocket, 16-kHz PCM in / 24-kHz PCM out,
+  ~10-min connection lifetime, session resumption + `GoAway.timeLeft`,
+  `contextWindowCompression` → unlimited session. **Pipecat 1.8.1
+  `GeminiLiveLLMService`** (installed) has two real unfixed gaps — GitHub
+  **#5465** (user audio/text/tool-results silently dropped during the
+  reconnect window; fix PR #5497 OPEN, unmerged) and **no `GoAway`
+  handling** (reactive reconnect only) — both bounded for a short spike,
+  must be wrapped for production. **Provider-side RISK:**
+  `gemini-3.1-flash-live-preview` native audio currently speaks **Polish with
+  a strong EN/US accent** (Google-acknowledged 2026-08-18, unresolved).
+  **Privacy:** free-tier Gemini conversations are used for product
+  improvement + human review → real use needs a **paid-tier** key.
+  **Architecture (design, ADR-0004 owed):** `ConversationSession` stays the
+  one authority; cloud is a NEW `RealtimeVoiceProvider` boundary (not a
+  `ModelProvider` — that's a text stream) handed a NeXa-derived, privacy-
+  filtered `CloudContextSnapshot`; canonical transcript from Gemini's
+  input/output transcription streams + a spoken-audio high-water mark; raw
+  cloud audio NOT retained; minimal cloud `system_instruction` (role card,
+  not NeXa's identity); `ConversationPolicy` (AUTO / LOCAL_ONLY /
+  CLOUD_PREFERRED, NeXa-owned) distinct from runtime `active_provider`
+  (LOCAL / CLOUD); the model may classify a switch intent, **NeXa executes
+  it**; keep XVF3800 AEC + local Silero as the turn authority (HYBRID,
+  server VAD off), NeXa keeps final authority over the speaker.
+  **Recommendation: GO for M2.6A — minimal Gemini Live real-hardware spike**
+  (prove native cloud audio quality + latency only; no memory / identity /
+  router / tools / GUI); then R0031 + ADR-0004 before M2.6B production.
+  Pipecat static-audit spike: `docs/research/m2_6_cloud_realtime_voice/`.)
+- **Prior report:** `docs/reports/R0029_m2_5b_production_barge_in_interruption_20260909.md`
   (**M2.5B — Production Barge-In / Interruption — COMPLETE / OPERATOR-CONFIRMED
   (2026-09-10).** Production barge-in ships behind
   `LocalAudioConfig.bargein_enabled` (default `False` = byte-for-byte R0026;
@@ -307,9 +339,15 @@ Runtime / test evidence outranks anything else in this repo.
   architecture & feasibility — COMPLETE / OPERATOR-CONFIRMED (2026-09-09),
   `R0028`**; **M2.5B — production barge-in / interruption — COMPLETE /
   OPERATOR-CONFIRMED (2026-09-10), `R0029`**). **Local realtime voice with
-  production barge-in is done.** **Next planned stage — CLOUD REALTIME
-  VOICE (Google Gemini Live, `gemini-3.1-flash-live-preview`) — recorded
-  in ROADMAP, NOT STARTED.**
+  production barge-in is done.** **Now: M2.6 — Cloud Realtime Voice.
+  Research / architecture COMPLETE (`R0030`, 2026-09-10): provider frozen
+  to Google Gemini Live `gemini-3.1-flash-live-preview`; Pipecat OPTION C
+  (wrapped `GeminiLiveLLMService`); one `ConversationSession` authority +
+  new `RealtimeVoiceProvider` boundary + `CloudContextSnapshot`; HYBRID
+  audio (keep XVF3800 AEC + local Silero). Recommended next implementation
+  task: `M2.6A` — minimal Gemini Live real-hardware spike (native cloud
+  audio quality + latency only). `ADR-0004` owed before M2.6B production.
+  NOT STARTED; needs one paid-tier Gemini API key.**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
   M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1 local
   baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. M2
@@ -537,20 +575,23 @@ Runtime / test evidence outranks anything else in this repo.
   +18 `tests/test_response_language_override_vs_sticky.py`; `pytest` 587 /
   `unittest` 594; ruff + diff-check clean. Nothing else moved.
   **→ M2.4B is COMPLETE (2026-09-09); no blocker remains.**
-- **Current objective:** **none open — LOCAL VOICE is closed.** M2.5A
-  (`R0028`) and **M2.5B — production barge-in / interruption (`R0029`) are
-  COMPLETE / OPERATOR-CONFIRMED (2026-09-10).** Production barge-in
-  replaces the temporary R0026 whole-response `HalfDuplexGate` (behind
-  `bargein_enabled`, default off) **without** reintroducing the backlog
-  bug. `gemma4:e4b` + `num_thread=2` + `keep_alive=30m` + warm-up +
-  `ggml-base-q8_0` / `-t 4` / `LanguageIdGuard` / `ResponseLanguageResolver`
-  / Piper / SpeechPlanner / continuity / `ProviderWindow keep_entries=0`
-  all frozen; the plain explicit `WhisperCppTranscriber` path
-  (`--language pl|en`) still supported alongside the bilingual one.
-  **Next planned stage (recorded, NOT started): CLOUD REALTIME VOICE** —
-  see ROADMAP. Non-blocking, owed independently of M2.5B: the B.3.6
-  operator latency re-confirmation; a resource-safe non-blocking pre-warm
-  to remove the M2.5B.2 reset continuity dip.
+- **Current objective:** **M2.6 — Cloud Realtime Voice.** LOCAL VOICE is
+  closed: M2.5A (`R0028`) + **M2.5B (`R0029`) COMPLETE / OPERATOR-CONFIRMED
+  (2026-09-10)**, frozen (`gemma4:e4b` / `num_thread=2` / `keep_alive=30m`
+  / warm-up / `ggml-base-q8_0` `-t 4` / `LanguageIdGuard` /
+  `ResponseLanguageResolver` / Piper / SpeechPlanner / continuity /
+  `ProviderWindow keep_entries=0` / `bargein_enabled` default-off). **M2.6
+  research / architecture COMPLETE (`R0030`, 2026-09-10)** — provider
+  frozen to Gemini Live `gemini-3.1-flash-live-preview`, Pipecat OPTION C,
+  one `ConversationSession` + `RealtimeVoiceProvider` + `CloudContextSnapshot`,
+  HYBRID audio, `ConversationPolicy` vs `active_provider`. **Recommended
+  next task: `M2.6A` — minimal Gemini Live real-hardware spike** (native
+  cloud audio quality + latency only; PASS/WARN/FAIL table in R0030). Then
+  `R0031` + **`ADR-0004`** before `M2.6B` production. **Prerequisite: one
+  paid-tier Gemini API key** (`NEXA_GEMINI_API_KEY`; free-tier data is used
+  for product improvement) — not created. Non-blocking, owed independently:
+  the B.3.6 operator latency re-confirmation; a resource-safe non-blocking
+  pre-warm to remove the M2.5B.2 reset continuity dip.
 
 ---
 
@@ -1117,37 +1158,56 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Current focus
 
-- **None active. LOCAL REALTIME VOICE is complete and operator-confirmed.**
-  M1 (Natural Text Conversation) through M1.1, and M2 through
-  **M2.5B — production barge-in / interruption (`R0029`, COMPLETE /
-  OPERATOR-CONFIRMED 2026-09-10)** — research (`R0005`) → spikes (`R0006`)
-  → `ADR-0003` → M2.1 (`R0007`) → M2.2 (`R0008`) → M2.3 (`R0009`) → M2.4A
-  (`R0010`) → M2.4 (`R0011`) → M2.4B natural-speech-flow (`R0012`–`R0027`)
-  → M2.5A feasibility (`R0028`) → M2.5B (`R0029`) — are all
-  operator-confirmed on real hardware. The accepted LOCAL VOICE baseline
-  and the production barge-in stack are recorded under
-  *What works (VERIFIED FACT)* above.
-- **Next planned stage — CLOUD REALTIME VOICE — recorded, NOT started**
-  (see ROADMAP). Initial provider decision: Google Gemini Live,
-  `gemini-3.1-flash-live-preview`. Architecture principle: **NeXa remains
-  the single authority; cloud and local are replaceable conversation
-  providers.** Future modes AUTO / LOCAL ONLY / CLOUD PREFERRED,
-  switchable by natural voice command ("Przełącz na chmurę." / "Rozmawiaj
-  lokalnie." / "Używaj najlepszego trybu."); the provider may identify the
-  intent, NeXa's own router/core executes the switch. After local + cloud
-  voice: memory / identity / personality / capabilities → full graphical
-  UI → typed chat in that UI on the **same** `ConversationSession` / NeXa
-  brain as voice (never a separate voice-NeXa and chat-NeXa).
+- **M2.6 — Cloud Realtime Voice. Research / architecture COMPLETE
+  (`R0030`, 2026-09-10); no implementation started.** LOCAL REALTIME VOICE
+  is complete and operator-confirmed: M1 through M1.1, and M2 through
+  **M2.5B (`R0029`, COMPLETE / OPERATOR-CONFIRMED 2026-09-10)** — research
+  (`R0005`) → spikes (`R0006`) → `ADR-0003` → M2.1 (`R0007`) → M2.2
+  (`R0008`) → M2.3 (`R0009`) → M2.4A (`R0010`) → M2.4 (`R0011`) → M2.4B
+  natural-speech-flow (`R0012`–`R0027`) → M2.5A feasibility (`R0028`) →
+  M2.5B (`R0029`) — all operator-confirmed on real hardware. The accepted
+  LOCAL VOICE baseline and the production barge-in stack are recorded
+  under *What works (VERIFIED FACT)* above and are frozen.
+- **M2.6 research conclusions (`R0030`):** provider frozen for v1 to
+  Google Gemini Live `gemini-3.1-flash-live-preview` (VERIFIED real +
+  current; Preview; native audio; synchronous-only tools; no caching).
+  Integration = Pipecat **OPTION C** — wrap the installed 1.8.1
+  `GeminiLiveLLMService`, harden its two known gaps (GitHub #5465 silent
+  reconnect-window drops — fix PR #5497 OPEN; no `GoAway` handling).
+  Architecture principle held: **one `ConversationSession` authority**;
+  cloud is a NEW `RealtimeVoiceProvider` boundary (not a `ModelProvider`)
+  fed a NeXa-derived, privacy-filtered `CloudContextSnapshot`; canonical
+  transcript from Gemini's input/output transcription + a spoken-audio
+  high-water mark; raw cloud audio NOT retained; minimal cloud
+  `system_instruction` (role card, not NeXa identity). `ConversationPolicy`
+  (AUTO / LOCAL_ONLY / CLOUD_PREFERRED, NeXa-owned) is distinct from
+  runtime `active_provider` (LOCAL / CLOUD); the model may classify a
+  switch intent, **NeXa executes it**. HYBRID audio — keep XVF3800 AEC +
+  local Silero as the turn authority, Gemini server VAD off, NeXa keeps
+  final authority over the speaker. **Provider-side RISK:** Polish native
+  audio currently has a strong EN/US accent (Google-acknowledged, open).
+  **Privacy:** real use needs a paid-tier key.
+- **After local + cloud voice** (unchanged plan): memory / identity /
+  personality / capabilities → full graphical UI → typed chat in that UI
+  on the **same** `ConversationSession` / NeXa brain as voice (never a
+  separate voice-NeXa and chat-NeXa).
 
 ## Exact next recommended task
 
-**Begin CLOUD REALTIME VOICE research / architecture** (do not implement
-before its own report): Google Gemini Live (`gemini-3.1-flash-live-preview`)
-as a replaceable conversation provider behind NeXa's own router; the
-AUTO / LOCAL ONLY / CLOUD PREFERRED mode model; natural-language provider
-switching executed by NeXa's core, not the model. Local realtime voice
-with production barge-in (`R0029`) is the frozen baseline it builds on —
-do not destabilise it; `bargein_enabled` default stays `False`.
+**M2.6A — minimal Gemini Live real-hardware spike** (`R0030` "PROPOSED
+NEXT SPIKE"). Prove ONLY: reSpeaker mic → existing XVF3800 AEC / local
+audio path → Gemini Live (`gemini-3.1-flash-live-preview`) → native
+streamed cloud audio → existing speaker, plus the latency + Polish-audio
++ reconnect + cost metrics in R0030's PASS/WARN/FAIL table. **No** memory,
+identity system, full router, `SetConversationPolicy` NL matching, tools,
+GUI, LiveKit, or `src/nexa/**` cloud code — a bounded disposable probe
+(`apps/nexa_cloud_voice_probe.py` or a `docs/research/` harness). Then
+**`R0031`** (spike results) and **`ADR-0004`** (provider boundary + cloud
+credential surface + dependency) before **`M2.6B`** production. Local
+realtime voice with production barge-in (`R0029`) is the frozen baseline
+it builds beside — do not destabilise it; `bargein_enabled` default stays
+`False`. **Prerequisite:** one paid-tier Google AI Studio / Gemini API key
+(`NEXA_GEMINI_API_KEY`), operator-provided — **not created in R0030**.
 
 Non-blocking, owed independently (not gating cloud): the B.3.6 operator
 latency re-confirmation (STT latency + END_OF_TURN → first-audio); a
