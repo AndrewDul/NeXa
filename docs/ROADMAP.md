@@ -100,16 +100,53 @@ unpaid-quota data is used to improve Google products.
   delayed-`activity_end` + local language-ID as measured Option B.
   Reconnect/lifetime testing deferred to M2.6B. **Three sessions cost
   ≈ 7 cents.**
-- **ADR-0004** (next task) — ratify: the `RealtimeVoiceProvider` boundary
-  + `CloudContextSnapshot` + one `ConversationSession` authority;
-  `google-genai` as a tracked dependency (+ pin `websockets` 16.x);
-  production language-routing authority (Option A default, Option B
-  measured fallback); the #5465 not-ready buffer + `GoAway`/age-timer
-  reconnect; voice as a persisted NeXa user preference (default
-  `Sulafat`); cloud credential surface + paid-key/region policy;
-  `ConversationPolicy` vs `active_provider`. Owed **before** M2.6B.
-- **M2.6B** — production `RealtimeVoiceProvider` + `ConversationRouter` +
-  `SetConversationPolicy` + `CloudContextSnapshot` + reconnect hardening.
+- **ADR-0004** — Cloud Realtime Voice provider boundary — **WRITTEN /
+  Accepted (2026-09-10)**
+  (`docs/decisions/ADR-0004_cloud_realtime_voice_provider_boundary.md`).
+  Encodes the canonical rule (NeXa is the persistent system; Gemini Live is
+  a replaceable realtime voice provider; a cloud provider must never become
+  a second NeXa brain) and decides A–P: one `ConversationSession` authority
+  for local + cloud; a new NeXa-owned `RealtimeVoiceProvider` boundary — a
+  **peer of** `ModelProvider`, not a subtype (speech-to-speech session ≠
+  text stream) — in a provider-agnostic `src/nexa/realtime/` package;
+  `GeminiLiveProvider` wraps Pipecat 1.8.1 `GeminiLiveLLMService`
+  (Option C); `CloudContextSnapshot` (privacy allow-list: minimal role
+  card + language preference + last ~12 turns + policy state, fresh per
+  non-resumed session; never full history / memory / persona / creds / raw
+  audio); persisted NeXa-owned `ConversationPolicy` (`LOCAL_ONLY`
+  **default**, `CLOUD_PREFERRED`, `AUTO` provisional — no classifier in
+  M2.6B) vs runtime `active_provider` (`LOCAL`/`CLOUD`), NeXa's
+  `ConversationRouter` executes every switch; language routing **Option A**
+  default (Gemini native same-turn mirroring; NeXa owns the *preference*
+  permanently), Option B (delayed `activity_end` + local language-ID,
+  ≈ +1.1 s) is the measured fallback, Option C (parallel whisper.cpp)
+  rejected unless A & B fail; voice = provider-agnostic NeXa user
+  preference → `Sulafat`; Pipecat #5465 handled by a NeXa-owned bounded
+  inbound audio buffer at the boundary (not an upstream fork);
+  `ReconnectController` (proactive ~8-min age-timer + `GoAway` + latest
+  resumption handle + fresh snapshot on resumption failure + backoff);
+  explicit failure→fallback table (no silent policy-violating fallback;
+  `LOCAL_ONLY` never leaves local; others fall back to `LOCAL` with the
+  user informed; continuity survives); credentials = XDG secret file
+  `~/.config/nexa/secrets/gemini.env` (700/600) + env-var-first loader +
+  `CredentialSource` seam, paid-tier key required for `CLOUD_PREFERRED`/
+  `AUTO` (EEA/CH/UK Paid-Services terms — stated as terms, not a legal
+  opinion); `google-genai>=2.22,<3` + `websockets>=15,<17` as an
+  **optional `cloud-gemini` extra** (`pip install .` stays Google-free;
+  `src/nexa/realtime/gemini/` imports `google.genai` lazily;
+  `pipecat-ai[local]==1.8.1` unchanged); `ProviderUsageEvent` from
+  authoritative `usageMetadata`; Gemini function calling never the
+  capability authority (event types defined, OFF in v1); Pipecat owns
+  media/WS mechanics only. The ADR carries the ordered M2.6B
+  implementation plan (15 components) and 17 measurable M2.6B acceptance
+  gates. No `src/` / `tests/` / dependency-file change in the ADR task.
+- **M2.6B** (next task) — production `RealtimeVoiceProvider` +
+  `GeminiLiveProvider` + `ConversationRouter` + `ConversationPolicy` +
+  `SetConversationPolicy` + `CloudContextSnapshot` + inbound #5465 buffer +
+  `ReconnectController` + usage telemetry + cloud credential loader +
+  provider voice/language preference, per the ADR-0004 plan and gates.
+  Local voice stays byte-for-byte frozen; real-hardware operator
+  acceptance required before COMPLETE. NOT STARTED.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

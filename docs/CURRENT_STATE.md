@@ -9,6 +9,60 @@ Runtime / test evidence outranks anything else in this repo.
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
+- **Latest decision:** `docs/decisions/ADR-0004_cloud_realtime_voice_provider_boundary.md`
+  (**Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
+  Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
+  a replaceable realtime voice provider; identity / canonical conversation /
+  memory / preferences / permissions / routing authority belong to NeXa; a
+  cloud provider must never become a second NeXa brain. Decides A–P:
+  **A** one `ConversationSession` authority for local + cloud; **B** new
+  NeXa-owned `RealtimeVoiceProvider` boundary — a *peer of* `ModelProvider`,
+  not a subtype (speech-to-speech session ≠ text stream) — in a new
+  provider-agnostic `src/nexa/realtime/` package; **C** `GeminiLiveProvider`
+  wraps Pipecat 1.8.1 `GeminiLiveLLMService` (Option C), v1 baseline
+  `gemini-3.1-flash-live-preview` / `Sulafat` / 16k-in-24k-out / server VAD
+  OFF / local Silero + XVF3800 AEC + local barge-in authority unchanged;
+  **D** persisted NeXa-owned `ConversationPolicy` (`LOCAL_ONLY` **default**,
+  `CLOUD_PREFERRED`, `AUTO` provisional — no classifier in M2.6B) vs runtime
+  `active_provider` (`LOCAL`/`CLOUD`); NeXa's `ConversationRouter` executes
+  every switch; **E** `CloudContextSnapshot` = minimal role card + language
+  preference + last ~12 turns + policy state, fresh per non-resumed session,
+  **never** full history / memory / persona verbatim / creds / raw audio;
+  **F** language routing = **Option A** (Gemini native same-turn mirroring;
+  NeXa owns the *preference* permanently via `ResponseLanguageResolver` +
+  per-turn metadata; timing headroom ≠ steerability), Option B
+  (delayed `activity_end` + local language-ID, ≈ +1.1 s) is the measured
+  fallback, Option C (parallel whisper.cpp) rejected unless A & B fail;
+  **G** voice is a provider-agnostic NeXa user preference mapped to
+  `Sulafat`, not `GeminiIdentity.voice`; **H** Pipecat #5465 handled by a
+  NeXa-owned bounded inbound audio buffer at the boundary (drop-oldest,
+  metric, no dup after reconnect), **not** a patched upstream fork;
+  **I** `ReconnectController` — proactive age-timer (~8 min) + `GoAway`
+  handling + latest resumption handle + fresh snapshot on resumption
+  failure + backoff → Decision J; **J** explicit failure→fallback table, no
+  silent policy-violating fallback, `LOCAL_ONLY` stays local, others fall
+  back to `LOCAL` with the user informed, continuity survives; **K** XDG
+  secret file `~/.config/nexa/secrets/gemini.env` (700/600),
+  `NEXA_GEMINI_API_KEY`, env-var-first loader + `CredentialSource` seam,
+  redacted always; terms (not legal opinion): EEA/CH/UK cloud voice must use
+  Paid Services → NeXa requires a paid-tier key for `CLOUD_PREFERRED`/`AUTO`;
+  **L** `google-genai>=2.22,<3` + `websockets>=15,<17` as an **optional
+  `cloud-gemini` extra** — `pip install .` stays Google-free, `LOCAL_ONLY`
+  needs no cloud code, `src/nexa/realtime/gemini/` imports `google.genai`
+  lazily, `pipecat-ai[local]==1.8.1` unchanged; **M** `ProviderUsageEvent`
+  from authoritative `usageMetadata`, no raw audio retained for billing;
+  **N** Gemini function calling never the capability authority — request →
+  NeXa ActionRouter validates + executes → result → provider continues
+  (OFF in v1, event types defined); **O** Gemini session ≠ NeXa memory,
+  future memory stays local/canonical, boundary compatible with
+  memory/identity/GUI-typed-chat/multi-device; **P** Pipecat owns media/WS
+  mechanics only, NeXa owns canonical conversation / routing / policy /
+  context selection / preferences / memory / capability authority /
+  fallback / reconnect semantics; no second orchestration framework. The
+  ADR carries the ordered **M2.6B implementation plan** (15 components with
+  owning layer / deps / tests / failure cases / frozen-path impact) and 17
+  measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
+  `pyproject.toml` change in the ADR task.)
 - **Latest report:** `docs/reports/R0030_cloud_realtime_voice_research_architecture_20260910.md`
   (**M2.6 — Cloud Realtime Voice — RESEARCH / ARCHITECTURE + Phase-0 fact
   corrections + M2.6A probe implemented (2026-09-10).** No `src/` change;
@@ -386,14 +440,23 @@ Runtime / test evidence outranks anything else in this repo.
   `R0028`**; **M2.5B — production barge-in / interruption — COMPLETE /
   OPERATOR-CONFIRMED (2026-09-10), `R0029`**). **Local realtime voice with
   production barge-in is done.** **Now: M2.6 — Cloud Realtime Voice.
-  Research / architecture COMPLETE (`R0030`, 2026-09-10): provider frozen
-  to Google Gemini Live `gemini-3.1-flash-live-preview`; Pipecat OPTION C
-  (wrapped `GeminiLiveLLMService`); one `ConversationSession` authority +
-  new `RealtimeVoiceProvider` boundary + `CloudContextSnapshot`; HYBRID
-  audio (keep XVF3800 AEC + local Silero). Recommended next implementation
-  task: `M2.6A` — minimal Gemini Live real-hardware spike (native cloud
-  audio quality + latency only). `ADR-0004` owed before M2.6B production.
-  NOT STARTED; needs one paid-tier Gemini API key.**
+  Research / architecture COMPLETE (`R0030`, 2026-09-10); **M2.6A
+  feasibility PASS / OPERATOR-CONFIRMED** (`R0031`, 2026-09-10), voice
+  `Sulafat` OPERATOR-CONFIRMED, frozen v1 cloud baseline
+  (`gemini-3.1-flash-live-preview`; Pipecat OPTION C wrapped
+  `GeminiLiveLLMService`). **`ADR-0004` — Cloud Realtime Voice provider
+  boundary — WRITTEN and Accepted (2026-09-10)**: one `ConversationSession`
+  authority for local + cloud; new NeXa-owned `RealtimeVoiceProvider`
+  boundary (a *peer of* `ModelProvider`) in a provider-agnostic
+  `src/nexa/realtime/` package; `CloudContextSnapshot` (privacy allow-list);
+  `ConversationPolicy` (`LOCAL_ONLY` default) vs `active_provider`; language
+  routing Option A default; NeXa-owned #5465 buffer + `GoAway`/age-timer
+  reconnect; `google-genai` as an optional `cloud-gemini` extra; paid-tier
+  key policy; full ordered M2.6B plan + 17 acceptance gates inside the ADR.
+  **Recommended next implementation task: `M2.6B` — production
+  `RealtimeVoiceProvider` + `ConversationRouter` + `ConversationPolicy` +
+  `CloudContextSnapshot` + reconnect hardening. NOT STARTED.** Needs a
+  paid-tier Gemini API key (operator-provided, stored outside the repo).**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
   M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1 local
   baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. M2
@@ -648,14 +711,46 @@ Runtime / test evidence outranks anything else in this repo.
   session):** RAW input transcription precedes first audio 3/3 valid turns
   (~0.5 s), PUSHED 2/3 — but timing headroom ≠ steerability; ADR-0004
   defaults to Gemini native mirroring (Option A), delayed-`activity_end` +
-  local language-ID as Option B. **Sufficient to start ADR-0004.**
-  Then **`ADR-0004`** before `M2.6B` production.
+  local language-ID as the measured Option B.
+  **`ADR-0004` — Cloud Realtime Voice provider boundary — WRITTEN and
+  Accepted (2026-09-10)**
+  (`docs/decisions/ADR-0004_cloud_realtime_voice_provider_boundary.md`).
+  Decided A–P: one `ConversationSession` authority (local + cloud); new
+  NeXa-owned `RealtimeVoiceProvider` boundary — a *peer of* `ModelProvider`,
+  not a subtype — in a provider-agnostic `src/nexa/realtime/` package, with
+  `GeminiLiveProvider` wrapping Pipecat 1.8.1 `GeminiLiveLLMService`
+  (Option C); `CloudContextSnapshot` = minimal role card + language
+  preference + last ~12 turns + policy state, fresh per non-resumed
+  session, never full history / memory / persona / creds / raw audio;
+  `ConversationPolicy` (`LOCAL_ONLY` **default**, `CLOUD_PREFERRED`, `AUTO`
+  provisional — no classifier in M2.6B) vs runtime `active_provider`
+  (`LOCAL`/`CLOUD`), NeXa's `ConversationRouter` executes every switch;
+  language routing Option A (native mirroring; NeXa owns the preference
+  permanently), Option B is the measured fallback; voice = provider-agnostic
+  NeXa user preference → `Sulafat`; Pipecat #5465 handled by a NeXa-owned
+  bounded inbound audio buffer at the boundary (not an upstream fork);
+  `ReconnectController` (proactive age-timer + `GoAway` + resumption + fresh
+  snapshot on resumption failure); explicit failure→fallback table
+  (`LOCAL_ONLY` never leaves local; others fall back to `LOCAL` with the
+  user informed; continuity survives); credential surface = XDG secret file
+  `~/.config/nexa/secrets/gemini.env` (700/600) + env-var-first loader +
+  `CredentialSource` seam, paid-tier key required for `CLOUD_PREFERRED`/`AUTO`
+  (EEA/CH/UK Paid-Services terms — stated as terms, not a legal opinion);
+  `google-genai>=2.22,<3` + `websockets>=15,<17` as an **optional
+  `cloud-gemini` extra** (`pip install .` stays Google-free; lazy import in
+  `src/nexa/realtime/gemini/`); `ProviderUsageEvent` from `usageMetadata`;
+  Gemini function calling never the capability authority (event types
+  defined, OFF in v1); Pipecat owns media/WS mechanics only. The ADR carries
+  the ordered **M2.6B implementation plan (15 components)** and 17
+  measurable **M2.6B acceptance gates**; local voice stays byte-for-byte
+  frozen; real-hardware operator acceptance required before M2.6B COMPLETE.
+  No `src/nexa/**` / `tests/**` / `pyproject.toml` change in the ADR task.
+  **Next: `M2.6B` production implementation. NOT STARTED.**
   **Credential:** operator-provided key stored at
   `~/.config/nexa/secrets/gemini.env` (outside the repo, 700/600), var
-  `NEXA_GEMINI_API_KEY`; tier/region + paid-key decision is an ADR-0004
-  item. Non-blocking, owed independently: the B.3.6 operator latency
-  re-confirmation; a resource-safe non-blocking pre-warm to remove the
-  M2.5B.2 reset continuity dip.
+  `NEXA_GEMINI_API_KEY`. Non-blocking, owed independently: the B.3.6
+  operator latency re-confirmation; a resource-safe non-blocking pre-warm to
+  remove the M2.5B.2 reset continuity dip.
 
 ---
 
@@ -1286,23 +1381,45 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Exact next recommended task
 
-**Write `ADR-0004` — Cloud Realtime Voice provider boundary.** M2.6A
-feasibility AND the `Sulafat` voice are OPERATOR-CONFIRMED, and C6 is
-answered enough to decide language routing. ADR-0004 ratifies: the
-`RealtimeVoiceProvider` boundary + `CloudContextSnapshot` + one
-`ConversationSession` authority; `google-genai` as a tracked dependency
-(+ pin `websockets` 16.x); production language-routing authority (default
-= Gemini native mirroring / Option A; delayed-`activity_end` + local
-language-ID = measured Option B); the #5465 not-ready send buffer +
-`GoAway`/age-timer reconnect; voice as a persisted NeXa user preference
-(default `Sulafat`); cloud credential surface + paid-key/region policy;
-`ConversationPolicy` vs `active_provider`. Then **`M2.6B`** production.
-The operator may keep talking to NeXa with `Sulafat` any time — every
-probe run adds turn-local C6 samples automatically. Local realtime voice
-with production barge-in (`R0029`) is the
-frozen baseline this builds beside — do not destabilise it;
-`bargein_enabled` default stays `False`; no `src/nexa/**` cloud code until
-ADR-0004. **Credential:** operator-provided key at
+**Begin `M2.6B` — production Cloud Realtime Voice implementation.**
+`ADR-0004` — Cloud Realtime Voice provider boundary — is **written and
+Accepted (2026-09-10)**
+(`docs/decisions/ADR-0004_cloud_realtime_voice_provider_boundary.md`); it
+decided items A–P and contains the ordered M2.6B implementation plan (15
+components) and 17 measurable M2.6B acceptance gates. M2.6A feasibility
+and the `Sulafat` voice are OPERATOR-CONFIRMED and remain the frozen v1
+cloud baseline. **M2.6B is NOT started.**
+
+ADR-0004 decisions to implement in M2.6B: new provider-agnostic
+`src/nexa/realtime/` package — `RealtimeVoiceProvider` ABC (a **peer of**
+`ModelProvider`, not a subtype) + `ProviderReadiness`; `ConversationPolicy`
+(`LOCAL_ONLY` **default**, `CLOUD_PREFERRED`, `AUTO` provisional) vs
+runtime `active_provider` (`LOCAL`/`CLOUD`); `CloudContextSnapshot`
+(minimal role card + language preference + last ~12 turns + policy state;
+never full history / memory / persona / creds / raw audio; fresh per
+non-resumed session); NeXa-owned inbound audio buffer for Pipecat #5465;
+`ReconnectController` (proactive age-timer + `GoAway` + resumption, fresh
+snapshot on resumption failure); `ProviderUsageEvent` from authoritative
+`usageMetadata`; `credentials.py` (env-var-first, XDG secret file
+fallback, `CredentialSource` seam) with paid-tier-key required for
+`CLOUD_PREFERRED`/`AUTO` in EEA/CH/UK; `ConversationRouter` executes every
+LOCAL↔CLOUD switch; additive `ConversationSession.record_external_exchange`
+(user turn kept on cloud interruption, assistant = spoken-prefix only);
+`GeminiLiveProvider` wrapping Pipecat 1.8.1 `GeminiLiveLLMService`
+(Option C, `LLMRunFrame` kickoff, server VAD off, `Sulafat` via a
+provider-agnostic voice preference); HYBRID audio reuses the frozen
+XVF3800 AEC + Silero + `BargeInController`. Language routing = **Option A**
+(Gemini native same-turn mirroring; NeXa owns the preference permanently),
+Option B (delayed `activity_end` + local language-ID, ≈ +1.1 s) is the
+measured fallback. Dependency: `google-genai>=2.22,<3` + `websockets>=15,<17`
+as an **optional `cloud-gemini` extra** (`pip install .` stays Google-free;
+`src/nexa/realtime/gemini/` imports `google.genai` lazily).
+
+Local realtime voice with production barge-in (`R0029`) is the frozen
+baseline M2.6B builds beside — do not destabilise it; `bargein_enabled`
+default stays `False`; every existing local-voice regression suite must
+stay green; real-hardware operator acceptance is required before M2.6B is
+marked COMPLETE. **Credential:** operator-provided key at
 `~/.config/nexa/secrets/gemini.env` (outside the repo, 700/600), var
 `NEXA_GEMINI_API_KEY`.
 
