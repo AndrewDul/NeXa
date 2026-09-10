@@ -1,0 +1,304 @@
+{
+  "recomputed_from": "m2_6a_probe_results_20260910T215423Z.json",
+  "recomputed_utc": "2026-09-10T22:07:21.182212+00:00",
+  "note": "Recomputed with turn-local reconstruction: barge-in gates on bot_is_speaking; latency + C6 are measured per reconstructed turn (a fragmented multi-VAD-segment utterance is measured from its FINAL VAD_EOT and excluded from the C6 primary stat) so no event is paired across turn boundaries.",
+  "original_config": {
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Sulafat",
+    "in_sample_rate": 16000,
+    "out_sample_rate": 24000,
+    "input_chunk_ms_target": 20,
+    "input_device_name": "respeaker",
+    "output_device_name": "usb_speaker",
+    "aec_reference_device": "plug:respeaker",
+    "server_vad": "disabled (local Silero is turn authority)",
+    "context_window_compression": "enabled",
+    "transcription": "input + output (Pipecat enables both unconditionally)",
+    "settings_ok": true,
+    "input_device_index": 3,
+    "output_device_index": 2,
+    "mode": "live real-hardware"
+  },
+  "corrected_derived_latencies_s": {
+    "eot_to_first_server_content_s": [
+      0.7135
+    ],
+    "eot_to_first_audio_received_s": [
+      0.7135,
+      0.876,
+      1.8926,
+      0.7032,
+      0.6872
+    ],
+    "eot_to_first_audio_received_median_s": 0.7135,
+    "eot_to_first_audio_played_s": [
+      0.7564,
+      0.8771,
+      1.9299,
+      0.7405,
+      0.7361
+    ],
+    "eot_to_first_audio_played_median_s": 0.7564,
+    "eot_to_first_audio_played_turnlocal_s": [
+      0.7564,
+      0.8771,
+      0.7405,
+      0.7361
+    ],
+    "eot_to_first_audio_played_turnlocal_median_s": 0.7485,
+    "eot_to_first_audio_received_turnlocal_s": [
+      0.7135,
+      0.876,
+      0.7032,
+      0.6872
+    ],
+    "eot_to_first_audio_received_turnlocal_median_s": 0.7084,
+    "eot_to_input_transcription_raw_first_s": [
+      0.1779,
+      0.2304,
+      0.2628,
+      0.2153,
+      0.1964
+    ],
+    "eot_to_input_transcription_pushed_s": [
+      0.2101,
+      0.7312,
+      0.7639,
+      0.7161,
+      0.6983
+    ],
+    "input_transcription_pushed_to_first_audio_received_s": [
+      0.5034,
+      0.1448,
+      1.1287,
+      19.8441
+    ],
+    "input_transcription_pushed_to_first_audio_played_s": [
+      0.5463,
+      0.1459,
+      1.166,
+      0.0244,
+      0.0378
+    ],
+    "c6": {
+      "n_turns_total": 4,
+      "n_valid": 3,
+      "n_excluded": 1,
+      "n_valid_raw_before_first_audio": 3,
+      "n_valid_pushed_before_first_audio": 2,
+      "raw_to_first_audio_margin_s": [
+        0.5356,
+        0.6456,
+        0.4908
+      ],
+      "raw_to_first_audio_margin_median_s": 0.5356,
+      "raw_to_first_audio_margin_min_s": 0.4908,
+      "raw_to_first_audio_margin_max_s": 0.6456,
+      "pushed_to_first_audio_margin_s": [
+        0.5034,
+        0.1448,
+        -0.0111
+      ],
+      "pushed_to_first_audio_margin_median_s": 0.1448,
+      "pushed_to_first_audio_margin_min_s": -0.0111,
+      "pushed_to_first_audio_margin_max_s": 0.5034,
+      "valid_turns": [
+        {
+          "index": 1,
+          "vad_start_t": 4.4416,
+          "n_vad_segments": 1,
+          "fragmented": false,
+          "eff_eot_t": 6.2194,
+          "raw_transcript_t": 6.3973,
+          "pushed_transcript_t": 6.4295,
+          "first_server_content_t": 6.9329,
+          "first_audio_received_t": 6.9329,
+          "first_audio_played_t": 6.9758,
+          "turn_complete_t": null,
+          "answered": true,
+          "eot_to_raw_s": 0.1779,
+          "eot_to_pushed_s": 0.2101,
+          "eot_to_first_audio_received_s": 0.7135,
+          "eot_to_first_audio_played_s": 0.7564,
+          "raw_to_first_audio_received_s": 0.5356,
+          "pushed_to_first_audio_received_s": 0.5034
+        },
+        {
+          "index": 2,
+          "vad_start_t": 13.2626,
+          "n_vad_segments": 1,
+          "fragmented": false,
+          "eff_eot_t": 14.0361,
+          "raw_transcript_t": 14.2665,
+          "pushed_transcript_t": 14.7673,
+          "first_server_content_t": null,
+          "first_audio_received_t": 14.9121,
+          "first_audio_played_t": 14.9132,
+          "turn_complete_t": 23.0042,
+          "answered": true,
+          "eot_to_raw_s": 0.2304,
+          "eot_to_pushed_s": 0.7312,
+          "eot_to_first_audio_received_s": 0.876,
+          "eot_to_first_audio_played_s": 0.8771,
+          "raw_to_first_audio_received_s": 0.6456,
+          "pushed_to_first_audio_received_s": 0.1448
+        },
+        {
+          "index": 4,
+          "vad_start_t": 44.6644,
+          "n_vad_segments": 1,
+          "fragmented": false,
+          "eff_eot_t": 47.5773,
+          "raw_transcript_t": 47.7737,
+          "pushed_transcript_t": 48.2756,
+          "first_server_content_t": null,
+          "first_audio_received_t": 48.2645,
+          "first_audio_played_t": 48.3134,
+          "turn_complete_t": 62.3468,
+          "answered": true,
+          "eot_to_raw_s": 0.1964,
+          "eot_to_pushed_s": 0.6983,
+          "eot_to_first_audio_received_s": 0.6872,
+          "eot_to_first_audio_played_s": 0.7361,
+          "raw_to_first_audio_received_s": 0.4908,
+          "pushed_to_first_audio_received_s": -0.0111
+        }
+      ],
+      "excluded_turns": [
+        {
+          "index": 3,
+          "vad_start_t": 25.4628,
+          "n_vad_segments": 2,
+          "fragmented": true,
+          "eff_eot_t": 27.7043,
+          "raw_transcript_t": 27.9196,
+          "pushed_transcript_t": 28.4204,
+          "first_server_content_t": null,
+          "first_audio_received_t": 28.4075,
+          "first_audio_played_t": 28.4448,
+          "turn_complete_t": 43.3543,
+          "answered": true,
+          "eot_to_raw_s": 0.2153,
+          "eot_to_pushed_s": 0.7161,
+          "eot_to_first_audio_received_s": 0.7032,
+          "eot_to_first_audio_played_s": 0.7405,
+          "raw_to_first_audio_received_s": 0.4879,
+          "pushed_to_first_audio_received_s": -0.0129,
+          "excluded_reason": "fragmented user speech (2 VAD segments) \u2014 merged utterance"
+        }
+      ],
+      "_note": "Positive margin => the transcript arrived at NeXa before the first response audio for the same turn. RAW = first raw input-transcription chunk; PUSHED = Pipecat's aggregated sentence (end-of-sentence OR 0.5 s timeout flush). Local availability in time is necessary but NOT sufficient to steer the SAME response \u2014 see R0031 C6 architectural conclusion."
+    },
+    "reconnect_start_to_ready_s": [],
+    "barge_in": {
+      "barge_in_candidate_count": 1,
+      "barge_in_candidates": [
+        {
+          "vad_start_t": 13.2626,
+          "playback_stop_t": 13.2646,
+          "bot_audio_stopped_t": 13.2661,
+          "last_interruption_frame_t": 13.2929,
+          "vad_start_to_playback_stop_s": 0.002,
+          "vad_start_to_bot_audio_stopped_s": 0.0035,
+          "playback_stop_minus_interruption_frame_s": -0.0283
+        }
+      ],
+      "bargein_vad_start_to_playback_stop_s": [
+        0.002
+      ],
+      "bargein_vad_start_to_playback_stop_median_s": 0.002,
+      "bargein_vad_start_to_bot_audio_stopped_s": [
+        0.0035
+      ],
+      "bargein_vad_start_to_bot_audio_stopped_median_s": 0.0035,
+      "local_playback_stop_minus_interruption_frame_s": [
+        -0.0283
+      ],
+      "local_playback_stop_minus_interruption_frame_median_s": -0.0283,
+      "_note": "A LOCAL_VAD_START while the bot was NOT playing is an ordinary user turn, not a barge-in, and is excluded. local_playback_stop_minus_interruption_frame_s is negative when NeXa's local playback authority silenced the speaker BEFORE the (later, likely server-round-trip) InterruptionFrame."
+    },
+    "turns": [
+      {
+        "index": 1,
+        "vad_start_t": 4.4416,
+        "n_vad_segments": 1,
+        "fragmented": false,
+        "eff_eot_t": 6.2194,
+        "raw_transcript_t": 6.3973,
+        "pushed_transcript_t": 6.4295,
+        "first_server_content_t": 6.9329,
+        "first_audio_received_t": 6.9329,
+        "first_audio_played_t": 6.9758,
+        "turn_complete_t": null,
+        "answered": true,
+        "eot_to_raw_s": 0.1779,
+        "eot_to_pushed_s": 0.2101,
+        "eot_to_first_audio_received_s": 0.7135,
+        "eot_to_first_audio_played_s": 0.7564,
+        "raw_to_first_audio_received_s": 0.5356,
+        "pushed_to_first_audio_received_s": 0.5034
+      },
+      {
+        "index": 2,
+        "vad_start_t": 13.2626,
+        "n_vad_segments": 1,
+        "fragmented": false,
+        "eff_eot_t": 14.0361,
+        "raw_transcript_t": 14.2665,
+        "pushed_transcript_t": 14.7673,
+        "first_server_content_t": null,
+        "first_audio_received_t": 14.9121,
+        "first_audio_played_t": 14.9132,
+        "turn_complete_t": 23.0042,
+        "answered": true,
+        "eot_to_raw_s": 0.2304,
+        "eot_to_pushed_s": 0.7312,
+        "eot_to_first_audio_received_s": 0.876,
+        "eot_to_first_audio_played_s": 0.8771,
+        "raw_to_first_audio_received_s": 0.6456,
+        "pushed_to_first_audio_received_s": 0.1448
+      },
+      {
+        "index": 3,
+        "vad_start_t": 25.4628,
+        "n_vad_segments": 2,
+        "fragmented": true,
+        "eff_eot_t": 27.7043,
+        "raw_transcript_t": 27.9196,
+        "pushed_transcript_t": 28.4204,
+        "first_server_content_t": null,
+        "first_audio_received_t": 28.4075,
+        "first_audio_played_t": 28.4448,
+        "turn_complete_t": 43.3543,
+        "answered": true,
+        "eot_to_raw_s": 0.2153,
+        "eot_to_pushed_s": 0.7161,
+        "eot_to_first_audio_received_s": 0.7032,
+        "eot_to_first_audio_played_s": 0.7405,
+        "raw_to_first_audio_received_s": 0.4879,
+        "pushed_to_first_audio_received_s": -0.0129
+      },
+      {
+        "index": 4,
+        "vad_start_t": 44.6644,
+        "n_vad_segments": 1,
+        "fragmented": false,
+        "eff_eot_t": 47.5773,
+        "raw_transcript_t": 47.7737,
+        "pushed_transcript_t": 48.2756,
+        "first_server_content_t": null,
+        "first_audio_received_t": 48.2645,
+        "first_audio_played_t": 48.3134,
+        "turn_complete_t": 62.3468,
+        "answered": true,
+        "eot_to_raw_s": 0.1964,
+        "eot_to_pushed_s": 0.6983,
+        "eot_to_first_audio_received_s": 0.6872,
+        "eot_to_first_audio_played_s": 0.7361,
+        "raw_to_first_audio_received_s": 0.4908,
+        "pushed_to_first_audio_received_s": -0.0111
+      }
+    ],
+    "_removed_invalid_metrics": "vad_start_to_local_playback_stopped_s and server_interrupted_to_playback_stopped_s (pre-2026-09-10): paired EVERY VAD_START with a later playback stop. Also: the raw _pairs-based eot_to_first_audio_* and input_transcription_pushed_to_first_audio_* can cross turn boundaries or double-count a fragmented utterance \u2014 use the *_turnlocal_* fields and the c6 block instead."
+  }
+}

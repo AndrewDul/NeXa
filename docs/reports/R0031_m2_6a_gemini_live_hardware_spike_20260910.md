@@ -5,23 +5,24 @@
 - **Milestone:** M2 — Realtime Voice · **M2.6 — Cloud Realtime Voice** ·
   substage **M2.6A** (feasibility spike, the cloud analogue of M2.5A).
 - **Status:** **M2.6A CLOUD REALTIME VOICE FEASIBILITY — PASS /
-  OPERATOR-CONFIRMED (2026-09-10).** Attempt #1 was an infrastructure bug
-  (silent after user speech — missing `LLMRunFrame` kickoff), root-caused
-  from source and fixed in the probe. The **operator retest succeeded**:
-  a real natural PL/EN conversation with `gemini-3.1-flash-live-preview`,
-  judged by the operator as *excellent* conversation quality / reasoning /
-  natural flow / barge-in, latency *essentially immediate*, "mega super".
-  Machine evidence agrees: **EOT → first audible ≈ 0.81 s median** (9
-  turns, two sessions; R0030 gate ≤ 1.5 s), **barge-in ≈ 2–4 ms** (5 real
-  barge-ins, corrected metric), 0 AEC-feed failures. The **only** operator
-  request is a voice-preference change (female / cozy / warm) — a tuning
-  item, **not** a feasibility failure. Recorded separately: current
-  default voice rejected as a preference; **`Sulafat` ("Warm")** selected
-  as the next candidate — statically configured, **not yet heard by the
-  operator**, so NOT voice-confirmed. Reconnect / lifetime testing
-  deliberately deferred to production hardening (M2.6B); not needed to
-  prove basic conversation feasibility, and the operator wants quota
-  preserved for real conversation.
+  OPERATOR-CONFIRMED (2026-09-10). VOICE: `Sulafat` — OPERATOR-CONFIRMED,
+  frozen as the current NeXa cloud voice baseline.** Attempt #1 was an
+  infrastructure bug (missing `LLMRunFrame` kickoff), root-caused from
+  source and fixed. Attempt #2 (Pipecat default voice) = real PL/EN
+  conversation, operator EXCELLENT / "essentially immediate" / "mega
+  super"; the operator's only ask was a female/cozy/warm voice. A **third
+  session** was then run with `Sulafat` ("Warm"): after real natural use
+  the operator said *"I like this voice, we keep it."* Machine evidence
+  across all sessions: **EOT → first audible ≈ 0.75 s median** (turn-local;
+  R0030 gate ≤ 1.5 s), **barge-in ≈ 2 ms** local playback-stop, 0 AEC-feed
+  failures. **C6 (input-transcription vs first audio), turn-local, Sulafat
+  session:** the RAW input transcription precedes first response audio in
+  **3/3 valid turns** by ~0.5 s (median 0.54 s); the aggregated (PUSHED)
+  transcript precedes it in only 2/3. **But timing headroom ≠
+  steerability** — see the C6 architectural conclusion: NeXa cannot be
+  assumed to steer the *same* cloud response, so ADR-0004 should default
+  to Gemini's native language mirroring (which worked). Reconnect /
+  lifetime testing deliberately deferred to M2.6B (quota preserved).
 - **Related:** `R0030` (Cloud Realtime Voice research/architecture — **and
   its `PHASE 0 CORRECTIONS`, applied in this task**), `R0029` (frozen
   local baseline), `ADR-0003` (D2 one `ConversationSession`; compliance
@@ -279,6 +280,176 @@ Consistent across both sessions and all 9 turns.
 Session 1 estimate **~$0.043**, session 2 **~$0.007** (audio-duration ×
 official rates; `usageMetadata` not yet wired). Two real conversation
 sessions cost **~5 cents** total.
+
+---
+
+## OPERATOR ATTEMPT #3 — SULAFAT: PASS / VOICE OPERATOR-CONFIRMED
+
+Third real-hardware session, `--voice Sulafat` (now the probe default),
+`m2_6a_probe_results_20260910T215423Z.json` (+ `…_recomputed.json`). ~64 s,
+**4 reconstructed user turns** (one fragmented — see below). After real
+natural use the operator said:
+
+> **"I like this voice, we keep it."**
+
+**Decision recorded:** **VOICE = `Sulafat` — OPERATOR-CONFIRMED**, the
+frozen current NeXa cloud voice baseline. Model / VAD / AEC / Smart Turn /
+barge-in / latency settings / audio format / chunk size / system
+instruction / conversation behaviour **unchanged**.
+
+### Turn-local latency (metric corrected again)
+
+`eot_to_first_audio_played_s` via the raw `_pairs` was
+`[0.7564, 0.8771, 1.9299, 0.7405, 0.7361]`. The **1.93 s value is not a
+real latency** — same class of cross-boundary pairing bug as the earlier
+barge-in metric. **Turn 3 was fragmented speech**: the operator spoke it
+in **two VAD segments** with a ~0.45 s mid-utterance pause (VAD closed at
+t = 26.51 s, the operator resumed at t = 26.96 s, true end t = 27.70 s).
+Silero + Smart Turn correctly treated it as one continued utterance and
+Gemini responded 0.70 s after the *true* (final) end — the naive
+`_pairs` matched the **first** segment's `LOCAL_VAD_EOT` (26.51) against
+the audio that answered the whole utterance (28.44) → 1.93 s.
+
+**Fix (probe `derive()` only):** `Timeline.turns()` reconstructs user
+turns; consecutive `LOCAL_VAD_START`s before the turn's first
+`FIRST_AUDIO_RECEIVED` are merged as **fragments** (the turn is flagged
+`fragmented` and measured from its **final** `LOCAL_VAD_EOT`); every turn
+is bounded by the next turn's first VAD-start so no event is paired
+across turns. `--recompute` applies it to existing timelines.
+
+| Turn | Status | EOT → first audible (s) |
+|---|---|---|
+| 1 | clean | 0.756 |
+| 2 | clean (this turn interrupted turn 1's reply) | 0.877 |
+| 3 | **fragmented (2 VAD segments)** — measured from final EOT | 0.741 |
+| 4 | clean | 0.736 |
+
+**Turn-local EOT → first audible: [0.756, 0.877, 0.741, 0.736], median
+≈ 0.749 s, mean ≈ 0.777 s.** The "outlier" was **fragmented speech
+surfacing as a metric artifact** — not Smart Turn misbehaviour (it did
+the right thing), not an interruption, not a delayed server response, not
+unknown. **No tuning warranted** (operator judged the conversation
+excellent; corrected per-turn latency ~0.75 s).
+
+Combined with attempts #1/#2: EOT → first audible is ~**0.75–0.81 s
+median** across three real sessions — R0030 ≤ 1.5 s gate **PASS**, and
+faster than local voice.
+
+### Barge-in (Sulafat session)
+
+1 real barge-in candidate (turn 2 interrupting turn 1's reply):
+`vad_start → LOCAL_PLAYBACK_STOPPED` = **2.0 ms**, `→ BOT_AUDIO_STOPPED` =
+**3.5 ms**, `LOCAL_PLAYBACK_STOPPED − last interruption frame` =
+**−28.3 ms** (local speaker silent ~28 ms *before* the server-round-trip
+frame). Consistent with attempt #2 (medians 2.3 / 4.0 / −27.2 ms).
+**PASS.**
+
+### AEC (Sulafat session)
+
+`ever_started=true`, `failure_count=0`, `chunks_dropped=0`,
+`AEC_REF_ACTIVE` at t = 1.23 s (before any speech). `AEC_REF_DOWN` at
+t = 63.92 s, ~33 ms before `SESSION_STOP` (Ctrl+C teardown) →
+`active_at_end=false` is **expected teardown, not a failure**. Healthy.
+
+### #5465 (Sulafat session)
+
+One NOT_READY window, 540 ms, at startup (`LLM_READY` at t = 1.88 s).
+First `LOCAL_VAD_START` at t = 4.44 s — **2.56 s after the window
+closed**. **No user speech in the window.** Same verdict:
+*KNOWN PRODUCTION RISK STILL OPEN, NOT OBSERVED AS USER-AUDIO LOSS.*
+
+### Cost (Sulafat session)
+
+~$0.0195 (~2 cents) for ~64 s.
+
+---
+
+## C6 — INPUT-TRANSCRIPTION vs FIRST AUDIO (turn-local; Sulafat session)
+
+The Sulafat session is the first with the C6 wrappers installed
+(`INPUT_TRANSCRIPTION_RAW_FIRST` = first raw input-transcription chunk of
+a turn; `INPUT_TRANSCRIPTION_PUSHED` = Pipecat's aggregated user sentence
+— end-of-sentence marker OR its 0.5 s timeout flush). Analysed
+**turn-locally** (`c6` block in the recomputed JSON); the earlier raw
+`_pairs` produced a spurious **19.84 s** value by pairing turn 3's
+second-segment PUSHED against **turn 4's** first audio.
+
+### Per turn
+
+| Turn | Status | EOT→RAW | EOT→PUSHED | EOT→audio recv | RAW→audio recv | PUSHED→audio recv |
+|---|---|---|---|---|---|---|
+| 1 | clean | 0.178 | 0.210 | 0.714 | **+0.536** | **+0.503** |
+| 2 | clean (interrupted T1) | 0.230 | 0.731 | 0.876 | **+0.646** | **+0.145** |
+| 3 | fragmented — **EXCLUDED** | 0.216 | 0.716 | 0.703 | +0.488 | −0.013 |
+| 4 | clean | 0.196 | 0.698 | 0.687 | **+0.491** | **−0.011** |
+
+(Positive = the transcript reached NeXa before the first response audio
+for the same turn. Turn 3 excluded: fragmented / merged utterance.)
+
+### C6 statistic (valid turns 1, 2, 4)
+
+- **n valid turns = 3** (turn 3 excluded — fragmented user speech).
+- **RAW transcript preceded first audio: 3 / 3.** Margins
+  `[0.536, 0.646, 0.491] s` → **median 0.536 s, min 0.491, max 0.646**.
+- **PUSHED (aggregated) transcript preceded first audio: 2 / 3.** Margins
+  `[0.503, 0.145, −0.011] s` → median 0.145 s, min −0.011, max 0.503.
+  (Turn 4's aggregated sentence landed ~11 ms *after* first audio — it hit
+  the aggregator's 0.5 s timeout flush rather than an end-of-sentence
+  marker.)
+
+### C6 ARCHITECTURAL CONCLUSION
+
+The three questions R0030 asks are **separate**, and the evidence answers
+them differently:
+
+1. **Is the transcript locally available in time?**
+   **RAW: YES** — the first raw chunk lands at EOT + ~0.2 s and precedes
+   the first response audio by **~0.5 s, consistently (3/3)**.
+   **PUSHED: not reliably** — EOT + 0.21 s to EOT + 0.73 s depending on
+   punctuation vs the 0.5 s flush; 1/3 valid turns it arrived *after*
+   first audio.
+
+2. **Has Gemini already begun generating internally by then?**
+   **INFERENCE: almost certainly YES.** `activity_end` is sent at EOT and
+   Gemini 3.x "acts on it immediately with no additional wait" (R0030 C3).
+   The RAW transcription (~EOT + 0.2 s) is a *parallel* server output —
+   the server transcribes and generates concurrently. Nothing in the
+   evidence suggests "transcript arrived" implies "generation has not
+   started"; the timing suggests the opposite.
+
+3. **Can NeXa actually influence the SAME response?**
+   **NOT DEMONSTRATED, and the mechanism is doubtful.** To steer *this*
+   response, NeXa would have to inject an instruction (e.g. "answer in
+   Polish") that reaches Gemini after the transcript but before the
+   response is committed, and that Gemini honours mid-turn. But
+   `activity_end` already closed the turn ~0.2–0.7 s earlier; Pipecat's
+   `_send_user_text` goes via `realtimeInput` where "turn completion is
+   automatically inferred", so a post-`activity_end` text most likely
+   opens a **new** turn. There is **no evidence** a mid-turn instruction
+   modifies the in-flight response. **Timing headroom ≠ steerability.**
+
+**Therefore, for ADR-0004:** NeXa's per-turn `ResponseLanguageResolver`
+**cannot be assumed to steer the same cloud response.** Options:
+
+- **A (recommended for v1):** let Gemini mirror the spoken language
+  natively (it did this well — the operator had zero language
+  complaints). NeXa's resolver still runs on the transcript for canonical
+  history language metadata and sticky-preference tracking; the
+  `CloudContextSnapshot` system instruction carries the current preference
+  so it applies **from the next turn**.
+- **B (if strict per-turn authority is required):** deliberately delay
+  `activity_end` until a fast local language-ID runs on the buffered
+  utterance audio — a *measured* added latency, decided in ADR-0004.
+- **C:** parallel local whisper.cpp — heavier, contradicts "no second STT
+  in cloud mode"; rejected unless B is insufficient.
+
+**Is the C6 evidence sufficient to start ADR-0004? YES.** The timing
+question is answered (RAW transcript available ~0.5 s before audio,
+consistent) and the steerability question is answered enough to decide:
+proceed with **Option A** as the default, **Option B** documented as the
+measured-latency fallback. Caveat: n = 3 valid turns from one session —
+the C6 wrappers stay in place, so every future ordinary probe run adds
+data with zero extra effort.
 
 ---
 
@@ -565,57 +736,25 @@ timeline (no cloud call). `SERVER_INTERRUPTED` renamed
 
 ## EVENT ORDERING FINDINGS (R0030 C6 — language routing)
 
-**NOT ANSWERED by the existing evidence.** The two attempt-#2 JSONs
-contain **no input-transcription timestamps** (`INPUT_TRANSCRIPTION_*`
-lists are empty; the timeline has no such marks). Reason, verified from
-Pipecat 1.8.1 source: `GeminiLiveLLMService._push_user_transcription`
-pushes the `TranscriptionFrame` **`FrameDirection.UPSTREAM`**, and
-`LLMUserAggregator.process_frame` **consumes** `TranscriptionFrame`
-(`_handle_transcription`, not re-pushed) — so it never reaches either
-metrics tap. The probe's original `INPUT_TRANSCRIPTION_FIRST` tap could
-not fire.
+**Historical (attempts #1/#2):** those two JSONs contain **no
+input-transcription timestamps** — verified from Pipecat 1.8.1 source,
+`_push_user_transcription` pushes the `TranscriptionFrame`
+`FrameDirection.UPSTREAM` and `LLMUserAggregator` **consumes** it before
+any metrics tap. Spike-only wrappers on `_handle_msg_input_transcription`
+(`INPUT_TRANSCRIPTION_RAW_FIRST`) and `_push_user_transcription`
+(`INPUT_TRANSCRIPTION_PUSHED`) were added.
 
-The operator's terminal quote —
-
-```
-LOCAL EOT          22:19:45.422
-input transcript   22:19:45.702   (Pipecat's [Transcription:user] DEBUG log line)
-first audio        22:19:46.242
-```
-
-— is **one turn, human-read from a log line**, not machine-tapped across
-turns. It *suggests* EOT→transcript ≈ 0.28 s and transcript→first-audio ≈
-0.54 s, i.e. the aggregated user transcription may arrive ~0.5 s before
-first audio. **This is indicative only and must not be generalised.**
-
-Answers, precisely, to R0030 C6 questions:
-
-1. **first-transcription timing** — not instrumented in these runs.
-2. **flushed/final-transcription timing** — not instrumented (distinct
-   from #1; both absent).
-3. **first-audio timing** — instrumented: EOT → first audio ≈ 0.81 s
-   median (above).
-4. **turns with complete transcription before first audio** — cannot be
-   counted from the JSON; the one log-line example is consistent with
-   "yes", n = 1.
-5. **median margin transcript-final → first audio** — unknown from the
-   JSON; ~0.54 s in the single log example.
-6. **enough time for `ResponseLanguageResolver` to steer the same
-   response without added delay** — **NOT PROVEN either way.** If the
-   single data point generalises (~0.5 s margin), there would be room;
-   but that is not established, and Gemini's own native language mirroring
-   already handled PL/EN well in the operator session.
-
-**Fix applied (probe, for the NEXT natural session — no rerun triggered
-now):** spike-only wrappers on `_handle_msg_input_transcription`
-(`INPUT_TRANSCRIPTION_RAW_FIRST` — first raw chunk per turn) and
-`_push_user_transcription` (`INPUT_TRANSCRIPTION_PUSHED` — the aggregated
-sentence). `derive()` then produces
-`eot_to_input_transcription_raw_first_s`,
-`eot_to_input_transcription_pushed_s`,
-`input_transcription_pushed_to_first_audio_*_s`. **C6 remains an OPEN
-INPUT to ADR-0004**, to be filled from the operator's next ordinary
-conversation.
+**Now answered — see the turn-local analysis in
+*C6 — INPUT-TRANSCRIPTION vs FIRST AUDIO (turn-local; Sulafat session)*
+above.** In short: the RAW input transcription reaches NeXa ~0.5 s before
+the first response audio in **3/3 valid turns** (median 0.54 s); the
+aggregated (PUSHED) transcript only in 2/3. But this is *timing headroom*,
+not *steerability* — the C6 architectural conclusion (three separate
+questions) says NeXa cannot be assumed to influence the **same** cloud
+response, so ADR-0004 should default to Gemini's native language mirroring
+(Option A) with a delayed-`activity_end` + local language-ID fallback
+(Option B). **C6 is now a SUFFICIENT input to start ADR-0004** (n = 3
+valid turns from one session; the wrappers stay in place for more).
 
 ---
 
@@ -678,126 +817,129 @@ ceiling is well under $1.
 
 ---
 
-## VOICE CONFIGURATION
+## VOICE CONFIGURATION & RECORD
 
-The operator's only requested change after the successful conversation:
-**a female, cozy, pleasant, warm voice** (the current voice was rejected
-as a *preference*, not a fault).
+**Chronology (accurate history — earlier steps preserved):**
 
-- **VERIFIED (official docs, `ai.google.dev/gemini-api/docs/speech-generation`,
-  2026-09-10):** `Sulafat`'s style descriptor is **"Warm"**. (Alternatives
-  recorded, **not** auto-tested: `Vindemiatrix` "Gentle", `Achernar`
-  "Soft", `Aoede` "Breezy".) The style table does not list gender; the
-  female identification is the operator-supplied basis (Google/Firebase
-  voice metadata).
-- **VERIFIED (installed Pipecat 1.8.1 source):** the supported surface is
-  `GeminiLiveLLMService.Settings(voice="Sulafat")`. In `_connect()` it
-  maps to
+1. Attempts #1/#2 ran with **Pipecat's default voice** (`Charon`,
+   "Informative"). After the successful attempt-#2 conversation the
+   operator said this voice was **not preferred** and asked for a
+   **female / cozy / pleasant / warm** voice.
+2. **`Sulafat`** ("Warm") was proposed as the best semantic match.
+3. The operator listened to other candidates, **including `Achernar`**
+   ("Soft"), and the recorded alternatives `Vindemiatrix` ("Gentle") /
+   `Aoede` ("Breezy").
+4. The operator then **used `Sulafat` in a real Gemini Live conversation**
+   (session `…215423Z`, `--voice Sulafat`).
+5. The operator **explicitly selected `Sulafat`**:
+   *"I like this voice, we keep it."*
+6. **`Sulafat` is now OPERATOR-CONFIRMED and the frozen current NeXa
+   cloud voice baseline.**
+
+**Mechanism (VERIFIED):**
+
+- Official docs (`ai.google.dev/gemini-api/docs/speech-generation`,
+  2026-09-10): `Sulafat` style descriptor = **"Warm"**. (The style table
+  lists no gender; female identification is the operator-supplied basis
+  from Google/Firebase voice metadata.)
+- Installed Pipecat 1.8.1 source: `GeminiLiveLLMService.Settings(voice="Sulafat")`
+  → `_connect()` maps it to
   `generation_config.speech_config.voice_config.prebuilt_voice_config.voice_name = "Sulafat"`
-  — i.e. exactly Google's `speech_config → voice_config →
-  prebuilt_voice_config → voice_name`. No invented API.
-- **Probe change:** `DEFAULT_VOICE = "Sulafat"`, plus `--voice <name>`
-  override. Voice is a **NeXa user preference**, kept configurable and
-  separate from model / VAD / audio-format / latency settings and from the
-  Gemini identity. Model, VAD, audio format, system instruction, and all
-  latency-relevant settings are **unchanged**.
-- **Validated statically** (`--dry`: `voice = Sulafat`; `Settings.voice`
-  carries through; `_connect` maps via `voice_name=...`). **No cloud call
-  made for the voice change.**
-
-**`Sulafat` is NOT operator-confirmed** — the operator has not heard it
-yet. Recorded as: *current/default voice rejected as a preference;
-`Sulafat` selected as the next candidate; awaiting natural-use
-confirmation.*
+  — exactly Google's `speech_config → voice_config → prebuilt_voice_config
+  → voice_name`. No invented API.
+- Probe: `DEFAULT_VOICE = "Sulafat"` + `--voice <name>`. **Voice is a NeXa
+  user preference**, kept configurable and separate from the model / VAD /
+  AEC / Smart Turn / barge-in / audio format / chunk size / latency
+  settings / system instruction (all unchanged) and from the Gemini
+  identity. Future NeXa architecture must keep voice a user preference,
+  not part of the Gemini provider.
 
 ---
 
 ## FAILURES / ANOMALIES
 
-- **OPERATOR ATTEMPT #1 = FAIL (silent after user speech)** — root cause:
-  missing `LLMRunFrame` kickoff → `GeminiLiveLLMService` never became
-  `_ready_for_realtime_input`; with server VAD off that gates
-  `activity_start` / audio / `activity_end`. **Fixed in the probe**
-  (kickoff + `inference_on_context_initialization=False` + empty context);
-  proven by the no-mic lifecycle smoke. Full analysis above.
-- **`websockets` 17.1 → 16.1.1 downgrade** (transitive, forced by
-  `google-genai`). Within Pipecat's allowed range; `pip check` clean;
-  spot-check tests pass. Flagged for ADR-0004 (pin it).
-- **No `GoAway` handling in Pipecat 1.8.1** (known from R0030). The probe
-  will just observe the ~10-minute reconnect reactively; the reconnect
-  phase records `CONNECTION_LOST` / `RECONNECT_START` / `RECONNECT_READY`
-  and whether pre-reconnect context survived.
+- **Attempt #1 = FAIL (silent after user speech)** — missing `LLMRunFrame`
+  kickoff; `GeminiLiveLLMService` never became `_ready_for_realtime_input`
+  (which, server VAD off, gates `activity_start` / audio / `activity_end`).
+  Fixed in the probe; proven by the no-mic lifecycle smoke.
+- **Barge-in metrics (attempt-#2 JSONs)** were semantically invalid (naive
+  "next event" pairing). Fixed in `derive()` (`bot_is_speaking` gate) +
+  recomputed from history.
+- **Latency "1.93 s outlier" (Sulafat session)** was **fragmented user
+  speech** (a mid-utterance pause = 2 VAD segments) surfacing as a
+  cross-boundary pairing artifact. Fixed by turn-local reconstruction
+  (`Timeline.turns()`); real per-turn latency was 0.74 s.
+- **C6 raw `_pairs` "19.84 s"** — turn 3's second-segment PUSHED
+  transcript paired against turn 4's first audio. Fixed by the turn-local
+  `c6` analysis.
+- **C6 (attempts #1/#2)** was not instrumented — the input `TranscriptionFrame`
+  is pushed upstream and consumed by the aggregator before any tap.
+  Wrappers added; the Sulafat session has the data.
 - **#5465 silent-drop guards present** (known). Instrumented; startup
-  window only; no user-audio loss observed (above).
-- **Barge-in metrics in the attempt-#2 JSONs were semantically invalid**
-  (naive "next event" pairing). Fixed in the probe's `derive()` +
-  recomputed from history (above). No cloud rerun needed.
-- **C6 (input-transcription ordering) was not instrumented** in the
-  attempt-#2 runs (frame consumed by the aggregator before any tap).
-  Wrappers added for the next natural session.
+  window only; no user-audio loss observed in any of the three sessions.
+- **`websockets` 17.1 → 16.1.1** transitive downgrade (from `google-genai`;
+  within Pipecat's `>=13.1`; `pip check` clean; spot-check tests pass).
+  Pin in ADR-0004.
+- **No `GoAway` handling in Pipecat 1.8.1** (R0030). Reconnect / lifetime
+  testing **deliberately deferred** to M2.6B production hardening — not
+  needed to prove feasibility; quota preserved.
 - **Bundled "Local Smart Turn v3" ONNX model** loads via the realtime
   aggregator's stop strategy — a different, base-bundled model, not the
   ADR-0003 D10-rejected `[local-smart-turn]` extra. Not a blocker; note
   for ADR-0004 whether to force a pure-VAD stop strategy.
-- **`websockets` 17.1 → 16.1.1** transitive downgrade (from `google-genai`;
-  within Pipecat's range; `pip check` clean). Pin in ADR-0004.
-- **No `GoAway` handling in Pipecat 1.8.1** (R0030). Reconnect testing
-  **deliberately deferred** to production hardening (M2.6B) — not needed
-  to prove basic conversation feasibility, and quota is preserved for
-  real conversation.
 
 ---
 
 ## WHAT REMAINS (post-PASS)
 
-1. **Hear `Sulafat`** in an ordinary conversation and confirm/adjust the
-   voice preference (operator).
-2. **C6 language-ordering data** — captured automatically the next time
-   the operator just talks (probe wrappers in place); feeds ADR-0004.
-3. **`usageMetadata` wiring** for exact cost (small follow-up).
-4. **ADR-0004** — provider boundary, `google-genai` as a tracked
-   dependency (+ pin `websockets`), production language-routing authority,
-   the #5465 not-ready buffer + `GoAway` reconnect, `RealtimeVoiceProvider`
-   / `CloudContextSnapshot` / `ConversationRouter`. **Not started.**
-5. **M2.6B** production. **Not started.**
+1. **`usageMetadata` wiring** for exact cost (small follow-up; the
+   audio-duration estimate is adequate for a spike).
+2. **More C6 data** — every future ordinary probe run adds turn-local C6
+   samples automatically (wrappers in place); n = 3 valid turns today.
+3. **ADR-0004** — provider boundary; `google-genai` as a tracked
+   dependency (+ pin `websockets`); **production language-routing
+   authority** (default to Gemini native mirroring, Option A; delayed
+   `activity_end` + local language-ID as Option B); the #5465 not-ready
+   buffer + `GoAway`/age-timer reconnect; `RealtimeVoiceProvider` /
+   `CloudContextSnapshot` / `ConversationRouter`. **Not started.**
+4. **M2.6B** production. **Not started.**
 
 ---
 
 ## FILES CHANGED
 
-### This commit (operator-attempt-#2 PASS + corrected metrics + Sulafat)
+### This commit (Sulafat OPERATOR-CONFIRMED + turn-local C6 / latency)
 
 **Changed (probe / report / evidence only — no `src/nexa/**`, no deps):**
 
 - `docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py` —
-  (1) **corrected barge-in metric**: `Timeline` tracks `bot_is_speaking`;
-  `barge_in_analysis()` counts only VAD-starts while the bot plays;
-  `local_playback_stop_minus_interruption_frame_s` (negatives allowed);
-  removed the invalid `vad_start_to_local_playback_stopped_s` /
-  `server_interrupted_to_playback_stopped_s`; `Timeline.from_events()` +
-  `--recompute` (repair from an existing timeline, no cloud). (2) **C6
-  instrumentation**: spike-only wrappers on
-  `_handle_msg_input_transcription` / `_push_user_transcription` →
-  `INPUT_TRANSCRIPTION_RAW_FIRST` / `INPUT_TRANSCRIPTION_PUSHED` + derived
-  margins. (3) **Voice**: `DEFAULT_VOICE = "Sulafat"` + `--voice`, mapped
-  via `Settings(voice=...)` → `prebuilt_voice_config.voice_name`. (4)
-  `SERVER_INTERRUPTED` → `INTERRUPTION_DOWNSTREAM`; median helpers; tidier
-  summary.
-- `docs/research/m2_6_cloud_realtime_voice/m2_6a_probe_results_20260910T2121*.json`
-  (×2) — the operator attempt-#2 evidence (added).
-- `…_recomputed.json` (×2) — corrected metrics derived from the above.
-- `docs/reports/R0031_…md` — this report: OPERATOR ATTEMPT #2 = PASS,
-  measured latency, corrected barge-in verdict, C6 finding, AEC verdict,
-  #5465 observation, voice config, **FINAL VERDICT PASS / OPERATOR-CONFIRMED**.
+  **turn-local metric derivation**: `Timeline.turns()` reconstructs user
+  turns (merging fragmented multi-VAD-segment utterances, bounding each by
+  the next turn's VAD-start); `derive()` adds
+  `eot_to_first_audio_*_turnlocal_s` and a `c6` block
+  (`c6_turnlocal()`) that reports RAW/PUSHED transcript → first-audio
+  margins per valid turn and excludes fragmented turns with a stated
+  reason. `--recompute` applies it to existing timelines. (Earlier this
+  file also gained the `bot_is_speaking` barge-in gate, `--recompute`,
+  the C6 wrappers, and `DEFAULT_VOICE="Sulafat"` + `--voice`.)
+- `docs/research/m2_6_cloud_realtime_voice/m2_6a_probe_results_20260910T215423Z.json`
+  — **the Sulafat operator session** (added).
+- `…_recomputed.json` (×3) — all three sessions recomputed with the
+  turn-local logic.
+- `docs/reports/R0031_…md` — this report: OPERATOR ATTEMPT #3 (Sulafat) =
+  PASS + **VOICE OPERATOR-CONFIRMED**; turn-local latency + outlier
+  analysis; **turn-local C6 analysis + architectural conclusion**; voice
+  record chronology; ADR-0004-readiness note.
 - `docs/research/m2_6_cloud_realtime_voice/README.md`,
-  `docs/CURRENT_STATE.md`, `docs/ROADMAP.md` — status → M2.6A feasibility
-  PASS / OPERATOR-CONFIRMED; voice preference recorded.
+  `docs/CURRENT_STATE.md`, `docs/ROADMAP.md` — VOICE = Sulafat /
+  OPERATOR-CONFIRMED; C6 result; ADR-0004 next.
 
 ### Earlier in M2.6A
 
 `f920315` / `b3c7c32` — R0031 v1 + connectivity smoke + probe v1 + R0030
 Phase-0 corrections. `d15e785` / `377e99a` — attempt-#1 diagnosis + fix
-(`LLMRunFrame` kickoff).
+(`LLMRunFrame` kickoff). `ddb7c70` / `3346256` — attempt-#2 PASS +
+corrected barge-in metrics + Sulafat proposed.
 
 **Outside the repo (not committed, cannot be):**
 `~/.config/nexa/secrets/gemini.env` — the operator's key, `600`.
@@ -809,10 +951,12 @@ Phase-0 corrections. `d15e785` / `377e99a` — attempt-#1 diagnosis + fix
 ## CHECKS (this commit)
 
 `ruff check docs/research/m2_6_cloud_realtime_voice/` → All checks passed ·
-`py_compile m2_6a_gemini_live_probe.py` → OK · `--dry` (default Sulafat) →
-PASS (`voice = Sulafat`; `Settings.voice` carries through; `_connect`
-maps `voice_name=`) · `--recompute` on both existing JSONs → PASS
-(5 real barge-ins session 1, 0 session 2; EOT→audible median 0.8129 s) ·
+`py_compile` → OK · `--dry` (default Sulafat) → PASS (`voice = Sulafat`;
+`Settings.voice` carries through; `_connect` maps `voice_name=`) ·
+`--recompute` on **all 3** existing JSONs (turn-local) → PASS
+(Sulafat session: 4 turns, 3 valid for C6; turn-local EOT→audible median
+0.7485 s; barge-in 2.0 ms; RAW→first-audio [0.536, 0.646, 0.491],
+3/3 before audio; PUSHED 2/3) ·
 **no Gemini conversation run; no lifecycle smoke re-run** · `git diff
 --check` → clean · secret scan (`AIza…` / `AQ.…` / key leading chars /
 `api_key=` / `Authorization:` / `Bearer` / `NEXA_GEMINI_API_KEY=<value>`)
@@ -825,70 +969,76 @@ full suite not re-run (no `src`/`tests` change).
 - `f920315` / `b3c7c32` — R0031 v1 + connectivity smoke + probe v1 + R0030
   Phase-0 corrections.
 - `d15e785` / `377e99a` — attempt-#1 diagnosis + `LLMRunFrame` fix.
-- `ddb7c70` — attempt-#2 PASS: corrected barge-in metrics (`--recompute`),
-  C6 instrumentation, `Sulafat` voice config, R0031 final verdict.
+- `ddb7c70` / `3346256` — attempt-#2 PASS + corrected barge-in metrics
+  (`--recompute`) + C6 instrumentation + `Sulafat` proposed.
+- `<PENDING — this commit>` — **Sulafat OPERATOR-CONFIRMED**; turn-local
+  reconstruction (latency + C6); turn-local C6 analysis + architectural
+  conclusion.
 
 This hash-record note is finalised by the immediately-following commit
-(R0026–R0030 pattern). Prior tip: `b3c7c32`.
+(R0026–R0030 pattern). Prior tip: `3346256`.
 
 ## GIT STATUS
 
 Branch `main`, **not pushed**. `git diff --check` clean. No `src/` /
 `tests/` / tracked-dependency change. This commit changes only the probe +
-R0031 + README + `CURRENT_STATE` + `ROADMAP`, and adds the 2 operator
-evidence JSONs + their 2 recomputed JSONs. The Gemini key lives only at
+R0031 + README + `CURRENT_STATE` + `ROADMAP`, adds the Sulafat session
+JSON, and refreshes the 3 recomputed JSONs. The Gemini key lives only at
 `~/.config/nexa/secrets/gemini.env` (outside the repo).
 
 ## R0031 FINAL VERDICT
 
 **M2.6A CLOUD REALTIME VOICE FEASIBILITY: PASS / OPERATOR-CONFIRMED
-(2026-09-10).**
+(2026-09-10). VOICE `Sulafat`: OPERATOR-CONFIRMED, frozen cloud voice
+baseline.**
 
 - Attempt #1 = infrastructure bug (missing `LLMRunFrame` kickoff), fixed.
-- Attempt #2 = real natural PL/EN conversation with
-  `gemini-3.1-flash-live-preview`: operator judged conversation quality,
-  reasoning, natural flow and barge-in **EXCELLENT**, latency
-  **essentially immediate**, overall *"mega super"*.
-- Machine evidence agrees: **EOT → first audible ≈ 0.81 s median**
-  (R0030 ≤ 1.5 s gate — PASS, and faster than local voice); **barge-in
-  ≈ 2–4 ms** local playback-stop (5 real barge-ins, corrected metric;
-  R0030 ≤ 100 ms — PASS); local speaker silenced ~27 ms **before** the
-  server-round-trip interruption frame; **AEC feed 0 failures**; the one
-  #5465 NOT_READY window was startup only with **no user speech in it**.
-- Two real sessions cost **≈ 5 cents**.
+- Attempt #2 (Pipecat default voice) = real PL/EN conversation, operator
+  **EXCELLENT** / "essentially immediate" / *"mega super"*; only ask was a
+  female/cozy/warm voice.
+- Attempt #3 (`Sulafat`) = real natural conversation, operator: *"I like
+  this voice, we keep it."* → **VOICE OPERATOR-CONFIRMED.**
+- Machine evidence (3 sessions, turn-local): **EOT → first audible ≈
+  0.75–0.81 s median** (R0030 ≤ 1.5 s — **PASS**, faster than local);
+  **barge-in ≈ 2 ms** local playback-stop (R0030 ≤ 100 ms — **PASS**);
+  local speaker silent ~27 ms **before** the server-round-trip
+  interruption frame; **AEC 0 failures** in every session; #5465 NOT_READY
+  window startup-only, **no user speech in it** in any session. The
+  "1.93 s / 19.84 s outliers" were **metric artifacts** (fragmented speech
+  + cross-turn pairing), fixed by turn-local reconstruction.
+- **C6 (turn-local, Sulafat session):** RAW input transcription precedes
+  first response audio in **3/3 valid turns** (~0.5 s margin); PUSHED in
+  2/3. **But timing headroom ≠ steerability** — NeXa cannot be assumed to
+  influence the *same* cloud response (`activity_end` already closed the
+  turn). ADR-0004: default to Gemini native language mirroring (Option A);
+  delayed-`activity_end` + local language-ID as the measured Option B.
+- Three real sessions cost **≈ 7 cents** total.
 
-**Voice preference (separate from feasibility):** the current/default
-voice is **rejected as a preference**; **`Sulafat` ("Warm", VERIFIED
-descriptor)** selected as the next candidate and statically configured
-(`Settings(voice="Sulafat")` → `prebuilt_voice_config.voice_name`);
-**awaiting natural-use confirmation** — NOT voice-confirmed.
-
-**Not answered here (inputs to ADR-0004):** C6 input-transcription
-ordering (not instrumented in these runs — wrappers now added);
-`usageMetadata` exact cost; reconnect / session-lifetime behaviour
-(deliberately deferred to M2.6B production hardening — quota preserved).
+**Sufficient to start ADR-0004?** **YES.** Feasibility + voice are
+operator-confirmed; C6 timing is answered and the steerability question
+is decided-enough (Option A default). Remaining ADR-0004 inputs
+(`usageMetadata` cost, reconnect/lifetime) are M2.6B-scoped and don't
+gate the ADR.
 
 **Not started:** ADR-0004, M2.6B, `ConversationRouter`, any `src/nexa/**`
 cloud code.
 
 ## M2.6A STATUS
 
-**FEASIBILITY PASS / OPERATOR-CONFIRMED.** Next natural step: the operator
-simply talks to NeXa again, now with `Sulafat`, and confirms the voice
-(and the probe silently captures C6 ordering data). Not a scripted
-benchmark, no reconnect test.
+**FEASIBILITY PASS / OPERATOR-CONFIRMED. VOICE `Sulafat`
+OPERATOR-CONFIRMED.** Next recommended step: **write ADR-0004** (not in
+this task). The operator may keep talking to NeXa with `Sulafat` any time
+— every run adds turn-local C6 samples automatically.
 
-### One launch command (just talk — now with Sulafat)
+### Launch command (just talk — Sulafat is the default)
 
 ```
 set -a; . ~/.config/nexa/secrets/gemini.env; set +a
 .venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py
 ```
 
-`Sulafat` is the default voice. Wait for `GEMINI_REALTIME_READY` and
-`AEC_REF_ACTIVE`, then just have a normal conversation in Polish and
-English. `Ctrl+C` writes `m2_6a_probe_results_<timestamp>.json`. (To try
-an alternative later: `--voice Vindemiatrix` / `Achernar` / `Aoede`.)
+Wait for `GEMINI_REALTIME_READY` and `AEC_REF_ACTIVE`, then have a normal
+PL/EN conversation. `Ctrl+C` writes `m2_6a_probe_results_<timestamp>.json`.
 
 ---
 

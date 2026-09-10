@@ -85,21 +85,29 @@ unpaid-quota data is used to improve Google products.
   existing AEC/local audio path → Gemini Live → native streamed cloud
   audio → existing speaker + metrics. No memory, identity, router, tools
   or GUI. Attempt #1 = infra bug (missing `LLMRunFrame` kickoff), fixed.
-  **Operator retest = PASS / OPERATOR-CONFIRMED (2026-09-10, `R0031`):**
-  real PL/EN conversation judged EXCELLENT, latency "essentially
-  immediate"; machine EOT→first-audible ≈ 0.81 s median (R0030 ≤ 1.5 s —
-  PASS), barge-in ≈ 2–4 ms local playback-stop (corrected metric), AEC 0
-  failures, #5465 startup-window only. Cost ≈ 5 cents for two sessions.
-  Only operator ask: female/cozy voice → **`Sulafat` ("Warm")** selected +
-  statically configured, **awaiting natural-use confirmation**. C6
-  input-transcription ordering not yet instrumented (wrappers added) → an
-  ADR-0004 input. Reconnect/lifetime testing deferred to M2.6B.
-- **ADR-0004** — ratify the provider boundary, the cloud credential
-  surface, `google-genai` as a tracked dependency (+ pin `websockets`),
-  the production language-routing authority (C6 data from the next
-  ordinary conversation), the #5465 not-ready buffer + `GoAway` reconnect,
-  and `RealtimeVoiceProvider` / `CloudContextSnapshot` /
-  `ConversationRouter`. Owed **before** M2.6B.
+  **PASS / OPERATOR-CONFIRMED (2026-09-10, `R0031`); VOICE `Sulafat` =
+  OPERATOR-CONFIRMED** (3 real sessions; attempt #2 default voice judged
+  EXCELLENT / "mega super", attempt #3 with `Sulafat` → *"I like this
+  voice, we keep it."*). Machine (turn-local): EOT→first-audible
+  ≈ 0.75–0.81 s median (R0030 ≤ 1.5 s — PASS), barge-in ≈ 2 ms local
+  playback-stop (R0030 ≤ 100 ms — PASS), AEC 0 failures, #5465
+  startup-window only. "1.93 s / 19.84 s outliers" = metric artifacts
+  (fragmented speech + cross-turn pairing), fixed by turn-local
+  reconstruction. **C6 (turn-local):** RAW input transcription precedes
+  first response audio 3/3 valid turns (~0.5 s), PUSHED 2/3 — but timing
+  headroom ≠ steerability (`activity_end` already closed the turn) →
+  ADR-0004 defaults to Gemini native language mirroring (Option A),
+  delayed-`activity_end` + local language-ID as measured Option B.
+  Reconnect/lifetime testing deferred to M2.6B. **Three sessions cost
+  ≈ 7 cents.**
+- **ADR-0004** (next task) — ratify: the `RealtimeVoiceProvider` boundary
+  + `CloudContextSnapshot` + one `ConversationSession` authority;
+  `google-genai` as a tracked dependency (+ pin `websockets` 16.x);
+  production language-routing authority (Option A default, Option B
+  measured fallback); the #5465 not-ready buffer + `GoAway`/age-timer
+  reconnect; voice as a persisted NeXa user preference (default
+  `Sulafat`); cloud credential surface + paid-key/region policy;
+  `ConversationPolicy` vs `active_provider`. Owed **before** M2.6B.
 - **M2.6B** — production `RealtimeVoiceProvider` + `ConversationRouter` +
   `SetConversationPolicy` + `CloudContextSnapshot` + reconnect hardening.
 

@@ -5,7 +5,8 @@ Supporting evidence for **M2.6 — Cloud Realtime Voice**:
 - `docs/reports/R0030_cloud_realtime_voice_research_architecture_20260910.md`
   (research / architecture + **PHASE 0 CORRECTIONS**)
 - `docs/reports/R0031_m2_6a_gemini_live_hardware_spike_20260910.md`
-  (M2.6A feasibility spike — **PASS / OPERATOR-CONFIRMED 2026-09-10**)
+  (M2.6A feasibility spike — **PASS / OPERATOR-CONFIRMED 2026-09-10;
+  VOICE `Sulafat` OPERATOR-CONFIRMED**)
 
 Research-only. No production `src/` change. No tracked-dependency-file
 change.
@@ -16,20 +17,31 @@ change.
 | `inspect_pipecat_gemini_live_output_20260910.txt` | Captured output of the above (pipecat 1.8.1, 2026-09-10). |
 | `m2_6a_connect_smoke.py` | Smallest authenticated Gemini Live connection smoke — credential accepted, model reachable, WebSocket + setup handshake, clean disconnect. **No microphone, no speaker, no conversation.** Exit 0 = OK. |
 | `m2_6a_gemini_live_probe.py` | The M2.6A real-hardware probe. `--dry` = build the cloud-side object graph only (no device, no network); `--lifecycle-smoke` = ONE authenticated no-mic readiness check (near-zero tokens); `--recompute <json…>` = re-derive metrics (incl. the **corrected barge-in analysis**) from existing result timelines, **no cloud call**; `--voice <name>` (default **`Sulafat`**, "Warm"); no flag = full session (mic → XVF3800 AEC path → Gemini Live → speaker) → timestamped JSON here. Hard 15-min cap. |
-| `m2_6a_probe_results_20260910T2121*.json` | **Operator attempt #2 evidence** (feasibility PASS): 2 real PL/EN sessions, 9 turns. |
-| `m2_6a_probe_results_*_recomputed.json` | Metrics re-derived from the above with the corrected `bot_is_speaking` barge-in filter (the original `vad_start_to_local_playback_stopped_s` etc. were semantically invalid). |
+| `m2_6a_probe_results_20260910T2121*.json` | Operator attempts #2 evidence (feasibility PASS): 2 real PL/EN sessions, Pipecat default voice. |
+| `m2_6a_probe_results_20260910T215423Z.json` | **Operator attempt #3 — `Sulafat`** (voice OPERATOR-CONFIRMED): 1 real PL/EN session, 4 turns, first with C6 instrumentation. |
+| `m2_6a_probe_results_*_recomputed.json` | Metrics re-derived with **turn-local reconstruction** (barge-in gates on `bot_is_speaking`; latency + C6 measured per reconstructed turn; a fragmented multi-VAD-segment utterance is measured from its final `LOCAL_VAD_EOT` and excluded from the C6 primary stat). |
 
-### Corrected barge-in metric (2026-09-10)
+### Corrected metrics (2026-09-10)
 
-The naive "pair each `LOCAL_VAD_START` with the next `LOCAL_PLAYBACK_STOPPED`"
-also matched ordinary user turns where the bot was not speaking (→ 8–21 s
-"latencies"). The probe now tracks `bot_is_speaking`
-(`FIRST_AUDIO_PLAYED` → True; `LOCAL_PLAYBACK_STOPPED` / `BOT_AUDIO_STOPPED`
-/ `TURN_COMPLETE` → False) and counts only VAD-starts while the bot plays.
-Recomputed result: session 1 = 5 real barge-ins, median VAD-start →
-playback-stop **≈ 2.3 ms**; local speaker silenced **~27 ms before** the
-later (server-round-trip) interruption frame. `SERVER_INTERRUPTED`
-renamed `INTERRUPTION_DOWNSTREAM` (source ambiguous).
+1. **Barge-in.** The naive "pair each `LOCAL_VAD_START` with the next
+   `LOCAL_PLAYBACK_STOPPED`" matched ordinary user turns (bot silent) →
+   8–21 s "latencies". The probe now tracks `bot_is_speaking` and counts
+   only VAD-starts while the bot plays. Recomputed: attempt-#2 session 1 =
+   5 real barge-ins, median VAD-start → playback-stop ≈ 2.3 ms; Sulafat
+   session = 1, 2.0 ms. Local speaker silenced ~27 ms **before** the
+   later (server-round-trip) interruption frame. `SERVER_INTERRUPTED` →
+   `INTERRUPTION_DOWNSTREAM`.
+2. **Turn-local latency + C6.** `Timeline.turns()` reconstructs user
+   turns; consecutive `LOCAL_VAD_START`s before the turn's first audio are
+   merged as **fragments** (the turn is flagged and measured from its
+   final EOT); each turn is bounded by the next turn's VAD-start. This
+   removed a **1.93 s** "latency outlier" (a fragmented utterance's first
+   segment paired with the whole-utterance audio → real per-turn latency
+   0.74 s) and a **19.84 s** C6 value (a second-segment transcript paired
+   with the *next* turn's audio). **C6 (Sulafat session, 3 valid turns):**
+   RAW input transcription precedes first response audio 3/3 (~0.5 s
+   margin); PUSHED (aggregated) 2/3. Timing headroom ≠ steerability — see
+   R0031 C6 architectural conclusion.
 
 ## Credential (never in the repo)
 

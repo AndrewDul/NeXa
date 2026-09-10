@@ -234,17 +234,159 @@ class Timeline:
             ),
         }
 
+    # ---- turn-local reconstruction (fixes cross-turn / fragment pairing) - #
+    def turns(self) -> list[dict]:
+        """Reconstruct user turns from the timeline.
+
+        A turn opens on ``LOCAL_VAD_START``. Consecutive VAD-starts that occur
+        BEFORE this turn's first ``FIRST_AUDIO_RECEIVED`` are FRAGMENTS of the
+        same utterance (the user paused, then resumed) — merged, and the turn
+        is flagged ``fragmented``. Each turn is bounded by the next turn's
+        first VAD-start (or the end of the timeline), so no event from one
+        turn is ever paired with audio from another.
+        """
+        starts = self._ts("LOCAL_VAD_START")
+        recv = self._ts("FIRST_AUDIO_RECEIVED")
+        played = self._ts("FIRST_AUDIO_PLAYED")
+        eots = self._ts("LOCAL_VAD_EOT")
+        raws = self._ts("INPUT_TRANSCRIPTION_RAW_FIRST")
+        pushes = self._ts("INPUT_TRANSCRIPTION_PUSHED")
+        server1 = self._ts("FIRST_SERVER_CONTENT", "GEMINI_SERVER_CONTENT_FIRST")
+        tcomplete = self._ts("TURN_COMPLETE")
+        INF = float("inf")
+
+        def first_after(ts: list[float], t: float) -> float | None:
+            hits = [x for x in ts if x > t + 1e-6]
+            return hits[0] if hits else None
+
+        def in_win(ts: list[float], lo: float, hi: float) -> list[float]:
+            return [x for x in ts if lo - 1e-6 <= x < hi - 1e-6]
+
+        turns: list[dict] = []
+        i = 0
+        while i < len(starts):
+            grp = [starts[i]]
+            fr = first_after(recv, starts[i]) or INF
+            j = i + 1
+            while j < len(starts) and starts[j] < fr:
+                grp.append(starts[j])
+                fr = first_after(recv, starts[j]) or INF
+                j += 1
+            win_lo = grp[0]
+            win_hi = starts[j] if j < len(starts) else INF
+            frecv = min(in_win(recv, win_lo, win_hi), default=None)
+            fplay = min(in_win(played, win_lo, win_hi), default=None)
+            fserver = min(in_win(server1, win_lo, win_hi), default=None)
+            win_eots = in_win(eots, win_lo, win_hi)
+            # effective EOT = last EOT at/before first audio (the real end of
+            # a fragmented utterance), else the last EOT in the window.
+            cut = frecv if frecv is not None else win_hi
+            eff_eot = max([e for e in win_eots if e <= cut + 1e-6], default=(win_eots[-1] if win_eots else None))
+            win_raws = in_win(raws, win_lo, win_hi)
+            raw_t = max([r for r in win_raws if frecv is None or r <= frecv + 0.10], default=(win_raws[-1] if win_raws else None))
+            win_push = in_win(pushes, win_lo, win_hi)
+            pcut = (fplay + 0.30) if fplay is not None else win_hi
+            push_t = max([p for p in win_push if p <= pcut + 1e-6], default=None)
+            tc = min(in_win(tcomplete, win_lo, win_hi), default=None)
+
+            def d(a: float | None, b: float | None) -> float | None:
+                return round(b - a, 4) if (a is not None and b is not None) else None
+
+            turns.append({
+                "index": len(turns) + 1,
+                "vad_start_t": round(win_lo, 4),
+                "n_vad_segments": len(grp),
+                "fragmented": len(grp) > 1,
+                "eff_eot_t": round(eff_eot, 4) if eff_eot is not None else None,
+                "raw_transcript_t": round(raw_t, 4) if raw_t is not None else None,
+                "pushed_transcript_t": round(push_t, 4) if push_t is not None else None,
+                "first_server_content_t": round(fserver, 4) if fserver is not None else None,
+                "first_audio_received_t": round(frecv, 4) if frecv is not None else None,
+                "first_audio_played_t": round(fplay, 4) if fplay is not None else None,
+                "turn_complete_t": round(tc, 4) if tc is not None else None,
+                "answered": frecv is not None,
+                "eot_to_raw_s": d(eff_eot, raw_t),
+                "eot_to_pushed_s": d(eff_eot, push_t),
+                "eot_to_first_audio_received_s": d(eff_eot, frecv),
+                "eot_to_first_audio_played_s": d(eff_eot, fplay),
+                "raw_to_first_audio_received_s": d(raw_t, frecv),
+                "pushed_to_first_audio_received_s": d(push_t, frecv),
+            })
+            i = j
+        return turns
+
+    def c6_turnlocal(self) -> dict:
+        """R0030 C6 — was the user transcription available BEFORE Gemini
+        started returning response audio for the SAME turn? Turn-local; a
+        fragmented (multi-VAD-segment) turn is EXCLUDED from the primary
+        statistic and reported separately."""
+        turns = self.turns()
+        valid, excluded = [], []
+        for t in turns:
+            why = None
+            if not t["answered"]:
+                why = "no first-audio for this turn"
+            elif t["fragmented"]:
+                why = f"fragmented user speech ({t['n_vad_segments']} VAD segments) — merged utterance"
+            elif t["raw_transcript_t"] is None:
+                why = "no input-transcription mark (wrappers not installed for this run)"
+            elif t["eff_eot_t"] is None:
+                why = "no LOCAL_VAD_EOT"
+            (valid if why is None else excluded).append(
+                {**t, **({"excluded_reason": why} if why else {})}
+            )
+
+        def col(rows: list[dict], k: str) -> list[float]:
+            return [r[k] for r in rows if r.get(k) is not None]
+
+        raw_margins = col(valid, "raw_to_first_audio_received_s")
+        push_margins = col(valid, "pushed_to_first_audio_received_s")
+        return {
+            "n_turns_total": len(turns),
+            "n_valid": len(valid),
+            "n_excluded": len(excluded),
+            "n_valid_raw_before_first_audio": sum(1 for x in raw_margins if x > 0),
+            "n_valid_pushed_before_first_audio": sum(1 for x in push_margins if x > 0),
+            "raw_to_first_audio_margin_s": raw_margins,
+            "raw_to_first_audio_margin_median_s": _median(raw_margins),
+            "raw_to_first_audio_margin_min_s": min(raw_margins) if raw_margins else None,
+            "raw_to_first_audio_margin_max_s": max(raw_margins) if raw_margins else None,
+            "pushed_to_first_audio_margin_s": push_margins,
+            "pushed_to_first_audio_margin_median_s": _median(push_margins),
+            "pushed_to_first_audio_margin_min_s": min(push_margins) if push_margins else None,
+            "pushed_to_first_audio_margin_max_s": max(push_margins) if push_margins else None,
+            "valid_turns": valid,
+            "excluded_turns": excluded,
+            "_note": (
+                "Positive margin => the transcript arrived at NeXa before the "
+                "first response audio for the same turn. RAW = first raw "
+                "input-transcription chunk; PUSHED = Pipecat's aggregated "
+                "sentence (end-of-sentence OR 0.5 s timeout flush). "
+                "Local availability in time is necessary but NOT sufficient to "
+                "steer the SAME response — see R0031 C6 architectural conclusion."
+            ),
+        }
+
     def derive(self) -> dict:
         eot_played = self._pairs("LOCAL_VAD_EOT", "FIRST_AUDIO_PLAYED")
         eot_recv = self._pairs("LOCAL_VAD_EOT", "FIRST_AUDIO_RECEIVED")
+        turns = self.turns()
+        tl_played = [t["eot_to_first_audio_played_s"] for t in turns if t.get("eot_to_first_audio_played_s") is not None]
+        tl_recv = [t["eot_to_first_audio_received_s"] for t in turns if t.get("eot_to_first_audio_received_s") is not None]
         d = {
             "eot_to_first_server_content_s": self._pairs("LOCAL_VAD_EOT", "FIRST_SERVER_CONTENT"),
+            # raw _pairs (kept for continuity; can double-count a fragmented turn)
             "eot_to_first_audio_received_s": eot_recv,
             "eot_to_first_audio_received_median_s": _median(eot_recv),
             "eot_to_first_audio_played_s": eot_played,
             "eot_to_first_audio_played_median_s": _median(eot_played),
-            # C6 (input transcription vs first audio) — only present if the
-            # spike-only transcription wrappers were installed (a fresh run).
+            # TURN-LOCAL latency (one value per reconstructed turn; a fragmented
+            # utterance is measured from its FINAL VAD_EOT, not double-counted)
+            "eot_to_first_audio_played_turnlocal_s": tl_played,
+            "eot_to_first_audio_played_turnlocal_median_s": _median(tl_played),
+            "eot_to_first_audio_received_turnlocal_s": tl_recv,
+            "eot_to_first_audio_received_turnlocal_median_s": _median(tl_recv),
+            # C6 raw _pairs (kept for continuity; cross-turn pairing possible)
             "eot_to_input_transcription_raw_first_s": self._pairs("LOCAL_VAD_EOT", "INPUT_TRANSCRIPTION_RAW_FIRST"),
             "eot_to_input_transcription_pushed_s": self._pairs("LOCAL_VAD_EOT", "INPUT_TRANSCRIPTION_PUSHED"),
             "input_transcription_pushed_to_first_audio_received_s": self._pairs(
@@ -253,14 +395,19 @@ class Timeline:
             "input_transcription_pushed_to_first_audio_played_s": self._pairs(
                 "INPUT_TRANSCRIPTION_PUSHED", "FIRST_AUDIO_PLAYED"
             ),
+            # C6 TURN-LOCAL (the authoritative version)
+            "c6": self.c6_turnlocal(),
             "reconnect_start_to_ready_s": self._pairs("RECONNECT_START", "RECONNECT_READY"),
             "barge_in": self.barge_in_analysis(),
+            "turns": turns,
             "_removed_invalid_metrics": (
                 "vad_start_to_local_playback_stopped_s and "
-                "server_interrupted_to_playback_stopped_s (pre-2026-09-10): they "
-                "paired EVERY VAD_START with a later playback stop, so ordinary "
-                "user turns (bot silent) produced 8-21 s 'latencies'. Replaced by "
-                "barge_in.* which gates on bot_is_speaking."
+                "server_interrupted_to_playback_stopped_s (pre-2026-09-10): paired "
+                "EVERY VAD_START with a later playback stop. Also: the raw "
+                "_pairs-based eot_to_first_audio_* and "
+                "input_transcription_pushed_to_first_audio_* can cross turn "
+                "boundaries or double-count a fragmented utterance — use the "
+                "*_turnlocal_* fields and the c6 block instead."
             ),
         }
         return d
@@ -815,7 +962,13 @@ def _recompute(paths: list[str]) -> int:
             print("MISSING:", src)
             rc = 1
             continue
+        if src.stem.endswith("_recomputed"):
+            print("SKIP (already a recompute):", src.name)
+            continue
         data = json.loads(src.read_text(encoding="utf-8"))
+        if "timeline" not in data:
+            print("SKIP (no `timeline`):", src.name)
+            continue
         tl = Timeline.from_events(data.get("timeline", []))
         corrected = tl.derive()
         out = src.with_name(src.stem + "_recomputed.json")
@@ -823,23 +976,31 @@ def _recompute(paths: list[str]) -> int:
             "recomputed_from": src.name,
             "recomputed_utc": datetime.now(UTC).isoformat(),
             "note": (
-                "barge-in metrics recomputed with the bot_is_speaking filter; "
-                "the original vad_start_to_local_playback_stopped_s / "
-                "server_interrupted_to_playback_stopped_s were semantically "
-                "invalid (paired every user turn with a later playback stop)."
+                "Recomputed with turn-local reconstruction: barge-in gates on "
+                "bot_is_speaking; latency + C6 are measured per reconstructed "
+                "turn (a fragmented multi-VAD-segment utterance is measured "
+                "from its FINAL VAD_EOT and excluded from the C6 primary stat) "
+                "so no event is paired across turn boundaries."
             ),
             "original_config": data.get("config"),
             "corrected_derived_latencies_s": corrected,
         }
         out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         bi = corrected["barge_in"]
+        c6 = corrected["c6"]
         print(f"== {src.name} ==")
-        print(f"   EOT->first audible played s : {corrected['eot_to_first_audio_played_s']}  median={corrected['eot_to_first_audio_played_median_s']}")
-        print(f"   barge-in candidates         : {bi['barge_in_candidate_count']}")
-        print(f"   vad_start->playback stop s   : {bi['bargein_vad_start_to_playback_stop_s']}  median={bi['bargein_vad_start_to_playback_stop_median_s']}")
-        print(f"   vad_start->bot audio stop s  : {bi['bargein_vad_start_to_bot_audio_stopped_s']}  median={bi['bargein_vad_start_to_bot_audio_stopped_median_s']}")
-        print(f"   playback stop - intr frame s : {bi['local_playback_stop_minus_interruption_frame_s']}  median={bi['local_playback_stop_minus_interruption_frame_median_s']}")
-        print(f"   C6 input-transcription marks : {'present' if corrected['eot_to_input_transcription_pushed_s'] else 'ABSENT (not instrumented in this run)'}")
+        print(f"   turns (reconstructed)        : {c6['n_turns_total']}  (valid for C6: {c6['n_valid']}, excluded: {c6['n_excluded']})")
+        print(f"   EOT->first audible, turnlocal: {corrected['eot_to_first_audio_played_turnlocal_s']}  median={corrected['eot_to_first_audio_played_turnlocal_median_s']}")
+        print(f"   EOT->first audible, raw pairs: {corrected['eot_to_first_audio_played_s']}  median={corrected['eot_to_first_audio_played_median_s']}  (may double-count a fragment)")
+        print(f"   barge-in candidates          : {bi['barge_in_candidate_count']}")
+        print(f"   vad_start->playback stop s    : {bi['bargein_vad_start_to_playback_stop_s']}  median={bi['bargein_vad_start_to_playback_stop_median_s']}")
+        print(f"   playback stop - intr frame s  : {bi['local_playback_stop_minus_interruption_frame_s']}  median={bi['local_playback_stop_minus_interruption_frame_median_s']}")
+        if c6["n_valid"]:
+            print(f"   C6 RAW transcript -> first audio (valid turns): {c6['raw_to_first_audio_margin_s']}  median={c6['raw_to_first_audio_margin_median_s']}")
+            print(f"   C6 PUSHED transcript -> first audio           : {c6['pushed_to_first_audio_margin_s']}  median={c6['pushed_to_first_audio_margin_median_s']}")
+            print(f"   C6 RAW before first audio  : {c6['n_valid_raw_before_first_audio']}/{c6['n_valid']}   PUSHED before first audio: {c6['n_valid_pushed_before_first_audio']}/{c6['n_valid']}")
+        else:
+            print("   C6 : not instrumented in this run (no input-transcription marks)")
         print(f"   -> {out.name}")
     return rc
 
@@ -922,20 +1083,23 @@ def _print_summary(tl: Timeline, meta: dict) -> None:
     print("\n" + "=" * 74)
     print("SESSION SUMMARY")
     print("=" * 74)
+    c6 = d["c6"]
     print(f"  voice                                         {meta.get('voice', '?')}")
-    print(f"  EOT -> first audible (played)  s               {d['eot_to_first_audio_played_s']}")
-    print(f"      median                                    {d['eot_to_first_audio_played_median_s']}")
-    print(f"  EOT -> first audio received    s               {d['eot_to_first_audio_received_s']}")
-    print(f"      median                                    {d['eot_to_first_audio_received_median_s']}")
+    print(f"  turns (reconstructed)                          {c6['n_turns_total']}  (C6 valid {c6['n_valid']}, excluded {c6['n_excluded']})")
+    print(f"  EOT -> first audible, TURN-LOCAL  s            {d['eot_to_first_audio_played_turnlocal_s']}  median={d['eot_to_first_audio_played_turnlocal_median_s']}")
+    print(f"  EOT -> first audible, raw pairs   s            {d['eot_to_first_audio_played_s']}  median={d['eot_to_first_audio_played_median_s']}  (may double-count a fragment)")
     bi = d["barge_in"]
     print(f"  barge-in candidates (VAD start while bot playing): {bi['barge_in_candidate_count']}")
     print(f"      vad_start -> playback stop   s             {bi['bargein_vad_start_to_playback_stop_s']}  median={bi['bargein_vad_start_to_playback_stop_median_s']}")
     print(f"      vad_start -> bot audio stop  s             {bi['bargein_vad_start_to_bot_audio_stopped_s']}  median={bi['bargein_vad_start_to_bot_audio_stopped_median_s']}")
     print(f"      playback stop - interruption frame  s      {bi['local_playback_stop_minus_interruption_frame_s']}  median={bi['local_playback_stop_minus_interruption_frame_median_s']}")
     print("      (negative => local speaker silenced BEFORE the interruption frame)")
-    print(f"  C6  EOT -> input transcription (raw first)  s  {d['eot_to_input_transcription_raw_first_s'] or 'NOT INSTRUMENTED IN THIS RUN'}")
-    print(f"  C6  EOT -> input transcription (pushed)     s  {d['eot_to_input_transcription_pushed_s'] or 'NOT INSTRUMENTED IN THIS RUN'}")
-    print(f"  C6  transcription pushed -> first audio recv s {d['input_transcription_pushed_to_first_audio_received_s'] or '(no data)'}")
+    if c6["n_valid"]:
+        print(f"  C6  RAW transcript -> first audio (valid turns) s  {c6['raw_to_first_audio_margin_s']}  median={c6['raw_to_first_audio_margin_median_s']}")
+        print(f"  C6  PUSHED transcript -> first audio            s  {c6['pushed_to_first_audio_margin_s']}  median={c6['pushed_to_first_audio_margin_median_s']}")
+        print(f"  C6  RAW before first audio {c6['n_valid_raw_before_first_audio']}/{c6['n_valid']} · PUSHED before first audio {c6['n_valid_pushed_before_first_audio']}/{c6['n_valid']}")
+    else:
+        print("  C6  not instrumented in this run (no input-transcription marks)")
     print(f"  mic audio presented (s)                       {c.get('mic_audio_ms_presented', 0) / 1000:.1f}")
     print(f"  mic audio while LLM NOT ready (s) [#5465]      {c.get('mic_audio_ms_while_not_ready', 0) / 1000:.2f}   windows={c.get('not_ready_window_count', 0)}")
     print(f"  cloud audio received (s)                      {c.get('cloud_audio_ms_received', 0) / 1000:.1f}")

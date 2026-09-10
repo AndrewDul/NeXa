@@ -1,7 +1,7 @@
 {
   "recomputed_from": "m2_6a_probe_results_20260910T212254Z.json",
-  "recomputed_utc": "2026-09-10T21:39:05.024386+00:00",
-  "note": "barge-in metrics recomputed with the bot_is_speaking filter; the original vad_start_to_local_playback_stopped_s / server_interrupted_to_playback_stopped_s were semantically invalid (paired every user turn with a later playback stop).",
+  "recomputed_utc": "2026-09-10T22:07:21.181207+00:00",
+  "note": "Recomputed with turn-local reconstruction: barge-in gates on bot_is_speaking; latency + C6 are measured per reconstructed turn (a fragmented multi-VAD-segment utterance is measured from its FINAL VAD_EOT and excluded from the C6 primary stat) so no event is paired across turn boundaries.",
   "original_config": {
     "model": "gemini-3.1-flash-live-preview",
     "in_sample_rate": 16000,
@@ -32,10 +32,81 @@
       0.9063
     ],
     "eot_to_first_audio_played_median_s": 0.7916,
+    "eot_to_first_audio_played_turnlocal_s": [
+      0.6769,
+      0.9063
+    ],
+    "eot_to_first_audio_played_turnlocal_median_s": 0.7916,
+    "eot_to_first_audio_received_turnlocal_s": [
+      0.6193,
+      0.8563
+    ],
+    "eot_to_first_audio_received_turnlocal_median_s": 0.7378,
     "eot_to_input_transcription_raw_first_s": [],
     "eot_to_input_transcription_pushed_s": [],
     "input_transcription_pushed_to_first_audio_received_s": [],
     "input_transcription_pushed_to_first_audio_played_s": [],
+    "c6": {
+      "n_turns_total": 2,
+      "n_valid": 0,
+      "n_excluded": 2,
+      "n_valid_raw_before_first_audio": 0,
+      "n_valid_pushed_before_first_audio": 0,
+      "raw_to_first_audio_margin_s": [],
+      "raw_to_first_audio_margin_median_s": null,
+      "raw_to_first_audio_margin_min_s": null,
+      "raw_to_first_audio_margin_max_s": null,
+      "pushed_to_first_audio_margin_s": [],
+      "pushed_to_first_audio_margin_median_s": null,
+      "pushed_to_first_audio_margin_min_s": null,
+      "pushed_to_first_audio_margin_max_s": null,
+      "valid_turns": [],
+      "excluded_turns": [
+        {
+          "index": 1,
+          "vad_start_t": 4.6907,
+          "n_vad_segments": 1,
+          "fragmented": false,
+          "eff_eot_t": 5.8349,
+          "raw_transcript_t": null,
+          "pushed_transcript_t": null,
+          "first_server_content_t": 6.4542,
+          "first_audio_received_t": 6.4542,
+          "first_audio_played_t": 6.5118,
+          "turn_complete_t": 8.9119,
+          "answered": true,
+          "eot_to_raw_s": null,
+          "eot_to_pushed_s": null,
+          "eot_to_first_audio_received_s": 0.6193,
+          "eot_to_first_audio_played_s": 0.6769,
+          "raw_to_first_audio_received_s": null,
+          "pushed_to_first_audio_received_s": null,
+          "excluded_reason": "no input-transcription mark (wrappers not installed for this run)"
+        },
+        {
+          "index": 2,
+          "vad_start_t": 13.8321,
+          "n_vad_segments": 1,
+          "fragmented": false,
+          "eff_eot_t": 17.3699,
+          "raw_transcript_t": null,
+          "pushed_transcript_t": null,
+          "first_server_content_t": null,
+          "first_audio_received_t": 18.2262,
+          "first_audio_played_t": 18.2762,
+          "turn_complete_t": 31.5383,
+          "answered": true,
+          "eot_to_raw_s": null,
+          "eot_to_pushed_s": null,
+          "eot_to_first_audio_received_s": 0.8563,
+          "eot_to_first_audio_played_s": 0.9063,
+          "raw_to_first_audio_received_s": null,
+          "pushed_to_first_audio_received_s": null,
+          "excluded_reason": "no input-transcription mark (wrappers not installed for this run)"
+        }
+      ],
+      "_note": "Positive margin => the transcript arrived at NeXa before the first response audio for the same turn. RAW = first raw input-transcription chunk; PUSHED = Pipecat's aggregated sentence (end-of-sentence OR 0.5 s timeout flush). Local availability in time is necessary but NOT sufficient to steer the SAME response \u2014 see R0031 C6 architectural conclusion."
+    },
     "reconnect_start_to_ready_s": [],
     "barge_in": {
       "barge_in_candidate_count": 0,
@@ -48,6 +119,48 @@
       "local_playback_stop_minus_interruption_frame_median_s": null,
       "_note": "A LOCAL_VAD_START while the bot was NOT playing is an ordinary user turn, not a barge-in, and is excluded. local_playback_stop_minus_interruption_frame_s is negative when NeXa's local playback authority silenced the speaker BEFORE the (later, likely server-round-trip) InterruptionFrame."
     },
-    "_removed_invalid_metrics": "vad_start_to_local_playback_stopped_s and server_interrupted_to_playback_stopped_s (pre-2026-09-10): they paired EVERY VAD_START with a later playback stop, so ordinary user turns (bot silent) produced 8-21 s 'latencies'. Replaced by barge_in.* which gates on bot_is_speaking."
+    "turns": [
+      {
+        "index": 1,
+        "vad_start_t": 4.6907,
+        "n_vad_segments": 1,
+        "fragmented": false,
+        "eff_eot_t": 5.8349,
+        "raw_transcript_t": null,
+        "pushed_transcript_t": null,
+        "first_server_content_t": 6.4542,
+        "first_audio_received_t": 6.4542,
+        "first_audio_played_t": 6.5118,
+        "turn_complete_t": 8.9119,
+        "answered": true,
+        "eot_to_raw_s": null,
+        "eot_to_pushed_s": null,
+        "eot_to_first_audio_received_s": 0.6193,
+        "eot_to_first_audio_played_s": 0.6769,
+        "raw_to_first_audio_received_s": null,
+        "pushed_to_first_audio_received_s": null
+      },
+      {
+        "index": 2,
+        "vad_start_t": 13.8321,
+        "n_vad_segments": 1,
+        "fragmented": false,
+        "eff_eot_t": 17.3699,
+        "raw_transcript_t": null,
+        "pushed_transcript_t": null,
+        "first_server_content_t": null,
+        "first_audio_received_t": 18.2262,
+        "first_audio_played_t": 18.2762,
+        "turn_complete_t": 31.5383,
+        "answered": true,
+        "eot_to_raw_s": null,
+        "eot_to_pushed_s": null,
+        "eot_to_first_audio_received_s": 0.8563,
+        "eot_to_first_audio_played_s": 0.9063,
+        "raw_to_first_audio_received_s": null,
+        "pushed_to_first_audio_received_s": null
+      }
+    ],
+    "_removed_invalid_metrics": "vad_start_to_local_playback_stopped_s and server_interrupted_to_playback_stopped_s (pre-2026-09-10): paired EVERY VAD_START with a later playback stop. Also: the raw _pairs-based eot_to_first_audio_* and input_transcription_pushed_to_first_audio_* can cross turn boundaries or double-count a fragmented utterance \u2014 use the *_turnlocal_* fields and the c6 block instead."
   }
 }
