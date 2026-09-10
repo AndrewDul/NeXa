@@ -65,7 +65,16 @@ Runtime / test evidence outranks anything else in this repo.
   memory / identity / router / tools / GUI); then R0031 + ADR-0004 before
   M2.6B production. Spike dir: `docs/research/m2_6_cloud_realtime_voice/`
   (offline Pipecat static audit, connectivity smoke, M2.6A probe).
-  **M2.6A: READY FOR OPERATOR TEST — NOT OPERATOR-CONFIRMED** (`R0031`).)
+  **M2.6A OPERATOR ATTEMPT #1 FAILED (silent after user speech) → ROOT
+  CAUSE FOUND (static) + FIXED in the probe + proven by a no-mic lifecycle
+  smoke → READY_FOR_OPERATOR_RETEST** (`R0031`). Root cause: the probe
+  never queued the one-time `LLMRunFrame` that initialises
+  `GeminiLiveLLMService`'s context, so `_ready_for_realtime_input` never
+  flipped True; with server VAD disabled that flag gates `activity_start`
+  / user audio / `activity_end`, so Gemini received nothing. Fix (probe
+  file only): queue one `LLMRunFrame` after the socket connects +
+  `inference_on_context_initialization=False` + empty `LLMContext`
+  (no greeting). NOT OPERATOR-CONFIRMED.)
 - **Prior report:** `docs/reports/R0029_m2_5b_production_barge_in_interruption_20260909.md`
   (**M2.5B — Production Barge-In / Interruption — COMPLETE / OPERATOR-CONFIRMED
   (2026-09-10).** Production barge-in ships behind
@@ -614,9 +623,13 @@ Runtime / test evidence outranks anything else in this repo.
   terms; 20–40 ms chunks; 2 h resumption tokens; official pricing;
   Polish-accent retagged as an unverified community report; a critical
   input-transcription-vs-audio-ordering question for M2.6A to measure).
-  **M2.6A probe IMPLEMENTED + connectivity smoke PASSED (449 ms).
-  READY FOR OPERATOR TEST — NOT OPERATOR-CONFIRMED** (`R0031`). Then
-  `R0031` results + **`ADR-0004`** before `M2.6B` production.
+  **M2.6A OPERATOR ATTEMPT #1 FAILED (silent after user speech); root
+  cause found statically + FIXED in the probe (missing one-time
+  `LLMRunFrame` kickoff → `GeminiLiveLLMService` never became
+  `_ready_for_realtime_input`, which with server VAD off gates
+  `activity_start`/audio/`activity_end`) + proven by a no-mic lifecycle
+  smoke → READY_FOR_OPERATOR_RETEST — NOT OPERATOR-CONFIRMED** (`R0031`).
+  Then `R0031` results + **`ADR-0004`** before `M2.6B` production.
   **Credential:** operator-provided key stored at
   `~/.config/nexa/secrets/gemini.env` (outside the repo, 700/600), var
   `NEXA_GEMINI_API_KEY`; tier/region + paid-key decision is an ADR-0004
@@ -1190,9 +1203,11 @@ Runtime / test evidence outranks anything else in this repo.
 ## Current focus
 
 - **M2.6 — Cloud Realtime Voice. Research + Phase-0 corrections COMPLETE
-  (`R0030`); M2.6A feasibility probe IMPLEMENTED + connectivity smoke
-  PASSED; awaiting the M2.6A operator live session (`R0031`,
-  READY_FOR_OPERATOR_TEST / NOT OPERATOR-CONFIRMED).** LOCAL REALTIME VOICE
+  (`R0030`); M2.6A feasibility probe implemented; OPERATOR ATTEMPT #1
+  FAILED (silent after user speech) → root cause found statically + FIXED
+  in the probe (missing one-time `LLMRunFrame` kickoff) + proven by a
+  no-mic lifecycle smoke → READY_FOR_OPERATOR_RETEST (`R0031`, NOT
+  OPERATOR-CONFIRMED).** LOCAL REALTIME VOICE
   is complete and operator-confirmed: M1 through M1.1, and M2 through
   **M2.5B (`R0029`, COMPLETE / OPERATOR-CONFIRMED 2026-09-10)** — research
   (`R0005`) → spikes (`R0006`) → `ADR-0003` → M2.1 (`R0007`) → M2.2

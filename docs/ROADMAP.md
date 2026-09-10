@@ -85,9 +85,12 @@ unpaid-quota data is used to improve Google products.
   reSpeaker → existing AEC/local audio path → Gemini Live → native
   streamed cloud audio → existing speaker, plus latency / Polish-quality /
   reconnect / cost / **event-ordering** metrics (PASS/WARN/FAIL table in
-  `R0030`). No memory, identity, router, tools or GUI. Probe implemented +
-  connectivity smoke passed; **awaiting the operator live session**
-  → report `R0031` (READY_FOR_OPERATOR_TEST / NOT OPERATOR-CONFIRMED).
+  `R0030`). No memory, identity, router, tools or GUI. Operator attempt #1
+  FAILED (silent after user speech — probe never queued the one-time
+  `LLMRunFrame` kickoff so `GeminiLiveLLMService` never became
+  `_ready_for_realtime_input`); **fixed in the probe + proven by a no-mic
+  lifecycle smoke → READY_FOR_OPERATOR_RETEST** → report `R0031`
+  (NOT OPERATOR-CONFIRMED).
 - **ADR-0004** — ratify the provider boundary, the cloud credential
   surface, `google-genai` as a tracked dependency, and the production
   language-routing authority (input-transcription timing, R0030 C6). Owed

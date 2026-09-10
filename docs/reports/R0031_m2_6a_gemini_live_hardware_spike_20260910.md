@@ -4,14 +4,17 @@
 - **Author:** Claude Code (agent), for Andrzej Dul
 - **Milestone:** M2 — Realtime Voice · **M2.6 — Cloud Realtime Voice** ·
   substage **M2.6A** (feasibility spike, the cloud analogue of M2.5A).
-- **Status:** **IMPLEMENTED / READY FOR OPERATOR TEST. NOT
-  OPERATOR-CONFIRMED.** The probe, the credential mechanism, the
-  dependency, and an authenticated no-audio connectivity smoke are done
-  and verified by the agent. The listening/speaking judgement (Polish
-  pronunciation, English naturalness, end-to-end latency feel, PL↔EN
-  switching) is the operator's and has **not** happened yet. When the
-  operator returns terminal + JSON evidence, this report is updated with
-  the measured results in a separate pass.
+- **Status:** **OPERATOR ATTEMPT #1 FAILED (silent after user speech) →
+  ROOT CAUSE FOUND (static) + FIXED + proven by a no-microphone lifecycle
+  smoke → READY_FOR_OPERATOR_RETEST. NOT OPERATOR-CONFIRMED.** The
+  connection, AEC feed, mic and VAD all worked on attempt #1, but Gemini
+  produced no transcription / server content / audio because the probe
+  never sent the one-time `LLMRunFrame` that initialises the LLM service's
+  context and flips `_ready_for_realtime_input` — and with server VAD
+  disabled that flag gates `activity_start` / user audio / `activity_end`.
+  Fix applied to the probe (research file only); a single authenticated
+  no-mic lifecycle smoke confirms the service now reaches realtime-ready.
+  The listening/speaking judgement is still the operator's.
 - **Related:** `R0030` (Cloud Realtime Voice research/architecture — **and
   its `PHASE 0 CORRECTIONS`, applied in this task**), `R0029` (frozen
   local baseline), `ADR-0003` (D2 one `ConversationSession`; compliance
@@ -39,6 +42,190 @@ Re-checked against current official Google sources. Full detail in R0030
 | **C7** | "no cloud call was made" | **One MEASURED FACT added:** authenticated Live-API WebSocket setup handshake **449 ms**, clean disconnect, no audio, no secret leak. | this task |
 
 `docs/CURRENT_STATE.md` and `docs/ROADMAP.md` updated to match.
+
+---
+
+## OPERATOR ATTEMPT #1 — FAIL (silent after user speech)
+
+Real reSpeaker + speaker, `m2_6a_gemini_live_probe.py`. Operator log:
+
+| Stage | Result |
+|---|---|
+| Gemini connection (`"Connected to Gemini service"`) | **PASS** — key / model / auth healthy |
+| AEC far-end reference (`"XVF3800 AEC reference feed active on plug:respeaker"`) | **PASS** |
+| `LocalAudioTransport` start; `input_device_index=3` (respeaker), `output_device_index=2` (usb_speaker) | **PASS** |
+| Local Silero VAD — `User started speaking` / `User stopped speaking` ×2; Smart Turn `COMPLETE` | **PASS** — mic + turn detection working |
+| **Gemini response path** — input transcription, server content, cloud audio, `turnComplete`, audible reply, after **both** detected turns | **FAIL — nothing** |
+
+So this was **not** an audio-quality test. The failure is entirely
+upstream of cloud playback: **Gemini received nothing** for either turn.
+
+## ROOT CAUSE (proven by source analysis)
+
+**The probe never sent the one-time `LLMRunFrame` that initialises
+`GeminiLiveLLMService`'s context, so `_ready_for_realtime_input` stayed
+`False` for the whole session — and with server VAD disabled that flag
+gates every path that talks to Gemini.**
+
+Chain, all in the installed Pipecat 1.8.1 (`pipecat/services/google/gemini_live/llm.py`
++ `pipecat/processors/aggregators/llm_response_universal.py`):
+
+1. `GeminiLiveLLMService.setup()` → `_connect()` opens the WebSocket
+   (`"Connected to Gemini service"`). But `_handle_session_ready()` on the
+   **initial** connection finds `_run_llm_when_session_ready=False`, no
+   resumption handle, and **`self._context is None`** → it takes the
+   `else` branch, whose own comment is: *"Initial connection: session is
+   ready before context has arrived. Nothing to do — `_handle_context`
+   will call `_create_initial_response` when the context arrives."*
+2. `_create_initial_response()` is the **only** thing that sets
+   `self._ready_for_realtime_input = True` (or queues it via
+   `_run_llm_when_session_ready`). It `assert`s `self._context is not
+   None`, and `_context` is only ever set inside `_handle_context()`.
+3. `_handle_context()` only runs when an **`LLMContextFrame`** reaches the
+   service. The context aggregator emits that frame from
+   `push_context_frame()`, which is called by **`_handle_llm_run()`** (on
+   an `LLMRunFrame`) or by `push_aggregation()` (after a *completed user
+   turn is transcribed*).
+4. No `LLMRunFrame` is ever queued (the probe didn't send one), and no
+   user turn can be transcribed because Gemini isn't receiving audio —
+   **circular deadlock**. `_context` stays `None`,
+   `_ready_for_realtime_input` stays `False`.
+5. With `vad=GeminiVADParams(disabled=True)` (`_vad_disabled=True`):
+   - `_handle_user_started_speaking()` sends `activity_start` +
+     `_flush_user_audio_preroll()` **only if** `self._vad_disabled and
+     self._session and self._ready_for_realtime_input` → **False** →
+     `activity_start` never sent, pre-roll never flushed.
+   - `_send_user_audio()` bare-`return`s while `not
+     self._ready_for_realtime_input` → mic audio is only appended to the
+     rolling pre-roll buffer, never sent.
+   - `_handle_user_stopped_speaking()` sends `activity_end` under the same
+     guard → never sent.
+6. Gemini therefore gets **no `activity_start`, no audio, no
+   `activity_end`** → no input transcription, no `serverContent`, no
+   model turn, no `turnComplete`, no audio. **Exactly the operator's
+   symptom, for every turn.**
+
+The frames themselves *did* reach the service (the operator saw
+`User started/stopped speaking`, and the `LLMUserAggregator` forwards
+`UserStarted/StoppedSpeakingFrame` and `InputAudioRawFrame` downstream via
+its `else` branch) — they were just no-ops inside the guards.
+
+## WHY THE RUN WAS SILENT — one sentence
+
+The socket was "Connected" but the service was never told to run
+(`LLMRunFrame`), so it never built a context, never became
+`_ready_for_realtime_input`, and with server VAD off that flag is exactly
+what lets it send `activity_start` / audio / `activity_end` — so Gemini
+sat idle with nothing to respond to.
+
+## OFFICIAL PIPECAT COMPARISON
+
+`examples/realtime/realtime-gemini-live-locally-driven-turns.py`
+(pipecat v1.8.1) — verbatim relevant lines:
+
+```python
+pipeline = Pipeline([transport.input(), user_aggregator, llm, transport.output(), assistant_aggregator])
+...
+@transport.event_handler("on_client_connected")
+async def on_client_connected(transport, client):
+    logger.info("Client connected")
+    await worker.queue_frames([LLMRunFrame()])
+```
+
+- The example **explicitly queues one `LLMRunFrame()`** from the
+  transport's `on_client_connected` handler — this is the kickoff that
+  pushes the initial `LLMContextFrame` into `GeminiLiveLLMService`.
+- The example's transports (Daily / FastAPI-websocket / eval) fire
+  `on_client_connected`. **`LocalAudioTransport` has no client and fires
+  no such event** (it registers no event handlers at all). So the
+  example's kickoff mechanism has **no equivalent** in our local-device
+  probe — and our probe omitted the kickoff entirely. **That omission is
+  the root cause.**
+- The example also uses `inference_on_context_initialization` default
+  (`True`) with a system prompt that *asks for* an opening greeting
+  ("Say hello…"). Our probe must **not** greet.
+
+## THE FIX (probe only — no `src/nexa/**`, no deps)
+
+`docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py`:
+
+1. **Queue exactly one `LLMRunFrame()`** after the socket connects. A new
+   `_kickoff()` coroutine polls `llm._session` (≤ 15 s), then
+   `await worker.queue_frames([LLMRunFrame()])` once, marking
+   `KICKOFF_SOCKET_CONNECTED` / `LLM_RUN_FRAME_QUEUED`. This is the
+   `LocalAudioTransport` equivalent of the example's `on_client_connected`
+   kickoff.
+2. **`inference_on_context_initialization=False`** on
+   `GeminiLiveLLMService` → the init seed goes out with
+   `turn_complete=False`, so the service becomes ready **without
+   generating an opening bot utterance**.
+3. **Empty `LLMContext(messages=[])`** (system instruction supplied only
+   via `system_instruction=` / `Settings`). With an empty context +
+   `inference_on_context_initialization=False`, `_create_initial_response`
+   early-returns and flips `_ready_for_realtime_input = True` **without
+   sending any seed at all** — and it removes the Pipecat warning
+   *"Both system_instruction and an initial system message in context are
+   set … converting to a user message"* seen in the first smoke.
+
+No initial spoken greeting. No duplicated conversation state. The frozen
+local NeXa path is untouched (this is a `docs/research/` file).
+
+## DIAGNOSTICS ADDED (probe only, clearly spike-labelled)
+
+- **`_state_poller()`** (10 Hz, SPIKE-ONLY): first-transition marks
+  `GEMINI_CONNECTED` (`llm._session`), `LLM_CONTEXT_INITIALIZED`
+  (`llm._context`), `GEMINI_REALTIME_READY` (`llm._ready_for_realtime_input`).
+  Stops after all three; no per-audio-frame logging.
+- **`_install_llm_diagnostics()`** (SPIKE-ONLY): wraps four *private*
+  `GeminiLiveLLMService` methods **on the single probe instance** — pure
+  observation, each wrapper calls the original unchanged:
+  - `_handle_user_started_speaking` → marks `USER_STARTED_FRAME_AT_GEMINI`
+    (+ `ready` / `session` / `vad_disabled`) and `ACTIVITY_START_SENT` or
+    `ACTIVITY_START_SKIPPED{reason}`.
+  - `_handle_user_stopped_speaking` → `USER_STOPPED_FRAME_AT_GEMINI`,
+    `ACTIVITY_END_SENT` / `ACTIVITY_END_SKIPPED{reason}`.
+  - `_flush_user_audio_preroll` → `PREROLL_FLUSH_TO_GEMINI{bytes}`.
+  - `_send_user_audio` → counts `audio_bytes_to_gemini` /
+    `audio_chunks_to_gemini` only for frames that pass the send guard;
+    first one marks `INPUT_AUDIO_TO_GEMINI_FIRST{bytes}`.
+- **`_SpikeMetrics`** gains `GEMINI_SERVER_CONTENT_FIRST` (first of
+  `TTSStartedFrame` / `LLMFullResponseStartFrame` / `TranscriptionFrame` /
+  `TTSTextFrame` / `TTSAudioRawFrame` from the server), and its
+  `INPUT_TRANSCRIPTION_FIRST` / `OUTPUT_TRANSCRIPTION_FIRST` /
+  `FIRST_SERVER_CONTENT` are now first-only (a `_once()` helper; the
+  previous code had an `... or True` bug that re-marked every frame).
+- `PIPELINE_READY` is marked once the runner starts.
+- New probe mode **`--lifecycle-smoke`**: one authenticated,
+  **no-microphone** run on a transport-less pipeline
+  (`[user_aggregator, llm]`) that queues the `LLMRunFrame` and verifies
+  `_ready_for_realtime_input` flips True. No user turn → the model
+  generates nothing → near-zero tokens.
+
+## LIFECYCLE-SMOKE PROOF (agent-run, 2026-09-10)
+
+```
+.venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py --lifecycle-smoke
+
+lifecycle events: ['KICKOFF_SOCKET_CONNECTED', 'GEMINI_CONNECTED',
+                   'LLM_RUN_FRAME_QUEUED', 'LLM_CONTEXT_INITIALIZED',
+                   'GEMINI_REALTIME_READY']
+GEMINI_CONNECTED        : True
+LLM_CONTEXT_INITIALIZED : True
+GEMINI_REALTIME_READY   : True
+RESULT: PASS — service reached realtime-ready
+EXIT=0
+```
+
+**MEASURED FACT (2026-09-10):** with the `LLMRunFrame` kickoff +
+`inference_on_context_initialization=False` + empty context, the service
+now reaches `_ready_for_realtime_input=True` (`GEMINI_REALTIME_READY`)
+after `LLM_RUN_FRAME_QUEUED` → `LLM_CONTEXT_INITIALIZED`. No mic, no user
+turn, no model generation, no seed sent (empty-context early return), no
+warning. Two such smokes were run (before/after the empty-context
+cleanup); no audio session, no long generation, negligible token use.
+
+**Still operator-only:** whether, once ready, a real spoken turn produces
+a timely PL/EN audio reply of acceptable quality.
 
 ---
 
@@ -161,6 +348,9 @@ untouched):**
 | output transcription | ON | …and `output_audio_transcription` unconditionally |
 | `context_window_compression` | `enabled=True` | unlimited session duration (needed for the reconnect phase) |
 | `system_instruction` | the minimal spike role card (below) | not NeXa's identity |
+| **`inference_on_context_initialization`** | **`False`** | **attempt-#1 fix** — init seed with `turn_complete=False`, service becomes ready with **no opening greeting** |
+| **`LLMContext(messages=[])`** | **empty** | **attempt-#1 fix** — system instruction only via `system_instruction=`; empty context → `_create_initial_response` early-returns ready, no seed, no Pipecat "converting to a user message" warning |
+| **startup kickoff** | **one `LLMRunFrame()`** queued by `_kickoff()` after the socket connects | **attempt-#1 fix** — `LocalAudioTransport` has no `on_client_connected`; without this the service never initialises its context or becomes `_ready_for_realtime_input` |
 | `user_audio_preroll_secs` | `None` (auto) | Pipecat auto-sizes from Silero `start_secs` + margin |
 | mic PCM to Gemini | 16-bit LE, mono, **16 kHz** | Gemini native input |
 | cloud audio from Gemini | **24 kHz** PCM | Gemini native output |
@@ -343,6 +533,12 @@ feasibility spike.
 
 ## FAILURES / ANOMALIES
 
+- **OPERATOR ATTEMPT #1 = FAIL (silent after user speech)** — root cause:
+  missing `LLMRunFrame` kickoff → `GeminiLiveLLMService` never became
+  `_ready_for_realtime_input`; with server VAD off that gates
+  `activity_start` / audio / `activity_end`. **Fixed in the probe**
+  (kickoff + `inference_on_context_initialization=False` + empty context);
+  proven by the no-mic lifecycle smoke. Full analysis above.
 - **`websockets` 17.1 → 16.1.1 downgrade** (transitive, forced by
   `google-genai`). Within Pipecat's allowed range; `pip check` clean;
   spot-check tests pass. Flagged for ADR-0004 (pin it).
@@ -377,66 +573,74 @@ feasibility spike.
 
 ## FILES CHANGED
 
-**New:**
+### This commit (operator-attempt-#1 diagnosis + fix)
 
-- `docs/reports/R0031_m2_6a_gemini_live_hardware_spike_20260910.md` — this
-  report.
-- `docs/research/m2_6_cloud_realtime_voice/m2_6a_connect_smoke.py` —
-  authenticated no-audio Live-API connectivity smoke.
+**Changed (probe / report only — no `src/nexa/**`, no deps):**
+
 - `docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py` —
-  the M2.6A real-hardware probe (`--dry` + live modes).
+  the fix (one `LLMRunFrame` kickoff via `_kickoff()`;
+  `inference_on_context_initialization=False`; empty `LLMContext`) +
+  diagnostics (`_state_poller`, `_install_llm_diagnostics`,
+  `GEMINI_SERVER_CONTENT_FIRST`, first-only markers, `PIPELINE_READY`) +
+  new `--lifecycle-smoke` mode. Also fixed a pre-existing
+  `... or True` bug that re-marked `INPUT_TRANSCRIPTION_FIRST` every frame.
+- `docs/reports/R0031_…md` — this report: OPERATOR ATTEMPT #1 = FAIL,
+  root cause, official-Pipecat comparison, the fix, diagnostics,
+  lifecycle-smoke proof, status → READY_FOR_OPERATOR_RETEST.
+- `docs/research/m2_6_cloud_realtime_voice/README.md`,
+  `docs/CURRENT_STATE.md`, `docs/ROADMAP.md` — status updated to
+  "attempt #1 failed → fixed → retest".
 
-**Changed:**
+### Earlier in M2.6A (commit `f920315`)
 
-- `docs/reports/R0030_cloud_realtime_voice_research_architecture_20260910.md`
-  — added `PHASE 0 CORRECTIONS` (C1–C7); fixed the in-body chunk-size,
-  resumption, pricing, privacy, Polish-risk, prerequisite lines to point
-  at it.
-- `docs/research/m2_6_cloud_realtime_voice/README.md` — lists the two new
-  scripts + the credential mechanism (name/path only).
-- `docs/CURRENT_STATE.md`, `docs/ROADMAP.md` — M2.6 status → "M2.6A
-  IMPLEMENTED / READY FOR OPERATOR TEST"; corrected facts; ADR-0004 items.
+`R0031` + `m2_6a_connect_smoke.py` + `m2_6a_gemini_live_probe.py` (first
+version) + R0030 `PHASE 0 CORRECTIONS` + `CURRENT_STATE` / `ROADMAP`.
 
 **Outside the repo (not committed, cannot be):**
-
-- `~/.config/nexa/secrets/gemini.env` — the operator's key, `600`.
+`~/.config/nexa/secrets/gemini.env` — the operator's key, `600`.
 
 **Not changed (verified):** all `src/nexa/**`, all `tests/**`,
 `pyproject.toml` / lock files. Local voice baseline (R0029) untouched;
 `bargein_enabled` default-off untouched.
 
-## CHECKS
+## CHECKS (this commit)
 
-`ruff check docs/research/m2_6_cloud_realtime_voice/` → pass ·
-`py_compile` all three scripts → OK · probe `--dry` → PASS ·
-connectivity smoke → PASS (449 ms) · import smoke → all OK ·
-`test_voice_architecture` + `test_bargein_wiring_m2_5b` → 17 passed ·
-`git diff --check` → clean · secret scan (`AIza`/`AQ.`/`api_key=`/
-`Authorization:`/`Bearer`/`NEXA_GEMINI_API_KEY=<value>`) over staged
-content → none · `git diff -- src/nexa` → empty · `git diff -- tests` →
-empty · full suite **not** re-run (no `src`/`tests` change; last green at
-`788a64d`).
+`ruff check docs/research/m2_6_cloud_realtime_voice/` → All checks passed ·
+`py_compile m2_6a_gemini_live_probe.py` → OK · `--dry` → PASS ·
+**`--lifecycle-smoke` → PASS** (`GEMINI_REALTIME_READY` reached; no mic,
+no generation) · diagnostic-wrapper targets verified present on
+`GeminiLiveLLMService` · `git diff --check` → clean · secret scan
+(`AIza…` / `AQ.…` / the key's own leading characters / `api_key=` /
+`Authorization:` / `Bearer` / `NEXA_GEMINI_API_KEY=<value>`) over staged
+content → **none** ·
+`git diff -- src/nexa` → **empty** · `git diff -- tests` → **empty** ·
+no tracked dependency file changed · full suite not re-run (no
+`src`/`tests` change).
 
 ## COMMIT HASH
 
-- `f920315` — `research: M2.6A gemini-live spike + R0030 Phase-0 corrections (R0031)`
-  (this report + `m2_6a_connect_smoke.py` + `m2_6a_gemini_live_probe.py` +
-  the R0030 Phase-0 corrections + `CURRENT_STATE` / `ROADMAP` updates).
+- `f920315` / `b3c7c32` — earlier M2.6A commit + its hash record
+  (R0031 v1 + connectivity smoke + probe v1 + R0030 Phase-0 corrections).
+- `<PENDING — this commit>` — operator-attempt-#1 diagnosis + probe fix +
+  R0031 update.
 
-This hash-record edit lands in the immediately-following commit
-(R0026–R0030 pattern). Prior tip: `a4f9266` (R0030 hash record).
+This hash-record note is finalised by the immediately-following commit
+(R0026–R0030 pattern). Prior tip: `b3c7c32`.
 
 ## GIT STATUS
 
 Branch `main`, **not pushed**. `git diff --check` clean. No `src/` /
-`tests/` / tracked-dependency change. New: R0031 + two spike scripts.
-Changed: R0030 (Phase-0 corrections), the spike README, `CURRENT_STATE`,
-`ROADMAP`. The Gemini key lives only at `~/.config/nexa/secrets/gemini.env`
-(outside the repo).
+`tests/` / tracked-dependency change. This commit changes only the probe
++ R0031 + README + `CURRENT_STATE` + `ROADMAP`. The Gemini key lives only
+at `~/.config/nexa/secrets/gemini.env` (outside the repo).
 
 ## M2.6A STATUS
 
-**READY_FOR_OPERATOR_TEST.**
+**READY_FOR_OPERATOR_RETEST.** Attempt #1 failed (silent after user
+speech); root cause found by source analysis, fixed in the probe, and
+confirmed by a no-microphone lifecycle smoke (`GEMINI_REALTIME_READY`
+reached). The audio session — Polish / English quality, latency, PL↔EN
+switching — is still owed from the operator.
 
 ### The one launch command
 
@@ -445,9 +649,11 @@ set -a; . ~/.config/nexa/secrets/gemini.env; set +a
 .venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py
 ```
 
-Wait for `AEC_REF_ACTIVE` in the log before interrupting. Ctrl+C ends the
-session and writes `m2_6a_probe_results_<timestamp>.json` next to the
-probe. A hard 15-minute cap ends it automatically.
+The probe now queues the `LLMRunFrame` kickoff itself once the socket
+connects — watch for `KICKOFF_SOCKET_CONNECTED`, `GEMINI_REALTIME_READY`,
+then `AEC_REF_ACTIVE` before speaking. Ctrl+C ends the session and writes
+`m2_6a_probe_results_<timestamp>.json` next to the probe; hard 15-minute
+cap.
 
 ### Minimum spoken test script (one continuous session)
 

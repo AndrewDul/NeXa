@@ -162,9 +162,11 @@ def _pipecat() -> dict:
         "GeminiVADParams": GeminiVADParams,
         "LocalAudioTransport": LocalAudioTransport,
         "LocalAudioTransportParams": LocalAudioTransportParams,
+        "LLMRunFrame": F.LLMRunFrame,
     }
     for _name in (
         "InputAudioRawFrame", "InterruptionFrame", "LLMFullResponseEndFrame",
+        "LLMFullResponseStartFrame",
         "StartFrame", "TranscriptionFrame", "TTSAudioRawFrame", "TTSStartedFrame",
         "TTSStoppedFrame", "TTSTextFrame", "UserStartedSpeakingFrame",
         "UserStoppedSpeakingFrame", "BotStartedSpeakingFrame", "BotStoppedSpeakingFrame",
@@ -203,7 +205,13 @@ def _build(P: dict, tl: Timeline, key: str, *, dry: bool):
     }
 
     # -- cloud-side objects (built in both dry and live modes) --------------
-    context = P["LLMContext"](messages=[{"role": "system", "content": SPIKE_SYSTEM_INSTRUCTION}])
+    # Empty message list on purpose: the system instruction is supplied via the
+    # service's `system_instruction=` / Settings only. Passing it ALSO as an
+    # initial context message makes Pipecat warn and convert it to a spurious
+    # "user" line. With an empty context + inference_on_context_initialization
+    # =False, `_create_initial_response` early-returns and flips
+    # `_ready_for_realtime_input` True without sending any seed at all.
+    context = P["LLMContext"](messages=[])
     user_agg, asst_agg = P["LLMContextAggregatorPair"](
         context,
         user_params=P["LLMUserAggregatorParams"](
@@ -224,9 +232,26 @@ def _build(P: dict, tl: Timeline, key: str, *, dry: bool):
             context_window_compression=P["ContextWindowCompressionParams"](enabled=True),
             system_instruction=SPIKE_SYSTEM_INSTRUCTION,
         ),
+        # M2.6A operator-attempt-1 FIX (R0031): with server VAD disabled, the
+        # service only sends activity_start / user audio / activity_end once
+        # `_ready_for_realtime_input` is True — and that flag only flips after
+        # an `LLMContextFrame` reaches the service (via `_handle_context` ->
+        # `_create_initial_response`). Nothing pushes that frame until an
+        # `LLMRunFrame` is queued (the upstream example does it from the
+        # transport's `on_client_connected`; `LocalAudioTransport` has no such
+        # event). The probe now queues exactly one `LLMRunFrame` after the
+        # socket connects (see `_kickoff` in `_run`).
+        #   `inference_on_context_initialization=False` => the init seed is
+        # sent with turn_complete=False, so the service becomes ready WITHOUT
+        # generating an opening bot utterance. (A system-only context also
+        # early-returns in `_create_initial_response` without inference, but
+        # False makes the "no greeting" intent explicit.)
+        inference_on_context_initialization=False,
         user_audio_preroll_secs=None,  # auto-size from Silero start_secs
     )
     meta["settings_ok"] = True
+    meta["_context"] = context
+    meta["_llm"] = llm
 
     if dry:
         meta["mode"] = "dry (cloud-side objects built; no hardware, no connect)"
@@ -258,6 +283,8 @@ def _build(P: dict, tl: Timeline, key: str, *, dry: bool):
         on_change=lambda active: tl.mark("AEC_REF_ACTIVE" if active else "AEC_REF_DOWN")
     )
     aec_feeder = AecReferenceFeeder(aec_health=aec_health, sample_rate=OUT_RATE, channels=1)
+
+    _install_llm_diagnostics(llm, tl)  # SPIKE-ONLY (see the function docstring)
 
     up = _SpikeMetrics(P, "upstream", tl, llm)
     down = _SpikeMetrics(P, "downstream", tl, llm)
@@ -292,6 +319,117 @@ def _build(P: dict, tl: Timeline, key: str, *, dry: bool):
     return worker, meta.pop("_runner_placeholder", None), meta
 
 
+def _install_llm_diagnostics(llm, tl: Timeline) -> None:
+    """SPIKE-ONLY. Wrap a few *private* GeminiLiveLLMService methods on this
+    one instance so the probe can record whether activity_start / activity_end
+    / user audio were actually issued to Gemini (not just whether the frames
+    reached the service). Pure observation — every wrapper calls the original
+    and returns its result unchanged. Disposable research diagnostics; nothing
+    here belongs in a production wrapper.
+    """
+    import functools
+
+    orig_started = llm._handle_user_started_speaking
+    orig_stopped = llm._handle_user_stopped_speaking
+    orig_flush = llm._flush_user_audio_preroll
+    orig_send_audio = llm._send_user_audio
+
+    @functools.wraps(orig_started)
+    async def _started(frame):
+        ready = bool(getattr(llm, "_ready_for_realtime_input", False))
+        has_session = getattr(llm, "_session", None) is not None
+        vad_off = bool(getattr(llm, "_vad_disabled", False))
+        tl.mark("USER_STARTED_FRAME_AT_GEMINI", ready=ready, session=has_session, vad_disabled=vad_off)
+        if vad_off and has_session and ready:
+            tl.mark("ACTIVITY_START_SENT")
+        else:
+            tl.mark("ACTIVITY_START_SKIPPED", reason=("not_ready" if not ready else "no_session" if not has_session else "vad_enabled"))
+        return await orig_started(frame)
+
+    @functools.wraps(orig_stopped)
+    async def _stopped(frame):
+        ready = bool(getattr(llm, "_ready_for_realtime_input", False))
+        has_session = getattr(llm, "_session", None) is not None
+        vad_off = bool(getattr(llm, "_vad_disabled", False))
+        tl.mark("USER_STOPPED_FRAME_AT_GEMINI", ready=ready, session=has_session)
+        if vad_off and has_session and ready:
+            tl.mark("ACTIVITY_END_SENT")
+        else:
+            tl.mark("ACTIVITY_END_SKIPPED", reason=("not_ready" if not ready else "no_session" if not has_session else "vad_enabled"))
+        return await orig_stopped(frame)
+
+    @functools.wraps(orig_flush)
+    async def _flush():
+        buf = getattr(llm, "_user_audio_preroll_buffer", b"") or b""
+        tl.mark("PREROLL_FLUSH_TO_GEMINI", bytes=len(buf))
+        return await orig_flush()
+
+    _sent = {"first": False}
+
+    @functools.wraps(orig_send_audio)
+    async def _send_audio(frame):
+        ready = bool(getattr(llm, "_ready_for_realtime_input", False))
+        speaking = bool(getattr(llm, "_user_is_speaking", False))
+        will_send = ready and (not getattr(llm, "_vad_disabled", False) or speaking) \
+            and not getattr(llm, "_audio_input_paused", False) \
+            and not getattr(llm, "_disconnecting", False) \
+            and getattr(llm, "_session", None) is not None
+        if will_send:
+            n = len(getattr(frame, "audio", b"") or b"")
+            tl.add("audio_bytes_to_gemini", n)
+            tl.add("audio_chunks_to_gemini", 1)
+            if not _sent["first"]:
+                _sent["first"] = True
+                tl.mark("INPUT_AUDIO_TO_GEMINI_FIRST", bytes=n)
+        return await orig_send_audio(frame)
+
+    llm._handle_user_started_speaking = _started
+    llm._handle_user_stopped_speaking = _stopped
+    llm._flush_user_audio_preroll = _flush
+    llm._send_user_audio = _send_audio
+
+
+async def _state_poller(llm, tl: Timeline, stop: asyncio.Event) -> None:
+    """SPIKE-ONLY. Poll the GeminiLiveLLMService's internal readiness flags at
+    10 Hz and mark the first transition of each. No per-audio-frame logging."""
+    seen: set[str] = set()
+
+    def once(name: str, cond: bool) -> None:
+        if cond and name not in seen:
+            seen.add(name)
+            tl.mark(name)
+
+    while not stop.is_set():
+        once("GEMINI_CONNECTED", getattr(llm, "_session", None) is not None)
+        once("LLM_CONTEXT_INITIALIZED", getattr(llm, "_context", None) is not None)
+        once("GEMINI_REALTIME_READY", bool(getattr(llm, "_ready_for_realtime_input", False)))
+        if len(seen) == 3:
+            return
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=0.1)
+        except TimeoutError:
+            pass
+
+
+async def _kickoff(worker, llm, tl: Timeline, P: dict, stop: asyncio.Event) -> None:
+    """M2.6A FIX + diagnostic. Wait for the Gemini socket, then queue exactly
+    ONE LLMRunFrame so the context aggregator pushes the initial LLMContextFrame
+    into GeminiLiveLLMService (-> `_handle_context` -> `_create_initial_response`
+    -> `_ready_for_realtime_input = True`). LocalAudioTransport has no
+    `on_client_connected` event, so the probe drives this itself."""
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline and not stop.is_set():
+        if getattr(llm, "_session", None) is not None:
+            break
+        await asyncio.sleep(0.1)
+    connected = getattr(llm, "_session", None) is not None
+    tl.mark("KICKOFF_SOCKET_CONNECTED" if connected else "KICKOFF_SOCKET_TIMEOUT")
+    # Small settle so StartFrame has propagated through the aggregator.
+    await asyncio.sleep(0.3)
+    await worker.queue_frames([P["LLMRunFrame"]()])
+    tl.mark("LLM_RUN_FRAME_QUEUED")
+
+
 def _make_metrics_cls(P: dict):
     FrameProcessor = P["FrameProcessor"]
     fr = P
@@ -311,13 +449,30 @@ def _make_metrics_cls(P: dict):
             self._last_ready: bool | None = None
             self._turn_audio_seen = False
             self._not_ready_since: float | None = None
+            self._once_seen: set[str] = set()
 
         def _ready(self) -> bool:
             return bool(getattr(self._llm, "_ready_for_realtime_input", False))
 
+        def _once(self, name: str, **extra) -> None:
+            if name not in self._once_seen:
+                self._once_seen.add(name)
+                self._tl.mark(name, **extra)
+
         async def process_frame(self, frame, direction) -> None:  # noqa: ANN001
             await super().process_frame(frame, direction)
             tl = self._tl
+
+            # first sign of ANY server content (downstream only): the earliest
+            # of started / transcription / text / audio frames coming back.
+            if self._pos == "downstream" and isinstance(
+                frame,
+                (
+                    fr["TTSStartedFrame"], fr["LLMFullResponseStartFrame"],
+                    fr["TranscriptionFrame"], fr["TTSTextFrame"], fr["TTSAudioRawFrame"],
+                ),
+            ):
+                self._once("GEMINI_SERVER_CONTENT_FIRST", frame=type(frame).__name__)
 
             if self._pos == "upstream" and isinstance(frame, fr["InputAudioRawFrame"]):
                 # #5465 accounting: is the LLM session ready to actually accept this?
@@ -351,15 +506,14 @@ def _make_metrics_cls(P: dict):
                     tl.mark("LOCAL_VAD_EOT")
             elif isinstance(frame, fr["TranscriptionFrame"]):
                 # Gemini input transcription (aggregated by Pipecat)
-                if "INPUT_TRANSCRIPTION_FIRST" not in {e for (_t, e, _x) in tl.events} or True:
-                    tl.mark("INPUT_TRANSCRIPTION_FIRST", text_len=len(getattr(frame, "text", "") or ""))
+                self._once("INPUT_TRANSCRIPTION_FIRST", text_len=len(getattr(frame, "text", "") or ""))
                 tl.add("input_transcription_frames", 1)
                 # A frame with a trailing sentence punctuation is treated as a flush.
                 txt = (getattr(frame, "text", "") or "").strip()
                 if txt.endswith((".", "!", "?", "…")):
                     tl.mark("INPUT_TRANSCRIPTION_FLUSHED", text_len=len(txt))
             elif isinstance(frame, fr["TTSTextFrame"]):
-                tl.mark("OUTPUT_TRANSCRIPTION", text_len=len(getattr(frame, "text", "") or ""))
+                self._once("OUTPUT_TRANSCRIPTION_FIRST", text_len=len(getattr(frame, "text", "") or ""))
                 tl.add("output_transcription_frames", 1)
             elif isinstance(frame, fr["TTSAudioRawFrame"]):
                 if self._pos == "downstream":
@@ -372,7 +526,7 @@ def _make_metrics_cls(P: dict):
                         self._turn_audio_seen = True
                         tl.mark("FIRST_AUDIO_RECEIVED")
             elif isinstance(frame, fr["TTSStartedFrame"]):
-                tl.mark("FIRST_SERVER_CONTENT")
+                self._once("FIRST_SERVER_CONTENT")
             elif isinstance(frame, fr["BotStartedSpeakingFrame"]):
                 tl.mark("FIRST_AUDIO_PLAYED")
             elif isinstance(frame, fr["BotStoppedSpeakingFrame"]):
@@ -503,13 +657,23 @@ async def _run(args) -> int:
         print(f"\n[hard {HARD_SESSION_CAP_S // 60}-min session cap reached — stopping]")
         stop.set()
 
+    llm = meta.get("_llm")
     cap_task = asyncio.create_task(_cap())
     run_task = asyncio.create_task(runner.run())
     tl.mark("SESSION_START")
-    print("Listening. Speak to NeXa (cloud). Ctrl+C to stop.\n")
+    tl.mark("PIPELINE_READY")
+    poll_task = asyncio.create_task(_state_poller(llm, tl, stop))
+    kick_task = asyncio.create_task(_kickoff(worker, llm, tl, P, stop))
+    print("Listening. Speak to NeXa (cloud). Ctrl+C to stop.")
+    print("(kickoff LLMRunFrame is queued automatically once the socket connects)\n")
 
     await asyncio.wait({run_task, asyncio.create_task(stop.wait())}, return_when=asyncio.FIRST_COMPLETED)
     cap_task.cancel()
+    stop.set()
+    for t in (poll_task, kick_task):
+        t.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await t
     tl.mark("SESSION_STOP")
 
     with contextlib.suppress(Exception):
@@ -538,12 +702,75 @@ async def _run(args) -> int:
     return 0
 
 
+async def _lifecycle_smoke() -> int:
+    """ONE minimal authenticated NO-MICROPHONE lifecycle check (R0031 fix
+    proof). Builds GeminiLiveLLMService + LLMContext + aggregator pair on a
+    tiny transport-less pipeline, queues one LLMRunFrame, and verifies
+    `_ready_for_realtime_input` flips True. No mic, no speaker, no user turn,
+    so the model generates nothing — near-zero tokens (just the connect +
+    a turn_complete=False seed)."""
+    tl = Timeline()
+    key = _load_key()
+    if not key:
+        print("BLOCKED: no NEXA_GEMINI_API_KEY")
+        return 2
+    P = _pipecat()
+    _worker, _rc, meta = _build(P, tl, key, dry=True)  # cloud-side objects only
+    llm = meta["_llm"]
+    # rebuild in live-ish mode manually (no _build live path -> no PyAudio)
+    _install_llm_diagnostics(llm, tl)
+    context = meta["_context"]
+    user_agg, _asst = P["LLMContextAggregatorPair"](
+        context, realtime_service_mode=True
+    )
+    pipeline = P["Pipeline"]([user_agg, llm])
+    worker = P["PipelineWorker"](pipeline, enable_rtvi=False, idle_timeout_secs=None)
+
+    from pipecat.workers.runner import WorkerRunner
+
+    runner = WorkerRunner()
+    await runner.add_workers(worker)
+    stop = asyncio.Event()
+    run_task = asyncio.create_task(runner.run())
+    poll_task = asyncio.create_task(_state_poller(llm, tl, stop))
+    await _kickoff(worker, llm, tl, P, stop)
+
+    ok = False
+    for _ in range(150):  # up to ~15 s
+        if getattr(llm, "_ready_for_realtime_input", False):
+            ok = True
+            break
+        await asyncio.sleep(0.1)
+
+    stop.set()
+    poll_task.cancel()
+    with contextlib.suppress(Exception):
+        await runner.stop_workers()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await asyncio.wait_for(run_task, timeout=10)
+
+    names = [e for (_t, e, _x) in tl.events]
+    print("lifecycle events:", names)
+    print("GEMINI_CONNECTED       :", "GEMINI_CONNECTED" in names)
+    print("LLM_CONTEXT_INITIALIZED:", "LLM_CONTEXT_INITIALIZED" in names)
+    print("GEMINI_REALTIME_READY  :", "GEMINI_REALTIME_READY" in names)
+    print("RESULT:", "PASS — service reached realtime-ready" if ok else "FAIL — never became ready")
+    return 0 if ok else 4
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="M2.6A Gemini Live hardware feasibility probe")
     ap.add_argument("--dry", action="store_true", help="validate config only; no hardware, no cloud")
+    ap.add_argument(
+        "--lifecycle-smoke", action="store_true",
+        help="ONE no-microphone authenticated check that the LLMRunFrame kickoff makes "
+        "GeminiLiveLLMService reach realtime-ready (proves the R0031 fix; near-zero tokens)",
+    )
     ap.add_argument("--note", default="", help="free-text note stored in the results JSON")
     args = ap.parse_args()
     try:
+        if args.lifecycle_smoke:
+            return asyncio.run(_lifecycle_smoke())
         return asyncio.run(_run(args))
     except KeyboardInterrupt:
         return 130
