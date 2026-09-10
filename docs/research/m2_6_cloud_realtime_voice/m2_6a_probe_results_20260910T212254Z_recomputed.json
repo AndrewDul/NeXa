@@ -1,0 +1,53 @@
+{
+  "recomputed_from": "m2_6a_probe_results_20260910T212254Z.json",
+  "recomputed_utc": "2026-09-10T21:39:05.024386+00:00",
+  "note": "barge-in metrics recomputed with the bot_is_speaking filter; the original vad_start_to_local_playback_stopped_s / server_interrupted_to_playback_stopped_s were semantically invalid (paired every user turn with a later playback stop).",
+  "original_config": {
+    "model": "gemini-3.1-flash-live-preview",
+    "in_sample_rate": 16000,
+    "out_sample_rate": 24000,
+    "input_chunk_ms_target": 20,
+    "input_device_name": "respeaker",
+    "output_device_name": "usb_speaker",
+    "aec_reference_device": "plug:respeaker",
+    "server_vad": "disabled (local Silero is turn authority)",
+    "context_window_compression": "enabled",
+    "transcription": "input + output (Pipecat enables both unconditionally)",
+    "settings_ok": true,
+    "input_device_index": 3,
+    "output_device_index": 2,
+    "mode": "live real-hardware"
+  },
+  "corrected_derived_latencies_s": {
+    "eot_to_first_server_content_s": [
+      0.6193
+    ],
+    "eot_to_first_audio_received_s": [
+      0.6193,
+      0.8563
+    ],
+    "eot_to_first_audio_received_median_s": 0.7378,
+    "eot_to_first_audio_played_s": [
+      0.6769,
+      0.9063
+    ],
+    "eot_to_first_audio_played_median_s": 0.7916,
+    "eot_to_input_transcription_raw_first_s": [],
+    "eot_to_input_transcription_pushed_s": [],
+    "input_transcription_pushed_to_first_audio_received_s": [],
+    "input_transcription_pushed_to_first_audio_played_s": [],
+    "reconnect_start_to_ready_s": [],
+    "barge_in": {
+      "barge_in_candidate_count": 0,
+      "barge_in_candidates": [],
+      "bargein_vad_start_to_playback_stop_s": [],
+      "bargein_vad_start_to_playback_stop_median_s": null,
+      "bargein_vad_start_to_bot_audio_stopped_s": [],
+      "bargein_vad_start_to_bot_audio_stopped_median_s": null,
+      "local_playback_stop_minus_interruption_frame_s": [],
+      "local_playback_stop_minus_interruption_frame_median_s": null,
+      "_note": "A LOCAL_VAD_START while the bot was NOT playing is an ordinary user turn, not a barge-in, and is excluded. local_playback_stop_minus_interruption_frame_s is negative when NeXa's local playback authority silenced the speaker BEFORE the (later, likely server-round-trip) InterruptionFrame."
+    },
+    "_removed_invalid_metrics": "vad_start_to_local_playback_stopped_s and server_interrupted_to_playback_stopped_s (pre-2026-09-10): they paired EVERY VAD_START with a later playback stop, so ordinary user turns (bot silent) produced 8-21 s 'latencies'. Replaced by barge_in.* which gates on bot_is_speaking."
+  }
+}

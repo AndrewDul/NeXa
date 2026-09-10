@@ -81,20 +81,25 @@ paid data terms apply to unpaid quota too, and a cloud voice made
 available to such users must use Paid Services; outside those regions
 unpaid-quota data is used to improve Google products.
 
-- **M2.6A** (in progress) — minimal Gemini Live real-hardware spike:
-  reSpeaker → existing AEC/local audio path → Gemini Live → native
-  streamed cloud audio → existing speaker, plus latency / Polish-quality /
-  reconnect / cost / **event-ordering** metrics (PASS/WARN/FAIL table in
-  `R0030`). No memory, identity, router, tools or GUI. Operator attempt #1
-  FAILED (silent after user speech — probe never queued the one-time
-  `LLMRunFrame` kickoff so `GeminiLiveLLMService` never became
-  `_ready_for_realtime_input`); **fixed in the probe + proven by a no-mic
-  lifecycle smoke → READY_FOR_OPERATOR_RETEST** → report `R0031`
-  (NOT OPERATOR-CONFIRMED).
+- **M2.6A** — minimal Gemini Live real-hardware spike: reSpeaker →
+  existing AEC/local audio path → Gemini Live → native streamed cloud
+  audio → existing speaker + metrics. No memory, identity, router, tools
+  or GUI. Attempt #1 = infra bug (missing `LLMRunFrame` kickoff), fixed.
+  **Operator retest = PASS / OPERATOR-CONFIRMED (2026-09-10, `R0031`):**
+  real PL/EN conversation judged EXCELLENT, latency "essentially
+  immediate"; machine EOT→first-audible ≈ 0.81 s median (R0030 ≤ 1.5 s —
+  PASS), barge-in ≈ 2–4 ms local playback-stop (corrected metric), AEC 0
+  failures, #5465 startup-window only. Cost ≈ 5 cents for two sessions.
+  Only operator ask: female/cozy voice → **`Sulafat` ("Warm")** selected +
+  statically configured, **awaiting natural-use confirmation**. C6
+  input-transcription ordering not yet instrumented (wrappers added) → an
+  ADR-0004 input. Reconnect/lifetime testing deferred to M2.6B.
 - **ADR-0004** — ratify the provider boundary, the cloud credential
-  surface, `google-genai` as a tracked dependency, and the production
-  language-routing authority (input-transcription timing, R0030 C6). Owed
-  **before** M2.6B.
+  surface, `google-genai` as a tracked dependency (+ pin `websockets`),
+  the production language-routing authority (C6 data from the next
+  ordinary conversation), the #5465 not-ready buffer + `GoAway` reconnect,
+  and `RealtimeVoiceProvider` / `CloudContextSnapshot` /
+  `ConversationRouter`. Owed **before** M2.6B.
 - **M2.6B** — production `RealtimeVoiceProvider` + `ConversationRouter` +
   `SetConversationPolicy` + `CloudContextSnapshot` + reconnect hardening.
 

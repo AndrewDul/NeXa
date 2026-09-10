@@ -1,0 +1,327 @@
+{
+  "report": "R0031 / M2.6A gemini-live hardware probe",
+  "generated_utc": "2026-09-10T21:22:54.205541+00:00",
+  "note": "operator live session",
+  "config": {
+    "model": "gemini-3.1-flash-live-preview",
+    "in_sample_rate": 16000,
+    "out_sample_rate": 24000,
+    "input_chunk_ms_target": 20,
+    "input_device_name": "respeaker",
+    "output_device_name": "usb_speaker",
+    "aec_reference_device": "plug:respeaker",
+    "server_vad": "disabled (local Silero is turn authority)",
+    "context_window_compression": "enabled",
+    "transcription": "input + output (Pipecat enables both unconditionally)",
+    "settings_ok": true,
+    "input_device_index": 3,
+    "output_device_index": 2,
+    "mode": "live real-hardware"
+  },
+  "timeline": [
+    {
+      "t": 1.1622,
+      "event": "SESSION_START"
+    },
+    {
+      "t": 1.1622,
+      "event": "PIPELINE_READY"
+    },
+    {
+      "t": 1.2386,
+      "event": "AEC_REF_ACTIVE"
+    },
+    {
+      "t": 1.35,
+      "event": "PIPELINE_START::upstream"
+    },
+    {
+      "t": 1.351,
+      "event": "PIPELINE_START::downstream"
+    },
+    {
+      "t": 1.369,
+      "event": "LLM_NOT_READY"
+    },
+    {
+      "t": 1.5834,
+      "event": "GEMINI_CONNECTED"
+    },
+    {
+      "t": 1.5834,
+      "event": "KICKOFF_SOCKET_CONNECTED"
+    },
+    {
+      "t": 1.8839,
+      "event": "LLM_RUN_FRAME_QUEUED"
+    },
+    {
+      "t": 1.8888,
+      "event": "LLM_READY"
+    },
+    {
+      "t": 1.9851,
+      "event": "LLM_CONTEXT_INITIALIZED"
+    },
+    {
+      "t": 1.9851,
+      "event": "GEMINI_REALTIME_READY"
+    },
+    {
+      "t": 4.6907,
+      "event": "LOCAL_VAD_START::upstream"
+    },
+    {
+      "t": 4.6907,
+      "event": "LOCAL_VAD_START"
+    },
+    {
+      "t": 4.6908,
+      "event": "USER_STARTED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true,
+      "vad_disabled": true
+    },
+    {
+      "t": 4.6908,
+      "event": "ACTIVITY_START_SENT"
+    },
+    {
+      "t": 4.6926,
+      "event": "PREROLL_FLUSH_TO_GEMINI",
+      "bytes": 9600
+    },
+    {
+      "t": 4.6937,
+      "event": "LOCAL_VAD_START::downstream"
+    },
+    {
+      "t": 4.6938,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 4.6943,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 4.6943,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 4.7093,
+      "event": "INPUT_AUDIO_TO_GEMINI_FIRST",
+      "bytes": 640
+    },
+    {
+      "t": 5.8341,
+      "event": "USER_STOPPED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true
+    },
+    {
+      "t": 5.8341,
+      "event": "ACTIVITY_END_SENT"
+    },
+    {
+      "t": 5.8349,
+      "event": "LOCAL_VAD_EOT"
+    },
+    {
+      "t": 6.4542,
+      "event": "GEMINI_SERVER_CONTENT_FIRST",
+      "frame": "TTSStartedFrame"
+    },
+    {
+      "t": 6.4542,
+      "event": "FIRST_SERVER_CONTENT"
+    },
+    {
+      "t": 6.4542,
+      "event": "FIRST_AUDIO_RECEIVED"
+    },
+    {
+      "t": 6.4543,
+      "event": "OUTPUT_TRANSCRIPTION_FIRST",
+      "text_len": 9
+    },
+    {
+      "t": 6.5118,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 6.5121,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 8.9118,
+      "event": "LOCAL_PLAYBACK_STOPPED"
+    },
+    {
+      "t": 8.9119,
+      "event": "TURN_COMPLETE"
+    },
+    {
+      "t": 8.9367,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 8.9369,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 13.8321,
+      "event": "LOCAL_VAD_START::upstream"
+    },
+    {
+      "t": 13.8321,
+      "event": "LOCAL_VAD_START"
+    },
+    {
+      "t": 13.8323,
+      "event": "USER_STARTED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true,
+      "vad_disabled": true
+    },
+    {
+      "t": 13.8323,
+      "event": "ACTIVITY_START_SENT"
+    },
+    {
+      "t": 13.8326,
+      "event": "PREROLL_FLUSH_TO_GEMINI",
+      "bytes": 9600
+    },
+    {
+      "t": 13.8335,
+      "event": "LOCAL_VAD_START::downstream"
+    },
+    {
+      "t": 13.8337,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 13.8344,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 13.8344,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 17.3694,
+      "event": "USER_STOPPED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true
+    },
+    {
+      "t": 17.3694,
+      "event": "ACTIVITY_END_SENT"
+    },
+    {
+      "t": 17.3699,
+      "event": "LOCAL_VAD_EOT"
+    },
+    {
+      "t": 18.2262,
+      "event": "FIRST_AUDIO_RECEIVED"
+    },
+    {
+      "t": 18.2762,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 18.2764,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 31.5383,
+      "event": "LOCAL_PLAYBACK_STOPPED"
+    },
+    {
+      "t": 31.5383,
+      "event": "TURN_COMPLETE"
+    },
+    {
+      "t": 31.5635,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 31.5639,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 36.5682,
+      "event": "AEC_REF_DOWN"
+    },
+    {
+      "t": 36.6009,
+      "event": "SESSION_STOP"
+    }
+  ],
+  "counters": {
+    "mic_audio_ms_presented": 35140.0,
+    "mic_audio_bytes_presented": 1124480,
+    "mic_chunks_presented": 1757,
+    "mic_audio_ms_while_not_ready": 520.0,
+    "mic_chunks_while_not_ready": 26,
+    "mic_chunk_bytes_sample": 640,
+    "not_ready_window_count": 1,
+    "audio_bytes_to_gemini": 140160,
+    "audio_chunks_to_gemini": 219,
+    "cloud_audio_bytes_received": 751684,
+    "cloud_audio_chunks_received": 59,
+    "cloud_audio_ms_received": 15660.083333333332,
+    "output_transcription_frames": 22
+  },
+  "derived_latencies_s": {
+    "eot_to_first_server_content_s": [
+      0.6193
+    ],
+    "eot_to_first_audio_received_s": [
+      0.6193,
+      0.8563
+    ],
+    "eot_to_first_audio_played_s": [
+      0.6769,
+      0.9063
+    ],
+    "eot_to_input_transcription_first_s": [],
+    "eot_to_input_transcription_flushed_s": [],
+    "input_transcription_first_to_first_audio_s": [],
+    "input_transcription_flushed_to_first_audio_s": [],
+    "vad_start_to_local_playback_stopped_s": [
+      4.2211,
+      17.7062
+    ],
+    "server_interrupted_to_playback_stopped_s": [
+      4.2175,
+      17.7039
+    ],
+    "reconnect_start_to_ready_s": []
+  },
+  "pipecat_5465": {
+    "not_ready_windows": 1,
+    "mic_audio_ms_while_not_ready": 520.0,
+    "mic_chunks_while_not_ready": 26,
+    "note": "pipecat 1.8.1 bare-returns InputAudioRawFrame while _ready_for_realtime_input is False; any non-zero value here was NOT sent to Gemini"
+  },
+  "aec_reference": {
+    "ever_started": true,
+    "active_at_end": false,
+    "failure_count": 0,
+    "frames_mirrored": 59,
+    "chunks_dropped": 0
+  },
+  "cost_estimate": {
+    "mic_audio_seconds": 35.1,
+    "cloud_audio_seconds": 15.7,
+    "input_audio_tokens_est": 878,
+    "output_audio_tokens_est": 392,
+    "usd_estimate": 0.0073,
+    "basis": "official 2026-09-10 pricing: in audio $3.00/1M (~25 tok/s), out audio $12.00/1M; usageMetadata not yet wired"
+  },
+  "session_notes": {
+    "session_resumption_handle_present": true
+  }
+}

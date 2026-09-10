@@ -1,0 +1,802 @@
+{
+  "report": "R0031 / M2.6A gemini-live hardware probe",
+  "generated_utc": "2026-09-10T21:21:36.760765+00:00",
+  "note": "operator live session",
+  "config": {
+    "model": "gemini-3.1-flash-live-preview",
+    "in_sample_rate": 16000,
+    "out_sample_rate": 24000,
+    "input_chunk_ms_target": 20,
+    "input_device_name": "respeaker",
+    "output_device_name": "usb_speaker",
+    "aec_reference_device": "plug:respeaker",
+    "server_vad": "disabled (local Silero is turn authority)",
+    "context_window_compression": "enabled",
+    "transcription": "input + output (Pipecat enables both unconditionally)",
+    "settings_ok": true,
+    "input_device_index": 3,
+    "output_device_index": 2,
+    "mode": "live real-hardware"
+  },
+  "timeline": [
+    {
+      "t": 1.1758,
+      "event": "SESSION_START"
+    },
+    {
+      "t": 1.1758,
+      "event": "PIPELINE_READY"
+    },
+    {
+      "t": 1.253,
+      "event": "AEC_REF_ACTIVE"
+    },
+    {
+      "t": 1.3629,
+      "event": "PIPELINE_START::upstream"
+    },
+    {
+      "t": 1.3638,
+      "event": "PIPELINE_START::downstream"
+    },
+    {
+      "t": 1.3814,
+      "event": "LLM_NOT_READY"
+    },
+    {
+      "t": 1.6965,
+      "event": "GEMINI_CONNECTED"
+    },
+    {
+      "t": 1.6966,
+      "event": "KICKOFF_SOCKET_CONNECTED"
+    },
+    {
+      "t": 1.9976,
+      "event": "LLM_RUN_FRAME_QUEUED"
+    },
+    {
+      "t": 1.9982,
+      "event": "LLM_CONTEXT_INITIALIZED"
+    },
+    {
+      "t": 1.9982,
+      "event": "GEMINI_REALTIME_READY"
+    },
+    {
+      "t": 2.0014,
+      "event": "LLM_READY"
+    },
+    {
+      "t": 20.3449,
+      "event": "LOCAL_VAD_START::upstream"
+    },
+    {
+      "t": 20.3449,
+      "event": "LOCAL_VAD_START"
+    },
+    {
+      "t": 20.345,
+      "event": "USER_STARTED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true,
+      "vad_disabled": true
+    },
+    {
+      "t": 20.345,
+      "event": "ACTIVITY_START_SENT"
+    },
+    {
+      "t": 20.3476,
+      "event": "PREROLL_FLUSH_TO_GEMINI",
+      "bytes": 9600
+    },
+    {
+      "t": 20.3492,
+      "event": "LOCAL_VAD_START::downstream"
+    },
+    {
+      "t": 20.3494,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 20.3502,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 20.3502,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 20.3629,
+      "event": "INPUT_AUDIO_TO_GEMINI_FIRST",
+      "bytes": 640
+    },
+    {
+      "t": 22.1118,
+      "event": "USER_STOPPED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true
+    },
+    {
+      "t": 22.1118,
+      "event": "ACTIVITY_END_SENT"
+    },
+    {
+      "t": 22.1126,
+      "event": "LOCAL_VAD_EOT"
+    },
+    {
+      "t": 22.931,
+      "event": "GEMINI_SERVER_CONTENT_FIRST",
+      "frame": "TTSStartedFrame"
+    },
+    {
+      "t": 22.931,
+      "event": "FIRST_SERVER_CONTENT"
+    },
+    {
+      "t": 22.9311,
+      "event": "FIRST_AUDIO_RECEIVED"
+    },
+    {
+      "t": 22.9311,
+      "event": "OUTPUT_TRANSCRIPTION_FIRST",
+      "text_len": 13
+    },
+    {
+      "t": 22.9324,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 22.9326,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 41.8831,
+      "event": "LOCAL_PLAYBACK_STOPPED"
+    },
+    {
+      "t": 41.8832,
+      "event": "TURN_COMPLETE"
+    },
+    {
+      "t": 41.9074,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 41.9077,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 65.9476,
+      "event": "LOCAL_VAD_START::upstream"
+    },
+    {
+      "t": 65.9476,
+      "event": "LOCAL_VAD_START"
+    },
+    {
+      "t": 65.9477,
+      "event": "USER_STARTED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true,
+      "vad_disabled": true
+    },
+    {
+      "t": 65.9477,
+      "event": "ACTIVITY_START_SENT"
+    },
+    {
+      "t": 65.9481,
+      "event": "PREROLL_FLUSH_TO_GEMINI",
+      "bytes": 9600
+    },
+    {
+      "t": 65.9489,
+      "event": "LOCAL_VAD_START::downstream"
+    },
+    {
+      "t": 65.9491,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 65.9497,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 65.9497,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 67.5886,
+      "event": "USER_STOPPED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true
+    },
+    {
+      "t": 67.5887,
+      "event": "ACTIVITY_END_SENT"
+    },
+    {
+      "t": 67.5892,
+      "event": "LOCAL_VAD_EOT"
+    },
+    {
+      "t": 68.3434,
+      "event": "FIRST_AUDIO_RECEIVED"
+    },
+    {
+      "t": 68.4021,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 68.4023,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 74.1482,
+      "event": "LOCAL_VAD_START::upstream"
+    },
+    {
+      "t": 74.1482,
+      "event": "LOCAL_VAD_START"
+    },
+    {
+      "t": 74.1483,
+      "event": "USER_STARTED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true,
+      "vad_disabled": true
+    },
+    {
+      "t": 74.1483,
+      "event": "ACTIVITY_START_SENT"
+    },
+    {
+      "t": 74.1486,
+      "event": "PREROLL_FLUSH_TO_GEMINI",
+      "bytes": 9600
+    },
+    {
+      "t": 74.1494,
+      "event": "LOCAL_VAD_START::downstream"
+    },
+    {
+      "t": 74.1495,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 74.1503,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 74.1503,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 74.1504,
+      "event": "LOCAL_PLAYBACK_STOPPED"
+    },
+    {
+      "t": 74.1522,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 74.1525,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 74.1783,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 74.1783,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 74.1786,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 76.181,
+      "event": "USER_STOPPED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true
+    },
+    {
+      "t": 76.181,
+      "event": "ACTIVITY_END_SENT"
+    },
+    {
+      "t": 76.1814,
+      "event": "LOCAL_VAD_EOT"
+    },
+    {
+      "t": 76.9568,
+      "event": "FIRST_AUDIO_RECEIVED"
+    },
+    {
+      "t": 77.0082,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 77.0084,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 84.8292,
+      "event": "LOCAL_VAD_START::upstream"
+    },
+    {
+      "t": 84.8292,
+      "event": "LOCAL_VAD_START"
+    },
+    {
+      "t": 84.8294,
+      "event": "USER_STARTED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true,
+      "vad_disabled": true
+    },
+    {
+      "t": 84.8294,
+      "event": "ACTIVITY_START_SENT"
+    },
+    {
+      "t": 84.8297,
+      "event": "PREROLL_FLUSH_TO_GEMINI",
+      "bytes": 9600
+    },
+    {
+      "t": 84.8306,
+      "event": "LOCAL_VAD_START::downstream"
+    },
+    {
+      "t": 84.8308,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 84.8316,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 84.8316,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 84.8317,
+      "event": "LOCAL_PLAYBACK_STOPPED"
+    },
+    {
+      "t": 84.8338,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 84.8342,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 84.8592,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 84.8592,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 84.8602,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 86.9274,
+      "event": "USER_STOPPED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true
+    },
+    {
+      "t": 86.9274,
+      "event": "ACTIVITY_END_SENT"
+    },
+    {
+      "t": 86.928,
+      "event": "LOCAL_VAD_EOT"
+    },
+    {
+      "t": 87.6997,
+      "event": "FIRST_AUDIO_RECEIVED"
+    },
+    {
+      "t": 87.7374,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 87.7375,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 94.1696,
+      "event": "LOCAL_VAD_START::upstream"
+    },
+    {
+      "t": 94.1696,
+      "event": "LOCAL_VAD_START"
+    },
+    {
+      "t": 94.1697,
+      "event": "USER_STARTED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true,
+      "vad_disabled": true
+    },
+    {
+      "t": 94.1697,
+      "event": "ACTIVITY_START_SENT"
+    },
+    {
+      "t": 94.1701,
+      "event": "PREROLL_FLUSH_TO_GEMINI",
+      "bytes": 9600
+    },
+    {
+      "t": 94.1711,
+      "event": "LOCAL_VAD_START::downstream"
+    },
+    {
+      "t": 94.1712,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 94.1721,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 94.1721,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 94.1722,
+      "event": "LOCAL_PLAYBACK_STOPPED"
+    },
+    {
+      "t": 94.1741,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 94.1745,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 94.1993,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 94.1994,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 94.1997,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 96.2213,
+      "event": "USER_STOPPED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true
+    },
+    {
+      "t": 96.2213,
+      "event": "ACTIVITY_END_SENT"
+    },
+    {
+      "t": 96.2218,
+      "event": "LOCAL_VAD_EOT"
+    },
+    {
+      "t": 97.0125,
+      "event": "FIRST_AUDIO_RECEIVED"
+    },
+    {
+      "t": 97.0648,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 97.0651,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 106.4697,
+      "event": "LOCAL_VAD_START::upstream"
+    },
+    {
+      "t": 106.4697,
+      "event": "LOCAL_VAD_START"
+    },
+    {
+      "t": 106.4698,
+      "event": "USER_STARTED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true,
+      "vad_disabled": true
+    },
+    {
+      "t": 106.4698,
+      "event": "ACTIVITY_START_SENT"
+    },
+    {
+      "t": 106.4701,
+      "event": "PREROLL_FLUSH_TO_GEMINI",
+      "bytes": 9600
+    },
+    {
+      "t": 106.4707,
+      "event": "LOCAL_VAD_START::downstream"
+    },
+    {
+      "t": 106.4708,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 106.4714,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 106.4714,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 106.4714,
+      "event": "LOCAL_PLAYBACK_STOPPED"
+    },
+    {
+      "t": 106.4727,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 106.4729,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 106.4938,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 106.4938,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 106.4943,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 108.1068,
+      "event": "USER_STOPPED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true
+    },
+    {
+      "t": 108.1068,
+      "event": "ACTIVITY_END_SENT"
+    },
+    {
+      "t": 108.1072,
+      "event": "LOCAL_VAD_EOT"
+    },
+    {
+      "t": 108.8028,
+      "event": "FIRST_AUDIO_RECEIVED"
+    },
+    {
+      "t": 108.8514,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 108.8516,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 117.4709,
+      "event": "LOCAL_VAD_START::upstream"
+    },
+    {
+      "t": 117.4709,
+      "event": "LOCAL_VAD_START"
+    },
+    {
+      "t": 117.471,
+      "event": "USER_STARTED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true,
+      "vad_disabled": true
+    },
+    {
+      "t": 117.471,
+      "event": "ACTIVITY_START_SENT"
+    },
+    {
+      "t": 117.4714,
+      "event": "PREROLL_FLUSH_TO_GEMINI",
+      "bytes": 9600
+    },
+    {
+      "t": 117.4722,
+      "event": "LOCAL_VAD_START::downstream"
+    },
+    {
+      "t": 117.4723,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 117.4731,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 117.4731,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 117.4732,
+      "event": "LOCAL_PLAYBACK_STOPPED"
+    },
+    {
+      "t": 117.4749,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 117.4752,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 117.4973,
+      "event": "INTERRUPTION::downstream"
+    },
+    {
+      "t": 117.4973,
+      "event": "SERVER_INTERRUPTED"
+    },
+    {
+      "t": 117.4976,
+      "event": "INTERRUPTION::upstream"
+    },
+    {
+      "t": 119.4459,
+      "event": "USER_STOPPED_FRAME_AT_GEMINI",
+      "ready": true,
+      "session": true
+    },
+    {
+      "t": 119.4459,
+      "event": "ACTIVITY_END_SENT"
+    },
+    {
+      "t": 119.4463,
+      "event": "LOCAL_VAD_EOT"
+    },
+    {
+      "t": 120.1402,
+      "event": "FIRST_AUDIO_RECEIVED"
+    },
+    {
+      "t": 120.2007,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 120.2009,
+      "event": "FIRST_AUDIO_PLAYED"
+    },
+    {
+      "t": 129.1831,
+      "event": "LOCAL_PLAYBACK_STOPPED"
+    },
+    {
+      "t": 129.1831,
+      "event": "TURN_COMPLETE"
+    },
+    {
+      "t": 129.2079,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 129.2083,
+      "event": "BOT_AUDIO_STOPPED"
+    },
+    {
+      "t": 133.4163,
+      "event": "AEC_REF_DOWN"
+    },
+    {
+      "t": 133.4495,
+      "event": "SESSION_STOP"
+    }
+  ],
+  "counters": {
+    "mic_audio_ms_presented": 131920.0,
+    "mic_audio_bytes_presented": 4221440,
+    "mic_chunks_presented": 6596,
+    "mic_audio_ms_while_not_ready": 620.0,
+    "mic_chunks_while_not_ready": 31,
+    "mic_chunk_bytes_sample": 640,
+    "not_ready_window_count": 1,
+    "audio_bytes_to_gemini": 389120,
+    "audio_chunks_to_gemini": 608,
+    "cloud_audio_bytes_received": 5239242,
+    "cloud_audio_chunks_received": 392,
+    "cloud_audio_ms_received": 109150.87500000001,
+    "output_transcription_frames": 206
+  },
+  "derived_latencies_s": {
+    "eot_to_first_server_content_s": [
+      0.8184
+    ],
+    "eot_to_first_audio_received_s": [
+      0.8185,
+      0.7542,
+      0.7754,
+      0.7717,
+      0.7907,
+      0.6956,
+      0.6939
+    ],
+    "eot_to_first_audio_played_s": [
+      0.8198,
+      0.8129,
+      0.8268,
+      0.8094,
+      0.843,
+      0.7442,
+      0.7544
+    ],
+    "eot_to_input_transcription_first_s": [],
+    "eot_to_input_transcription_flushed_s": [],
+    "input_transcription_first_to_first_audio_s": [],
+    "input_transcription_flushed_to_first_audio_s": [],
+    "vad_start_to_local_playback_stopped_s": [
+      21.5382,
+      8.2028,
+      0.0022,
+      0.0025,
+      0.0026,
+      0.0017,
+      0.0023
+    ],
+    "server_interrupted_to_playback_stopped_s": [
+      21.5329,
+      8.2007,
+      0.0001,
+      10.6534,
+      0.0001,
+      9.313,
+      0.0001,
+      12.272,
+      0.0,
+      10.9794,
+      0.0001,
+      11.6858
+    ],
+    "reconnect_start_to_ready_s": []
+  },
+  "pipecat_5465": {
+    "not_ready_windows": 1,
+    "mic_audio_ms_while_not_ready": 620.0,
+    "mic_chunks_while_not_ready": 31,
+    "note": "pipecat 1.8.1 bare-returns InputAudioRawFrame while _ready_for_realtime_input is False; any non-zero value here was NOT sent to Gemini"
+  },
+  "aec_reference": {
+    "ever_started": true,
+    "active_at_end": false,
+    "failure_count": 0,
+    "frames_mirrored": 298,
+    "chunks_dropped": 94
+  },
+  "cost_estimate": {
+    "mic_audio_seconds": 131.9,
+    "cloud_audio_seconds": 109.2,
+    "input_audio_tokens_est": 3298,
+    "output_audio_tokens_est": 2729,
+    "usd_estimate": 0.0426,
+    "basis": "official 2026-09-10 pricing: in audio $3.00/1M (~25 tok/s), out audio $12.00/1M; usageMetadata not yet wired"
+  },
+  "session_notes": {
+    "session_resumption_handle_present": true
+  }
+}

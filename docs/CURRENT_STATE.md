@@ -60,21 +60,32 @@ Runtime / test evidence outranks anything else in this repo.
   (LOCAL / CLOUD); the model may classify a switch intent, **NeXa executes
   it**; keep XVF3800 AEC + local Silero as the turn authority (HYBRID,
   server VAD off), NeXa keeps final authority over the speaker.
-  **Recommendation: GO for M2.6A — minimal Gemini Live real-hardware spike**
-  (prove native cloud audio quality + latency + event ordering only; no
-  memory / identity / router / tools / GUI); then R0031 + ADR-0004 before
-  M2.6B production. Spike dir: `docs/research/m2_6_cloud_realtime_voice/`
-  (offline Pipecat static audit, connectivity smoke, M2.6A probe).
-  **M2.6A OPERATOR ATTEMPT #1 FAILED (silent after user speech) → ROOT
-  CAUSE FOUND (static) + FIXED in the probe + proven by a no-mic lifecycle
-  smoke → READY_FOR_OPERATOR_RETEST** (`R0031`). Root cause: the probe
-  never queued the one-time `LLMRunFrame` that initialises
-  `GeminiLiveLLMService`'s context, so `_ready_for_realtime_input` never
-  flipped True; with server VAD disabled that flag gates `activity_start`
-  / user audio / `activity_end`, so Gemini received nothing. Fix (probe
-  file only): queue one `LLMRunFrame` after the socket connects +
-  `inference_on_context_initialization=False` + empty `LLMContext`
-  (no greeting). NOT OPERATOR-CONFIRMED.)
+  **M2.6A CLOUD REALTIME VOICE FEASIBILITY — PASS / OPERATOR-CONFIRMED
+  (2026-09-10), `R0031`.** Attempt #1 was an infrastructure bug (silent
+  after user speech — the probe never queued the one-time `LLMRunFrame`
+  kickoff, so `GeminiLiveLLMService` never became
+  `_ready_for_realtime_input`, which with server VAD off gates
+  `activity_start`/audio/`activity_end`); root-caused from source and
+  fixed in the probe (kickoff + `inference_on_context_initialization=False`
+  + empty `LLMContext`). **Operator retest = real natural PL/EN
+  conversation with `gemini-3.1-flash-live-preview`: conversation quality
+  / reasoning / natural flow / barge-in judged EXCELLENT, latency
+  "essentially immediate", "mega super".** Machine evidence (2 sessions,
+  9 turns, recomputed): **EOT→first audible ≈ 0.81 s median** (R0030 gate
+  ≤1.5 s — PASS, faster than local); **barge-in ≈ 2–4 ms** local
+  playback-stop (5 real barge-ins; corrected metric — the old "next
+  event" pairing was invalid); local speaker silenced ~27 ms **before**
+  the server-round-trip interruption frame; AEC feed 0 failures; the one
+  #5465 NOT_READY window was startup-only with no user speech in it (risk
+  open, not observed as loss). Cost ≈ 5 cents for both sessions.
+  **Only operator request: a female/cozy/warm voice → `Sulafat` ("Warm",
+  verified) selected + statically configured (`--voice`, default) —
+  awaiting natural-use confirmation, NOT voice-confirmed.** C6
+  input-transcription ordering was NOT instrumented in these runs
+  (wrappers added for the next ordinary session) → an OPEN ADR-0004 input.
+  Reconnect/lifetime testing deliberately deferred to M2.6B. Spike dir:
+  `docs/research/m2_6_cloud_realtime_voice/` (static audit, connectivity
+  smoke, probe, 2 evidence JSONs + 2 recomputed).
 - **Prior report:** `docs/reports/R0029_m2_5b_production_barge_in_interruption_20260909.md`
   (**M2.5B — Production Barge-In / Interruption — COMPLETE / OPERATOR-CONFIRMED
   (2026-09-10).** Production barge-in ships behind
@@ -623,13 +634,16 @@ Runtime / test evidence outranks anything else in this repo.
   terms; 20–40 ms chunks; 2 h resumption tokens; official pricing;
   Polish-accent retagged as an unverified community report; a critical
   input-transcription-vs-audio-ordering question for M2.6A to measure).
-  **M2.6A OPERATOR ATTEMPT #1 FAILED (silent after user speech); root
-  cause found statically + FIXED in the probe (missing one-time
-  `LLMRunFrame` kickoff → `GeminiLiveLLMService` never became
-  `_ready_for_realtime_input`, which with server VAD off gates
-  `activity_start`/audio/`activity_end`) + proven by a no-mic lifecycle
-  smoke → READY_FOR_OPERATOR_RETEST — NOT OPERATOR-CONFIRMED** (`R0031`).
-  Then `R0031` results + **`ADR-0004`** before `M2.6B` production.
+  **M2.6A CLOUD REALTIME VOICE FEASIBILITY — PASS / OPERATOR-CONFIRMED
+  2026-09-10** (`R0031`): attempt #1 infra bug (missing `LLMRunFrame`
+  kickoff) fixed; operator retest = real PL/EN conversation judged
+  EXCELLENT, latency essentially immediate; machine EOT→first-audible
+  ≈0.81 s median (R0030 ≤1.5 s PASS), barge-in ≈2–4 ms (corrected
+  metric), AEC 0 failures, #5465 startup-window only (no speech in it).
+  Only ask: female/cozy voice → `Sulafat` selected + configured, awaiting
+  natural-use confirmation. C6 ordering not yet instrumented (wrappers
+  added) → ADR-0004 input. Reconnect testing deferred to M2.6B.
+  Then **`ADR-0004`** before `M2.6B` production.
   **Credential:** operator-provided key stored at
   `~/.config/nexa/secrets/gemini.env` (outside the repo, 700/600), var
   `NEXA_GEMINI_API_KEY`; tier/region + paid-key decision is an ADR-0004
@@ -1203,11 +1217,17 @@ Runtime / test evidence outranks anything else in this repo.
 ## Current focus
 
 - **M2.6 — Cloud Realtime Voice. Research + Phase-0 corrections COMPLETE
-  (`R0030`); M2.6A feasibility probe implemented; OPERATOR ATTEMPT #1
-  FAILED (silent after user speech) → root cause found statically + FIXED
-  in the probe (missing one-time `LLMRunFrame` kickoff) + proven by a
-  no-mic lifecycle smoke → READY_FOR_OPERATOR_RETEST (`R0031`, NOT
-  OPERATOR-CONFIRMED).** LOCAL REALTIME VOICE
+  (`R0030`); M2.6A CLOUD REALTIME VOICE FEASIBILITY = PASS /
+  OPERATOR-CONFIRMED (`R0031`, 2026-09-10).** Attempt #1 infra bug (missing
+  `LLMRunFrame` kickoff) fixed; operator retest = real PL/EN conversation
+  judged EXCELLENT (quality / reasoning / flow / barge-in), latency
+  "essentially immediate", "mega super"; machine evidence agrees
+  (EOT→first-audible ≈0.81 s median; barge-in ≈2–4 ms; AEC 0 failures).
+  Only operator ask: female/cozy voice → `Sulafat` selected + configured,
+  **awaiting natural-use confirmation (NOT voice-confirmed)**. C6
+  input-transcription ordering not yet instrumented (wrappers added) →
+  ADR-0004 input. Reconnect testing deferred to M2.6B. LOCAL REALTIME
+  VOICE
   is complete and operator-confirmed: M1 through M1.1, and M2 through
   **M2.5B (`R0029`, COMPLETE / OPERATOR-CONFIRMED 2026-09-10)** — research
   (`R0005`) → spikes (`R0006`) → `ADR-0003` → M2.1 (`R0007`) → M2.2
@@ -1239,10 +1259,13 @@ Runtime / test evidence outranks anything else in this repo.
   apply to unpaid quota too, and a cloud voice *made available to* such
   users must use Paid Services; outside those regions unpaid-quota data is
   used to improve Google products. Paid-key decision → ADR-0004. **M2.6A
-  probe implemented; connectivity smoke PASSED (449 ms).** **CRITICAL
-  M2.6A measurement (R0030 C6):** input-transcription-vs-first-audio
-  ordering (decides whether `ResponseLanguageResolver` can steer the same
-  cloud response) — ADR-0004 settles production language routing.
+  feasibility = PASS / OPERATOR-CONFIRMED (`R0031`).** **STILL OPEN for
+  ADR-0004 (R0030 C6):** input-transcription-vs-first-audio ordering — NOT
+  instrumented in the attempt-#2 runs (the frame is consumed by the
+  aggregator before any tap); probe wrappers now added, data captured on
+  the operator's next ordinary conversation. One indicative log-line
+  suggests the aggregated user transcription may arrive ~0.5 s before
+  first audio, but this is one turn, not generalised.
 - **After local + cloud voice** (unchanged plan): memory / identity /
   personality / capabilities → full graphical UI → typed chat in that UI
   on the **same** `ConversationSession` / NeXa brain as voice (never a
@@ -1250,26 +1273,26 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Exact next recommended task
 
-**Run the M2.6A operator live session** (`R0031` "OPERATOR LIVE TEST" —
-one launch command, ~5-turn PL/EN scripted script, then a separate
-reconnect phase only if the short session passes). The probe
-(`docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py`) is
-implemented, `--dry`-validated, and the Live-API connectivity smoke
-passed (449 ms). The operator judges: Polish pronunciation/accent,
-English naturalness, EOT→first-audible latency, PL↔EN switching, and the
-probe records the event timeline (incl. the C6 input-transcription-vs-
-first-audio ordering), the #5465 NOT_READY audio accounting, AEC-ref
-health, and a token/cost estimate → timestamped JSON under the spike dir.
+**M2.6A feasibility is PASS / OPERATOR-CONFIRMED.** Next, small and
+non-blocking: the operator simply talks to NeXa again — now with the
+`Sulafat` voice (default) — to confirm the voice preference, while the
+probe silently captures the C6 input-transcription-vs-first-audio ordering
+(wrappers now in place). One launch command:
+`.venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py`
+(after sourcing `~/.config/nexa/secrets/gemini.env`). Not a scripted
+benchmark; no reconnect test.
 
-After the operator returns terminal evidence: update `R0031` with the
-measured results, then **`ADR-0004`** (provider boundary + cloud
-credential surface + `google-genai` as a tracked dependency + production
-language-routing authority) before **`M2.6B`** production. Local realtime
-voice with production barge-in (`R0029`) is the frozen baseline this
-builds beside — do not destabilise it; `bargein_enabled` default stays
-`False`; no `src/nexa/**` cloud code until ADR-0004.
-**Credential:** operator-provided key at `~/.config/nexa/secrets/gemini.env`
-(outside the repo, 700/600), var `NEXA_GEMINI_API_KEY`.
+Then **`ADR-0004`** — provider boundary + cloud credential surface +
+`google-genai` as a tracked dependency (+ pin `websockets`) + production
+language-routing authority (from the C6 data) + the #5465 not-ready
+buffer + `GoAway` reconnect + `RealtimeVoiceProvider` /
+`CloudContextSnapshot` / `ConversationRouter` — before **`M2.6B`**
+production. Local realtime voice with production barge-in (`R0029`) is the
+frozen baseline this builds beside — do not destabilise it;
+`bargein_enabled` default stays `False`; no `src/nexa/**` cloud code until
+ADR-0004. **Credential:** operator-provided key at
+`~/.config/nexa/secrets/gemini.env` (outside the repo, 700/600), var
+`NEXA_GEMINI_API_KEY`.
 
 Non-blocking, owed independently (not gating cloud): the B.3.6 operator
 latency re-confirmation (STT latency + END_OF_TURN → first-audio); a

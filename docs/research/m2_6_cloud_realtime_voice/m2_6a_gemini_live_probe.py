@@ -58,6 +58,21 @@ OUT_DIR = Path(__file__).resolve().parent
 MODEL = "gemini-3.1-flash-live-preview"
 HARD_SESSION_CAP_S = 15 * 60
 
+# Voice is a NeXa USER PREFERENCE, not part of the Gemini model/identity.
+# Operator (R0031 retest) requested a female / cozy / pleasant / warm voice.
+# Sulafat's official descriptor is "Warm" (ai.google.dev speech-generation
+# voice table, 2026-09-10); Google/Firebase voice metadata identifies it as
+# female (operator-supplied basis — the style table does not list gender).
+DEFAULT_VOICE = "Sulafat"
+# Recorded alternatives — NOT auto-tested (no multi-voice generation, no
+# voice-comparison benchmark, no quota waste). Descriptors from the same
+# official table.
+VOICE_ALTERNATIVES = {
+    "Vindemiatrix": "Gentle",
+    "Achernar": "Soft",
+    "Aoede": "Breezy",
+}
+
 SPIKE_SYSTEM_INSTRUCTION = (
     "You are the temporary realtime conversation engine for an assistant "
     "called NeXa. Speak naturally and concisely. Normally answer in the "
@@ -79,13 +94,39 @@ def _load_key() -> str:
 
 
 # ---- one monotonic clock + timeline -------------------------------------- #
+def _median(xs: list[float]) -> float | None:
+    if not xs:
+        return None
+    s = sorted(xs)
+    n = len(s)
+    return s[n // 2] if n % 2 else round((s[n // 2 - 1] + s[n // 2]) / 2, 4)
+
+
 class Timeline:
     """Append-only (event, monotonic_seconds) log on one clock."""
+
+    #: an InterruptionFrame at the downstream tap. It can be EITHER the local
+    #: aggregator's broadcast_interruption() on user-turn-start OR Gemini's
+    #: own serverContent.interrupted round-trip — the probe cannot tell them
+    #: apart, so the metric that uses it says so.
+    _INTERRUPTION_MARKS = ("INTERRUPTION_DOWNSTREAM", "SERVER_INTERRUPTED")
+    _BOT_STOP_MARKS = ("LOCAL_PLAYBACK_STOPPED", "BOT_AUDIO_STOPPED", "TURN_COMPLETE")
 
     def __init__(self) -> None:
         self.t0 = time.monotonic()
         self.events: list[tuple[float, str, dict]] = []
         self.counters: dict[str, float] = {}
+
+    @classmethod
+    def from_events(cls, events: list[dict]) -> Timeline:
+        """Rebuild a Timeline from a results-JSON ``timeline`` list (for
+        ``--recompute``). No clock is started."""
+        tl = cls()
+        tl.events = [
+            (float(e["t"]), str(e["event"]), {k: v for k, v in e.items() if k not in ("t", "event")})
+            for e in events
+        ]
+        return tl
 
     def mark(self, event: str, **extra: object) -> float:
         t = time.monotonic() - self.t0
@@ -95,31 +136,134 @@ class Timeline:
     def add(self, counter: str, n: float = 1) -> None:
         self.counters[counter] = self.counters.get(counter, 0) + n
 
-    # ---- derived latencies (best-effort; multiple turns -> list) --------- #
+    # ---- helpers -------------------------------------------------------- #
+    def _ts(self, *names: str) -> list[float]:
+        want = set(names)
+        return sorted(t for (t, e, _x) in self.events if e in want)
+
     def _pairs(self, a: str, b: str) -> list[float]:
-        """For each `a` mark, the delta to the next `b` mark after it."""
+        """For each `a` mark, the delta to the next `b` mark at/after it."""
         out: list[float] = []
-        a_ts = [t for (t, e, _x) in self.events if e == a]
-        b_ts = [t for (t, e, _x) in self.events if e == b]
-        for ta in a_ts:
+        b_ts = self._ts(b)
+        for ta in self._ts(a):
             nxt = [tb for tb in b_ts if tb >= ta]
             if nxt:
                 out.append(round(nxt[0] - ta, 4))
         return out
 
-    def derive(self) -> dict:
+    def _next(self, ts: list[float], after: float) -> float | None:
+        nxt = [t for t in ts if t >= after - 1e-6]
+        return nxt[0] if nxt else None
+
+    def _last_within(self, ts: list[float], start: float, window: float) -> float | None:
+        hits = [t for t in ts if start - 1e-6 <= t <= start + window]
+        return hits[-1] if hits else None
+
+    # ---- barge-in (CORRECTED): only a VAD_START while the bot is speaking - #
+    def barge_in_analysis(self) -> dict:
+        """Track bot-playing state across the timeline; a ``LOCAL_VAD_START``
+        is a real barge-in ONLY while the bot is actually playing audio.
+
+        ``FIRST_AUDIO_PLAYED`` -> bot_is_speaking=True
+        ``LOCAL_PLAYBACK_STOPPED`` / ``BOT_AUDIO_STOPPED`` / ``TURN_COMPLETE``
+            -> bot_is_speaking=False
+        """
+        stop_ts = self._ts(*self._BOT_STOP_MARKS)
+        botstop_ts = self._ts("BOT_AUDIO_STOPPED")
+        intr_ts = self._ts(*self._INTERRUPTION_MARKS)
+        vad_ts = self._ts("LOCAL_VAD_START")
+
+        # build (t, is_speaking) transitions in time order
+        trans = sorted(
+            [(t, True) for t in self._ts("FIRST_AUDIO_PLAYED")]
+            + [(t, False) for t in stop_ts],
+            key=lambda x: x[0],
+        )
+
+        def speaking_at(t: float) -> bool:
+            s = False
+            for tt, val in trans:
+                if tt <= t + 1e-6:
+                    s = val
+                else:
+                    break
+            return s
+
+        candidates: list[dict] = []
+        for tv in vad_ts:
+            if not speaking_at(tv):
+                continue
+            pstop = self._next(stop_ts, tv)
+            bstop = self._next(botstop_ts, tv)
+            ack = self._last_within(intr_ts, tv, 0.5)
+            candidates.append({
+                "vad_start_t": round(tv, 4),
+                "playback_stop_t": round(pstop, 4) if pstop is not None else None,
+                "bot_audio_stopped_t": round(bstop, 4) if bstop is not None else None,
+                "last_interruption_frame_t": round(ack, 4) if ack is not None else None,
+                "vad_start_to_playback_stop_s": round(pstop - tv, 4) if pstop is not None else None,
+                "vad_start_to_bot_audio_stopped_s": round(bstop - tv, 4) if bstop is not None else None,
+                # negative => local speaker stopped BEFORE this interruption
+                # frame (which, being the later one in the window, is most
+                # likely Gemini's serverContent.interrupted round-trip).
+                "playback_stop_minus_interruption_frame_s": (
+                    round(pstop - ack, 4) if (pstop is not None and ack is not None) else None
+                ),
+            })
+
+        def col(key: str) -> list[float]:
+            return [c[key] for c in candidates if c.get(key) is not None]
+
         return {
-            "eot_to_first_server_content_s": self._pairs("LOCAL_VAD_EOT", "FIRST_SERVER_CONTENT"),
-            "eot_to_first_audio_received_s": self._pairs("LOCAL_VAD_EOT", "FIRST_AUDIO_RECEIVED"),
-            "eot_to_first_audio_played_s": self._pairs("LOCAL_VAD_EOT", "FIRST_AUDIO_PLAYED"),
-            "eot_to_input_transcription_first_s": self._pairs("LOCAL_VAD_EOT", "INPUT_TRANSCRIPTION_FIRST"),
-            "eot_to_input_transcription_flushed_s": self._pairs("LOCAL_VAD_EOT", "INPUT_TRANSCRIPTION_FLUSHED"),
-            "input_transcription_first_to_first_audio_s": self._pairs("INPUT_TRANSCRIPTION_FIRST", "FIRST_AUDIO_RECEIVED"),
-            "input_transcription_flushed_to_first_audio_s": self._pairs("INPUT_TRANSCRIPTION_FLUSHED", "FIRST_AUDIO_RECEIVED"),
-            "vad_start_to_local_playback_stopped_s": self._pairs("LOCAL_VAD_START", "LOCAL_PLAYBACK_STOPPED"),
-            "server_interrupted_to_playback_stopped_s": self._pairs("SERVER_INTERRUPTED", "LOCAL_PLAYBACK_STOPPED"),
-            "reconnect_start_to_ready_s": self._pairs("RECONNECT_START", "RECONNECT_READY"),
+            "barge_in_candidate_count": len(candidates),
+            "barge_in_candidates": candidates,
+            "bargein_vad_start_to_playback_stop_s": col("vad_start_to_playback_stop_s"),
+            "bargein_vad_start_to_playback_stop_median_s": _median(col("vad_start_to_playback_stop_s")),
+            "bargein_vad_start_to_bot_audio_stopped_s": col("vad_start_to_bot_audio_stopped_s"),
+            "bargein_vad_start_to_bot_audio_stopped_median_s": _median(col("vad_start_to_bot_audio_stopped_s")),
+            "local_playback_stop_minus_interruption_frame_s": col("playback_stop_minus_interruption_frame_s"),
+            "local_playback_stop_minus_interruption_frame_median_s": _median(
+                col("playback_stop_minus_interruption_frame_s")
+            ),
+            "_note": (
+                "A LOCAL_VAD_START while the bot was NOT playing is an ordinary "
+                "user turn, not a barge-in, and is excluded. "
+                "local_playback_stop_minus_interruption_frame_s is negative when "
+                "NeXa's local playback authority silenced the speaker BEFORE the "
+                "(later, likely server-round-trip) InterruptionFrame."
+            ),
         }
+
+    def derive(self) -> dict:
+        eot_played = self._pairs("LOCAL_VAD_EOT", "FIRST_AUDIO_PLAYED")
+        eot_recv = self._pairs("LOCAL_VAD_EOT", "FIRST_AUDIO_RECEIVED")
+        d = {
+            "eot_to_first_server_content_s": self._pairs("LOCAL_VAD_EOT", "FIRST_SERVER_CONTENT"),
+            "eot_to_first_audio_received_s": eot_recv,
+            "eot_to_first_audio_received_median_s": _median(eot_recv),
+            "eot_to_first_audio_played_s": eot_played,
+            "eot_to_first_audio_played_median_s": _median(eot_played),
+            # C6 (input transcription vs first audio) — only present if the
+            # spike-only transcription wrappers were installed (a fresh run).
+            "eot_to_input_transcription_raw_first_s": self._pairs("LOCAL_VAD_EOT", "INPUT_TRANSCRIPTION_RAW_FIRST"),
+            "eot_to_input_transcription_pushed_s": self._pairs("LOCAL_VAD_EOT", "INPUT_TRANSCRIPTION_PUSHED"),
+            "input_transcription_pushed_to_first_audio_received_s": self._pairs(
+                "INPUT_TRANSCRIPTION_PUSHED", "FIRST_AUDIO_RECEIVED"
+            ),
+            "input_transcription_pushed_to_first_audio_played_s": self._pairs(
+                "INPUT_TRANSCRIPTION_PUSHED", "FIRST_AUDIO_PLAYED"
+            ),
+            "reconnect_start_to_ready_s": self._pairs("RECONNECT_START", "RECONNECT_READY"),
+            "barge_in": self.barge_in_analysis(),
+            "_removed_invalid_metrics": (
+                "vad_start_to_local_playback_stopped_s and "
+                "server_interrupted_to_playback_stopped_s (pre-2026-09-10): they "
+                "paired EVERY VAD_START with a later playback stop, so ordinary "
+                "user turns (bot silent) produced 8-21 s 'latencies'. Replaced by "
+                "barge_in.* which gates on bot_is_speaking."
+            ),
+        }
+        return d
 
 
 # ---- pipecat imports (deferred so --help works without them) ------------- #
@@ -175,12 +319,13 @@ def _pipecat() -> dict:
     return P
 
 
-def _build(P: dict, tl: Timeline, key: str, *, dry: bool):
+def _build(P: dict, tl: Timeline, key: str, *, dry: bool, voice: str = DEFAULT_VOICE):
     """Construct the probe pipeline. Returns (worker, runner_cls, meta).
 
     ``dry=True`` builds the cloud-side objects (Settings, LLMContext,
     aggregator pair, GeminiLiveLLMService — validates the pipecat/Gemini API
     surface) but opens NO audio device and makes NO network connection.
+    ``voice`` is a Gemini prebuilt voice name (see DEFAULT_VOICE / --voice).
     """
     from nexa.voice.aec import AecReferenceHealth
     from nexa.voice.config import LocalAudioConfig
@@ -193,6 +338,7 @@ def _build(P: dict, tl: Timeline, key: str, *, dry: bool):
 
     meta: dict = {
         "model": MODEL,
+        "voice": voice,
         "in_sample_rate": IN_RATE,
         "out_sample_rate": OUT_RATE,
         "input_chunk_ms_target": INPUT_CHUNK_MS,
@@ -228,6 +374,14 @@ def _build(P: dict, tl: Timeline, key: str, *, dry: bool):
         settings=P["GeminiLiveLLMService"].Settings(
             model=MODEL,
             modalities=P["GeminiModalities"].AUDIO,
+            # Gemini prebuilt voice. Pipecat 1.8.1 exposes this as
+            # `Settings(voice=...)` and, in `_connect()`, maps it to
+            #   generation_config.speech_config.voice_config
+            #       .prebuilt_voice_config.voice_name = <voice>
+            # i.e. exactly Google's speech_config -> voice_config ->
+            # prebuilt_voice_config -> voice_name. Voice is a NeXa USER
+            # PREFERENCE, not part of the model / architecture.
+            voice=voice,
             vad=P["GeminiVADParams"](disabled=True),
             context_window_compression=P["ContextWindowCompressionParams"](enabled=True),
             system_instruction=SPIKE_SYSTEM_INSTRUCTION,
@@ -333,12 +487,19 @@ def _install_llm_diagnostics(llm, tl: Timeline) -> None:
     orig_stopped = llm._handle_user_stopped_speaking
     orig_flush = llm._flush_user_audio_preroll
     orig_send_audio = llm._send_user_audio
+    # C6 instrumentation: Gemini's input transcription is pushed UPSTREAM by
+    # `_push_user_transcription` and CONSUMED by the user aggregator, so it
+    # never reaches a metrics tap. Wrap the source instead.
+    orig_msg_intr = getattr(llm, "_handle_msg_input_transcription", None)
+    orig_push_utr = getattr(llm, "_push_user_transcription", None)
+    _utr = {"raw_since_turn": False}
 
     @functools.wraps(orig_started)
     async def _started(frame):
         ready = bool(getattr(llm, "_ready_for_realtime_input", False))
         has_session = getattr(llm, "_session", None) is not None
         vad_off = bool(getattr(llm, "_vad_disabled", False))
+        _utr["raw_since_turn"] = False  # arm C6 first-chunk mark for this turn
         tl.mark("USER_STARTED_FRAME_AT_GEMINI", ready=ready, session=has_session, vad_disabled=vad_off)
         if vad_off and has_session and ready:
             tl.mark("ACTIVITY_START_SENT")
@@ -383,10 +544,33 @@ def _install_llm_diagnostics(llm, tl: Timeline) -> None:
                 tl.mark("INPUT_AUDIO_TO_GEMINI_FIRST", bytes=n)
         return await orig_send_audio(frame)
 
+    async def _msg_intr(message):
+        # first raw input-transcription chunk of this user turn
+        try:
+            sc = getattr(message, "server_content", None)
+            it = getattr(sc, "input_transcription", None)
+            txt = (getattr(it, "text", "") or "") if it else ""
+        except Exception:  # noqa: BLE001
+            txt = ""
+        if txt and not _utr["raw_since_turn"]:
+            _utr["raw_since_turn"] = True
+            tl.mark("INPUT_TRANSCRIPTION_RAW_FIRST", text_len=len(txt))
+        return await orig_msg_intr(message)
+
+    async def _push_utr(text, result=None):
+        # the aggregated user sentence Pipecat forwards ("final" for this
+        # segment — end-of-sentence or 0.5 s flush)
+        tl.mark("INPUT_TRANSCRIPTION_PUSHED", text_len=len(text or ""))
+        return await orig_push_utr(text, result)
+
     llm._handle_user_started_speaking = _started
     llm._handle_user_stopped_speaking = _stopped
     llm._flush_user_audio_preroll = _flush
     llm._send_user_audio = _send_audio
+    if orig_msg_intr is not None:
+        llm._handle_msg_input_transcription = _msg_intr
+    if orig_push_utr is not None:
+        llm._push_user_transcription = _push_utr
 
 
 async def _state_poller(llm, tl: Timeline, stop: asyncio.Event) -> None:
@@ -538,7 +722,11 @@ def _make_metrics_cls(P: dict):
             elif isinstance(frame, fr["InterruptionFrame"]):
                 tl.mark(f"INTERRUPTION::{self._pos}")
                 if self._pos == "downstream":
-                    tl.mark("SERVER_INTERRUPTED")
+                    # An InterruptionFrame past the LLM service. Could be the
+                    # local aggregator's broadcast_interruption() on user-turn
+                    # -start OR Gemini's serverContent.interrupted round-trip —
+                    # indistinguishable here. Renamed from SERVER_INTERRUPTED.
+                    tl.mark("INTERRUPTION_DOWNSTREAM", bot_responding=bool(getattr(self._llm, "_bot_is_responding", False)))
             elif isinstance(frame, fr["StartFrame"]):
                 tl.mark(f"PIPELINE_START::{self._pos}")
 
@@ -616,6 +804,46 @@ def _write_results(tl: Timeline, meta: dict, note: str) -> Path:
     return path
 
 
+def _recompute(paths: list[str]) -> int:
+    """Re-run derive() over the `timeline` in one or more existing results
+    JSONs (repairs the barge-in metrics from history — no cloud call).
+    Writes `<name>_recomputed_YYYY…json` next to each and prints a summary."""
+    rc = 0
+    for p in paths:
+        src = Path(p)
+        if not src.is_file():
+            print("MISSING:", src)
+            rc = 1
+            continue
+        data = json.loads(src.read_text(encoding="utf-8"))
+        tl = Timeline.from_events(data.get("timeline", []))
+        corrected = tl.derive()
+        out = src.with_name(src.stem + "_recomputed.json")
+        payload = {
+            "recomputed_from": src.name,
+            "recomputed_utc": datetime.now(UTC).isoformat(),
+            "note": (
+                "barge-in metrics recomputed with the bot_is_speaking filter; "
+                "the original vad_start_to_local_playback_stopped_s / "
+                "server_interrupted_to_playback_stopped_s were semantically "
+                "invalid (paired every user turn with a later playback stop)."
+            ),
+            "original_config": data.get("config"),
+            "corrected_derived_latencies_s": corrected,
+        }
+        out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        bi = corrected["barge_in"]
+        print(f"== {src.name} ==")
+        print(f"   EOT->first audible played s : {corrected['eot_to_first_audio_played_s']}  median={corrected['eot_to_first_audio_played_median_s']}")
+        print(f"   barge-in candidates         : {bi['barge_in_candidate_count']}")
+        print(f"   vad_start->playback stop s   : {bi['bargein_vad_start_to_playback_stop_s']}  median={bi['bargein_vad_start_to_playback_stop_median_s']}")
+        print(f"   vad_start->bot audio stop s  : {bi['bargein_vad_start_to_bot_audio_stopped_s']}  median={bi['bargein_vad_start_to_bot_audio_stopped_median_s']}")
+        print(f"   playback stop - intr frame s : {bi['local_playback_stop_minus_interruption_frame_s']}  median={bi['local_playback_stop_minus_interruption_frame_median_s']}")
+        print(f"   C6 input-transcription marks : {'present' if corrected['eot_to_input_transcription_pushed_s'] else 'ABSENT (not instrumented in this run)'}")
+        print(f"   -> {out.name}")
+    return rc
+
+
 async def _run(args) -> int:
     tl = Timeline()
     key = _load_key()
@@ -625,7 +853,7 @@ async def _run(args) -> int:
         print("BLOCKED: NEXA_GEMINI_API_KEY not set and no key in", SECRETS_FILE)
         return 2
 
-    worker, _runner_cls, meta = _build(P, tl, key, dry=args.dry)
+    worker, _runner_cls, meta = _build(P, tl, key, dry=args.dry, voice=args.voice)
 
     print("=" * 74)
     print("M2.6A — Gemini Live hardware probe")
@@ -682,24 +910,39 @@ async def _run(args) -> int:
         await asyncio.wait_for(run_task, timeout=10)
 
     path = _write_results(tl, meta, note=args.note or "operator live session")
-    print("\n" + "=" * 74)
-    print("SESSION ENDED — summary")
-    print("=" * 74)
+    _print_summary(tl, meta)
+    print(f"\nresults JSON: {path}")
+    print("This probe does NOT judge audio quality — that is the operator's call.")
+    return 0
+
+
+def _print_summary(tl: Timeline, meta: dict) -> None:
     d = tl.derive()
-    for k, v in d.items():
-        if v:
-            print(f"  {k:44} {v}")
     c = tl.counters
-    print(f"  mic audio presented (s)                      {c.get('mic_audio_ms_presented', 0) / 1000:.1f}")
-    print(f"  mic audio while LLM NOT ready (s) [#5465]     {c.get('mic_audio_ms_while_not_ready', 0) / 1000:.2f}   windows={c.get('not_ready_window_count', 0)}")
+    print("\n" + "=" * 74)
+    print("SESSION SUMMARY")
+    print("=" * 74)
+    print(f"  voice                                         {meta.get('voice', '?')}")
+    print(f"  EOT -> first audible (played)  s               {d['eot_to_first_audio_played_s']}")
+    print(f"      median                                    {d['eot_to_first_audio_played_median_s']}")
+    print(f"  EOT -> first audio received    s               {d['eot_to_first_audio_received_s']}")
+    print(f"      median                                    {d['eot_to_first_audio_received_median_s']}")
+    bi = d["barge_in"]
+    print(f"  barge-in candidates (VAD start while bot playing): {bi['barge_in_candidate_count']}")
+    print(f"      vad_start -> playback stop   s             {bi['bargein_vad_start_to_playback_stop_s']}  median={bi['bargein_vad_start_to_playback_stop_median_s']}")
+    print(f"      vad_start -> bot audio stop  s             {bi['bargein_vad_start_to_bot_audio_stopped_s']}  median={bi['bargein_vad_start_to_bot_audio_stopped_median_s']}")
+    print(f"      playback stop - interruption frame  s      {bi['local_playback_stop_minus_interruption_frame_s']}  median={bi['local_playback_stop_minus_interruption_frame_median_s']}")
+    print("      (negative => local speaker silenced BEFORE the interruption frame)")
+    print(f"  C6  EOT -> input transcription (raw first)  s  {d['eot_to_input_transcription_raw_first_s'] or 'NOT INSTRUMENTED IN THIS RUN'}")
+    print(f"  C6  EOT -> input transcription (pushed)     s  {d['eot_to_input_transcription_pushed_s'] or 'NOT INSTRUMENTED IN THIS RUN'}")
+    print(f"  C6  transcription pushed -> first audio recv s {d['input_transcription_pushed_to_first_audio_received_s'] or '(no data)'}")
+    print(f"  mic audio presented (s)                       {c.get('mic_audio_ms_presented', 0) / 1000:.1f}")
+    print(f"  mic audio while LLM NOT ready (s) [#5465]      {c.get('mic_audio_ms_while_not_ready', 0) / 1000:.2f}   windows={c.get('not_ready_window_count', 0)}")
     print(f"  cloud audio received (s)                      {c.get('cloud_audio_ms_received', 0) / 1000:.1f}")
     print(f"  observed mic input chunk (bytes)             {c.get('mic_chunk_bytes_sample', '?')}")
     ah = meta.get("_aec_health")
     if ah is not None:
         print(f"  AEC ref: ever_started={ah.ever_started} active_at_end={ah.active} failures={ah.failure_count}")
-    print(f"\nresults JSON: {path}")
-    print("This probe does NOT judge audio quality — that is the operator's call.")
-    return 0
 
 
 async def _lifecycle_smoke() -> int:
@@ -766,9 +1009,21 @@ def main() -> int:
         help="ONE no-microphone authenticated check that the LLMRunFrame kickoff makes "
         "GeminiLiveLLMService reach realtime-ready (proves the R0031 fix; near-zero tokens)",
     )
+    ap.add_argument(
+        "--recompute", nargs="+", metavar="RESULTS_JSON", default=None,
+        help="re-derive metrics (incl. the corrected barge-in analysis) from existing "
+        "results JSON timeline(s). No cloud call.",
+    )
+    ap.add_argument(
+        "--voice", default=DEFAULT_VOICE,
+        help=f"Gemini prebuilt voice name (default {DEFAULT_VOICE!r}, 'Warm'; "
+        f"alternatives, not auto-tested: {', '.join(VOICE_ALTERNATIVES)})",
+    )
     ap.add_argument("--note", default="", help="free-text note stored in the results JSON")
     args = ap.parse_args()
     try:
+        if args.recompute:
+            return _recompute(args.recompute)
         if args.lifecycle_smoke:
             return asyncio.run(_lifecycle_smoke())
         return asyncio.run(_run(args))
