@@ -410,11 +410,12 @@ or lost in the canonical transcript afterward.
 
 ## COMMIT HASH
 
-(recorded in a follow-up commit once made — see the session's final
-message for the TEST-READY commit hash.)
+TEST-READY commit: `6977fcb` — "feat(m2.6b.3): reconnect wiring + HYBRID
+cloud audio/barge-in (R0035, TEST-READY)". Not pushed.
 
 ## GIT STATUS
 
 Not pushed (per the standing constraint for this entire M2.6 body of
-work). Working tree at the time of this report: the files listed under
-FILES CHANGED, uncommitted until the TEST-READY commit below.
+work). All files listed under FILES CHANGED are committed at `6977fcb`.
+A further acceptance commit follows real operator evidence (Phase 7),
+once available.
