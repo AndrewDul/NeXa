@@ -53,25 +53,50 @@ class TestNoCloudDependencyOnImport(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Sulafat", result.stdout)
 
-    def test_local_only_path_never_needs_the_gemini_service_module(self) -> None:
-        """``GeminiLiveProvider`` (``nexa.realtime.gemini.service``) is
-        M2.6B.2 — it does not exist yet, so a ``LOCAL_ONLY`` install cannot
-        possibly import it. This test also pins that boundary: once M2.6B.2
-        lands, a LOCAL_ONLY policy path must still never import it."""
+    def test_local_only_router_never_imports_the_gemini_service_module(self) -> None:
+        """``GeminiLiveProvider`` (``nexa.realtime.gemini.service``, M2.6B.2)
+        is constructed only via an injected factory — ``ConversationRouter``
+        itself has no import of it, so a ``LOCAL_ONLY`` policy path
+        (which never even calls the factory) can never reach it."""
         result = _run(
-            "import importlib\n"
-            "import nexa.realtime\n"
+            "import sys\n"
             "from nexa.realtime.policy import ConversationPolicy, conversation_policy_from_env\n"
+            "from nexa.realtime.router import ConversationRouter\n"
+            "from nexa.conversation.session import ConversationSession\n"
+            "from nexa.providers.base import ModelProvider, ProviderDescription\n"
+            "\n"
+            "class _NoopProvider(ModelProvider):\n"
+            "    def describe(self):\n"
+            "        return ProviderDescription(provider_name='noop', model='noop')\n"
+            "    async def generate(self, messages, options, *, cancel_token=None):\n"
+            "        return\n"
+            "        yield\n"
+            "\n"
             "assert conversation_policy_from_env() == ConversationPolicy.LOCAL_ONLY\n"
-            "try:\n"
-            "    importlib.import_module('nexa.realtime.gemini.service')\n"
-            "except ModuleNotFoundError:\n"
-            "    print('NOT_YET_IMPLEMENTED')\n"
-            "else:\n"
-            "    raise AssertionError('nexa.realtime.gemini.service should not exist in M2.6B.1')\n"
+            "session = ConversationSession(provider=_NoopProvider(), system_prompt='p')\n"
+            "router = ConversationRouter(session)  # no cloud_provider_factory given\n"
+            "assert 'nexa.realtime.gemini' not in sys.modules\n"
+            "assert 'nexa.realtime.gemini.service' not in sys.modules\n"
+            "assert 'google.genai' not in sys.modules\n"
+            "print('OK')\n"
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("NOT_YET_IMPLEMENTED", result.stdout)
+        self.assertIn("OK", result.stdout)
+
+    def test_importing_gemini_service_module_alone_does_not_import_google_genai(self) -> None:
+        """``nexa.realtime.gemini.service`` defers every Pipecat/Gemini
+        import to inside ``GeminiLiveProvider.start()`` — importing the
+        module itself must not require the optional ``cloud-gemini``
+        extra."""
+        result = _run(
+            "import sys\n"
+            "import nexa.realtime.gemini.service\n"
+            "assert 'google.genai' not in sys.modules, sys.modules.keys()\n"
+            "assert 'pipecat' not in sys.modules, sys.modules.keys()\n"
+            "print('OK')\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("OK", result.stdout)
 
     def test_bare_nexa_import_does_not_import_realtime(self) -> None:
         result = _run(

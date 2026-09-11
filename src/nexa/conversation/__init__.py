@@ -23,13 +23,14 @@ from .response_language import (
     detect_language_request,
 )
 from .response_mode import ResponseMode, voice_response_directive
-from .session import ConversationSession, InterruptedTurnOutcome
+from .session import ConversationSession, ExternalExchangeOutcome, InterruptedTurnOutcome
 from .streaming import StreamingResponse
 from .turn import ConversationTurn, Role
 
 __all__ = [
     "ConversationContext",
     "ConversationSession",
+    "ExternalExchangeOutcome",
     "InterruptedTurnOutcome",
     "ProviderWindow",
     "DEFAULT_PROVIDER_WINDOW_KEEP",

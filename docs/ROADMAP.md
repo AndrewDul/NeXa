@@ -184,9 +184,41 @@ unpaid-quota data is used to improve Google products.
     see `docs/research/m2_6_cloud_realtime_voice/m2_6b_gemini_startup_sequencing_source_audit_20260911.md`.
     +73 tests (812 total, 0 regressions); zero existing `src/nexa/**` file
     modified; no `pyproject.toml` change; no cloud call.
-  - **M2.6B.2 (next)** — `GeminiLiveProvider` + canonical cloud-turn
-    integration (`ConversationSession.record_external_exchange` +
-    `ConversationRouter`). NOT STARTED.
+  - **M2.6B.2 — `GeminiLiveProvider` + canonical cloud-turn integration:
+    IMPLEMENTED** (`R0033`, 2026-09-11). `src/nexa/realtime/turn.py`
+    (`CloudTurnAccumulator` — one logical cloud turn -> at most one
+    canonical commit, NeXa-local `generation` id); `turn_framing.py`
+    (`UtteranceFramer` — preserves the activity-start/audio/activity-end
+    envelope through a NOT_READY window); `router.py`
+    (`ConversationRouter` — owns policy/active_provider/provider
+    lifecycle/snapshot creation/cloud-turn commits/failure fallback;
+    `LOCAL_ONLY` never calls the injected cloud-provider factory);
+    `gemini/service.py` (`GeminiLiveProvider` — production
+    `RealtimeVoiceProvider`, built exactly per the R0032 source-audit
+    sequencing: construction-time `system_instruction`, initial
+    `LLMContext` from `snapshot.recent_turns`, one `LLMRunFrame` kickoff,
+    Pipecat's own one-time `clientContent` seed, `UtteranceFramer` wired
+    into the turn-I/O methods). **Proven against the REAL Pipecat 1.8.1
+    pipeline/worker/aggregator machinery** (fake terminal service only —
+    no cloud call); found and fixed a real bug this way
+    (`WorkerRunner.add_workers()` needs `asyncio.create_task(runner.run())`
+    launched alongside it). Additive
+    `ConversationSession.record_external_exchange` (NORMAL / USER-ONLY /
+    INTERRUPTED / NO-SPOKEN-ASSISTANT / invalid cases tested;
+    `send()`/`commit_interrupted_turn()` unchanged). `pyproject.toml`:
+    `cloud-gemini` optional extra added
+    (`google-genai>=2.22,<3` + `websockets>=15,<17`; core deps unchanged,
+    `pip install .` stays Google-free). +57 tests (870 total, 0
+    regressions); zero non-additive `src/nexa/**` change. **Known gap:**
+    `ReconnectController` not yet driven by `GeminiLiveProvider` on a real
+    connection error — no live reconnect wiring yet; the stale-context-
+    vs-fresh-snapshot design question from R0032 remains open.
+  - **M2.6B.3 (next)** — wire `ReconnectController` into
+    `GeminiLiveProvider` for a real connection-error path; HYBRID cloud
+    audio wiring (tee to `AecReferenceFeeder`, keep Silero +
+    `BargeInController` as authority); real LOCAL↔CLOUD spoken switch;
+    minimum real-hardware operator acceptance (required before M2.6B
+    COMPLETE). NOT STARTED.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

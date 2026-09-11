@@ -29,6 +29,19 @@ dev = [
   "pytest>=8",
   "ruff>=0.6",
 ]
+# ADR-0004 Decision L (M2.6B.2): GeminiLiveProvider (`nexa.realtime.gemini.
+# service`) needs `google-genai` at runtime — Pipecat 1.8.1's own
+# `gemini_live/llm.py` imports it directly. Kept OPTIONAL so `pip install .`
+# (no extra) stays Google-cloud-free for LOCAL_ONLY / local-first installs;
+# `nexa.realtime.gemini.service` defers every Pipecat/Gemini import to
+# inside `GeminiLiveProvider.start()`, so importing the module itself never
+# requires this extra. `websockets` is pinned to the range `google-genai`
+# 2.22.0 resolved to in the M2.6A/M2.6B research venv (R0030/R0031),
+# within Pipecat's own `websockets>=13.1` constraint.
+cloud-gemini = [
+  "google-genai>=2.22,<3",
+  "websockets>=15,<17",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nexa"]

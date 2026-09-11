@@ -49,6 +49,21 @@ class InterruptedTurnOutcome(StrEnum):
     NOTHING_TO_COMMIT = "nothing_to_commit"
 
 
+class ExternalExchangeOutcome(StrEnum):
+    """What ``record_external_exchange`` did to history (ADR-0004 Decision
+    A / M2.6B.2 — the canonical cloud-turn write path)."""
+
+    #: both a user turn and a (possibly interrupted) assistant turn were
+    #: appended.
+    COMMITTED_EXCHANGE = "committed_exchange"
+    #: only the user turn was appended — the provider/session was lost, or
+    #: the reply was interrupted before any audio played. Unlike the local
+    #: pre-generation rollback case (``ROLLED_BACK_USER_TURN``), the user
+    #: turn is *kept*: an external provider actually heard and processed
+    #: it.
+    COMMITTED_USER_ONLY = "committed_user_only"
+
+
 @dataclass
 class ConversationSession:
     provider: ModelProvider
@@ -263,3 +278,65 @@ class ConversationSession:
         )
         self._response_languages.append(None)
         return InterruptedTurnOutcome.COMMITTED_SPOKEN_PREFIX
+
+    def record_external_exchange(
+        self,
+        user_text: str,
+        assistant_text: str | None = None,
+        *,
+        interrupted: bool = False,
+        response_language: str | None = None,
+    ) -> ExternalExchangeOutcome:
+        """M2.6B.2 (ADR-0004 Decision A) — commit ONE cloud-provider turn.
+
+        This is the canonical write path for a *realtime cloud voice
+        provider* turn (``RealtimeVoiceProvider``, ``nexa.realtime``): NeXa
+        never calls ``provider.generate()`` for a cloud turn (a cloud
+        provider is speech-to-speech, not a text stream), so the turn
+        cannot go through ``send()``. It still lands in exactly the same
+        canonical ``_history`` / ``_response_languages``, index-aligned the
+        same way.
+
+        ``user_text`` must be non-blank — a cloud "turn" with no user
+        utterance at all is a caller bug (the accumulator that calls this,
+        ``nexa.realtime.turn.CloudTurnAccumulator``, never produces one),
+        not a valid commit: raises ``ValueError`` rather than silently
+        appending nothing or corrupting alignment.
+
+        ``assistant_text`` blank or ``None`` means no assistant turn is
+        appended at all — never an empty one. This covers both "the
+        provider/session was lost before the assistant said anything" and
+        "the reply was interrupted before any audio played"; either way
+        the user turn is *kept*, unlike the local pre-generation
+        ``ROLLED_BACK_USER_TURN`` case, because an external provider did
+        hear and process it (ADR-0004 Decision A).
+
+        ``interrupted=True`` with a non-blank ``assistant_text`` commits
+        exactly that text as the assistant turn, marked interrupted (same
+        ``INTERRUPTED_WIRE_SUFFIX`` convention as ``commit_interrupted_turn``)
+        — the caller supplies the actually-spoken prefix, never the full
+        (possibly longer) generated/transcribed text.
+
+        Never calls into any provider and never inspects
+        ``response_mode``/``provider_window`` — this method only appends to
+        the canonical transcript; it is not part of the provider-facing
+        rendering path.
+        """
+        stripped_user = user_text.strip()
+        if not stripped_user:
+            raise ValueError("record_external_exchange requires a non-blank user_text")
+
+        self._history.append(ConversationTurn(role=Role.USER, content=stripped_user))
+        self._response_languages.append(response_language)
+
+        stripped_assistant = (assistant_text or "").strip()
+        if not stripped_assistant:
+            return ExternalExchangeOutcome.COMMITTED_USER_ONLY
+
+        self._history.append(
+            ConversationTurn(
+                role=Role.ASSISTANT, content=stripped_assistant, interrupted=interrupted
+            )
+        )
+        self._response_languages.append(None)
+        return ExternalExchangeOutcome.COMMITTED_EXCHANGE

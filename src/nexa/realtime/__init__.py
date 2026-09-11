@@ -7,13 +7,19 @@ here) imports a cloud SDK: a concrete provider implementation (e.g.
 imported when that provider is actually selected, so a ``LOCAL_ONLY`` /
 local-first install never pulls in Google cloud code (ADR-0004 Decision L).
 
-M2.6B.1 ships the provider-agnostic foundation only: the
+M2.6B.1 shipped the provider-agnostic foundation: the
 ``RealtimeVoiceProvider`` boundary, ``ConversationPolicy`` /
 ``ProviderEligibilityPolicy``, ``CloudContextSnapshot``, the NeXa-owned
 inbound audio buffer (Pipecat #5465 protection), usage telemetry types, and
-a deterministic ``ReconnectController``. ``GeminiLiveProvider``,
-``ConversationRouter``, and the canonical cloud write-path
-(``ConversationSession.record_external_exchange``) are M2.6B.2+.
+a deterministic ``ReconnectController``. M2.6B.2 adds the canonical
+cloud-turn write path: ``CloudTurnAccumulator`` (one logical cloud turn ->
+at most one canonical commit), ``UtteranceFramer`` (preserves the
+activity-start/audio/activity-end envelope through a NOT_READY window),
+``ConversationRouter`` (owns policy / active_provider / the cloud-turn
+commits), and ``ConversationSession.record_external_exchange`` (additive,
+in ``nexa.conversation``). ``nexa.realtime.gemini.service.GeminiLiveProvider``
+is the first concrete ``RealtimeVoiceProvider`` (needs the optional
+``cloud-gemini`` dependency extra at *use* time, not at import time).
 """
 
 from __future__ import annotations
@@ -58,6 +64,7 @@ from .reconnect import (
     ReconnectTrigger,
     SessionResumptionHandle,
 )
+from .router import ConversationRouter, ProviderSwitchNotice
 from .snapshot import (
     CLOUD_ROLE_CARD,
     DEFAULT_SNAPSHOT_CHAR_BUDGET,
@@ -66,6 +73,8 @@ from .snapshot import (
     SnapshotTurn,
     build_cloud_context_snapshot,
 )
+from .turn import CloudTurn, CloudTurnAccumulator, CloudTurnState
+from .turn_framing import EnvelopeEvent, EnvelopeEventKind, UtteranceFramer
 from .usage import ProviderUsageEvent, SessionUsageAggregate, UsagePriceTable
 
 __all__ = [
@@ -116,4 +125,13 @@ __all__ = [
     "SessionResumptionHandle",
     "DEFAULT_PROACTIVE_RECONNECT_AGE_S",
     "DEFAULT_MAX_RECONNECT_ATTEMPTS",
+    # canonical cloud-turn write path (M2.6B.2)
+    "CloudTurnAccumulator",
+    "CloudTurn",
+    "CloudTurnState",
+    "UtteranceFramer",
+    "EnvelopeEvent",
+    "EnvelopeEventKind",
+    "ConversationRouter",
+    "ProviderSwitchNotice",
 ]
