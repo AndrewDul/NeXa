@@ -518,6 +518,53 @@ unpaid-quota data is used to improve Google products.
     other two fixes (VAD bridge lifecycle, playback-generation guard)
     are unaffected and remain ready for a hardware retest independent of
     this open language question.
+  - **M2.6B.4B — real lightweight PL/EN LID candidate benchmark: RESEARCH
+    ONLY** (`R0040`, 2026-09-11). R0039 proved `base/q8_0` too slow but only
+    *surveyed* lighter candidates without benchmarking a real one. This
+    checkpoint downloaded the three REAL multilingual whisper.cpp `tiny`
+    variants (`ggml-tiny.bin`/`ggml-tiny-q8_0.bin`/`ggml-tiny-q5_1.bin`,
+    verified from the official `download-ggml-model.sh` source, MIT-
+    licensed, SHA256-verified against HuggingFace's own `x-linked-etag`)
+    into an isolated research cache (production `base/q8_0` untouched),
+    and extended R0039's own benchmark script (same whisper.cpp v1.9.3/
+    ctypes binding, no new framework) with `--model-path`/`--model-label`,
+    the full 50-item M2.4B corpus accuracy sweep, a 2-pair
+    0.5/1.0/1.5/2.0s/full truncation sweep, and an EOT-visible-latency
+    simulation (background LID launched on the first 1.5s of buffered
+    speech while the utterance continues — the metric the charter called
+    potentially more important than raw inference time). A real
+    measurement bug in that simulation (captured the LID task's "done"
+    timestamp only after the full simulated sleep, falsely inflating every
+    model to ~2005ms) was found and fixed before trusting any number.
+    Result: all four models tie at 100% (30/30) on the main corpus; the
+    ONE discriminating real fixture (`pl_co_to_są_kolory.wav`) is
+    misclassified by `tiny` (full — wrong even at the FULL utterance) and
+    by `tiny-q8_0` (wrong at exactly the 1.5s decision point a
+    background-LID design would use, despite being fastest at ~511ms
+    warm); only `tiny-q5_1` matches `base/q8_0`'s accuracy exactly (4/4
+    cross-check, correct at 1.5s). Corrected EOT-visible-latency: **all
+    four models show 0.0ms visible latency on every 3.5s cross-check
+    case** — LID cost is fully hidden by background execution on
+    utterances this long, making accuracy (not speed) the actual
+    discriminator. **DECISION GATE: B — TINY-Q5_1 ACCEPTED** — not for
+    raw speed (only ~13-20% faster than the rejected `base/q8_0`
+    baseline) but for a genuine footprint win at equal accuracy (30.7 MiB
+    vs 78.0 MiB disk, -61%; 133.3 MiB vs 203.6 MiB peak RSS, -35%),
+    directly validating the charter's "do not assume smaller quantization
+    is automatically better" caution (the smaller, slower `tiny-q5_1`
+    beats the larger, faster `tiny-q8_0` on accuracy). **Explicit
+    unresolved caveat**: the repo's own 10 `short` corpus fixtures (real
+    recordings, all 1.344–1.728s long) end at or before a 1.5s-start
+    background LID would even begin, so the 0ms-hidden-latency result
+    does NOT extend to short utterances — an open design question left
+    for R0041. Recommended (NOT implemented) an R0041 design sketch
+    reusing R0038's `_VadToProviderBridge`/`_PendingUtteranceAudio`
+    buffering and `recover_from_mid_turn_loss` provider-replacement
+    machinery verbatim. Zero `src/nexa/**` change this checkpoint; full
+    suite unchanged at **923 tests, OK (skipped=7)**;
+    `ruff`/`pip check`/`git diff --check` all clean. **`M2.6B` remains IN
+    PROGRESS; the language-mirroring gap remains open — now with an
+    accepted lighter LID model but no R0041 implementation yet.**
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

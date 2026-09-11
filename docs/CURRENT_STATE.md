@@ -47,8 +47,11 @@ Runtime / test evidence outranks anything else in this repo.
   M2.6B.2A/M2.6B.3/M2.6B.3A/M2.6B.3B/M2.6B.4 IMPLEMENTED (first real
   hardware/Gemini operator run: ATTEMPT #1 FAILED, three regressions
   found; two fixed and retest-ready, the language-mirroring one only
-  diagnosed — M2.6B.4A research (below) found the obvious fix too slow
-  and paused pending a lighter LID)]**.
+  diagnosed — M2.6B.4A research found the obvious fix too slow and paused
+  pending a lighter LID; M2.6B.4B (below) benchmarked three real
+  multilingual whisper.cpp tiny variants and ACCEPTED tiny-q5_1 as the
+  lighter LID model, footprint win at equal accuracy — R0041 design/impl
+  not yet started)]**.
   Original Accepted content:
   **Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
   Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
@@ -106,7 +109,54 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0039_m2_6b_4a_strict_language_authority_research_20260911.md`
+- **Latest report:** `docs/reports/R0040_m2_6b_4b_lightweight_lid_benchmark_20260911.md`
+  (**M2.6B.4B — real lightweight PL/EN LID candidate benchmark — RESEARCH
+  ONLY, 2026-09-11.** R0039 proved `base/q8_0` too slow for per-turn gating
+  but only *surveyed* lighter candidates without benchmarking a real one.
+  This checkpoint downloaded and benchmarked the three REAL multilingual
+  whisper.cpp `tiny` variants (`ggml-tiny.bin`/`ggml-tiny-q8_0.bin`/
+  `ggml-tiny-q5_1.bin`, MIT-licensed, from `huggingface.co/ggerganov/whisper.cpp`,
+  SHA256-verified downloads) against the SAME whisper.cpp v1.9.3/ctypes
+  binding NeXa already uses, into an isolated research cache
+  (`~/.local/share/nexa/research/lid/`, production `base/q8_0` untouched),
+  extending (not replacing) R0039's own benchmark script with
+  `--model-path`/`--model-label`, the full 50-item M2.4B corpus accuracy
+  sweep, a 2-pair 0.5/1.0/1.5/2.0s/full truncation sweep, and an
+  EOT-visible-latency simulation (background LID launched on the first
+  1.5s of buffered speech while the utterance continues) — the metric the
+  charter called potentially more important than raw inference time. All
+  four models tie at 100% (30/30) on the main corpus; the ONE discriminating
+  real fixture (`pl_co_to_są_kolory.wav`, "Co to są kolory?") is
+  misclassified by `tiny` (full, wrong even at the FULL utterance) and by
+  `tiny-q8_0` (wrong at exactly the 1.5s decision point a background-LID
+  design would use, despite being the fastest candidate at ~511ms warm) —
+  only `tiny-q5_1` matches `base/q8_0`'s accuracy exactly (4/4 cross-check,
+  correct at 1.5s). A real EOT-visible-latency measurement bug (captured
+  the LID task's "done" timestamp only after the full simulated sleep,
+  falsely inflating every model to ~2005ms) was found and fixed before any
+  number was trusted; corrected result: **all four models show 0.0ms
+  EOT-visible latency on every 3.5s cross-check case** — LID cost is fully
+  hidden by background execution on utterances this long, making accuracy
+  (not speed) the actual discriminator. **DECISION GATE: B — TINY-Q5_1
+  ACCEPTED** — not for raw speed (only ~13-20% faster than the rejected
+  `base/q8_0` baseline, still nominally "too slow" alone) but for a genuine
+  footprint win at equal accuracy (30.7 MiB vs 78.0 MiB disk, -61%; 133.3
+  MiB vs 203.6 MiB peak RSS, -35%) — directly validating the charter's own
+  "do not assume smaller quantization is automatically better" caution,
+  since `tiny-q5_1` (smaller, slower) beats `tiny-q8_0` (larger, faster) on
+  accuracy. **Explicit unresolved caveat**: the repo's own 10 `short`
+  corpus fixtures (real recordings, all 1.344-1.728s — "tak"/"nie"/"okay"
+  etc.) end at or before a 1.5s-start background LID would even begin, so
+  the 0ms-hidden-latency result does NOT extend to short utterances — left
+  as an open design question for R0041, not resolved here. Recommended
+  (NOT implemented) an R0041 design sketch reusing R0038's
+  `_VadToProviderBridge`/`_PendingUtteranceAudio` buffering and
+  `recover_from_mid_turn_loss` provider-replacement machinery verbatim.
+  Zero `src/nexa/**` change this checkpoint; full suite unchanged at 923
+  tests, OK (skipped=7). **`M2.6B` remains IN PROGRESS; the
+  language-mirroring gap remains open, now with an accepted lighter LID
+  model but no implementation yet.** Not pushed.)
+- **Prior report:** `docs/reports/R0039_m2_6b_4a_strict_language_authority_research_20260911.md`
   (**M2.6B.4A — strict same-turn PL/EN language authority — RESEARCH
   ONLY, 2026-09-11.** R0038 diagnosed but did not fix the language-
   mirroring failure. This checkpoint benchmarked
