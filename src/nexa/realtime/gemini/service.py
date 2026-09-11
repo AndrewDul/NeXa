@@ -42,6 +42,27 @@ can never seed the new session. The old instance's still-undelivered
 buffered audio (if any) is retrievable via ``take_pending_audio()`` before
 it is discarded, so nothing already captured is silently lost across the
 hand-off (M2.6B.2A hardening — see the turn-I/O methods below).
+
+M2.6B.4E (R0043) — real Attempt #2 hardware evidence found that a
+non-lexical interrupting sound (a throat-clear/cough) can confirm a
+local barge-in and close a real local VAD turn WITHOUT Gemini ever
+producing a ``UserTranscriptionEvent`` for it. The runtime's dispatch
+gate (``GeminiVoiceRuntime._consume_provider_events``) previously relied
+solely on a fresh final ``UserTranscriptionEvent`` to know "a genuinely
+new local turn has started, the next Assistant event may get a fresh
+generation id" — with no transcript ever arriving, that gate stayed
+permanently closed, and ALL future assistant audio (for every later
+turn, regardless of language) was silently dropped as
+belonging-to-an-invalidated-generation, while assistant TEXT kept
+flowing normally (text commit does not go through the generation guard
+at all). ``user_turn_end()`` now increments ``local_turn_closed_seq`` —
+a NeXa/Gemini-independent, always-fires-once-per-local-VAD-turn
+counter — which the runtime uses as a fallback re-arm signal alongside
+the existing final-transcription one. See
+``docs/reports/R0043_m2_6b_4e_attempt2_post_interruption_audio_loss_20260911.md``
+for the full source audit and the residual-risk discussion (a bounded,
+disclosed chance of one stray trailing-audio chunk at an interruption
+boundary, versus the confirmed alternative of permanent silence).
 """
 
 from __future__ import annotations
@@ -246,6 +267,18 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
         #: READY again. Never bypassed: ``send_user_audio`` etc. always
         #: check ``readiness`` first.
         self._framer = UtteranceFramer()
+        #: M2.6B.4E (R0043) — a NeXa-owned, Gemini-independent counter:
+        #: incremented once per ``user_turn_end()`` call, i.e. once per
+        #: local VAD-detected utterance closing, REGARDLESS of whether
+        #: Gemini ever transcribes it. A non-lexical sound (a throat-
+        #: clear/cough) closes a real local turn with NO
+        #: ``UserTranscriptionEvent`` at all — this counter is the one
+        #: signal the runtime consumer loop can rely on to know "at least
+        #: one more local turn has genuinely closed" without depending on
+        #: Gemini producing a transcript for it. See
+        #: ``GeminiVoiceRuntime._consume_provider_events``'s own use of
+        #: this for the exact failure this closes.
+        self._local_turn_closed_seq = 0
 
     def capabilities(self) -> RealtimeProviderCapabilities:
         return RealtimeProviderCapabilities(
@@ -523,6 +556,12 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
         self._framer.capture_audio(pcm)
 
     async def user_turn_end(self) -> None:
+        # M2.6B.4E (R0043) -- unconditional: a local VAD turn has closed
+        # regardless of readiness/liveness/transcription outcome. This is
+        # what the runtime consumer loop uses to re-arm response dispatch
+        # after an interruption whose own local turn never produced a
+        # UserTranscriptionEvent (see class docstring above).
+        self._local_turn_closed_seq += 1
         self._turn_open = False
         was_live = self._live_turn_open
         self._live_turn_open = False
@@ -534,6 +573,12 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
         # utterance (it was captured/aborted into the framer above) —
         # close whatever is open there. A no-op if nothing is open.
         self._framer.user_turn_end()
+
+    @property
+    def local_turn_closed_seq(self) -> int:
+        """M2.6B.4E (R0043) -- monotonic count of ``user_turn_end()``
+        calls, independent of Gemini transcription. See ``__init__``."""
+        return self._local_turn_closed_seq
 
     def take_pending_audio(self) -> list[bytes]:
         """Extract any user audio buffered but not yet delivered — e.g.

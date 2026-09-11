@@ -662,6 +662,73 @@ unpaid-quota data is used to improve Google products.
     PASS; `M2.6B` NOT marked COMPLETE** — both still contingent on a
     clean operator Attempt #2, which now runs with zero background
     whisper.cpp CPU load competing with Pipecat/audio/AEC/VAD.
+  - **M2.6B.4E — Attempt #2 post-interruption audio-loss failure: root
+    cause CONFIRMED + fixed** (`R0043`, 2026-09-11). The REAL Attempt #2
+    hardware run happened. PASS: `CLOUD_PROVIDER_READY`/`AEC_REF_ACTIVE`
+    reached, no VAD-bridge crash, first response audible, **native
+    PL/EN mirroring confirmed working live** (PL->PL, EN->EN, PL->PL) —
+    R0041/R0042 both hold; R0039/R0040 stay fallback research only, not
+    reopened. FAIL: mid-first-reply the operator cleared his throat; this
+    non-lexical sound confirmed a real local barge-in (VAD/barge-in
+    correctly did its job) and printed FOUR `✂ cloud interruption
+    acknowledged` lines; assistant TEXT kept flowing correctly afterward
+    but no further assistant AUDIO was ever audible again. Source-audited
+    (not guessed): installed Pipecat 1.8.1's
+    `FrameProcessor.broadcast_interruption()` fans out TWO
+    `InterruptionFrame` instances per call, and BOTH our own
+    `provider.cancel()` AND Gemini's OWN independent
+    `serverContent.interrupted` server-side ack (`gemini_live/llm.py:
+    1332-1333`) each trigger one such broadcast — 2+2=4
+    `ProviderInterruptionEvent`s from ONE local confirmation is confirmed
+    NORMAL Pipecat/Gemini behaviour, not a NeXa bug (local side already
+    idempotent, proven by test). **Confirmed root cause**:
+    `GeminiVoiceRuntime._consume_provider_events`'s dispatch-rearm gate
+    (`dispatched_for_turn`) depended solely on a fresh, final
+    `UserTranscriptionEvent` — a non-lexical sound can confirm a real
+    local barge-in and close a real local VAD turn while Gemini produces
+    ZERO transcription events for it; with none ever arriving, the gate
+    stayed shut, `start_new_generation()` was never called again, and
+    every subsequent assistant-audio chunk (for as long as no turn
+    produces a final transcript) was silently dropped as
+    belonging-to-an-invalidated-generation, while text (bypassing the
+    generation guard entirely) kept flowing — exactly the live symptom.
+    Investigated Pipecat's own output-transport interruption handling and
+    found it correctly cancels+recreates its audio task/queue
+    unconditionally and is invoked only once per confirmed interruption
+    in this topology — ruled OUT as a contributing cause. **Fix**:
+    `GeminiLiveProvider` gained `local_turn_closed_seq` (a
+    NeXa/Gemini-independent counter incremented once per
+    `user_turn_end()` regardless of transcription outcome); the consumer
+    loop now ALSO re-arms dispatch once this counter advances past the
+    value recorded when the now-invalidated generation was dispatched --
+    proof, from local VAD alone, that at least one more turn has
+    genuinely closed even if Gemini never transcribed it. The original
+    final-transcription reset is kept unchanged as the (faster) primary
+    path -- a strict, backward-compatible addition (all 75 pre-existing
+    tests in the module pass unchanged). Honestly disclosed a bounded
+    residual risk (Gemini's event ordering is not guaranteed, so a single
+    stray trailing chunk could in principle be misclassified as a fresh
+    generation at an interruption boundary -- at most one brief artifact,
+    never accumulating, vastly preferable to the confirmed alternative of
+    permanent silence). Added lightweight diagnostics
+    (`LOCAL_BARGEIN_CONFIRMED`/`PROVIDER_INTERRUPTION_ACK`/
+    `GENERATION_INVALIDATED`/`ASSISTANT_RESPONSE_DISPATCH`/
+    `ASSISTANT_AUDIO_RECEIVED`/`_DROPPED`/`_HW_QUEUED`/`BOT_STARTED`/
+    `BOT_STOPPED`/`OUTPUT_INTERRUPTION_BROADCAST`). **+7 new
+    deterministic tests** (the core no-transcript reproduction+fix --
+    verified to FAIL without the fix and PASS with it restored, both
+    checked in this session; repeated-provider-ack idempotency;
+    cancel/confirm counts exactly one per confirmation; old-generation
+    trailing audio still never reaches hardware; three event-ordering
+    variants) -- **939 tests total, OK (skipped=7)**, 0 regressions;
+    `ruff`/`pip check`/`git diff --check` all clean; local voice
+    completely untouched (empty diff). Recorded the throat-clear as a
+    separate, lower-priority NON-LEXICAL FALSE BARGE-IN observation --
+    not addressed by disabling barge-in or adding LID/STT to the
+    interrupt-confirmation path. **Hardware acceptance remains FAIL;
+    `M2.6B` remains IN PROGRESS** — contingent on an Attempt #3 that
+    deliberately includes a non-lexical interruption followed by further
+    real turns.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

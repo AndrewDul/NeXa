@@ -265,6 +265,7 @@ from ..provider import (
     AssistantAudioEvent,
     AssistantTranscriptionEvent,
     GenerationCompleteEvent,
+    ProviderInterruptionEvent,
     ProviderReadiness,
     RealtimeProviderFailedError,
     UserTranscriptionEvent,
@@ -445,16 +446,16 @@ class _ResponseGenerationGuard:
     fresh dispatch" into this guard too, keyed off the same
     interrupt-vs-valid state, and that conflated two different signals:
     "may this chunk play" (this class) and "has a genuinely NEW local
-    user turn started" (only a fresh, final ``UserTranscriptionEvent`` --
-    the interrupting utterance's own -- proves that; R0034's own proven
-    message-ordering guarantee is what makes this reliable). Trailing
-    audio for an invalidated generation and the interrupting utterance's
-    own brand-new reply both arrive as plain ``AssistantAudioEvent``s
-    with no marker distinguishing them, so conflating the two signals
-    made a late, invalid chunk look like a fresh, valid dispatch. Kept
-    deliberately dumb: only ``is_valid``/``start_new_generation``/
-    ``interrupt`` — the caller (``_consume_provider_events``) decides the
-    dispatch boundary from ``UserTranscriptionEvent(final=True)``.
+    user turn started". Kept deliberately dumb: only
+    ``is_valid``/``start_new_generation``/``interrupt``/``valid_id`` —
+    the caller (``_consume_provider_events``) decides the dispatch
+    boundary. Originally (R0038) that boundary was a fresh, final
+    ``UserTranscriptionEvent`` (the interrupting utterance's own —
+    R0034's proven message-ordering guarantee). M2.6B.4E (R0043) added a
+    second, NeXa/Gemini-independent fallback boundary
+    (``provider.local_turn_closed_seq`` advancing) for the case a
+    non-lexical interrupting sound produces no transcript at all — see
+    that method's own docstring in ``_consume_provider_events``.
     """
 
     def __init__(self) -> None:
@@ -468,6 +469,14 @@ class _ResponseGenerationGuard:
 
     def is_valid(self, generation_id: int) -> bool:
         return generation_id == self._valid_id
+
+    @property
+    def valid_id(self) -> int | None:
+        """The currently-valid generation id, or ``None`` if none is
+        (``0`` is never a real id — the counter starts at 1). Read-only
+        observability accessor (M2.6B.4E / R0043 diagnostics) — never
+        used to decide dispatch; ``is_valid`` remains the sole gate."""
+        return self._valid_id or None
 
     def interrupt(self) -> None:
         """The CURRENT generation can never produce audible output again.
@@ -528,8 +537,10 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
             elif isinstance(frame, P["BotStartedSpeakingFrame"]):
                 self._lifecycle.observe_bot_started()
                 self._nexa_metrics.first_assistant_audio_played()
+                self._nexa_metrics.bot_started()
             elif isinstance(frame, P["BotStoppedSpeakingFrame"]):
                 self._lifecycle.observe_bot_stopped()
+                self._nexa_metrics.bot_stopped()
             await self.push_frame(frame, direction)
 
     return _VadToProviderBridge
@@ -569,11 +580,89 @@ class RuntimeMetrics:
             self._first_audio_played_marked = True
             logger.info("nexa.realtime.metrics: first assistant audio played")
 
-    def local_interruption_confirmed(self) -> None:
-        logger.info("nexa.realtime.metrics: local interruption CONFIRMED")
+    def local_interruption_confirmed(
+        self,
+        *,
+        confirm_count: int | None = None,
+        generation_id: int | None = None,
+        bargein_state: str | None = None,
+    ) -> None:
+        # M2.6B.4E (R0043) -- the charter's exact LOCAL_BARGEIN_CONFIRMED
+        # keys. confirm_count is a per-runtime monotonic counter (never
+        # confused with PROVIDER_INTERRUPTION_ACK's own count -- ONE local
+        # confirmation legitimately produces MULTIPLE provider acks, see
+        # R0043's source audit; the two counters are deliberately kept
+        # separate so this is directly observable, not assumed).
+        logger.info(
+            "nexa.realtime.metrics: LOCAL_BARGEIN_CONFIRMED confirm_count=%s "
+            "generation_id=%s bargein_state=%s",
+            confirm_count, generation_id, bargein_state,
+        )
 
-    def provider_interruption_ack(self) -> None:
-        logger.info("nexa.realtime.metrics: provider (server) interruption ACK received")
+    def provider_interruption_ack(self, *, count: int | None = None) -> None:
+        # M2.6B.4E (R0043) -- PROVIDER_INTERRUPTION_ACK. Now actually wired
+        # (previously defined but never called from the consumer loop).
+        # Confirmed by source audit: Pipecat's own `broadcast_interruption()`
+        # emits TWO InterruptionFrame instances (upstream + downstream) per
+        # call, and BOTH the provider's own `cancel()` AND Gemini's
+        # independent `serverContent.interrupted` server-side ack each
+        # trigger one such broadcast inside the provider's headless
+        # pipeline -- so 4 acks from ONE confirmed local interruption is
+        # EXPECTED Pipecat/Gemini behaviour, not a NeXa-side bug. See the
+        # R0043 report for the full trace.
+        logger.info(
+            "nexa.realtime.metrics: PROVIDER_INTERRUPTION_ACK count=%s", count
+        )
+
+    def generation_invalidated(self, *, generation_id: int) -> None:
+        logger.info(
+            "nexa.realtime.metrics: GENERATION_INVALIDATED id=%d", generation_id
+        )
+
+    def output_interruption_broadcast(self, *, count: int) -> None:
+        logger.info(
+            "nexa.realtime.metrics: OUTPUT_INTERRUPTION_BROADCAST count=%d", count
+        )
+
+    def user_transcription_final_state(
+        self, *, dispatched_for_turn: bool, generation_id: int, generation_valid: bool
+    ) -> None:
+        logger.info(
+            "nexa.realtime.metrics: USER_TRANSCRIPTION_FINAL dispatched_for_turn=%s "
+            "generation_id=%d generation_valid=%s",
+            dispatched_for_turn, generation_id, generation_valid,
+        )
+
+    def assistant_response_dispatch(
+        self, *, generation_id: int, triggering_event: str
+    ) -> None:
+        logger.info(
+            "nexa.realtime.metrics: ASSISTANT_RESPONSE_DISPATCH generation_id=%d "
+            "triggering_event=%s",
+            generation_id, triggering_event,
+        )
+
+    def assistant_audio_received(
+        self, *, generation_id: int, valid: bool, chunk_count: int, byte_count: int
+    ) -> None:
+        logger.info(
+            "nexa.realtime.metrics: ASSISTANT_AUDIO_RECEIVED generation_id=%d "
+            "valid=%s chunk_count=%d bytes=%d",
+            generation_id, valid, chunk_count, byte_count,
+        )
+
+    def assistant_audio_hw_queued(self, *, generation_id: int, chunk_count: int) -> None:
+        logger.info(
+            "nexa.realtime.metrics: ASSISTANT_AUDIO_HW_QUEUED generation_id=%d "
+            "chunk_count=%d",
+            generation_id, chunk_count,
+        )
+
+    def bot_started(self) -> None:
+        logger.info("nexa.realtime.metrics: BOT_STARTED")
+
+    def bot_stopped(self) -> None:
+        logger.info("nexa.realtime.metrics: BOT_STOPPED")
 
     def canonical_turn_committed(
         self,
@@ -624,13 +713,22 @@ class RuntimeMetrics:
             event.output_text_tokens, event.output_audio_tokens,
         )
 
-    def dropped_invalidated_generation_audio(self, *, generation_id: int) -> None:
+    def dropped_invalidated_generation_audio(
+        self,
+        *,
+        generation_id: int,
+        reason: str = "generation_invalidated",
+        valid_generation_id: int | None = None,
+    ) -> None:
         # M2.6B.4 FAILURE 2 -- visibility into the generation guard
         # actually doing its job: a chunk belonging to an interrupted
         # generation was correctly kept off the hardware pipeline.
+        # M2.6B.4E (R0043) -- the charter's exact ASSISTANT_AUDIO_DROPPED
+        # keys (reason / generation_id / the currently-valid id, if any).
         logger.info(
-            "nexa.realtime.metrics: dropped invalidated-generation audio generation_id=%d",
-            generation_id,
+            "nexa.realtime.metrics: ASSISTANT_AUDIO_DROPPED reason=%s "
+            "generation_id=%d valid_generation_id=%s",
+            reason, generation_id, valid_generation_id,
         )
 
 
@@ -688,22 +786,47 @@ class GeminiVoiceRuntime:
         recovery begins. M2.6B.4C (R0041)/M2.6B.4D (R0042) -- NO local
         language-ID runs anywhere in this loop: native Gemini mirroring
         is the sole language mechanism, per the operator's explicit
-        product decision (see the module docstring)."""
+        product decision (see the module docstring).
+
+        M2.6B.4E (R0043) -- dispatch re-arm no longer depends SOLELY on a
+        fresh final ``UserTranscriptionEvent``. Real Attempt #2 hardware
+        evidence: a non-lexical interrupting sound (throat-clear) can
+        confirm a local barge-in and close a real local VAD turn with NO
+        transcript ever produced for it -- the OLD (final-transcription-
+        only) design left ``dispatched_for_turn`` stuck True forever in
+        that case, so no future ``AssistantAudioEvent`` for ANY later
+        turn ever got a fresh valid generation id, and all of it was
+        silently dropped, while assistant TEXT kept flowing (text commit
+        does not depend on the generation guard at all) -- exactly the
+        live symptom (text visible, audio permanently gone). Fixed with a
+        second, NeXa/Gemini-independent fallback re-arm signal:
+        ``provider.local_turn_closed_seq`` (incremented once per
+        ``user_turn_end()`` call, regardless of transcription outcome).
+        See ``GeminiLiveProvider``'s own docstring and
+        ``docs/reports/R0043_...`` for the full source audit."""
         P = _pipecat_hw_imports()
         first_audio_seen = False
         current_gid = 0
         # True once the CURRENT open user turn's assistant output has
-        # already been dispatched -- reset specifically on a fresh, FINAL
+        # already been dispatched -- reset on a fresh, FINAL
         # UserTranscriptionEvent (a genuinely NEW local user turn was just
-        # heard), never merely because a generation was interrupted. This
-        # is what correctly tells apart "late trailing audio for the
-        # generation a barge-in just invalidated" (arrives while this is
-        # still True -- no new final transcription has arrived yet) from
-        # "the interrupting utterance's own brand-new reply" (arrives
-        # only after ITS OWN final transcription resets this to False;
-        # R0034's proven ordering guarantees input transcription always
-        # precedes that turn's own assistant content).
+        # heard -- R0034's proven message-ordering guarantee: for a
+        # NORMAL, transcribed turn this always arrives before that turn's
+        # own assistant content) OR, as of R0043, once
+        # ``provider.local_turn_closed_seq`` has advanced past the value
+        # recorded when the CURRENT (now-invalidated) generation was
+        # dispatched -- proof, from local VAD alone, that at least one
+        # more local turn has genuinely closed since the interruption,
+        # even if Gemini never transcribed it. This never fires while the
+        # current generation is still VALID (an ordinary in-progress
+        # reply), only once a confirmed interruption has invalidated it --
+        # so it cannot promote trailing audio into a fresh generation
+        # while the interrupted reply might merely be paused, only once
+        # it is provably dead.
         dispatched_for_turn = False
+        dispatched_at_turn_closed_seq: int | None = None
+        provider_interruption_ack_count = 0
+        audio_chunk_count = 0
 
         while True:
             provider = self.provider
@@ -717,19 +840,52 @@ class GeminiVoiceRuntime:
                             "nexa.realtime.gemini.runtime: on_event hook raised"
                         )
 
+                if isinstance(event, ProviderInterruptionEvent):
+                    # M2.6B.4E (R0043) -- NOT the same thing as a local
+                    # confirmation: ONE confirmed local interruption can
+                    # legitimately produce SEVERAL of these (Pipecat's own
+                    # broadcast_interruption() fans out two InterruptionFrame
+                    # instances per call, and both our own cancel() and
+                    # Gemini's independent serverContent.interrupted ack
+                    # each trigger one broadcast -- see the module
+                    # docstring). Counted here purely for observability;
+                    # nothing in this loop reacts to the count.
+                    provider_interruption_ack_count += 1
+                    self.metrics.provider_interruption_ack(
+                        count=provider_interruption_ack_count
+                    )
+
+                if (
+                    dispatched_for_turn
+                    and not self.generation_guard.is_valid(current_gid)
+                    and dispatched_at_turn_closed_seq is not None
+                    and provider.local_turn_closed_seq > dispatched_at_turn_closed_seq
+                ):
+                    dispatched_for_turn = False
+
                 if isinstance(
                     event, (AssistantAudioEvent, AssistantTranscriptionEvent)
                 ) and not dispatched_for_turn:
                     dispatched_for_turn = True
+                    dispatched_at_turn_closed_seq = provider.local_turn_closed_seq
                     current_gid = self.generation_guard.start_new_generation()
                     self.bargein.notify_response_dispatched()
                     self.lifecycle.mark_dispatched()
+                    self.metrics.assistant_response_dispatch(
+                        generation_id=current_gid,
+                        triggering_event=type(event).__name__,
+                    )
 
                 outcome = self.router.handle_provider_event(event)
 
                 if isinstance(event, UserTranscriptionEvent) and event.final:
                     dispatched_for_turn = False
                     self.metrics.input_transcription_final(event.text)
+                    self.metrics.user_transcription_final_state(
+                        dispatched_for_turn=dispatched_for_turn,
+                        generation_id=current_gid,
+                        generation_valid=self.generation_guard.is_valid(current_gid),
+                    )
                 elif isinstance(event, GenerationCompleteEvent):
                     self.lifecycle.mark_generation_done()
                     if self.generation_guard.is_valid(current_gid):
@@ -761,12 +917,23 @@ class GeminiVoiceRuntime:
                         first_audio_seen = True
                         self.metrics.first_assistant_audio_received()
                     self.lifecycle.mark_audio_produced()
-                    if self.generation_guard.is_valid(current_gid):
+                    audio_chunk_count += 1
+                    valid = self.generation_guard.is_valid(current_gid)
+                    self.metrics.assistant_audio_received(
+                        generation_id=current_gid,
+                        valid=valid,
+                        chunk_count=audio_chunk_count,
+                        byte_count=len(event.pcm),
+                    )
+                    if valid:
                         frame = P["TTSAudioRawFrame"](
                             audio=event.pcm, sample_rate=OUTPUT_SAMPLE_RATE_HZ,
                             num_channels=1,
                         )
                         await self.hw_worker.queue_frames([frame])
+                        self.metrics.assistant_audio_hw_queued(
+                            generation_id=current_gid, chunk_count=audio_chunk_count
+                        )
                     else:
                         # A confirmed local interruption already invalidated
                         # this generation -- this chunk was already in
@@ -775,7 +942,9 @@ class GeminiVoiceRuntime:
                         # window before it honoured the cancel signal) and
                         # must NEVER reach the speaker or the AEC reference.
                         self.metrics.dropped_invalidated_generation_audio(
-                            generation_id=current_gid
+                            generation_id=current_gid,
+                            reason="generation_invalidated",
+                            valid_generation_id=self.generation_guard.valid_id,
                         )
 
                 if provider.needs_fresh_session:
@@ -861,9 +1030,22 @@ def build_gemini_voice_runtime(
     aec_health = AecReferenceHealth(on_change=_combined_aec_change)
     lifecycle = _ResponseLifecycle(on_finished=lambda: bargein.notify_response_finished())
     generation_guard = _ResponseGenerationGuard()
+    # M2.6B.4E (R0043) -- plain closure counters, purely for observability
+    # (LOCAL_BARGEIN_CONFIRMED / OUTPUT_INTERRUPTION_BROADCAST). Deliberately
+    # separate from `_ResponseGenerationGuard`'s own id counter and from
+    # PROVIDER_INTERRUPTION_ACK's count -- ONE local confirmation can
+    # legitimately produce SEVERAL provider acks (see the module
+    # docstring); keeping the counters distinct is what makes that
+    # observable instead of assumed.
+    _confirm_counts = {"local_bargein_confirmed": 0, "output_interruption_broadcast": 0}
 
     def _on_confirmed(ctx: InterruptContext) -> None:
-        metrics.local_interruption_confirmed()
+        _confirm_counts["local_bargein_confirmed"] += 1
+        metrics.local_interruption_confirmed(
+            confirm_count=_confirm_counts["local_bargein_confirmed"],
+            generation_id=ctx.invalidated_response_id,
+            bargein_state=bargein.state_machine.state.value,
+        )
         # M2.6B.4 FAILURE 2 -- invalidate the CURRENT response generation
         # BEFORE anything else below (see _ResponseGenerationGuard's own
         # docstring for why this is race-free on a single-threaded event
@@ -874,6 +1056,18 @@ def build_gemini_voice_runtime(
         # same generation, already in flight on provider.events()'s own
         # queue, from ever reaching hw_worker.queue_frames() afterward.
         generation_guard.interrupt()
+        if ctx.invalidated_response_id is not None:
+            metrics.generation_invalidated(generation_id=ctx.invalidated_response_id)
+        # M2.6B.4E (R0043) -- ``BargeInController._do_confirm`` calls this
+        # hook, then unconditionally awaits its OWN `broadcast_interruption()`
+        # once (bargein.py) -- so this count tracks 1:1 with confirmed
+        # local interruptions, deliberately logged here (not inside the
+        # shared, local-voice-frozen `nexa.voice.bargein` module) so this
+        # observability addition never touches that shared class.
+        _confirm_counts["output_interruption_broadcast"] += 1
+        metrics.output_interruption_broadcast(
+            count=_confirm_counts["output_interruption_broadcast"]
+        )
         # Local speaker-stop authority already happened: BargeInController
         # calls Pipecat's own broadcast_interruption() (which tears down
         # queued/playing output audio) BEFORE this hook runs, and that call
