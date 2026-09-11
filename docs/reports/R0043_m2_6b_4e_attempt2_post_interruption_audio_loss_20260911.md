@@ -343,6 +343,8 @@ voice completely untouched this checkpoint.
 
 ## COMMIT HASHES
 
+root-cause/fix/report commit: `2a3a665`
+
 (recorded in the follow-up hash-record commit)
 
 ## GIT STATUS
