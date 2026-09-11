@@ -349,6 +349,8 @@ sequential `_fixed` run this report is based on.
 
 ## COMMIT HASHES
 
+research commit: `cd05e89`
+
 (recorded in the follow-up hash-record commit)
 
 ## GIT STATUS
