@@ -623,6 +623,45 @@ unpaid-quota data is used to improve Google products.
     in R0041). If Attempt #2 is clean, native mirroring stays the
     permanent mechanism and strict LID is never implemented; only
     REPEATED clean-runtime EN->PL failure reopens the fallback decision.
+  - **M2.6B.4D — remove cloud LID runtime cost before Attempt #2: narrow
+    cleanup** (`R0042`, 2026-09-11). R0041 correctly decided NO local LID
+    gate in the normal cloud critical path, but the runtime still
+    CONSTRUCTED `WhisperCppLanguageDetector` and INVOKED it fire-and-
+    forget once per closed utterance. R0041's own test proved only that
+    the event loop does not await a slow fake coroutine inline — not
+    that a REAL whisper.cpp CPU-bound inference call (~0.5-1.7s of
+    native-code work per R0039/R0040's own measurements) has zero
+    impact on Pipecat's scheduling/audio playback/AEC/VAD once actually
+    invoked on a resource-constrained Raspberry Pi. Per the operator's
+    explicit instruction — "normal cloud voice must run with ZERO local
+    LID inference" — removed rather than merely proved-non-blocking:
+    `build_gemini_voice_runtime` no longer constructs
+    `WhisperCppLanguageDetector`/`ResponseLanguageResolver` at all (no
+    import, no whisper.cpp model load, no CPU/RAM footprint);
+    `_analyze_turn_language` and `RuntimeMetrics.language_diagnostics`
+    deleted; `_VadToProviderBridge` no longer accumulates a parallel
+    per-utterance PCM buffer; `_PendingUtteranceAudio` deleted after
+    confirming (by grep across `src/nexa/realtime/`) it had exactly one
+    caller — the deleted diagnostic — and was never used by reconnect/
+    mid-turn recovery, which is a structurally separate, untouched
+    mechanism (`GeminiLiveProvider.take_pending_audio()`/
+    `ConversationRouter.recover_from_mid_turn_loss`, confirmed by an
+    empty `git diff` on `service.py`/`router.py`). Verified by test, not
+    just inspection: a patched `WhisperCppLanguageDetector.__init__`
+    proves zero construction calls; a patched `.detect()` proves a REAL
+    Polish-content turn followed by a REAL English-content turn both
+    dispatch through the identical native provider path with zero LID
+    calls, no provider replacement, and `activityEnd`
+    (`user_turn_end()`) returning in under 50ms every time. R0041's
+    other changes (`CLOUD_ROLE_CARD` wording, per-turn diagnostics,
+    R0038 fixes) and R0039/R0040's fallback research are unchanged/
+    preserved (nothing deleted from `docs/research/`). **+2 net new
+    tests (932 total, OK, skipped=7)**, 0 regressions;
+    `ruff`/`pip check`/`git diff --check` all clean; local voice
+    completely untouched (empty diff). **Hardware acceptance NOT marked
+    PASS; `M2.6B` NOT marked COMPLETE** — both still contingent on a
+    clean operator Attempt #2, which now runs with zero background
+    whisper.cpp CPU load competing with Pipecat/audio/AEC/VAD.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

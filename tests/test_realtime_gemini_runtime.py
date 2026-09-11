@@ -36,7 +36,6 @@ from nexa.realtime.gemini.runtime import (  # noqa: E402
     GeminiVoiceRuntime,
     RuntimeMetrics,
     _make_vad_bridge_class,
-    _PendingUtteranceAudio,
     _pipecat_hw_imports,
     _ProviderHandle,
     _ResponseGenerationGuard,
@@ -427,7 +426,6 @@ class TestBargeInWiring(_FakeGeminiLiveServiceTestCase):
             metrics=metrics,
             lifecycle=lifecycle,
             generation_guard=generation_guard,
-            pending_utterance_audio=_PendingUtteranceAudio(),
         )
         runtime._cancel_calls = cancel_calls  # type: ignore[attr-defined]
         return runtime
@@ -666,7 +664,6 @@ class TestMidTurnRuntimeRecovery(_FakeGeminiLiveServiceTestCase):
             metrics=metrics,
             lifecycle=lifecycle,
             generation_guard=_ResponseGenerationGuard(),
-            pending_utterance_audio=_PendingUtteranceAudio(),
         )
 
         await self._drain_one(old_provider, ReadinessChangedEvent)
@@ -853,7 +850,7 @@ class TestVadBridgeProcessorLifecycle(unittest.IsolatedAsyncioTestCase):
         # (installed source, frame_processor.py:256); not asserting its
         # exact type here, only that it is NOT NeXa's RuntimeMetrics.
         self.assertIsNot(bridge._metrics, metrics)  # noqa: SLF001
-        self.assertFalse(hasattr(bridge._metrics, "language_diagnostics"))  # noqa: SLF001
+        self.assertFalse(hasattr(bridge._metrics, "local_vad_start"))  # noqa: SLF001
         self.assertIs(bridge._nexa_metrics, metrics)  # noqa: SLF001
 
         pipeline = P["Pipeline"]([bridge])
@@ -923,7 +920,6 @@ class TestGenerationGuardWiredIntoConsumer(_FakeGeminiLiveServiceTestCase):
             metrics=metrics,
             lifecycle=lifecycle,
             generation_guard=generation_guard,
-            pending_utterance_audio=_PendingUtteranceAudio(),
         )
 
     async def test_late_invalidated_generation_audio_never_reaches_hardware(self) -> None:
@@ -1166,29 +1162,69 @@ class TestSystemInstructionLanguagePolicy(unittest.TestCase):
 
 
 @unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
-class TestLidNeverBlocksCloudCriticalPath(_FakeGeminiLiveServiceTestCase):
-    """M2.6B.4C (R0041) retest item 11 -- no local LID may ever gate, delay,
-    or otherwise sit on the normal cloud critical path (turn dispatch /
-    assistant-audio injection). Wires a deliberately SLOW fake detector as
-    ``runtime.language_detector`` and proves a turn dispatches and commits
-    at normal speed regardless -- ``_analyze_turn_language`` is fire-and-
-    forget (``asyncio.create_task``, never awaited inline), so a slow or
-    even permanently-hanging detector can never add latency to, or block,
-    the live turn-taking path."""
+class TestNoLocalLidInCloudRuntime(unittest.TestCase):
+    """M2.6B.4D (R0042) -- tightens R0041's own "no LID gate" decision:
+    R0041's slow-fake-coroutine test proved only that the event loop does
+    not AWAIT a slow detector inline; it did NOT prove that a REAL
+    whisper.cpp CPU-bound inference call has zero impact on Pipecat's own
+    scheduling, audio playback, AEC, or VAD once actually invoked. The
+    operator's product decision is stronger: NORMAL CLOUD VOICE MUST RUN
+    WITH ZERO LOCAL LID INFERENCE -- so this class proves the call is
+    never made in the first place, not merely that it would be
+    fire-and-forget if it were."""
 
-    class _SlowDetector:
-        def __init__(self) -> None:
-            self.call_count = 0
-            self.started = asyncio.Event()
+    def test_runtime_never_constructs_whisper_cpp_language_detector(self) -> None:
+        """``build_gemini_voice_runtime`` must never import or construct
+        ``WhisperCppLanguageDetector`` -- no whisper.cpp model load, no
+        CPU/RAM footprint, for the normal cloud path."""
+        try:
+            import nexa.stt as stt_module
+        except Exception:  # pragma: no cover - optional dependency
+            self.skipTest("nexa.stt not importable in this environment")
 
-        async def detect(self, pcm: bytes):
-            self.call_count += 1
-            self.started.set()
-            # Deliberately much slower than any real turn should ever
-            # wait -- if this ever blocked the critical path, the test's
-            # own timeout would fail first.
-            await asyncio.sleep(5.0)
-            raise AssertionError("should never be awaited to completion in this test")
+        from unittest import mock
+
+        construct_calls: list[object] = []
+        original_init = stt_module.WhisperCppLanguageDetector.__init__
+
+        def _spy_init(self, *args, **kwargs):
+            construct_calls.append(self)
+            return original_init(self, *args, **kwargs)
+
+        with mock.patch.object(
+            stt_module.WhisperCppLanguageDetector, "__init__", _spy_init
+        ):
+            session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+            build_gemini_voice_runtime(session=session, api_key="FAKE-TEST-KEY", dry=True)
+
+        self.assertEqual(construct_calls, [])
+
+    def test_runtime_has_no_lid_related_fields_at_all(self) -> None:
+        """Structural proof, not just behavioural: the object graph
+        ``build_gemini_voice_runtime`` returns carries no
+        ``language_detector``/``language_resolver``/
+        ``pending_utterance_audio`` attribute whatsoever -- there is
+        nothing left for any future code path to accidentally wire up."""
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        runtime = build_gemini_voice_runtime(
+            session=session, api_key="FAKE-TEST-KEY", dry=True
+        )
+        self.assertFalse(hasattr(runtime, "language_detector"))
+        self.assertFalse(hasattr(runtime, "language_resolver"))
+        self.assertFalse(hasattr(runtime, "pending_utterance_audio"))
+
+
+@unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+class TestNativeOnlyLanguageDispatch(_FakeGeminiLiveServiceTestCase):
+    """M2.6B.4D (R0042) retest items 2-6 -- a PL-content turn and an
+    EN-content turn both dispatch through the IDENTICAL native provider
+    path, with zero LID calls, no provider replacement triggered by
+    language, and no delay on the turn-close (``activityEnd``) ->
+    dispatch path. ``nexa.stt.WhisperCppLanguageDetector.detect`` is
+    patched to raise if ever called, at the class actually imported by
+    ``nexa.realtime.gemini.runtime`` (there is none left to import, but
+    this proves it even if some future code path re-introduced a
+    reference) -- the test fails loudly if local LID is ever invoked."""
 
     def _wire(self, provider) -> GeminiVoiceRuntime:
         session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
@@ -1200,8 +1236,7 @@ class TestLidNeverBlocksCloudCriticalPath(_FakeGeminiLiveServiceTestCase):
         lifecycle = _ResponseLifecycle(on_finished=lambda: bargein.notify_response_finished())
         generation_guard = _ResponseGenerationGuard()
         bargein = BargeInController(aec_health=aec_health, on_confirmed=lambda ctx: None)
-        slow_detector = self._SlowDetector()
-        runtime = GeminiVoiceRuntime(
+        return GeminiVoiceRuntime(
             provider=provider,
             provider_handle=provider_handle,
             router=router,
@@ -1212,51 +1247,89 @@ class TestLidNeverBlocksCloudCriticalPath(_FakeGeminiLiveServiceTestCase):
             metrics=metrics,
             lifecycle=lifecycle,
             generation_guard=generation_guard,
-            pending_utterance_audio=_PendingUtteranceAudio(),
-            language_detector=slow_detector,
         )
-        runtime._slow_detector = slow_detector  # type: ignore[attr-defined]
-        return runtime
 
-    async def test_slow_detector_never_delays_turn_dispatch_or_commit(self) -> None:
+    async def test_pl_then_en_turns_dispatch_natively_with_zero_lid_and_no_provider_swap(
+        self,
+    ) -> None:
         import time
+        from unittest import mock
 
-        provider, _ = await self._started_provider()
-        runtime = self._wire(provider)
-        await self._drain_one(provider, ReadinessChangedEvent)
-        fake = provider._llm  # noqa: SLF001
+        def _detect_must_never_be_called(*_args, **_kwargs):
+            raise AssertionError(
+                "local LID must never be invoked on the normal cloud critical path"
+            )
 
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"tell me about black holes")
-        await provider.user_turn_end()
-        # normally pushed by `_VadToProviderBridge` (not wired in this
-        # headless test); push it directly so the final transcription
-        # event below has buffered PCM to correlate and dispatch to the
-        # (slow) detector, exactly as the live wiring would.
-        runtime.pending_utterance_audio.push(b"tell me about black holes")
-
-        consume_task = asyncio.create_task(runtime._consume_provider_events())
-        t0 = time.monotonic()
-        await fake.emit_user_transcription("tell me about black holes", final=True)
-        await fake.emit_assistant_audio(b"assistant-pcm")
-        await fake.emit_assistant_text("black holes are...")
-        await fake.emit_generation_complete()
-        await _wait_until(lambda: len(runtime.hw_worker.queued_frames) >= 1, timeout=2.0)
-        dispatch_latency_s = time.monotonic() - t0
-        # generous ceiling still far below the detector's 5s sleep -- proves
-        # the critical path never waited on it.
-        self.assertLess(dispatch_latency_s, 1.0)
-
-        # the detector WAS invoked (fire-and-forget), never awaited inline.
-        await asyncio.wait_for(runtime._slow_detector.started.wait(), timeout=1.0)  # type: ignore[attr-defined]
-        self.assertEqual(runtime._slow_detector.call_count, 1)  # type: ignore[attr-defined]
-
-        consume_task.cancel()
+        patches: list[object] = []
         try:
-            await consume_task
-        except asyncio.CancelledError:
-            pass
+            import nexa.stt as stt_module
+
+            patches.append(
+                mock.patch.object(
+                    stt_module.WhisperCppLanguageDetector,
+                    "detect",
+                    _detect_must_never_be_called,
+                )
+            )
+        except Exception:  # pragma: no cover - optional dependency
+            pass  # nothing to patch -- absence itself is fine here
+
+        for p in patches:
+            p.start()
+        try:
+            provider, _ = await self._started_provider()
+            runtime = self._wire(provider)
+            await self._drain_one(provider, ReadinessChangedEvent)
+            fake = provider._llm  # noqa: SLF001
+            consume_task = asyncio.create_task(runtime._consume_provider_events())
+
+            provider_before = runtime.provider
+
+            turns = (
+                (
+                    "Powiedz mi krótko jak powstaje czarna dziura.",
+                    "Czarna dziura...",
+                    b"pl-pcm",
+                ),
+                (
+                    "Can you explain what happens near the event horizon?",
+                    "Near the horizon...",
+                    b"en-pcm",
+                ),
+            )
+            for user_text, assistant_text, assistant_pcm in turns:
+                runtime.router.begin_cloud_turn()
+                await provider.user_turn_start()
+                await provider.send_user_audio(user_text.encode("utf-8"))
+                t0 = time.monotonic()
+                await provider.user_turn_end()  # activityEnd -- must return immediately
+                activity_end_latency_s = time.monotonic() - t0
+                self.assertLess(activity_end_latency_s, 0.05)
+
+                await fake.emit_user_transcription(user_text, final=True)
+                await fake.emit_assistant_audio(assistant_pcm)
+                await _wait_until(
+                    lambda pcm=assistant_pcm: pcm
+                    in [f.audio for f in runtime.hw_worker.queued_frames if hasattr(f, "audio")]
+                )
+                await fake.emit_assistant_text(assistant_text)
+                await fake.emit_generation_complete()
+                await asyncio.sleep(0.02)
+                runtime.lifecycle.observe_bot_started()
+                runtime.lifecycle.observe_bot_stopped()
+
+            # identical native provider instance throughout -- no
+            # provider replacement was ever triggered by language.
+            self.assertIs(runtime.provider, provider_before)
+
+            consume_task.cancel()
+            try:
+                await consume_task
+            except asyncio.CancelledError:
+                pass
+        finally:
+            for p in patches:
+                p.stop()
 
 
 class TestCanonicalTurnDiagnostics(unittest.TestCase):

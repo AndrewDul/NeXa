@@ -160,16 +160,19 @@ three regressions, fixed here (see
    (R0024's ``argmax(p_pl, p_en)`` LID) and
    ``nexa.conversation.ResponseLanguageResolver`` (sticky preference set
    ONLY on an explicit directive, never from the language merely spoken).
-   This updates ``self._recovery_language_preference`` for any FUTURE
+   This updated ``self._recovery_language_preference`` for any FUTURE
    fresh-session snapshot (ADR-0004 Amendment 1 §2's own documented
-   mechanism) and logs the charter's exact diagnostic keys
-   (``SNAPSHOT_LANGUAGE_PREFERENCE``/``TURN_INPUT_LANGUAGE``/
-   ``TURN_INPUT_TRANSCRIPT``/``LANGUAGE_ROUTING_MODE``) — it does **not**
-   retroactively steer the response Gemini is already generating for the
-   CURRENT turn (native mirroring remains the active per-turn mechanism);
-   no verified, low-risk same-turn steering primitive was found reachable
-   through the installed stack without a live call to test it, so that
-   remains an explicit, honestly-documented open gap, not attempted here.
+   mechanism) and logged the charter's exact diagnostic keys. It did
+   **not** retroactively steer the response Gemini was already
+   generating for the CURRENT turn (native mirroring remained the active
+   per-turn mechanism); no verified, low-risk same-turn steering
+   primitive was found reachable through the installed stack without a
+   live call to test it. **This whole diagnostic mechanism (the
+   detector/resolver construction, the utterance-PCM correlation, and
+   the background classification call) was REMOVED in M2.6B.4D (R0042,
+   below)** — see that section for why and what replaced it (nothing;
+   native mirroring is now the sole mechanism, with no local LID
+   anywhere in the cloud path).
 
 M2.6B.4C (R0041) — **PRODUCT DECISION: no local LID gate in the normal
 cloud critical path.** M2.6A (the operator-confirmed spike, ``R0031``)
@@ -191,21 +194,57 @@ strict-routing research remains a **FALLBACK RESEARCH CANDIDATE ONLY**
 adopted unless a CLEAN retest (after this checkpoint's fixes, with no
 setup/cleanup crash and no barge-in playback bug in the way) produces
 REPEATED evidence that native mirroring is genuinely unreliable in
-production. ``_analyze_turn_language`` (M2.6B.4/R0038, above) remains
-wired but stays exactly what it always was: optional, fire-and-forget,
-offline diagnostics — never a gate on ``activityEnd``, never awaited
-inline on the turn-dispatch path, never invoked more than once per closed
-utterance. Also added: lightweight, non-blocking per-turn diagnostics
+production. At the time of R0041, ``_analyze_turn_language`` (M2.6B.4/
+R0038, above) remained wired as optional, fire-and-forget, offline
+diagnostics. Also added: lightweight, non-blocking per-turn diagnostics
 (``RuntimeMetrics.canonical_turn_committed``'s new
 ``user_transcript``/``assistant_transcript``/``provider_instance_id``
 keyword args) built only from state the turn accumulator already held in
-memory for the commit — no new I/O, no added latency, no raw audio.
+memory for the commit — no new I/O, no added latency, no raw audio. (The
+``USER_TRANSCRIPT``/``ASSISTANT_TRANSCRIPT``/``PROVIDER_SESSION_ID``
+diagnostics are unaffected by M2.6B.4D below and remain in place.)
+
+M2.6B.4D (R0042) — **the fire-and-forget LID call itself is REMOVED from
+the production cloud runtime**, tightening R0041's product decision. A
+sleeping fake coroutine (R0041's own test) proves only that the event
+loop does not *await* a slow detector — it does NOT prove that a REAL
+whisper.cpp inference call (genuine CPU-bound native code, ~0.5-1.7s per
+call per the R0039/R0040 benchmarks) has zero impact on Pipecat's own
+scheduling, audio playback, AEC, VAD, or realtime response latency on a
+resource-constrained Raspberry Pi, once actually exercised with real
+audio instead of ``asyncio.sleep``. Per the operator's explicit
+instruction — "normal cloud voice must run with ZERO local LID
+inference" — this checkpoint removes, rather than merely fails-to-await:
+``build_gemini_voice_runtime`` no longer constructs
+``WhisperCppLanguageDetector``/``ResponseLanguageResolver`` at all (no
+``import nexa.stt``, no CPU/RAM footprint, no construction-time whisper.cpp
+model load); ``GeminiVoiceRuntime`` no longer has
+``language_detector``/``language_resolver`` fields; ``_analyze_turn_language``
+and ``RuntimeMetrics.language_diagnostics`` are deleted; ``_VadToProviderBridge``
+no longer accumulates a parallel per-utterance PCM buffer (it was
+accumulated ONLY to feed this now-deleted diagnostic — never used for
+reconnect/mid-turn recovery, which is a structurally separate mechanism,
+see below); ``_PendingUtteranceAudio`` is deleted (it had exactly one
+caller, the deleted diagnostic). **Recovery buffering is unaffected**:
+``GeminiLiveProvider.take_pending_audio()`` (``service.py``) — the
+mechanism ``ConversationRouter.recover_from_mid_turn_loss`` actually
+replays after a fresh-session swap — is a completely separate,
+provider-internal ``UtteranceFramer``-backed buffer, never touched by
+this checkpoint. Normal cloud voice now spends **zero** CPU on PL/EN
+classification, holds ``activityEnd`` for **zero** milliseconds waiting
+on language, and never changes provider on a language switch — Gemini
+native mirroring (ADR-0004 Option A) is the sole language mechanism.
+R0039/R0040's research (the ``ggml-tiny-q5_1`` benchmark, the downloaded
+research models, the benchmark scripts/results) is **preserved
+untouched** as fallback research only — nothing deleted from
+``docs/research/``, only the now-dead production wiring in this module.
 
 Construction only (``dry=True``): builds every object EXCEPT the audio
 device / network — no ``pyaudio.PyAudio()``, no device index lookup, no
 Gemini connection. This module has NOT been validated against real
 hardware — see ``docs/reports/R0035_...``/``R0036_...``/``R0038_...``/
-``R0041_...`` for exactly what remains for a real operator run.
+``R0041_...``/``R0042_...`` for exactly what remains for a real operator
+run.
 """
 
 from __future__ import annotations
@@ -439,26 +478,6 @@ class _ResponseGenerationGuard:
         self._valid_id = 0  # 0 is never a real id (the counter starts at 1)
 
 
-class _PendingUtteranceAudio:
-    """M2.6B.4 FAILURE 3 — a tiny FIFO correlating each closed user
-    utterance's locally-buffered PCM with the FINAL transcription that
-    later arrives for it from the provider's own event stream. Safe
-    because turn-taking here is strictly sequential (R0034's own proven
-    message-ordering guarantee): one utterance closes locally, then its
-    transcription arrives, before the next utterance can open."""
-
-    def __init__(self) -> None:
-        self._pending: list[bytes] = []
-
-    def push(self, pcm: bytes) -> None:
-        self._pending.append(pcm)
-
-    def pop_oldest(self) -> bytes | None:
-        if not self._pending:
-            return None
-        return self._pending.pop(0)
-
-
 def _make_vad_bridge_class(P: dict[str, Any]) -> type:
     """The one new FrameProcessor: local VAD frames -> provider turn I/O,
     and real playback-lifecycle frames -> ``_ResponseLifecycle``. Built
@@ -471,7 +490,6 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
             provider_handle: _ProviderHandle,
             metrics: RuntimeMetrics,
             lifecycle: _ResponseLifecycle,
-            pending_utterance_audio: _PendingUtteranceAudio | None = None,
         ) -> None:
             super().__init__()
             self._handle = provider_handle
@@ -494,30 +512,19 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
             self._nexa_metrics = metrics
             self._lifecycle = lifecycle
             self._turn_open = False
-            # M2.6B.4 FAILURE 3 -- a PARALLEL local copy of the utterance
-            # audio, accumulated purely for offline same-turn language
-            # detection (never delays or alters what streams live to
-            # Gemini via ``send_user_audio`` below).
-            self._pending_utterance_audio = pending_utterance_audio
-            self._utterance_buffer = bytearray()
 
         async def process_frame(self, frame: Any, direction: Any) -> None:
             await super().process_frame(frame, direction)
             if isinstance(frame, P["VADUserStartedSpeakingFrame"]):
                 self._turn_open = True
-                self._utterance_buffer = bytearray()
                 self._nexa_metrics.local_vad_start()
                 await self._handle.current.user_turn_start()
             elif isinstance(frame, P["InputAudioRawFrame"]) and self._turn_open:
-                self._utterance_buffer.extend(frame.audio)
                 await self._handle.current.send_user_audio(frame.audio)
             elif isinstance(frame, P["VADUserStoppedSpeakingFrame"]):
                 self._turn_open = False
                 self._nexa_metrics.local_vad_eot()
                 await self._handle.current.user_turn_end()
-                if self._pending_utterance_audio is not None and self._utterance_buffer:
-                    self._pending_utterance_audio.push(bytes(self._utterance_buffer))
-                self._utterance_buffer = bytearray()
             elif isinstance(frame, P["BotStartedSpeakingFrame"]):
                 self._lifecycle.observe_bot_started()
                 self._nexa_metrics.first_assistant_audio_played()
@@ -626,26 +633,6 @@ class RuntimeMetrics:
             generation_id,
         )
 
-    def language_diagnostics(
-        self,
-        *,
-        snapshot_language_preference: str | None,
-        turn_input_language: str,
-        turn_input_transcript: str,
-        routing_mode: str,
-    ) -> None:
-        # M2.6B.4 FAILURE 3 -- the exact diagnostic keys the R0038 charter
-        # asked for, safe (no credentials, transcript is the operator's
-        # own already-printed speech, never raw audio).
-        logger.info(
-            "nexa.realtime.metrics: SNAPSHOT_LANGUAGE_PREFERENCE=%s "
-            "TURN_INPUT_LANGUAGE=%s TURN_INPUT_TRANSCRIPT=%r LANGUAGE_ROUTING_MODE=%s",
-            snapshot_language_preference or "none",
-            turn_input_language,
-            turn_input_transcript,
-            routing_mode,
-        )
-
 
 @dataclass
 class GeminiVoiceRuntime:
@@ -662,11 +649,6 @@ class GeminiVoiceRuntime:
     metrics: RuntimeMetrics
     lifecycle: _ResponseLifecycle
     generation_guard: _ResponseGenerationGuard
-    pending_utterance_audio: _PendingUtteranceAudio
-    #: ``None`` when local whisper.cpp LID is unavailable on this machine
-    #: (optional enhancement, never a hard dependency of cloud voice).
-    language_detector: Any = None
-    language_resolver: Any = None
     #: Optional operator/observability hook, called once per event
     #: *from the same single consumption loop* that drives the canonical
     #: write path -- ``provider.events()`` is backed by ONE
@@ -699,14 +681,14 @@ class GeminiVoiceRuntime:
         generation (M2.6B.4 FAILURE 2: ``_ResponseGenerationGuard`` drops
         anything belonging to a generation a confirmed local interruption
         already invalidated, no matter how many more events for it were
-        already in flight), (4) drive mid-turn fresh-session recovery the
-        instant ``provider.needs_fresh_session`` is observed true — never
-        a second concurrent ``provider.events()`` reader; the OLD
+        already in flight), and (4) drive mid-turn fresh-session recovery
+        the instant ``provider.needs_fresh_session`` is observed true —
+        never a second concurrent ``provider.events()`` reader; the OLD
         provider's queue is abandoned (never read again) the moment
-        recovery begins, and (5) correlate each closed user utterance's
-        locally-buffered audio with its final transcription for offline
-        same-turn language diagnostics (M2.6B.4 FAILURE 3) -- fire-and-
-        forget, never on the critical audio path."""
+        recovery begins. M2.6B.4C (R0041)/M2.6B.4D (R0042) -- NO local
+        language-ID runs anywhere in this loop: native Gemini mirroring
+        is the sole language mechanism, per the operator's explicit
+        product decision (see the module docstring)."""
         P = _pipecat_hw_imports()
         first_audio_seen = False
         current_gid = 0
@@ -748,9 +730,6 @@ class GeminiVoiceRuntime:
                 if isinstance(event, UserTranscriptionEvent) and event.final:
                     dispatched_for_turn = False
                     self.metrics.input_transcription_final(event.text)
-                    pcm = self.pending_utterance_audio.pop_oldest()
-                    if pcm is not None:
-                        asyncio.create_task(self._analyze_turn_language(pcm, event.text))
                 elif isinstance(event, GenerationCompleteEvent):
                     self.lifecycle.mark_generation_done()
                     if self.generation_guard.is_valid(current_gid):
@@ -822,46 +801,6 @@ class GeminiVoiceRuntime:
             if not recovered:
                 return  # the provider's own events() ended (stop()/cancel)
 
-    async def _analyze_turn_language(self, pcm: bytes, transcript: str) -> None:
-        """M2.6B.4 FAILURE 3 -- offline, same-turn PL/EN diagnostics.
-        Fire-and-forget (``asyncio.create_task``, never awaited inline
-        from the event loop) so a slow or failing detector never adds
-        latency to, or breaks, the live turn-taking path. Reuses the
-        SAME mechanism already accepted for local voice
-        (``nexa.stt.WhisperCppLanguageDetector`` — R0024's own
-        ``argmax(p_pl, p_en)`` method, proven to classify every
-        monolingual corpus item correctly) and the SAME
-        provider-agnostic sticky/one-turn resolver already accepted for
-        local voice (``nexa.conversation.ResponseLanguageResolver`` — it
-        sets a sticky preference ONLY on an explicit directive like
-        "always answer in English"/"odpowiadaj mi po polsku", never from
-        the language merely spoken). Updates
-        ``self._recovery_language_preference`` ONLY on a sticky decision
-        -- ADR-0004 Amendment 1 §2: a sticky command reaches the provider
-        only on the next new/resumed session, never retroactively steers
-        the response already in flight for THIS turn (native mirroring,
-        Option A, remains the active per-turn mechanism; see R0038 for
-        why a same-turn steering mechanism is not implemented here)."""
-        if self.language_detector is None:
-            return
-        try:
-            result = await self.language_detector.detect(pcm)
-        except Exception:  # noqa: BLE001 - LID is an optional enhancement
-            logger.exception("nexa.realtime.gemini.runtime: language detection failed")
-            return
-        input_language = "pl" if result.p_pl >= result.p_en else "en"
-        decision = None
-        if self.language_resolver is not None:
-            decision = self.language_resolver.resolve(transcript, input_language=input_language)
-            if decision.preference_changed:
-                self._recovery_language_preference = decision.sticky_after
-        self.metrics.language_diagnostics(
-            snapshot_language_preference=self._recovery_language_preference,
-            turn_input_language=input_language,
-            turn_input_transcript=transcript,
-            routing_mode="native",
-        )
-
     async def stop(self, *, reason: str) -> None:
         if self._events_task is not None:
             self._events_task.cancel()
@@ -922,29 +861,6 @@ def build_gemini_voice_runtime(
     aec_health = AecReferenceHealth(on_change=_combined_aec_change)
     lifecycle = _ResponseLifecycle(on_finished=lambda: bargein.notify_response_finished())
     generation_guard = _ResponseGenerationGuard()
-    pending_utterance_audio = _PendingUtteranceAudio()
-
-    # M2.6B.4 FAILURE 3 -- local same-turn language LID is an optional
-    # enhancement (diagnostics + future-session sticky-preference
-    # persistence only, never a hard dependency of cloud voice: if
-    # whisper.cpp isn't installed/configured on this machine, cloud voice
-    # still runs exactly as before, just without this diagnostic).
-    language_detector: Any = None
-    try:
-        from nexa.stt import WhisperCppLanguageDetector
-
-        language_detector = WhisperCppLanguageDetector()
-    except Exception as exc:  # noqa: BLE001 - optional enhancement
-        logger.warning(
-            "nexa.realtime.gemini.runtime: local language detector unavailable "
-            "(%r) -- cloud voice continues without same-turn language "
-            "diagnostics", exc,
-        )
-    language_resolver: Any = None
-    if language_detector is not None:
-        from nexa.conversation import ResponseLanguageResolver
-
-        language_resolver = ResponseLanguageResolver()
 
     def _on_confirmed(ctx: InterruptContext) -> None:
         metrics.local_interruption_confirmed()
@@ -1010,9 +926,6 @@ def build_gemini_voice_runtime(
             metrics=metrics,
             lifecycle=lifecycle,
             generation_guard=generation_guard,
-            pending_utterance_audio=pending_utterance_audio,
-            language_detector=language_detector,
-            language_resolver=language_resolver,
             on_event=on_event,
         )
 
@@ -1044,7 +957,6 @@ def build_gemini_voice_runtime(
         provider_handle=provider_handle,
         metrics=metrics,
         lifecycle=lifecycle,
-        pending_utterance_audio=pending_utterance_audio,
     )
     aec_feeder = AecReferenceFeeder(
         aec_health=aec_health, sample_rate=OUTPUT_SAMPLE_RATE_HZ, channels=1
@@ -1082,8 +994,5 @@ def build_gemini_voice_runtime(
         metrics=metrics,
         lifecycle=lifecycle,
         generation_guard=generation_guard,
-        pending_utterance_audio=pending_utterance_audio,
-        language_detector=language_detector,
-        language_resolver=language_resolver,
         on_event=on_event,
     )

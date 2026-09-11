@@ -58,7 +58,11 @@ Runtime / test evidence outranks anything else in this repo.
   source-level differential audit against the OPERATOR-CONFIRMED M2.6A
   spike found no concrete architectural regression, restored one
   wording difference in the cloud role card, and the correct next
-  evidence is a clean Attempt #2, not a LID gate)]**.
+  evidence is a clean Attempt #2, not a LID gate; **M2.6B.4D (below)
+  tightened this further — the fire-and-forget LID construction/
+  invocation itself was REMOVED from the production cloud runtime (not
+  merely proven non-blocking), so Attempt #2 now runs with zero local
+  LID CPU cost of any kind)]**.
   Original Accepted content:
   **Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
   Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
@@ -116,7 +120,45 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0041_m2_6b_4c_m2_6a_parity_audit_attempt2_prep_20260911.md`
+- **Latest report:** `docs/reports/R0042_m2_6b_4d_remove_cloud_lid_runtime_cost_20260911.md`
+  (**M2.6B.4D — remove cloud LID runtime cost before Attempt #2 —
+  narrow cleanup, 2026-09-11.** R0041 correctly decided NO local LID
+  gate in the normal cloud critical path, but the runtime still
+  CONSTRUCTED `WhisperCppLanguageDetector` and INVOKED it fire-and-
+  forget once per closed utterance. R0041's own test proved only that
+  the event loop does not await a slow fake coroutine inline — not that
+  a REAL whisper.cpp CPU-bound inference call (~0.5-1.7s of native-code
+  work per R0039/R0040's own measurements) has zero impact on Pipecat's
+  scheduling/audio/AEC/VAD once actually invoked on a resource-
+  constrained Pi. Per the operator's explicit instruction ("normal
+  cloud voice must run with ZERO local LID inference"), removed rather
+  than merely proved-non-blocking: `build_gemini_voice_runtime` no
+  longer constructs `WhisperCppLanguageDetector`/
+  `ResponseLanguageResolver` at all; `_analyze_turn_language` and
+  `RuntimeMetrics.language_diagnostics` deleted; `_VadToProviderBridge`
+  no longer accumulates a parallel per-utterance PCM buffer;
+  `_PendingUtteranceAudio` deleted (confirmed, by grep across
+  `src/nexa/realtime/`, to have had exactly one caller — the deleted
+  diagnostic — never used by reconnect/mid-turn recovery, which is a
+  structurally separate mechanism, `GeminiLiveProvider.take_pending_audio()`/
+  `ConversationRouter.recover_from_mid_turn_loss`, confirmed by an empty
+  `git diff` on `service.py`/`router.py`). Verified by test, not just
+  inspection: a patched `WhisperCppLanguageDetector.__init__` proves
+  zero construction calls; a patched `.detect()` proves a REAL
+  Polish-content turn followed by a REAL English-content turn both
+  dispatch through the identical native provider path with zero LID
+  calls, no provider replacement, and `activityEnd`
+  (`user_turn_end()`) returning in under 50ms every time. R0041's other
+  changes (`CLOUD_ROLE_CARD` wording, per-turn diagnostics, R0038
+  fixes) and R0039/R0040's fallback research are unchanged/preserved.
+  **+2 net new tests (41 in this file; 932 total, OK, skipped=7)**, 0
+  regressions; `ruff`/`pip check`/`git diff --check` all clean; local
+  voice completely untouched (empty diff). **Hardware acceptance NOT
+  marked PASS; `M2.6B` NOT marked COMPLETE** — both still contingent on
+  a clean operator Attempt #2, which now runs with zero background
+  whisper.cpp CPU load competing with Pipecat/audio/AEC/VAD. Not
+  pushed.)
+- **Prior report:** `docs/reports/R0041_m2_6b_4c_m2_6a_parity_audit_attempt2_prep_20260911.md`
   (**M2.6B.4C — M2.6A vs M2.6B language parity audit + Attempt #2
   preparation — PRODUCT DECISION, 2026-09-11.** Operator-directed reversal
   of the LID trajectory: M2.6A (`R0031`, OPERATOR-CONFIRMED) already
