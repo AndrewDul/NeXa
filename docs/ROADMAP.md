@@ -321,6 +321,45 @@ unpaid-quota data is used to improve Google products.
     operator acceptance remains the one step before M2.6B is COMPLETE —
     NOT YET RUN, see R0036 for the exact launch command and READY lines
     (unchanged from R0035).**
+  - **M2.6B.3B — interrupted cloud history safety only: IMPLEMENTED,
+    PASS** (`R0037`, 2026-09-11). R0036's own §2 fix (the one-audio-
+    chunk-lag `_SpokenPrefixHighWater`) was found to still overclaim: a
+    later chunk's mere existence does not prove how much of an EARLIER
+    text snapshot that chunk's own audio actually covers (snapshot
+    `"abcdef ghijkl mnop..."` with chunk #1 = "abc", chunk #2 = "def" —
+    chunk #2 arriving proves nothing about chunk #1 covering the WHOLE
+    earlier snapshot). Re-searched the installed source for a real,
+    provider-supported alignment mechanism: `google.genai.types.
+    Transcription.words`/`WordInfo.start_offset`/`end_offset` **do
+    exist** in the underlying SDK's own type schema (real per-word timing
+    data), but Pipecat's installed `_handle_msg_output_transcription`
+    **never reads or forwards `words`** (zero occurrences anywhere in the
+    file) — only the concatenated `.text` reaches any frame NeXa's
+    provider can see, so this data is unreachable without bypassing
+    Pipecat's own service (out of scope; ADR-0004 already forbids a
+    second raw Gemini client), and it's unverified whether the API even
+    populates it in practice. **Conclusion: no deterministic alignment
+    exists in the integrated stack.** Deleted `_SpokenPrefixHighWater`;
+    new `CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX = ""` is passed
+    unconditionally on every confirmed interruption regardless of chunk
+    count or accumulated text — an interrupted cloud turn always commits
+    `COMMITTED_USER_ONLY`. **Cloud interrupted-prefix precision:
+    CONSERVATIVE / NO FALSE FUTURE TEXT** — under-crediting an
+    interrupted reply is acceptable in v1; crediting words that were
+    never spoken is not. Normal, non-interrupted completions unaffected.
+    Playback lifecycle, AEC, reconnect/mid-turn-recovery, router
+    architecture, the Gemini model/voice, VAD, and barge-in thresholds
+    were **not** touched. 5 tests replace R0036's 6 (matching the
+    charter's own numbered scenarios exactly); full suite **910 tests, OK
+    (skipped=7)**, 0 regressions; `ruff`/`pip check`/`git diff --check`/
+    secret-scan/import-isolation all clean. **Standing note: `M2.6B` must
+    NOT be marked fully COMPLETE after the hardware run until the
+    proactive-reconnect/age-trigger gate is either implemented and
+    deterministically validated, or explicitly changed by an ADR
+    amendment** — restated from R0036, not newly resolved by this
+    checkpoint. **Real Gemini/hardware operator acceptance remains the
+    one step before M2.6B is COMPLETE — NOT YET RUN, see R0037 for the
+    exact launch command and READY lines (unchanged from R0035/R0036).**
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

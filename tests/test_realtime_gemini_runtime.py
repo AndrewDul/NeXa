@@ -1,7 +1,11 @@
-"""``GeminiVoiceRuntime`` (M2.6B.3/M2.6B.3A) — the HYBRID cloud-audio +
-barge-in wiring, plus the three M2.6B.3A pre-live hardening seams:
-playback-lifecycle-aware barge-in finishing, playback-truth spoken-prefix
-high-water, and driven mid-turn fresh-session recovery.
+"""``GeminiVoiceRuntime`` (M2.6B.3/M2.6B.3A/M2.6B.3B) — the HYBRID
+cloud-audio + barge-in wiring, plus the pre-live hardening seams:
+playback-lifecycle-aware barge-in finishing, the fully-conservative
+interrupted-turn spoken-prefix rule (M2.6B.3B — no deterministic
+assistant-text/audio alignment is reachable through the installed
+Pipecat/google-genai stack, so an interrupted turn's assistant text is
+always empty; see the runtime module docstring), and driven mid-turn
+fresh-session recovery.
 
 No real audio device, no network: the hardware-only object graph is
 exercised via ``dry=True`` construction (mirrors the M2.6A probe's own
@@ -9,8 +13,8 @@ exercised via ``dry=True`` construction (mirrors the M2.6A probe's own
 ``_on_confirmed``) is exercised with a real ``GeminiLiveProvider`` driven
 by the same FAKE terminal service used in ``test_realtime_gemini_service``
 (no network) plus a stub in place of the hardware ``PipelineWorker``. The
-combinator classes (``_ResponseLifecycle``, ``_SpokenPrefixHighWater``)
-are also exercised as pure units — they hold no Pipecat/network state.
+``_ResponseLifecycle`` combinator is also exercised as a pure unit — it
+holds no Pipecat/network state.
 """
 
 from __future__ import annotations
@@ -28,11 +32,11 @@ if str(SRC) not in sys.path:
 
 from nexa.conversation.session import ConversationSession, ExternalExchangeOutcome  # noqa: E402
 from nexa.realtime.gemini.runtime import (  # noqa: E402
+    CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX,
     GeminiVoiceRuntime,
     RuntimeMetrics,
     _ProviderHandle,
     _ResponseLifecycle,
-    _SpokenPrefixHighWater,
     build_gemini_voice_runtime,
 )
 from nexa.realtime.policy import ActiveProvider, ConversationPolicy  # noqa: E402
@@ -222,78 +226,37 @@ class TestResponseLifecycle(unittest.TestCase):
         self.assertEqual(fired, ["finished"])
 
 
-class TestSpokenPrefixHighWater(unittest.TestCase):
-    """M2.6B.3A §2 -- pure unit tests for the one-chunk-lag combinator."""
+class TestInterruptedHistorySafety(unittest.TestCase):
+    """M2.6B.3B -- no deterministic assistant-text/audio alignment is
+    reachable through the installed Pipecat/google-genai stack (the
+    ``words``/``WordInfo.start_offset``/``end_offset`` fields exist in
+    ``google.genai.types.Transcription`` but Pipecat's installed
+    ``_handle_msg_output_transcription`` never reads or forwards them —
+    only the concatenated ``.text`` reaches any frame NeXa's provider can
+    see). M2.6B.3A's one-audio-chunk-lag "high-water" mechanism is gone:
+    a later chunk's mere existence cannot prove how much of an EARLIER
+    text snapshot that chunk's own audio actually covers. The v1 rule is
+    now fully conservative: an interrupted cloud turn's committed
+    assistant text is unconditionally
+    ``CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX`` (``""``) — never a
+    partial-credit approximation built from chunk count."""
 
-    def test_a_unplayed_ahead_of_audio_text_is_not_yet_in_high_water(self) -> None:
-        tracker = _SpokenPrefixHighWater()
-        # transcript arrives well ahead of any audio (the documented Gemini
-        # look-ahead failure mode) -- nothing has crossed the boundary yet.
-        self.assertEqual(tracker.high_water, "")
-        tracker.on_audio_chunk(current_text="Once upon a time, in a land")
-        # the FIRST chunk only starts the pending snapshot -- nothing is
-        # promoted to high-water yet (nothing crossed the boundary BEFORE
-        # this chunk).
-        self.assertEqual(tracker.high_water, "")
-
-    def test_b_text_and_audio_both_released_may_be_committed(self) -> None:
-        tracker = _SpokenPrefixHighWater()
-        tracker.on_audio_chunk(current_text="Once upon a time,")
-        tracker.on_audio_chunk(current_text="Once upon a time, in a land far away")
-        # the second chunk's arrival promotes the FIRST chunk's snapshot.
-        self.assertEqual(tracker.high_water, "Once upon a time,")
-
-    def test_c_interruption_halfway_stores_only_high_water_prefix(self) -> None:
+    def test_1_transcript_far_ahead_of_first_audio_commits_no_future_text(self) -> None:
         session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
         router = ConversationRouter(session)
-        tracker = _SpokenPrefixHighWater()
 
         router.begin_cloud_turn()
         router.on_user_transcription("tell me a story", final=True)
-        router.on_assistant_transcription("Once upon a ti", final=False)
-        tracker.on_audio_chunk(current_text="Once upon a ti")
-        router.on_assistant_transcription("me, in a land far beyond", final=False)
-        tracker.on_audio_chunk(current_text="Once upon a time, in a land far beyond")
-
-        router.set_spoken_prefix(tracker.high_water)
-        router.on_interruption()
-        outcome = router.commit_cloud_turn()
-
-        self.assertEqual(outcome, ExternalExchangeOutcome.COMMITTED_EXCHANGE)
-        self.assertEqual(session.history[1].content, "Once upon a ti")
-        self.assertTrue(session.history[1].interrupted)
-
-    def test_d_late_transcription_after_interruption_cannot_enlarge_prefix(self) -> None:
-        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
-        router = ConversationRouter(session)
-        tracker = _SpokenPrefixHighWater()
-
-        router.begin_cloud_turn()
-        router.on_user_transcription("tell me a story", final=True)
-        router.on_assistant_transcription("Once upon a ti", final=False)
-        tracker.on_audio_chunk(current_text="Once upon a ti")
-        router.on_assistant_transcription("me, far beyond", final=False)
-        tracker.on_audio_chunk(current_text="Once upon a time, far beyond")
-
-        router.set_spoken_prefix(tracker.high_water)
-        router.on_interruption()
-        # a late server transcription delta for the invalidated reply
-        # arrives after the local interruption -- must never grow the
-        # committed prefix (CloudTurnAccumulator's own R0034 guard).
-        router.on_assistant_transcription(" the end", final=True)
-        outcome = router.commit_cloud_turn()
-
-        self.assertEqual(session.history[1].content, "Once upon a ti")
-        self.assertEqual(outcome, ExternalExchangeOutcome.COMMITTED_EXCHANGE)
-
-    def test_e_no_audio_interruption_has_no_assistant_canonical_text(self) -> None:
-        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
-        router = ConversationRouter(session)
-        tracker = _SpokenPrefixHighWater()  # never advanced -- no audio ever arrived
-
-        router.begin_cloud_turn()
-        router.on_user_transcription("tell me a story", final=True)
-        router.set_spoken_prefix(tracker.high_water)
+        # the model's own output-transcription looks far ahead of any
+        # audio actually produced (the documented Gemini/Pipecat
+        # look-ahead failure mode) -- a full paragraph arrives as text
+        # before a single audio chunk exists.
+        router.on_assistant_transcription(
+            "Once upon a time, in a land far beyond the seven seas, "
+            "there lived a dragon who loved to read.",
+            final=False,
+        )
+        router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
         router.on_interruption()
         outcome = router.commit_cloud_turn()
 
@@ -301,7 +264,65 @@ class TestSpokenPrefixHighWater(unittest.TestCase):
         self.assertEqual(len(session.history), 1)
         self.assertEqual(session.history[0].content, "tell me a story")
 
-    def test_f_normal_non_interrupted_turn_stores_full_final_text(self) -> None:
+    def test_2_multiple_audio_chunks_do_not_prove_the_whole_snapshot_spoken(self) -> None:
+        """Even with TWO (or more) audio chunks having arrived -- the
+        exact scenario M2.6B.3A's high-water mechanism treated as
+        "safe to credit" -- the existence of chunk #2 proves nothing
+        about how much of the *earlier* text snapshot chunk #1's own
+        audio actually covered (chunk #1's audio might be "abc" while the
+        snapshot already read "abcdef ghijkl..."). The conservative rule
+        commits no assistant text regardless of chunk count."""
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        router = ConversationRouter(session)
+
+        router.begin_cloud_turn()
+        router.on_user_transcription("tell me a story", final=True)
+        router.on_assistant_transcription("Once upon a ti", final=False)
+        # (an audio chunk would arrive here in production -- irrelevant:
+        # nothing about its arrival is used to credit any text)
+        router.on_assistant_transcription("me, in a land far beyond", final=False)
+        # (a second audio chunk arrives here too -- still irrelevant)
+
+        router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
+        router.on_interruption()
+        outcome = router.commit_cloud_turn()
+
+        self.assertEqual(outcome, ExternalExchangeOutcome.COMMITTED_USER_ONLY)
+        self.assertEqual(len(session.history), 1)
+
+    def test_3_interruption_with_no_trustworthy_prefix_is_user_only_commit(self) -> None:
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        router = ConversationRouter(session)
+
+        router.begin_cloud_turn()
+        router.on_user_transcription("tell me a story", final=True)
+        router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
+        router.on_interruption()
+        outcome = router.commit_cloud_turn()
+
+        self.assertEqual(outcome, ExternalExchangeOutcome.COMMITTED_USER_ONLY)
+        self.assertEqual(len(session.history), 1)
+        self.assertEqual(session.history[0].content, "tell me a story")
+
+    def test_4_late_transcription_after_interruption_remains_ignored(self) -> None:
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        router = ConversationRouter(session)
+
+        router.begin_cloud_turn()
+        router.on_user_transcription("tell me a story", final=True)
+        router.on_assistant_transcription("Once upon a ti", final=False)
+        router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
+        router.on_interruption()
+        # a late server transcription delta for the invalidated reply
+        # arrives after the local interruption -- must never resurrect any
+        # assistant text (CloudTurnAccumulator's own R0034 guard).
+        router.on_assistant_transcription(" the end", final=True)
+        outcome = router.commit_cloud_turn()
+
+        self.assertEqual(outcome, ExternalExchangeOutcome.COMMITTED_USER_ONLY)
+        self.assertEqual(len(session.history), 1)
+
+    def test_5_normal_non_interrupted_turn_stores_full_final_text(self) -> None:
         session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
         router = ConversationRouter(session)
 
@@ -330,7 +351,6 @@ class TestBargeInWiring(_FakeGeminiLiveServiceTestCase):
         metrics = RuntimeMetrics()
         provider_handle = _ProviderHandle(provider)
         lifecycle = _ResponseLifecycle(on_finished=lambda: bargein.notify_response_finished())
-        prefix_tracker = _SpokenPrefixHighWater()
 
         cancel_calls: list[str] = []
 
@@ -341,7 +361,7 @@ class TestBargeInWiring(_FakeGeminiLiveServiceTestCase):
 
         def _on_confirmed(ctx: InterruptContext) -> None:
             metrics.local_interruption_confirmed()
-            router.set_spoken_prefix(prefix_tracker.high_water)
+            router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
             router.on_interruption()
             lifecycle.mark_interrupted()
             asyncio.create_task(provider_handle.current.cancel())
@@ -358,7 +378,6 @@ class TestBargeInWiring(_FakeGeminiLiveServiceTestCase):
             bargein=bargein,
             metrics=metrics,
             lifecycle=lifecycle,
-            prefix_tracker=prefix_tracker,
         )
         runtime._cancel_calls = cancel_calls  # type: ignore[attr-defined]
         return runtime
@@ -468,7 +487,6 @@ class TestBargeInWiring(_FakeGeminiLiveServiceTestCase):
         runtime.router.begin_cloud_turn()
         runtime.router.on_user_transcription("user text", final=True)
         runtime.router.on_assistant_transcription("partial reply", final=False)
-        runtime.prefix_tracker.on_audio_chunk(current_text="partial reply")
 
         runtime.bargein.notify_response_dispatched()
         # Drive the state machine to INTERRUPTING via its own public
@@ -490,6 +508,10 @@ class TestBargeInWiring(_FakeGeminiLiveServiceTestCase):
         await _wait_until(lambda: bool(runtime._cancel_calls))  # type: ignore[attr-defined]
 
         self.assertTrue(runtime.router._turn.current.interrupted)  # noqa: SLF001
+        # M2.6B.3B -- the "partial reply" transcription accumulated before
+        # the interruption is NEVER committed as spoken; the conservative
+        # rule forces it to empty regardless of what had accumulated.
+        self.assertEqual(runtime.router._turn.current.assistant_text, "")  # noqa: SLF001
         self.assertEqual(runtime._cancel_calls, ["cancelled"])  # type: ignore[attr-defined]
         self.assertEqual(runtime.bargein.state_machine.state, InterruptionState.IDLE)
 
@@ -528,7 +550,6 @@ class TestMidTurnRuntimeRecovery(_FakeGeminiLiveServiceTestCase):
         metrics = RuntimeMetrics()
         provider_handle = _ProviderHandle(old_provider)
         lifecycle = _ResponseLifecycle(on_finished=lambda: None)
-        prefix_tracker = _SpokenPrefixHighWater()
         bargein = BargeInController(aec_health=aec_health, on_confirmed=lambda ctx: None)
 
         runtime = GeminiVoiceRuntime(
@@ -541,7 +562,6 @@ class TestMidTurnRuntimeRecovery(_FakeGeminiLiveServiceTestCase):
             bargein=bargein,
             metrics=metrics,
             lifecycle=lifecycle,
-            prefix_tracker=prefix_tracker,
         )
 
         await self._drain_one(old_provider, ReadinessChangedEvent)

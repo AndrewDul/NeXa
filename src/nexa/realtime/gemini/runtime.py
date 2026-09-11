@@ -68,7 +68,7 @@ any real Gemini/hardware operator run (see
    ``BotStoppedSpeakingFrame`` off a genuine ``TTSStoppedFrame`` — if the
    audio actually arrived — or, absent one, a ``BOT_VAD_STOP_FALLBACK_SECS``
    (3s) silence timeout).
-2. **Spoken-prefix high-water follows playback truth, not raw
+2. **Interrupted-turn assistant text is never trusted from raw
    transcription.** The installed Pipecat source
    (``gemini_live/llm.py:_handle_msg_output_transcription``) documents,
    verbatim, that Gemini's own output-transcription messages can arrive
@@ -76,13 +76,36 @@ any real Gemini/hardware operator run (see
    interruption our recorded context will contain some text that was
    actually never spoken" is the library's own comment. So
    ``CloudTurnAccumulator.assistant_text`` is never trusted directly as an
-   interrupted turn's prefix any more. ``_SpokenPrefixHighWater`` instead
-   promotes a one-chunk-lag snapshot: each new ``AssistantAudioEvent``
-   promotes whatever text had accumulated as of the *previous* chunk to the
-   high-water mark, so text that arrived after the last audio chunk (not
-   yet crossed the playback-output boundary) is never included. On a
-   confirmed interruption: ``router.set_spoken_prefix(high_water)`` then
-   ``router.on_interruption()``.
+   interrupted turn's prefix.
+
+   M2.6B.3A first tried a one-audio-chunk-lag "high-water" mechanism
+   (promote text-as-of-the-previous-chunk once a new chunk arrives).
+   **M2.6B.3B (see
+   ``docs/reports/R0037_m2_6b_3b_interrupted_cloud_history_safety_20260911.md``)
+   found that mechanism still overclaimed**: a later chunk's mere
+   existence proves nothing about how much of an *earlier* text snapshot
+   that chunk's own audio actually covers (the audio could be "abc" while
+   the snapshot already reads "abcdef ghijkl..."), so it could still credit
+   unspoken future text. A further source check (``google.genai.types.
+   Transcription.words`` / ``WordInfo.start_offset``/``end_offset`` DOES
+   exist in the underlying SDK's schema) found Pipecat's installed
+   ``_handle_msg_output_transcription`` **never reads or forwards
+   ``words``** — only the concatenated ``.text`` reaches any frame NeXa's
+   provider can see — so no real, already-wired alignment data is
+   reachable through this stack without bypassing Pipecat's own service
+   entirely (out of scope; ADR-0004 already forbids a second raw Gemini
+   client).
+
+   **Conclusion: no deterministic alignment exists in the integrated
+   stack. v1 rule, fully conservative:** an interrupted cloud turn's
+   assistant text is always empty — ``router.set_spoken_prefix("")`` is
+   called unconditionally on every confirmed interruption, then
+   ``router.on_interruption()``. Under-crediting (committing no assistant
+   text for an interrupted reply that did partly play) is acceptable;
+   crediting text that was never actually spoken is not. Normal,
+   non-interrupted completions are entirely unaffected — they still store
+   the full final assistant transcription via ``GenerationCompleteEvent``,
+   exactly as before.
 3. **Mid-turn fresh-session recovery is actually driven.**
    ``ConversationRouter.recover_from_mid_turn_loss()`` existed since R0035
    but had no caller. ``_consume_provider_events`` now polls
@@ -262,38 +285,17 @@ class _ResponseLifecycle:
         self._on_finished()
 
 
-class _SpokenPrefixHighWater:
-    """M2.6B.3A §2 — Gemini's own output-transcription can arrive well
-    ahead of, and contain far more text than, the audio synthesized so far
-    (Pipecat's installed source documents this exact failure mode — see
-    the module docstring). So the running
-    ``CloudTurnAccumulator.assistant_text`` must never be trusted directly
-    as an interrupted turn's spoken prefix.
-
-    Tracks a one-chunk-lag snapshot instead: each time a NEW audio chunk is
-    confirmed emitted toward playback, whatever text had accumulated as of
-    the *previous* chunk is promoted to the high-water mark — text that
-    arrived after the last audio chunk (has not yet crossed the
-    playback-output boundary) is never included. Sentence/chunk-level
-    precision, per the documented v1 approximation; not sample-accurate.
-    """
-
-    def __init__(self) -> None:
-        self._high_water = ""
-        self._pending: str | None = None
-
-    def reset(self) -> None:
-        self._high_water = ""
-        self._pending = None
-
-    def on_audio_chunk(self, *, current_text: str) -> None:
-        if self._pending is not None:
-            self._high_water = self._pending
-        self._pending = current_text
-
-    @property
-    def high_water(self) -> str:
-        return self._high_water
+#: M2.6B.3B — no deterministic assistant-text/audio alignment is reachable
+#: through the installed Pipecat/google-genai stack (see the module
+#: docstring's §2 for the source evidence: ``WordInfo.start_offset``/
+#: ``end_offset`` exist in the SDK's own type schema, but Pipecat's
+#: installed ``_handle_msg_output_transcription`` never reads or forwards
+#: them). An interrupted cloud turn's committed assistant text is
+#: therefore always this constant — never a partial-credit approximation
+#: built from audio-chunk count, which cannot logically prove how much of
+#: an earlier transcription snapshot a later chunk's own audio covers.
+#: Under-crediting is acceptable; crediting unspoken words is not.
+CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX = ""
 
 
 def _make_vad_bridge_class(P: dict[str, Any]) -> type:
@@ -422,7 +424,6 @@ class GeminiVoiceRuntime:
     bargein: BargeInController
     metrics: RuntimeMetrics
     lifecycle: _ResponseLifecycle
-    prefix_tracker: _SpokenPrefixHighWater
     #: Optional operator/observability hook, called once per event
     #: *from the same single consumption loop* that drives the canonical
     #: write path -- ``provider.events()`` is backed by ONE
@@ -478,7 +479,6 @@ class GeminiVoiceRuntime:
                     response_dispatched = True
                     self.bargein.notify_response_dispatched()
                     self.lifecycle.mark_dispatched()
-                    self.prefix_tracker.reset()
 
                 outcome = self.router.handle_provider_event(event)
 
@@ -505,10 +505,6 @@ class GeminiVoiceRuntime:
                         first_audio_seen = True
                         self.metrics.first_assistant_audio_received()
                     self.lifecycle.mark_audio_produced()
-                    cur = self.router._turn.current  # noqa: SLF001
-                    self.prefix_tracker.on_audio_chunk(
-                        current_text=cur.assistant_text if cur is not None else ""
-                    )
                     frame = P["TTSAudioRawFrame"](
                         audio=event.pcm, sample_rate=OUTPUT_SAMPLE_RATE_HZ, num_channels=1
                     )
@@ -595,7 +591,6 @@ def build_gemini_voice_runtime(
 
     aec_health = AecReferenceHealth(on_change=_combined_aec_change)
     lifecycle = _ResponseLifecycle(on_finished=lambda: bargein.notify_response_finished())
-    prefix_tracker = _SpokenPrefixHighWater()
 
     def _on_confirmed(ctx: InterruptContext) -> None:
         metrics.local_interruption_confirmed()
@@ -605,14 +600,23 @@ def build_gemini_voice_runtime(
         # never waits on anything below -- the R0034 late-server-event
         # protections stay in force regardless of what the cloud side does.
         #
-        # M2.6B.3A §2 -- the spoken prefix is the one-chunk-lag high-water
-        # mark, NEVER the raw running CloudTurnAccumulator.assistant_text
-        # (installed Pipecat source proves output-transcription can arrive
-        # ahead of, and contain more text than, the audio actually
-        # produced). Set BEFORE on_interruption() per the charter's own
-        # example ordering (functionally either order is safe -- neither
-        # accumulator method depends on the other having already run).
-        router.set_spoken_prefix(prefix_tracker.high_water)
+        # M2.6B.3B -- the interrupted spoken prefix is UNCONDITIONALLY
+        # empty, never the raw running CloudTurnAccumulator.assistant_text
+        # and never a partial-credit approximation. Installed Pipecat
+        # source proves output-transcription can arrive ahead of, and
+        # contain more text than, the audio actually produced, and a
+        # one-audio-chunk-lag mechanism (M2.6B.3A's first attempt) still
+        # cannot prove how much of an EARLIER text snapshot a LATER
+        # chunk's own audio actually covers. No deterministic
+        # assistant-text/audio alignment is reachable through the
+        # installed Pipecat/google-genai stack (see the module docstring
+        # §2) -- so under-crediting (no assistant text at all for an
+        # interrupted reply) is the only safe choice; crediting unspoken
+        # words is not acceptable. Set BEFORE on_interruption() per the
+        # charter's own example ordering (functionally either order is
+        # safe -- neither accumulator method depends on the other having
+        # already run).
+        router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
         router.on_interruption()
         lifecycle.mark_interrupted()
         # provider_handle.current (never the construction-time `provider`
@@ -641,7 +645,6 @@ def build_gemini_voice_runtime(
             bargein=bargein,
             metrics=metrics,
             lifecycle=lifecycle,
-            prefix_tracker=prefix_tracker,
             on_event=on_event,
         )
 
@@ -705,6 +708,5 @@ def build_gemini_voice_runtime(
         bargein=bargein,
         metrics=metrics,
         lifecycle=lifecycle,
-        prefix_tracker=prefix_tracker,
         on_event=on_event,
     )
