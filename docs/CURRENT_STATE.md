@@ -48,10 +48,17 @@ Runtime / test evidence outranks anything else in this repo.
   hardware/Gemini operator run: ATTEMPT #1 FAILED, three regressions
   found; two fixed and retest-ready, the language-mirroring one only
   diagnosed — M2.6B.4A research found the obvious fix too slow and paused
-  pending a lighter LID; M2.6B.4B (below) benchmarked three real
-  multilingual whisper.cpp tiny variants and ACCEPTED tiny-q5_1 as the
-  lighter LID model, footprint win at equal accuracy — R0041 design/impl
-  not yet started)]**.
+  pending a lighter LID; M2.6B.4B benchmarked three real multilingual
+  whisper.cpp tiny variants and identified tiny-q5_1 as the best
+  researched candidate; **M2.6B.4C (below) is an explicit PRODUCT
+  DECISION reversing the LID trajectory: no local LID gate in the normal
+  cloud critical path unless a CLEAN Attempt #2 (R0038's fixes in place)
+  produces repeated evidence native mirroring is unreliable — tiny-q5_1
+  downgraded to FALLBACK RESEARCH CANDIDATE ONLY, not adopted. A
+  source-level differential audit against the OPERATOR-CONFIRMED M2.6A
+  spike found no concrete architectural regression, restored one
+  wording difference in the cloud role card, and the correct next
+  evidence is a clean Attempt #2, not a LID gate)]**.
   Original Accepted content:
   **Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
   Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
@@ -109,7 +116,63 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0040_m2_6b_4b_lightweight_lid_benchmark_20260911.md`
+- **Latest report:** `docs/reports/R0041_m2_6b_4c_m2_6a_parity_audit_attempt2_prep_20260911.md`
+  (**M2.6B.4C — M2.6A vs M2.6B language parity audit + Attempt #2
+  preparation — PRODUCT DECISION, 2026-09-11.** Operator-directed reversal
+  of the LID trajectory: M2.6A (`R0031`, OPERATOR-CONFIRMED) already
+  proved native PL/EN mirroring/switching/barge-in worked well with no
+  local LID; Attempt #1 was not a clean same-architecture experiment (two
+  real integration bugs were entangled with the run, both already fixed
+  in R0038). Did a source-level differential audit of the OPERATOR-
+  CONFIRMED M2.6A spike (`docs/research/m2_6_cloud_realtime_voice/
+  m2_6a_gemini_live_probe.py`) against current production
+  (`service.py`/`runtime.py`/`snapshot.py`) across 27 dimensions (model,
+  voice, system_instruction, initial history, VAD framing, sample rates,
+  aggregator config, pipeline order, hidden language settings, etc.) —
+  produced as an explicit table in R0041. **Found no concrete
+  architectural regression capable of explaining EN->PL by itself.**
+  Confirmed from R0038's own live log that the VAD-bridge setup/cleanup
+  crash was confined to Pipecat's per-processor metrics lifecycle hooks
+  and never touched the turn-forwarding logic (new turns DID reach
+  Gemini throughout that failed run) — the crash is provably independent
+  of the language failure. Found exactly ONE genuine, source-level
+  wording difference: the cloud role card's language-mirroring sentence
+  had drifted from the spike's own proven, explicit per-turn framing
+  ("the language the user is currently speaking...if explicitly
+  asked...follow that request") to a terser "Mirror the user's language"
+  — restored (`CLOUD_ROLE_CARD` in `src/nexa/realtime/snapshot.py`) as a
+  low-risk alignment with the OPERATOR-CONFIRMED wording, explicitly NOT
+  claimed as a proven fix (unverifiable without a live call, not made
+  this checkpoint). A second, real but NOT language-related difference
+  was found and left open: production's `_VadToProviderBridge` only
+  forwards audio to the provider while a locally-detected turn is open,
+  so Gemini's own speech-onset pre-roll buffer (which the M2.6A spike's
+  continuous-streaming design DID populate) is never populated in
+  production — a latency/onset-clipping question for a future
+  checkpoint, not this one. **R0040's `tiny-q5_1` finding is explicitly
+  DOWNGRADED**: was "SELECTED", now **BEST RESEARCHED FALLBACK CANDIDATE
+  ONLY** — not adopted, not wired into production, nothing deleted
+  (models/benchmark/JSON results preserved for a future checkpoint if a
+  clean retest ever proves native mirroring genuinely unreliable). Added
+  lightweight, non-blocking per-turn retest diagnostics
+  (`RuntimeMetrics.canonical_turn_committed` gained
+  `user_transcript`/`assistant_transcript`/`provider_instance_id`
+  keyword args, logged as `USER_TRANSCRIPT`/`ASSISTANT_TRANSCRIPT`/
+  `PROVIDER_SESSION_ID`) built only from state already held in memory —
+  no new I/O, no added latency, no raw audio. **+7 new deterministic
+  tests** (a consecutive-normal-turns barge-in re-arm test; 3
+  system-instruction/no-implicit-language-preference tests; 1 test
+  proving a deliberately 5-second-sleeping fake LID detector never
+  delays turn dispatch/commit — confirms LID stays fully off the normal
+  cloud critical path; 2 diagnostics-logging tests) — **930 tests total,
+  OK (skipped=7)**, 0 regressions. `ruff`/`pip check`/`git diff --check`
+  all clean; local voice completely untouched (empty diff on
+  `src/nexa/voice`/`src/nexa/voice_tts`). R0038's fixes (VAD-bridge
+  lifecycle, response-generation guard) re-verified unchanged. **Hardware
+  acceptance NOT marked PASS; `M2.6B` NOT marked COMPLETE** — both
+  contingent on a clean operator Attempt #2 using the exact scripted
+  PL/interrupt/EN/EN/PL coverage in the report. Not pushed.)
+- **Prior report:** `docs/reports/R0040_m2_6b_4b_lightweight_lid_benchmark_20260911.md`
   (**M2.6B.4B — real lightweight PL/EN LID candidate benchmark — RESEARCH
   ONLY, 2026-09-11.** R0039 proved `base/q8_0` too slow for per-turn gating
   but only *surveyed* lighter candidates without benchmarking a real one.

@@ -528,6 +528,59 @@ class TestBargeInWiring(_FakeGeminiLiveServiceTestCase):
         except asyncio.CancelledError:
             pass
 
+    async def test_consecutive_normal_turns_rearm_bargein_each_time(self) -> None:
+        """M2.6B.4C (R0041) retest item 7 -- after a FULLY-FINISHED normal
+        (non-interrupted) turn returns ``BargeInController`` to IDLE, a
+        SECOND, independent normal turn must dispatch and finish exactly
+        the same way -- no leftover state from turn 1 (a stale generation
+        id, a stuck lifecycle flag, an already-consumed re-arm) may block
+        or corrupt turn 2."""
+        provider, _ = await self._started_provider()
+        runtime = self._wire(provider)
+        await self._drain_one(provider, ReadinessChangedEvent)
+        fake = provider._llm  # noqa: SLF001
+
+        for turn_no, (user_text, assistant_text, assistant_pcm) in enumerate(
+            (
+                ("hello", "hi", b"assistant-pcm-1"),
+                ("how are you", "fine", b"assistant-pcm-2"),
+            ),
+            start=1,
+        ):
+            runtime.router.begin_cloud_turn()
+            await provider.user_turn_start()
+            await provider.send_user_audio(f"user-audio-{turn_no}".encode())
+            await provider.user_turn_end()
+
+            consume_task = asyncio.create_task(runtime._consume_provider_events())
+            await fake.emit_user_transcription(user_text, final=True)
+            await fake.emit_assistant_audio(assistant_pcm)
+            await _wait_until(lambda: runtime.bargein.active_response_id is not None)
+            self.assertEqual(
+                runtime.bargein.state_machine.state, InterruptionState.RESPONDING
+            )
+            await fake.emit_assistant_text(assistant_text)
+            await fake.emit_generation_complete()
+            await asyncio.sleep(0.05)
+
+            # real playback-lifecycle truth, exactly as a real
+            # BaseOutputTransport would confirm the queue drained.
+            runtime.lifecycle.observe_bot_started()
+            runtime.lifecycle.observe_bot_stopped()
+
+            self.assertEqual(runtime.bargein.state_machine.state, InterruptionState.IDLE)
+            self.assertIsNone(runtime.bargein.active_response_id)
+            self.assertIn(
+                assistant_pcm,
+                [f.audio for f in runtime.hw_worker.queued_frames if hasattr(f, "audio")],
+            )
+
+            consume_task.cancel()
+            try:
+                await consume_task
+            except asyncio.CancelledError:
+                pass
+
     async def test_on_confirmed_hook_notifies_router_and_cancels_provider_and_bargein(
         self,
     ) -> None:
@@ -1059,6 +1112,194 @@ class TestCloudSameTurnLanguage(unittest.IsolatedAsyncioTestCase):
         decision2 = resolver.resolve("jaka jest prędkość światła", input_language="pl")
         self.assertEqual(decision2.response_language, "en")
         self.assertEqual(decision2.sticky_after, "en")
+
+
+class TestSystemInstructionLanguagePolicy(unittest.TestCase):
+    """M2.6B.4C (R0041) retest items 9-10 -- the cloud role card's
+    language-mirroring wording matches the intended CURRENT-turn-mirroring
+    policy (aligned with the OPERATOR-CONFIRMED M2.6A spike wording after
+    the differential audit), and no implicit language preference exists
+    when the caller passes none (reproducing R0038's exact production
+    call shape: ``apps/nexa_cloud_voice_app.py`` never passes
+    ``language_preference``)."""
+
+    def test_role_card_mirrors_current_spoken_language_explicitly(self) -> None:
+        from nexa.realtime.snapshot import CLOUD_ROLE_CARD
+
+        lowered = CLOUD_ROLE_CARD.lower()
+        # the exact framing gap the audit found between the spike and the
+        # prior production wording: per-turn ("currently speaking"), not a
+        # static/session-level characteristic.
+        self.assertIn("currently speaking", lowered)
+        self.assertIn("polish", lowered)
+        self.assertIn("english", lowered)
+        # the spike's own explicit-override clause is preserved.
+        self.assertIn("explicitly", lowered)
+
+    def test_role_card_names_no_default_language(self) -> None:
+        """Neither language is singled out as a fallback/default -- the
+        instruction is symmetric, matching ADR-0004 Decision F (Option A:
+        native mirroring), never a NeXa-side bias toward either language."""
+        from nexa.realtime.snapshot import CLOUD_ROLE_CARD
+
+        pl_pos = CLOUD_ROLE_CARD.lower().index("polish")
+        en_pos = CLOUD_ROLE_CARD.lower().index("english")
+        # both appear once, back-to-back (as alternatives), never one
+        # earlier as a "default" with the other only as an afterthought
+        # several sentences later.
+        self.assertLess(abs(pl_pos - en_pos), 20)
+
+    def test_no_implicit_language_preference_reproduces_production_call_shape(self) -> None:
+        """R0038's exact finding, re-asserted as a standing regression
+        test: the real production call (``apps/nexa_cloud_voice_app.py``)
+        never passes ``language_preference`` -- with it omitted, the
+        snapshot's ``system_instruction`` is BYTE-FOR-BYTE the neutral
+        role card, no language-preference sentence appended."""
+        from nexa.conversation.session import ConversationSession
+        from nexa.realtime.snapshot import CLOUD_ROLE_CARD, build_cloud_context_snapshot
+
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        snapshot = build_cloud_context_snapshot(session)  # language_preference omitted
+        self.assertIsNone(snapshot.language_preference)
+        self.assertEqual(snapshot.system_instruction, CLOUD_ROLE_CARD)
+        self.assertNotIn("preference", snapshot.system_instruction.lower())
+
+
+@unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+class TestLidNeverBlocksCloudCriticalPath(_FakeGeminiLiveServiceTestCase):
+    """M2.6B.4C (R0041) retest item 11 -- no local LID may ever gate, delay,
+    or otherwise sit on the normal cloud critical path (turn dispatch /
+    assistant-audio injection). Wires a deliberately SLOW fake detector as
+    ``runtime.language_detector`` and proves a turn dispatches and commits
+    at normal speed regardless -- ``_analyze_turn_language`` is fire-and-
+    forget (``asyncio.create_task``, never awaited inline), so a slow or
+    even permanently-hanging detector can never add latency to, or block,
+    the live turn-taking path."""
+
+    class _SlowDetector:
+        def __init__(self) -> None:
+            self.call_count = 0
+            self.started = asyncio.Event()
+
+        async def detect(self, pcm: bytes):
+            self.call_count += 1
+            self.started.set()
+            # Deliberately much slower than any real turn should ever
+            # wait -- if this ever blocked the critical path, the test's
+            # own timeout would fail first.
+            await asyncio.sleep(5.0)
+            raise AssertionError("should never be awaited to completion in this test")
+
+    def _wire(self, provider) -> GeminiVoiceRuntime:
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        router = ConversationRouter(session, policy=ConversationPolicy.CLOUD_PREFERRED)
+        aec_health = AecReferenceHealth()
+        aec_health.mark_started()
+        metrics = RuntimeMetrics()
+        provider_handle = _ProviderHandle(provider)
+        lifecycle = _ResponseLifecycle(on_finished=lambda: bargein.notify_response_finished())
+        generation_guard = _ResponseGenerationGuard()
+        bargein = BargeInController(aec_health=aec_health, on_confirmed=lambda ctx: None)
+        slow_detector = self._SlowDetector()
+        runtime = GeminiVoiceRuntime(
+            provider=provider,
+            provider_handle=provider_handle,
+            router=router,
+            hw_worker=_StubHardwareWorker(),
+            hw_runner=None,
+            aec_health=aec_health,
+            bargein=bargein,
+            metrics=metrics,
+            lifecycle=lifecycle,
+            generation_guard=generation_guard,
+            pending_utterance_audio=_PendingUtteranceAudio(),
+            language_detector=slow_detector,
+        )
+        runtime._slow_detector = slow_detector  # type: ignore[attr-defined]
+        return runtime
+
+    async def test_slow_detector_never_delays_turn_dispatch_or_commit(self) -> None:
+        import time
+
+        provider, _ = await self._started_provider()
+        runtime = self._wire(provider)
+        await self._drain_one(provider, ReadinessChangedEvent)
+        fake = provider._llm  # noqa: SLF001
+
+        runtime.router.begin_cloud_turn()
+        await provider.user_turn_start()
+        await provider.send_user_audio(b"tell me about black holes")
+        await provider.user_turn_end()
+        # normally pushed by `_VadToProviderBridge` (not wired in this
+        # headless test); push it directly so the final transcription
+        # event below has buffered PCM to correlate and dispatch to the
+        # (slow) detector, exactly as the live wiring would.
+        runtime.pending_utterance_audio.push(b"tell me about black holes")
+
+        consume_task = asyncio.create_task(runtime._consume_provider_events())
+        t0 = time.monotonic()
+        await fake.emit_user_transcription("tell me about black holes", final=True)
+        await fake.emit_assistant_audio(b"assistant-pcm")
+        await fake.emit_assistant_text("black holes are...")
+        await fake.emit_generation_complete()
+        await _wait_until(lambda: len(runtime.hw_worker.queued_frames) >= 1, timeout=2.0)
+        dispatch_latency_s = time.monotonic() - t0
+        # generous ceiling still far below the detector's 5s sleep -- proves
+        # the critical path never waited on it.
+        self.assertLess(dispatch_latency_s, 1.0)
+
+        # the detector WAS invoked (fire-and-forget), never awaited inline.
+        await asyncio.wait_for(runtime._slow_detector.started.wait(), timeout=1.0)  # type: ignore[attr-defined]
+        self.assertEqual(runtime._slow_detector.call_count, 1)  # type: ignore[attr-defined]
+
+        consume_task.cancel()
+        try:
+            await consume_task
+        except asyncio.CancelledError:
+            pass
+
+
+class TestCanonicalTurnDiagnostics(unittest.TestCase):
+    """M2.6B.4C (R0041) -- the new, lightweight per-turn retest diagnostics
+    (``USER_TRANSCRIPT``/``ASSISTANT_TRANSCRIPT``/``PROVIDER_SESSION_ID``)
+    are logged from state already held in memory, with no exception and no
+    raw audio/credential ever included."""
+
+    def test_canonical_turn_committed_logs_the_charters_exact_keys(self) -> None:
+        from nexa.conversation.session import ExternalExchangeOutcome
+
+        metrics = RuntimeMetrics()
+        with self.assertLogs("nexa.realtime.gemini.runtime", level="INFO") as cm:
+            metrics.canonical_turn_committed(
+                ExternalExchangeOutcome.COMMITTED_EXCHANGE,
+                3,
+                user_transcript="what is the speed of light",
+                assistant_transcript="about 300,000 km/s",
+                provider_instance_id="140000000000",
+            )
+        (line,) = cm.output
+        self.assertIn("PROVIDER_SESSION_ID=140000000000", line)
+        self.assertIn("USER_TRANSCRIPT=", line)
+        self.assertIn("what is the speed of light", line)
+        self.assertIn("ASSISTANT_TRANSCRIPT=", line)
+        self.assertIn("about 300,000 km/s", line)
+        self.assertIn("generation=3", line)
+
+    def test_canonical_turn_committed_tolerates_missing_transcripts(self) -> None:
+        """Never raises when a commit had no accumulator (``turn is
+        None``) -- the runtime's call site always passes ``None`` in that
+        case, never skips the call."""
+        from nexa.conversation.session import ExternalExchangeOutcome
+
+        metrics = RuntimeMetrics()
+        with self.assertLogs("nexa.realtime.gemini.runtime", level="INFO"):
+            metrics.canonical_turn_committed(
+                ExternalExchangeOutcome.COMMITTED_USER_ONLY,
+                None,
+                user_transcript=None,
+                assistant_transcript=None,
+                provider_instance_id=None,
+            )
 
 
 if __name__ == "__main__":

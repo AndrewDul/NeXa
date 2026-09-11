@@ -563,8 +563,66 @@ unpaid-quota data is used to improve Google products.
     machinery verbatim. Zero `src/nexa/**` change this checkpoint; full
     suite unchanged at **923 tests, OK (skipped=7)**;
     `ruff`/`pip check`/`git diff --check` all clean. **`M2.6B` remains IN
-    PROGRESS; the language-mirroring gap remains open — now with an
-    accepted lighter LID model but no R0041 implementation yet.**
+    PROGRESS; the language-mirroring gap remains open — now with a
+    researched (not yet adopted) lighter LID model.**
+  - **M2.6B.4C — M2.6A vs M2.6B language parity audit + Attempt #2
+    preparation: PRODUCT DECISION** (`R0041`, 2026-09-11). Operator-
+    directed: reverse the LID trajectory — M2.6A (`R0031`, OPERATOR-
+    CONFIRMED) already proved native PL/EN mirroring/switching/barge-in
+    worked well with NO local LID; Attempt #1 was not a clean same-
+    architecture experiment (two real integration bugs, both already
+    fixed in R0038, were entangled with the run). Did a source-level
+    differential audit of the OPERATOR-CONFIRMED M2.6A spike
+    (`docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py`)
+    against current production (`service.py`/`runtime.py`/`snapshot.py`)
+    across 27 requested dimensions (model, voice, system_instruction,
+    initial history/history_config, kickoff, transcription config,
+    server VAD, local VAD framing, activityStart/End timing, sample
+    rates, service construction args, aggregator config, pipeline
+    processor order, hidden language settings, session
+    resumption/history, role-card wording, Pipecat defaults, and whether
+    Attempt #1's setup failure changed turn framing) — recorded as an
+    explicit table in R0041. **Found no concrete architectural
+    regression capable of explaining EN->PL by itself.** Confirmed from
+    R0038's own live log that the VAD-bridge setup/cleanup crash was
+    confined to Pipecat's per-processor metrics lifecycle hooks and
+    never touched the actual turn-forwarding logic (new turns DID reach
+    Gemini throughout that failed run) — provably independent of the
+    language failure. Found exactly ONE genuine wording difference: the
+    cloud role card's language-mirroring sentence had drifted from the
+    spike's own proven, explicit per-turn framing ("the language the
+    user is currently speaking...if explicitly asked...follow that
+    request") to a terser "Mirror the user's language" — restored
+    (`CLOUD_ROLE_CARD`) as a low-risk alignment, explicitly not claimed
+    as a proven fix (unverifiable without a live call, not made this
+    checkpoint). Also found and left open (not language-related): the
+    hardware pipeline's `_VadToProviderBridge` only forwards audio to
+    the provider while a locally-detected turn is open, so Gemini's own
+    speech-onset pre-roll buffer (which the spike's continuous-streaming
+    design DID populate) is never populated in production — a future
+    latency/onset-clipping question, not this checkpoint's. **R0040's
+    `tiny-q5_1` finding is explicitly DOWNGRADED from "SELECTED" to
+    BEST RESEARCHED FALLBACK CANDIDATE ONLY** — not adopted, not wired
+    into production; nothing deleted (models/benchmark/results preserved
+    for a future checkpoint if a clean retest ever proves native
+    mirroring genuinely unreliable). Added lightweight, non-blocking
+    per-turn retest diagnostics (`RuntimeMetrics.canonical_turn_committed`
+    gained `user_transcript`/`assistant_transcript`/
+    `provider_instance_id` keyword args, logged as
+    `USER_TRANSCRIPT`/`ASSISTANT_TRANSCRIPT`/`PROVIDER_SESSION_ID`) built
+    only from state already held in memory. **+7 new deterministic
+    tests** (consecutive-normal-turns barge-in re-arm; 3
+    system-instruction/no-implicit-language-preference tests; 1 proving
+    a deliberately 5-second-sleeping fake LID detector never delays turn
+    dispatch/commit; 2 diagnostics-logging tests) — **930 tests total, OK
+    (skipped=7)**, 0 regressions; `ruff`/`pip check`/`git diff --check`
+    all clean; local voice completely untouched (empty diff). R0038's
+    fixes re-verified unchanged. **Hardware acceptance NOT marked PASS;
+    `M2.6B` NOT marked COMPLETE** — both contingent on a clean operator
+    Attempt #2 (exact command + scripted PL/interrupt/EN/EN/PL coverage
+    in R0041). If Attempt #2 is clean, native mirroring stays the
+    permanent mechanism and strict LID is never implemented; only
+    REPEATED clean-runtime EN->PL failure reopens the fallback decision.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

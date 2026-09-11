@@ -33,11 +33,29 @@ DEFAULT_SNAPSHOT_CHAR_BUDGET = 4_000
 #: The minimal cloud role card (ADR-0004 Decision E) — NOT NeXa's persona /
 #: identity (``configs/personas/nexa_persona_v1.json``). Deliberately short
 #: and deliberately different text so the two can never be confused.
+#:
+#: M2.6B.4C (R0041) — the language-mirroring sentence is worded to match the
+#: OPERATOR-CONFIRMED M2.6A spike's own instruction as closely as ADR-0004's
+#: brevity requirement allows (``docs/research/m2_6_cloud_realtime_voice/
+#: m2_6a_gemini_live_probe.py``'s ``SPIKE_SYSTEM_INSTRUCTION``: "Normally
+#: answer in the language the user is currently speaking. If explicitly
+#: asked to use Polish or English, follow that request."), after the
+#: differential audit found this the one concrete, source-level wording
+#: difference between the two: production's prior text ("Mirror the user's
+#: language (Polish or English).") dropped the spike's explicit *per-turn*
+#: framing ("currently speaking") and its explicit-override clause. This is
+#: a wording refinement only — ADR-0004 Decision E illustrates, but does not
+#: mandate verbatim, this sentence; ADR-0004 Decision F (Option A, native
+#: mirroring) is unchanged. NOT a claim that this was a proven root cause of
+#: the Attempt #1 EN->PL failures (unverifiable without a live call, which
+#: this checkpoint does not make) — a low-risk alignment with the ONE prior
+#: OPERATOR-CONFIRMED wording, made once, before the next live retest.
 CLOUD_ROLE_CARD = (
     "You are the realtime voice provider for NeXa, a personal AI assistant. "
     "Speak naturally and concisely for a live spoken conversation, usually "
-    "1-3 sentences for an ordinary question. Mirror the user's language "
-    "(Polish or English)."
+    "1-3 sentences for an ordinary question. Answer in the language the "
+    "user is currently speaking, Polish or English; if the user explicitly "
+    "asks you to switch, follow that request."
 )
 
 

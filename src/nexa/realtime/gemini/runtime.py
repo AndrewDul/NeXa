@@ -171,11 +171,41 @@ three regressions, fixed here (see
    through the installed stack without a live call to test it, so that
    remains an explicit, honestly-documented open gap, not attempted here.
 
+M2.6B.4C (R0041) — **PRODUCT DECISION: no local LID gate in the normal
+cloud critical path.** M2.6A (the operator-confirmed spike, ``R0031``)
+proved PL/EN native mirroring, switching, and barge-in all worked well
+without any local LID. Attempt #1's language failure was NOT a clean
+same-architecture experiment: it happened alongside the two real
+integration bugs above. A source-level differential audit
+(``docs/reports/R0041_...``) compared the spike against this module
+line-by-line and found no concrete regression capable of explaining
+EN->PL by itself — the one genuine wording difference (the cloud role
+card's language-mirroring sentence had drifted from the spike's own
+proven, more explicit "the language the user is currently speaking...if
+explicitly asked...follow that request" framing to a terser "Mirror the
+user's language") was restored (see ``nexa.realtime.snapshot.
+CLOUD_ROLE_CARD``) — a low-risk alignment, not a proven fix, since this
+cannot be verified without a live call. R0039/R0040's local-Whisper-LID
+strict-routing research remains a **FALLBACK RESEARCH CANDIDATE ONLY**
+(``ggml-tiny-q5_1``, R0040's DECISION GATE B) — not adopted here, and not
+adopted unless a CLEAN retest (after this checkpoint's fixes, with no
+setup/cleanup crash and no barge-in playback bug in the way) produces
+REPEATED evidence that native mirroring is genuinely unreliable in
+production. ``_analyze_turn_language`` (M2.6B.4/R0038, above) remains
+wired but stays exactly what it always was: optional, fire-and-forget,
+offline diagnostics — never a gate on ``activityEnd``, never awaited
+inline on the turn-dispatch path, never invoked more than once per closed
+utterance. Also added: lightweight, non-blocking per-turn diagnostics
+(``RuntimeMetrics.canonical_turn_committed``'s new
+``user_transcript``/``assistant_transcript``/``provider_instance_id``
+keyword args) built only from state the turn accumulator already held in
+memory for the commit — no new I/O, no added latency, no raw audio.
+
 Construction only (``dry=True``): builds every object EXCEPT the audio
 device / network — no ``pyaudio.PyAudio()``, no device index lookup, no
 Gemini connection. This module has NOT been validated against real
-hardware — see ``docs/reports/R0035_...``/``R0036_...``/``R0038_...`` for
-exactly what remains for a real operator run.
+hardware — see ``docs/reports/R0035_...``/``R0036_...``/``R0038_...``/
+``R0041_...`` for exactly what remains for a real operator run.
 """
 
 from __future__ import annotations
@@ -538,10 +568,29 @@ class RuntimeMetrics:
     def provider_interruption_ack(self) -> None:
         logger.info("nexa.realtime.metrics: provider (server) interruption ACK received")
 
-    def canonical_turn_committed(self, outcome: Any, generation: int | None) -> None:
+    def canonical_turn_committed(
+        self,
+        outcome: Any,
+        generation: int | None,
+        *,
+        user_transcript: str | None = None,
+        assistant_transcript: str | None = None,
+        provider_instance_id: str | None = None,
+    ) -> None:
+        # M2.6B.4C (R0041) -- lightweight, non-blocking retest diagnostics:
+        # the charter's exact keys, built ONLY from state the accumulator
+        # already held in memory for this commit (CloudTurn.user_text /
+        # .assistant_text, already-allocated generation id) -- no new I/O,
+        # no added latency, no raw audio, no credential. provider_instance_id
+        # is a process-local id (str(id(provider))), NOT a Gemini server
+        # session id -- no true server-side session id is tracked anywhere
+        # in this stack (see ProviderUsageEvent.session_id, same convention).
         logger.info(
-            "nexa.realtime.metrics: canonical cloud turn committed outcome=%s generation=%s",
-            outcome, generation,
+            "nexa.realtime.metrics: canonical cloud turn committed outcome=%s "
+            "generation=%s PROVIDER_SESSION_ID=%s USER_TRANSCRIPT=%r "
+            "ASSISTANT_TRANSCRIPT=%r",
+            outcome, generation, provider_instance_id or "unknown",
+            user_transcript or "", assistant_transcript or "",
         )
 
     def reconnecting(self, reason: str) -> None:
@@ -722,7 +771,11 @@ class GeminiVoiceRuntime:
                 if outcome is not None:
                     turn = self.router._turn.current  # noqa: SLF001 - metrics only
                     self.metrics.canonical_turn_committed(
-                        outcome, turn.generation if turn else None
+                        outcome,
+                        turn.generation if turn else None,
+                        user_transcript=turn.user_text if turn else None,
+                        assistant_transcript=turn.assistant_text if turn else None,
+                        provider_instance_id=str(id(self.provider)),
                     )
                 if isinstance(event, AssistantAudioEvent):
                     if not first_audio_seen:
