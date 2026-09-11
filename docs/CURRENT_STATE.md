@@ -44,7 +44,8 @@ Runtime / test evidence outranks anything else in this repo.
   infrastructure-only. M2.6A remains PASS/OPERATOR-CONFIRMED; M2.6B was
   NEXT / NOT STARTED as of this Amendment-1 commit **[since progressed —
   see "Latest report" above: M2.6B is now IN PROGRESS, M2.6B.1/M2.6B.2/
-  M2.6B.2A IMPLEMENTED]**.
+  M2.6B.2A/M2.6B.3 IMPLEMENTED (M2.6B.3 TEST-READY, hardware/Gemini
+  operator acceptance not yet run)]**.
   Original Accepted content:
   **Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
   Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
@@ -102,7 +103,59 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0034_m2_6b_2a_cloud_turn_reconnect_hardening_20260911.md`
+- **Latest report:** `docs/reports/R0035_m2_6b_3_hybrid_cloud_audio_hardware_acceptance_20260911.md`
+  (**M2.6B.3 — production HYBRID cloud audio + real-hardware operator
+  acceptance — TEST-READY (deterministic checkpoint), hardware/Gemini
+  operator acceptance NOT YET RUN, 2026-09-11.** ADR-0004 + Amendment 1
+  unchanged; no cloud call, no hardware test, no reconnect-duration/quota
+  test. Wired `ReconnectController` into the production `GeminiLiveProvider`
+  via a new NeXa-owned `_readiness_monitor()` observation seam (Pipecat's
+  `GeminiLiveLLMService` reconnects automatically/internally with no
+  external hook — confirmed from the installed source — so NeXa can only
+  observe the readiness transition and decide independently whether to
+  trust it). Explicit policy answer for the charter's central question:
+  a mid-user-turn connection loss is **not** assumed safely resumable (no
+  source evidence found) — `ConversationRouter.recover_from_mid_turn_loss()`
+  destroys the old provider and starts a fresh one from a freshly rebuilt
+  canonical `CloudContextSnapshot`, replaying **only** not-yet-delivered
+  PCM (`take_pending_audio()`, destructive) as one new framed utterance;
+  a safe-boundary loss may resume the same provider-scoped context with no
+  re-seed, no duplicate turns. New `src/nexa/realtime/gemini/runtime.py`
+  (`GeminiVoiceRuntime`/`build_gemini_voice_runtime`) wires the REAL
+  hardware path: reSpeaker mic → the existing `LocalAudioTransport`/
+  `SileroVADAnalyzer`/`VADProcessor` construction pattern (mirrored from
+  `voice/runtime.py`) → a new, minimal `_VadToProviderBridge` (forwards
+  VAD-bracketed audio into `provider.user_turn_start`/`send_user_audio`/
+  `user_turn_end` — Gemini's own server VAD stays OFF, local Silero is the
+  sole turn authority) → `GeminiLiveProvider` → Gemini → assistant PCM
+  injected back into the SAME hardware pipeline via
+  `PipelineWorker.queue_frames` (the same mechanism already used for the
+  one-time `LLMRunFrame` kickoff) → USB speaker, teed to the XVF3800 AEC
+  far-end reference by the existing, **unmodified** `AecReferenceFeeder`.
+  Cloud barge-in reuses the existing, **unmodified** `BargeInController`:
+  `notify_response_dispatched`/`notify_response_finished` kept in sync
+  from the same single `provider.events()` consumption loop that drives
+  the canonical write path (a second independent event-stream reader was
+  drafted for operator printing, then found via re-reading `service.py`
+  to be unsafe — `events()` is backed by ONE `asyncio.Queue` — and fixed
+  with a single in-loop `on_event` hook instead); `_on_confirmed` calls
+  `router.on_interruption()` (freezes `CloudTurnAccumulator`'s
+  already-accumulated `assistant_text` as the spoken prefix — the same
+  precision as the local `SpokenTextTracker`, no new tracker class built),
+  fire-and-forgets `provider.cancel()`, and closes the capture phase
+  immediately (cloud turns need no segment-coalescing capture, unlike
+  local). New operator app `apps/nexa_cloud_voice_app.py`
+  (`--dry`/live modes) — `--dry` run live in this sandbox: full object
+  graph constructs, no audio device or network touched. **+10 new tests
+  (896 total, 0 regressions)**; `ruff`/`pip check`/`git diff --check`/
+  secret-scan/import-isolation all clean. Corrected a stale test-count in
+  `R0034`'s own FILES CHANGED (said the service.py test file "+16", the
+  actual split verified via `git show` is service.py +15 / turn.py +1 =
+  16 total, matching R0034's own TEST RESULTS). **Real Gemini/hardware
+  operator acceptance is the explicit next step — not run yet, no PASS
+  claimed for it; see R0035 for the exact launch command and READY
+  lines.** Not pushed.)
+- **Prior report:** `docs/reports/R0034_m2_6b_2a_cloud_turn_reconnect_hardening_20260911.md`
   (**M2.6B.2A — pre-hardware cloud-turn / reconnect hardening —
   IMPLEMENTED, PASS (checkpoint), 2026-09-11.** ADR-0004 + Amendment 1
   unchanged; no cloud call, no hardware test. Found and fixed a **real
@@ -702,10 +755,29 @@ Runtime / test evidence outranks anything else in this repo.
   interruption was still being appended); made the fresh-snapshot
   reconnect mechanism precise (destroy-and-recreate) and tested against a
   deliberately stale context. +16 tests (886 total, 0 regressions).
-  **Known gap, unchanged:** `ReconnectController` is not yet driven by
-  `GeminiLiveProvider` on a real connection error — no live reconnect
-  wiring yet. **Next: `M2.6B.3` — HYBRID cloud audio wiring + minimum
-  real-hardware/operator conversation acceptance. NOT STARTED.** The
+  **`M2.6B.3` (`R0035`, 2026-09-11): production HYBRID cloud audio +
+  reconnect wiring — IMPLEMENTED, TEST-READY (deterministic checkpoint);
+  real-hardware/Gemini operator acceptance NOT YET RUN.** `GeminiLiveProvider`
+  now drives `ReconnectController` via a NeXa-owned `_readiness_monitor()`
+  observation seam (Pipecat's own reconnect is automatic/internal, no
+  external hook — confirmed from source); mid-user-turn connection loss is
+  explicitly NOT assumed safely resumable (no source evidence found) —
+  `ConversationRouter.recover_from_mid_turn_loss()` destroys the old
+  provider and starts a fresh one from a fresh canonical snapshot,
+  replaying only not-yet-delivered PCM. New `src/nexa/realtime/gemini/
+  runtime.py` (`GeminiVoiceRuntime`) wires the REAL hardware path —
+  reSpeaker input → local Silero VAD (Gemini server VAD stays OFF) →
+  provider → Gemini → assistant audio → USB speaker, teed to the XVF3800
+  AEC far-end reference via the existing, unmodified `AecReferenceFeeder`
+  — and cloud barge-in via the existing, unmodified `BargeInController`
+  (`_on_confirmed`: `router.on_interruption()` freezes the spoken prefix,
+  `provider.cancel()` fire-and-forget, capture phase closed immediately;
+  local speaker-stop never waits on any of it). New operator app
+  `apps/nexa_cloud_voice_app.py` (`--dry` proven live in-sandbox: full
+  object graph constructs with no audio device/network touched). +10
+  tests (896 total, 0 regressions). **Not yet run: the real Gemini/
+  hardware operator conversation — see R0035 for the exact launch command
+  and READY lines.** The
   operator's currently available Gemini API key/tier is sufficient to
   continue `DEVELOPMENT`-mode M2.6B work (stored outside the repo); a
   verified paid/billing-enabled project is required only before any
@@ -1048,8 +1120,9 @@ Runtime / test evidence outranks anything else in this repo.
   tests, **886 total, 0 regressions**. Still no live Gemini connection;
   reconnect still not wired to a real socket (explicit, deferred to
   M2.6B.3).
-  **Next: `M2.6B.3` — HYBRID cloud audio wiring + minimum real-hardware
-  operator conversation acceptance. NOT STARTED.**
+  **`M2.6B.3` (`R0035`) since IMPLEMENTED/TEST-READY — see "Latest
+  report" above. Next: the real Gemini/hardware operator acceptance run,
+  NOT YET RUN.**
   **Credential:** operator-provided key stored at
   `~/.config/nexa/secrets/gemini.env` (outside the repo, 700/600), var
   `NEXA_GEMINI_API_KEY`. Non-blocking, owed independently: the B.3.6
@@ -1686,9 +1759,11 @@ Runtime / test evidence outranks anything else in this repo.
   language-ID as the measured fallback. ADR-0004 = Accepted, Amendment 1
   Accepted. **[HISTORICAL — as of the ADR-0004 Amendment-1 task,
   superseded]** ~~M2.6B = NEXT / NOT STARTED.~~ **CURRENT: `M2.6B` is
-  IN PROGRESS — `M2.6B.1` (`R0032`) and `M2.6B.2` (`R0033`) are
-  IMPLEMENTED, `M2.6B.2A` hardening (`R0034`) is IMPLEMENTED; next is
-  `M2.6B.3`. See "Latest report" above.**
+  IN PROGRESS — `M2.6B.1` (`R0032`), `M2.6B.2` (`R0033`) and `M2.6B.2A`
+  hardening (`R0034`) are IMPLEMENTED; `M2.6B.3` (`R0035`) is
+  IMPLEMENTED/TEST-READY — the real Gemini/hardware operator acceptance
+  is the one remaining step before `M2.6B` can be marked COMPLETE. See
+  "Latest report" above.**
 - **After local + cloud voice** (unchanged plan): memory / identity /
   personality / capabilities → full graphical UI → typed chat in that UI
   on the **same** `ConversationSession` / NeXa brain as voice (never a
@@ -1696,10 +1771,15 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Exact next recommended task
 
-**Continue `M2.6B` — `M2.6B.3`: HYBRID cloud audio wiring + minimum
-real-hardware operator conversation acceptance.** `ADR-0004` + Amendment 1
-remain Accepted, unchanged. M2.6A feasibility and the `Sulafat` voice are
-OPERATOR-CONFIRMED and remain the frozen v1 cloud baseline.
+**Run the M2.6B.3 real-hardware/Gemini operator acceptance test.** All
+deterministic wiring (`M2.6B.1`/`.2`/`.2A`/`.3`) is IMPLEMENTED and green;
+`ADR-0004` + Amendment 1 remain Accepted, unchanged; M2.6A feasibility and
+the `Sulafat` voice remain OPERATOR-CONFIRMED and are the frozen v1 cloud
+baseline. Launch `apps/nexa_cloud_voice_app.py` (no `--dry`), wait for
+`CLOUD_PROVIDER_READY` + `AEC_REF_ACTIVE`, then a short natural PL/EN
+conversation with one interruption — see `R0035`'s EXACT LAUNCH COMMAND /
+READY LINES / WHAT THE OPERATOR SHOULD DO. Only after that evidence is
+returned can `M2.6B` be marked COMPLETE.
 
 **`M2.6B.1` DONE (`R0032`, 2026-09-11)** — the provider-agnostic
 `src/nexa/realtime/` package: `RealtimeVoiceProvider` ABC (a peer of
@@ -1800,12 +1880,24 @@ reconnect hardening:
   once a fresh session is decided and while readiness is degraded
   mid-turn, not when that decision is made from a real socket.
 
-**`M2.6B.3` (next, NOT started):** wire `ReconnectController` into
-`GeminiLiveProvider` for a real connection-error path (deterministic/
-mocked first); HYBRID audio (tee cloud output to `AecReferenceFeeder`,
-keep Silero + `BargeInController` as authority for the cloud path); real
-LOCAL↔CLOUD spoken switch; minimum real-hardware operator acceptance
-(required before M2.6B is marked COMPLETE).
+**`M2.6B.3` DONE (`R0035`, 2026-09-11), TEST-READY** — `ReconnectController`
+wired into `GeminiLiveProvider` via a new `_readiness_monitor()`
+observation seam (deterministic/mocked; Pipecat's own reconnect is
+automatic/internal with no external hook); mid-user-turn loss is
+explicitly NOT assumed resumable —
+`ConversationRouter.recover_from_mid_turn_loss()` destroys the old
+provider and replays only pending PCM into a fresh one from a fresh
+canonical snapshot. New `src/nexa/realtime/gemini/runtime.py`
+(`GeminiVoiceRuntime`) wires the HYBRID audio path — reSpeaker → local
+Silero (Gemini server VAD OFF) → provider → Gemini → assistant audio →
+USB speaker, teed to the XVF3800 AEC far-end reference via the existing,
+unmodified `AecReferenceFeeder` — and cloud barge-in via the existing,
+unmodified `BargeInController`. New operator app
+`apps/nexa_cloud_voice_app.py` (`--dry` proven live in-sandbox). +10 tests
+(896 total, 0 regressions). **Real LOCAL↔CLOUD spoken switch test not
+required for this run (charter policy); minimum real-hardware operator
+acceptance is the one remaining step before M2.6B is marked COMPLETE —
+NOT YET RUN, see R0035.**
 
 Local realtime voice with production barge-in (`R0029`) is the frozen
 baseline M2.6B builds beside — do not destabilise it; `bargein_enabled`

@@ -49,6 +49,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -65,9 +66,11 @@ from ..provider import (
     RealtimeProviderError,
     RealtimeProviderFailedError,
     RealtimeVoiceProvider,
+    ReconnectingEvent,
+    ResumedEvent,
     UserTranscriptionEvent,
 )
-from ..reconnect import SessionResumptionHandle
+from ..reconnect import ReconnectController, SessionResumptionHandle
 from ..snapshot import CloudContextSnapshot
 from ..turn_framing import EnvelopeEventKind, UtteranceFramer
 from ..usage import ProviderUsageEvent
@@ -201,11 +204,14 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
         voice_preference: str = DEFAULT_VOICE_PREFERENCE,
         service_class: type | None = None,
         ready_timeout_s: float = DEFAULT_READY_TIMEOUT_S,
+        reconnect_controller: ReconnectController | None = None,
+        readiness_poll_interval_s: float = DEFAULT_READY_POLL_INTERVAL_S,
     ) -> None:
         self._api_key = api_key
         self._voice = gemini_voice_for_preference(voice_preference)
         self._service_class_override = service_class
         self._ready_timeout_s = ready_timeout_s
+        self._readiness_poll_interval_s = readiness_poll_interval_s
 
         self._readiness = ProviderReadiness.CONNECTING
         self._events: asyncio.Queue[ProviderEvent] = asyncio.Queue()
@@ -220,6 +226,19 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
         #: ``activity_end`` — see the "mid-turn readiness loss" note on
         #: the turn-I/O methods below (M2.6B.2A hardening).
         self._live_turn_open = False
+
+        # M2.6B.3 — real reconnect wiring (ADR-0004 Decision I, hardened by
+        # the "mid-turn resumption unsafe" policy below).
+        self._reconnect = reconnect_controller or ReconnectController()
+        #: Set True the instant a connection drop is observed WHILE a turn
+        #: had already gone live (``_live_turn_open`` at the moment of
+        #: loss) — the caller (``ConversationRouter`` /
+        #: ``recover_from_mid_turn_loss``) MUST discard this instance and
+        #: build a fresh one; this provider will not try to resume that
+        #: turn itself. Never cleared automatically — a fresh instance
+        #: starts with this False.
+        self._needs_fresh_session = False
+        self._readiness_monitor_task: asyncio.Task | None = None
         #: ADR-0004 Decision H — while ``readiness != READY`` (including a
         #: future reconnect's DEGRADED/RECONNECTING window, M2.6B.3), the
         #: local turn envelope (activityStart / audio / activityEnd) is
@@ -342,6 +361,11 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
         await self._worker.queue_frames([P["LLMRunFrame"]()])
 
         await self._wait_until_ready()
+        self._reconnect.on_connected(now=self._now())
+        self._readiness_monitor_task = asyncio.create_task(self._readiness_monitor())
+
+    def _now(self) -> float:
+        return time.monotonic()
 
     async def _wait_until_ready(self) -> None:
         P = self._P
@@ -352,14 +376,70 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
                 self._set_readiness(ProviderReadiness.READY)
                 await self._flush_framer()
                 return
-            await asyncio.sleep(DEFAULT_READY_POLL_INTERVAL_S)
-            elapsed += DEFAULT_READY_POLL_INTERVAL_S
+            await asyncio.sleep(self._readiness_poll_interval_s)
+            elapsed += self._readiness_poll_interval_s
         self._set_readiness(ProviderReadiness.FAILED)
         raise RealtimeProviderFailedError(
             f"GeminiLiveProvider did not become ready within {self._ready_timeout_s}s"
         )
 
+    @property
+    def needs_fresh_session(self) -> bool:
+        """M2.6B.3 — set once a connection drop was observed WHILE a turn
+        had already gone live (mid-turn resumption is treated as UNSAFE by
+        policy, per R0034/M2.6B.3: no strong evidence that Gemini resets an
+        unmatched ``activity_start`` on resumption, so the safer v1 rule
+        applies). The caller (``ConversationRouter.recover_from_mid_turn_loss``)
+        must discard this instance and build a fresh one rather than trust
+        any recovery this instance's underlying Pipecat service performs on
+        its own."""
+        return self._needs_fresh_session
+
+    async def _readiness_monitor(self) -> None:
+        """NeXa-owned OBSERVATION seam (ADR-0004 Decision P — no Pipecat
+        patch): watches ``self._llm._ready_for_realtime_input`` for
+        transitions. Pipecat's own ``GeminiLiveLLMService`` reconnects
+        *automatically and internally* on a connection error
+        (``_handle_connection_error`` -> ``_reconnect()`` — R0034/M2.6B.3
+        source finding) with NO external hook to intervene beforehand; this
+        monitor is how NeXa finds out a drop happened at all, and is what
+        lets the mid-turn-unsafe policy actually take effect (without it,
+        ``self._readiness`` would simply stay ``READY`` throughout a drop
+        Pipecat recovered from on its own, and the R0034 abort-and-restart
+        logic would never engage)."""
+        was_ready = True
+        while self._llm is not None and self._readiness != ProviderReadiness.FAILED:
+            ready_now = bool(getattr(self._llm, "_ready_for_realtime_input", False))
+            if was_ready and not ready_now:
+                unsafe = self._live_turn_open
+                self._needs_fresh_session = unsafe
+                self._set_readiness(ProviderReadiness.RECONNECTING)
+                self._events.put_nowait(
+                    ReconnectingEvent(
+                        reason="mid_turn_unsafe_loss" if unsafe else "safe_boundary_loss"
+                    )
+                )
+                if unsafe:
+                    logger.warning(
+                        "nexa.realtime.gemini: connection lost mid-utterance — "
+                        "per policy this session will NOT be trusted to resume "
+                        "this turn; a fresh provider session is required"
+                    )
+                    return  # nothing more to observe from a doomed instance
+            elif not was_ready and ready_now:
+                self._set_readiness(ProviderReadiness.READY)
+                await self._flush_framer()
+                self._reconnect.on_connected(now=self._now())
+                self._events.put_nowait(ResumedEvent(from_handle=True))
+            was_ready = ready_now
+            await asyncio.sleep(self._readiness_poll_interval_s)
+
     async def stop(self, *, reason: str) -> None:
+        if self._readiness_monitor_task is not None:
+            self._readiness_monitor_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._readiness_monitor_task
+            self._readiness_monitor_task = None
         if self._runner is None:
             self._set_readiness(ProviderReadiness.FAILED)
             return
@@ -543,3 +623,14 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
     @property
     def latest_resumption_handle(self) -> SessionResumptionHandle | None:
         return self._reconnect_handle
+
+    def should_proactively_reconnect(self) -> bool:
+        """ADR-0004 Decision I — the proactive age-timer decision
+        (``ReconnectController.should_proactively_reconnect``), exposed for
+        a caller to poll. Gemini Live's own `GoAway` message is NOT exposed
+        by the installed Pipecat 1.8.1 (confirmed unchanged, R0032/R0034) —
+        there is no frame or attribute to observe it from, so only the
+        age-timer trigger is wired here. No live 8+ minute session is run
+        in this checkpoint to exercise it; the decision logic itself is
+        unit-tested with an injected clock."""
+        return self._reconnect.should_proactively_reconnect(now=self._now())

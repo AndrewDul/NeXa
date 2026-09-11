@@ -223,7 +223,7 @@ happens from a real socket.
   now also refuses once `cur.interrupted` — the second fix above).
 - **Modified:** `src/nexa/realtime/__init__.py` (+`GenerationCompleteEvent`
   export).
-- **Modified (tests):** `tests/test_realtime_gemini_service.py` (+16
+- **Modified (tests):** `tests/test_realtime_gemini_service.py` (+15
   tests across 4 classes — `TestEventTranslation` extended,
   `TestMidTurnReadinessLoss` and `TestNoManualInjectionFullCloudTurn` and
   `TestTurnOrderingPermutations` new; fake service extended with

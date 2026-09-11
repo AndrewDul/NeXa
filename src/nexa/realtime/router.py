@@ -172,6 +172,52 @@ class ConversationRouter:
             active_provider_name=ActiveProvider.CLOUD.value,
         )
 
+    async def recover_from_mid_turn_loss(
+        self, old_provider: RealtimeVoiceProvider, *, language_preference: str | None = None
+    ) -> RealtimeVoiceProvider | None:
+        """M2.6B.3 — the mid-turn-unsafe reconnect path (R0034/ADR-0004
+        Decision I, hardened): called once ``old_provider.needs_fresh_session``
+        is observed True. Destroys ``old_provider`` and starts a brand-new
+        one from a freshly rebuilt ``CloudContextSnapshot`` — never trusts
+        whatever recovery the old instance's underlying connection
+        performed on its own for the turn that was open when it dropped.
+
+        Any not-yet-delivered audio on the old instance
+        (``take_pending_audio()``) is replayed into the new provider as
+        ONE new, self-contained utterance — never the audio already
+        confirmed sent before the loss (that stays with the old, discarded
+        instance; ``take_pending_audio`` only ever returns what it never
+        delivered). Returns the new provider, or ``None`` if no cloud
+        provider factory is configured (nothing to recover into — the
+        caller falls back to LOCAL via the normal failure path).
+        """
+        take_pending = getattr(old_provider, "take_pending_audio", None)
+        pending: list[bytes] = take_pending() if callable(take_pending) else []
+        await old_provider.stop(reason="mid-turn connection loss — fresh session required")
+
+        if self._cloud_provider_factory is None:
+            self._handle_cloud_failure(reason="mid-turn loss, no cloud provider factory")
+            return None
+
+        snapshot = await self.request_fresh_snapshot_after_resumption_failure(
+            language_preference=language_preference
+        )
+        new_provider = self._cloud_provider_factory()
+        try:
+            await new_provider.start(snapshot)
+        except Exception as exc:  # noqa: BLE001 — a second failure is still a fallback trigger
+            self._handle_cloud_failure(reason=f"fresh session start failed: {exc}")
+            return None
+
+        self._cloud_provider = new_provider
+        self._active_provider = ActiveProvider.CLOUD
+        if pending:
+            await new_provider.user_turn_start()
+            for chunk in pending:
+                await new_provider.send_user_audio(chunk)
+            await new_provider.user_turn_end()
+        return new_provider
+
     # -- canonical cloud-turn write path (ADR-0004 Decision A) --------------
     def begin_cloud_turn(self) -> None:
         self._turn.start_turn()

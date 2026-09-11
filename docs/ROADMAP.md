@@ -238,12 +238,43 @@ unpaid-quota data is used to improve Google products.
     (destroy-and-recreate, proven never to leak stale context). +16 tests
     (886 total, 0 regressions). Still no live Gemini connection; reconnect
     still not wired to a real socket (explicit, deferred to M2.6B.3).
-  - **M2.6B.3 (next)** — wire `ReconnectController` into
-    `GeminiLiveProvider` for a real connection-error path; HYBRID cloud
-    audio wiring (tee to `AecReferenceFeeder`, keep Silero +
-    `BargeInController` as authority); real LOCAL↔CLOUD spoken switch;
-    minimum real-hardware operator acceptance (required before M2.6B
-    COMPLETE). NOT STARTED.
+  - **M2.6B.3 — production HYBRID cloud audio + real-hardware operator
+    acceptance: IMPLEMENTED, TEST-READY** (`R0035`, 2026-09-11).
+    `ReconnectController` wired into `GeminiLiveProvider` via a new
+    `_readiness_monitor()` observation seam (Pipecat's own reconnect is
+    automatic/internal, no external hook — confirmed from source; NeXa
+    can only observe the readiness transition it produces). Explicit
+    policy: a mid-user-turn connection loss is **not** assumed safely
+    resumable (no source evidence found) —
+    `ConversationRouter.recover_from_mid_turn_loss()` destroys the old
+    provider and starts a fresh one from a freshly rebuilt canonical
+    snapshot, replaying only not-yet-delivered PCM as one new utterance;
+    a safe-boundary loss may resume the same provider-scoped context, no
+    re-seed, no duplicate turns. New `src/nexa/realtime/gemini/
+    runtime.py` (`GeminiVoiceRuntime`) wires the REAL hardware path:
+    reSpeaker mic → the existing `LocalAudioTransport`/`SileroVADAnalyzer`/
+    `VADProcessor` construction pattern → a new, minimal
+    `_VadToProviderBridge` (Gemini server VAD stays OFF; local Silero
+    remains the sole turn authority) → `GeminiLiveProvider` → Gemini →
+    assistant audio injected back into the SAME hardware pipeline via
+    `PipelineWorker.queue_frames` → USB speaker, teed to the XVF3800 AEC
+    far-end reference by the existing, unmodified `AecReferenceFeeder` —
+    no second AEC implementation. Cloud barge-in reuses the existing,
+    unmodified `BargeInController`: kept in sync with cloud turns from the
+    same single `provider.events()` consumption loop that drives the
+    canonical write path (a second independent event-stream reader was
+    drafted for operator printing, found unsafe on re-reading
+    `service.py` — `events()` is one `asyncio.Queue`, single-consumer —
+    and fixed with an in-loop `on_event` hook); `_on_confirmed` freezes
+    the spoken prefix via the existing `CloudTurnAccumulator.assistant_text`
+    (same precision as the local `SpokenTextTracker`, no new tracker
+    class), fire-and-forgets `provider.cancel()`, never blocks local
+    speaker-stop. New operator app `apps/nexa_cloud_voice_app.py`
+    (`--dry` proven live in-sandbox: full object graph constructs, no
+    audio device/network touched). +10 tests (896 total, 0 regressions).
+    **Real Gemini/hardware operator acceptance is the one remaining step
+    before M2.6B is marked COMPLETE — NOT YET RUN, see R0035 for the
+    exact launch command and READY lines.**
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

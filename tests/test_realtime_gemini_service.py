@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,7 @@ if str(SRC) not in sys.path:
 
 from nexa.conversation.session import ConversationSession, ExternalExchangeOutcome  # noqa: E402
 from nexa.conversation.turn import Role  # noqa: E402
+from nexa.realtime.policy import ActiveProvider  # noqa: E402
 from nexa.realtime.provider import (  # noqa: E402
     AssistantAudioEvent,
     AssistantTranscriptionEvent,
@@ -745,6 +747,141 @@ class TestTurnOrderingPermutations(_RouterDrivenTestCase):
         self.assertEqual(outcome, ExternalExchangeOutcome.COMMITTED_EXCHANGE)
         self.assertEqual(len(session.history), 2)
         self.assertEqual(session.history[1].content, "Once upon a ti")
+
+
+class TestReconnectWiring(_RouterDrivenTestCase):
+    """M2.6B.3 — real ReconnectController wiring + the mid-turn-unsafe
+    policy. All deterministic: the fake service's ``_ready_for_realtime_input``
+    is flipped directly to simulate Pipecat's own automatic internal
+    reconnect (R0034/M2.6B.3 source finding — no external hook exists to
+    intervene before it, hence the readiness-monitor observation seam)."""
+
+    async def test_safe_boundary_drop_may_resume_without_a_fresh_session(self) -> None:
+        provider, calls = await self._started_provider()
+        await self._drain_one(provider, ReadinessChangedEvent)
+        self.assertFalse(provider._live_turn_open)  # noqa: SLF001 - no turn in progress
+
+        provider._llm._ready_for_realtime_input = False  # noqa: SLF001 - simulated drop
+        await _wait_until(lambda: provider.readiness == ProviderReadiness.RECONNECTING)
+        self.assertFalse(provider.needs_fresh_session)
+
+        provider._llm._ready_for_realtime_input = True  # noqa: SLF001 - simulated auto-resume
+        await _wait_until(lambda: provider.readiness == ProviderReadiness.READY)
+        self.assertFalse(provider.needs_fresh_session)
+        # no re-seed happened -- the SAME instance just recovered.
+        self.assertEqual(len(calls["contexts_seen"]), 1)
+        await provider.stop(reason="test done")
+
+    async def test_mid_turn_drop_is_flagged_unsafe_and_never_auto_resumes(self) -> None:
+        provider, _ = await self._started_provider()
+        await self._drain_one(provider, ReadinessChangedEvent)
+
+        await provider.user_turn_start()  # READY -> live activity_start sent
+        await _wait_until(lambda: provider._llm.turn_starts >= 1)  # noqa: SLF001
+
+        provider._llm._ready_for_realtime_input = False  # noqa: SLF001 - simulated drop
+        await _wait_until(lambda: provider.needs_fresh_session)
+        self.assertEqual(provider.readiness, ProviderReadiness.RECONNECTING)
+
+        # even if the underlying connection recovers on its own, THIS
+        # instance must never be trusted to resume that turn -- the
+        # monitor stops observing once flagged unsafe.
+        provider._llm._ready_for_realtime_input = True  # noqa: SLF001
+        await asyncio.sleep(0.2)
+        self.assertEqual(provider.readiness, ProviderReadiness.RECONNECTING)
+        self.assertTrue(provider.needs_fresh_session)
+        await provider.stop(reason="test done")
+
+    def _fresh_provider_factory(self) -> tuple[Callable[[], GeminiLiveProvider], dict]:
+        """A ``cloud_provider_factory`` that builds a genuinely new
+        ``GeminiLiveProvider`` (own fake service instance, own ``calls``
+        dict) each time it's invoked — mirrors what a real factory does in
+        production (a fresh provider per cloud session)."""
+        constructed: dict = {"calls_by_instance": []}
+
+        def factory() -> GeminiLiveProvider:
+            fake_cls, calls = self._make_fake_service_class()
+            constructed["calls_by_instance"].append(calls)
+            return GeminiLiveProvider(
+                api_key="FAKE-TEST-KEY", service_class=fake_cls, ready_timeout_s=5.0
+            )
+
+        return factory, constructed
+
+    async def test_mid_turn_loss_recovers_via_router_with_only_pending_audio(self) -> None:
+        provider, _ = await self._started_provider()
+        session, router = self._router()
+        factory, _ = self._fresh_provider_factory()
+        router._cloud_provider_factory = factory  # noqa: SLF001
+        router._active_provider = ActiveProvider.CLOUD  # noqa: SLF001 - simulate already-cloud
+
+        await self._drain_one(provider, ReadinessChangedEvent)
+        await provider.user_turn_start()
+        await provider.send_user_audio(b"live-1")
+        await _wait_until(lambda: len(provider._llm.received_audio) >= 1)  # noqa: SLF001
+
+        provider._llm._ready_for_realtime_input = False  # noqa: SLF001 - simulated drop
+        await _wait_until(lambda: provider.needs_fresh_session)
+        await provider.send_user_audio(b"stranded-1")  # arrives during the outage
+
+        new_provider = await router.recover_from_mid_turn_loss(provider)
+        self.assertIsNotNone(new_provider)
+        self.addAsyncCleanup(new_provider.stop, reason="test cleanup")
+
+        await _wait_until(lambda: new_provider._llm.turn_ends >= 1)  # noqa: SLF001
+        # only the post-loss, undelivered audio was replayed -- never the
+        # byte already confirmed sent live on the old (now-discarded)
+        # instance.
+        self.assertEqual(new_provider._llm.received_audio, [b"stranded-1"])  # noqa: SLF001
+        self.assertEqual(router.active_provider, ActiveProvider.CLOUD)
+        self.assertEqual(len(session.history), 0)  # nothing spoken/committed to lose here
+
+    async def test_fresh_session_uses_fresh_canonical_snapshot_not_stale_context(self) -> None:
+        old_provider, _old_calls = await self._started_provider(
+            recent_turns=(SnapshotTurn(role=Role.USER, content="OLD stale turn"),)
+        )
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        session.record_external_exchange("current turn", "current reply")
+        router = ConversationRouter(session)
+        factory, constructed = self._fresh_provider_factory()
+        router._cloud_provider_factory = factory  # noqa: SLF001
+
+        new_provider = await router.recover_from_mid_turn_loss(old_provider)
+        self.assertIsNotNone(new_provider)
+        self.addAsyncCleanup(new_provider.stop, reason="test cleanup")
+
+        new_calls = constructed["calls_by_instance"][0]
+        seeded = [msg.get("content", "") for msg in new_calls["contexts_seen"][0]]
+        self.assertIn("current turn", seeded)
+        self.assertIn("current reply", seeded)
+        self.assertNotIn("OLD stale turn", seeded)
+
+    async def test_reconnect_exhaustion_falls_back_to_local_with_notice(self) -> None:
+        provider, _ = await self._started_provider()
+        session, router = self._router()
+
+        class _AlwaysFailsProvider:
+            """Simulates a fresh-session start that itself fails -- e.g.
+            the network is still down. ``recover_from_mid_turn_loss`` must
+            fall back to LOCAL rather than raise or hang."""
+
+            async def start(self, snapshot):
+                raise RuntimeError("simulated fresh-session start failure")
+
+            async def stop(self, *, reason):
+                return None
+
+            def take_pending_audio(self):
+                return []
+
+        router._cloud_provider_factory = lambda: _AlwaysFailsProvider()  # noqa: SLF001
+        result = await router.recover_from_mid_turn_loss(provider)
+        self.assertIsNone(result)
+        self.assertEqual(router.active_provider, ActiveProvider.LOCAL)
+        self.assertEqual(len(router.notices), 1)
+        # canonical session is untouched by the failed recovery attempt.
+        self.assertEqual(len(session.history), 0)
+        await provider.stop(reason="test cleanup")
 
 
 class TestLifecycle(_FakeGeminiLiveServiceTestCase):
