@@ -46,7 +46,9 @@ Runtime / test evidence outranks anything else in this repo.
   see "Latest report" above: M2.6B is now IN PROGRESS, M2.6B.1/M2.6B.2/
   M2.6B.2A/M2.6B.3/M2.6B.3A/M2.6B.3B/M2.6B.4 IMPLEMENTED (first real
   hardware/Gemini operator run: ATTEMPT #1 FAILED, three regressions
-  found and fixed, retest pending)]**.
+  found; two fixed and retest-ready, the language-mirroring one only
+  diagnosed — M2.6B.4A research (below) found the obvious fix too slow
+  and paused pending a lighter LID)]**.
   Original Accepted content:
   **Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
   Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
@@ -104,7 +106,51 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0038_m2_6b_4_hardware_acceptance_attempt1_fail_20260911.md`
+- **Latest report:** `docs/reports/R0039_m2_6b_4a_strict_language_authority_research_20260911.md`
+  (**M2.6B.4A — strict same-turn PL/EN language authority — RESEARCH
+  ONLY, 2026-09-11.** R0038 diagnosed but did not fix the language-
+  mirroring failure. This checkpoint benchmarked
+  `WhisperCppLanguageDetector` (base/q8_0, the same model local voice
+  uses) on the real PL/EN fixtures per the charter's own "measure LID
+  first" instruction — result: **~1.15–1.7s per call, essentially
+  CONSTANT regardless of input duration** (0.5s of speech costs about the
+  same as the full utterance), with no reliable early-truncation point
+  (PL misclassified as EN below ~1.5s). Read the installed `whisper.cpp`
+  v1.9.3 source directly: `whisper_lang_auto_detect` runs a full encoder
+  forward pass over a FIXED ~30-second-equivalent context
+  (`WHISPER_CHUNK_SIZE`, an architectural Whisper constant) regardless of
+  actual audio length — confirming, from source, that this cost is
+  inherent and not fixable by truncation/config. Holding `activityEnd`
+  for this detector on EVERY turn (as the charter's strict-mode design
+  specifies) would cost every ordinary SAME-language turn ~1.1–1.7s more
+  than the M2.6A baseline — directly contradicting the charter's own
+  stated goal. **Put this to the user with the measured numbers before
+  writing any code; the user chose: pause implementation, research a
+  lighter LID model first.** Verified official Gemini Live API docs live
+  (WebFetch, no Gemini call): confirmed "the different modalities... are
+  handled as concurrent streams... ordering... is not guaranteed" (rules
+  out a realtime text hint as steering — independently confirms the
+  charter's own caution), confirmed "you cannot update the configuration
+  while the connection is open" (re-confirms ADR-0004 Amendment 1), and
+  confirmed native-audio models have no `language_code` parameter — "you
+  can restrict the languages it speaks in by specifying it in the system
+  instructions" is Google's own sanctioned mechanism, validating the
+  charter's provider-replacement design as correct once a viable
+  low-latency LID exists. Surveyed (not implemented) lighter
+  alternatives: a smaller `ggml` Whisper model (same binding, not yet
+  downloaded/verified in this environment — this sandbox's `tiny.bin`
+  files are whisper.cpp's own tiny CI test stubs, not real weights) or a
+  dedicated non-Whisper spoken-LID model (would be a genuinely new,
+  heavier dependency, not adopted casually). Recorded the full STRICT
+  MODE design (detected_turn_language/sticky_language_preference/
+  active_session_response_language, reusing R0038's
+  `recover_from_mid_turn_loss`/`_ProviderHandle` machinery verbatim, one
+  system-instruction wording proposal) as a specification for a future
+  checkpoint — **not implemented**. Zero `src/nexa/**` change this
+  checkpoint; full suite unchanged at 923 tests, OK. **`M2.6B` remains
+  IN PROGRESS; the language-mirroring gap remains open and undecided.**
+  Not pushed.)
+- **Prior report:** `docs/reports/R0038_m2_6b_4_hardware_acceptance_attempt1_fail_20260911.md`
   (**M2.6B.4 — production hardware acceptance ATTEMPT #1 — FAIL,
   2026-09-11.** The FIRST real operator hardware/Gemini run happened:
   reached `CLOUD_PROVIDER_READY`, `AEC_REF_ACTIVE`, audible Sulafat,
@@ -1970,9 +2016,14 @@ Runtime / test evidence outranks anything else in this repo.
 (ATTEMPT #2).** ATTEMPT #1 (`R0038`, 2026-09-11) FAILED with three real
 regressions — a `_VadToProviderBridge` Pipecat setup/cleanup crash, local
 playback not stopping on barge-in, and English input answered in Polish —
-all three found, root-caused against installed source, and fixed
-deterministically (923 tests, 0 regressions); none re-tested on real
-hardware yet. `ADR-0004` + Amendment 1 remain Accepted, unchanged; M2.6A
+all three found and root-caused against installed source; the first two
+fixed deterministically (923 tests, 0 regressions), none re-tested on
+real hardware yet. **The third (language) has no fix yet**:
+`M2.6B.4A` (`R0039`) benchmarked the obvious fix (gate `activityEnd` on
+local LID) and found it costs ~1.1–1.7s on EVERY turn with the currently
+available detector — the user chose to pause and research a lighter LID
+rather than ship that cost; native mirroring (still unreliable) remains
+the only mechanism in place for language. `ADR-0004` + Amendment 1 remain Accepted, unchanged; M2.6A
 feasibility and the `Sulafat` voice remain OPERATOR-CONFIRMED. Launch
 `apps/nexa_cloud_voice_app.py` (no `--dry`), wait for
 `CLOUD_PROVIDER_READY` + `AEC_REF_ACTIVE`, then a short natural
@@ -2202,6 +2253,45 @@ audio. Local voice completely untouched (only
 **Hardware acceptance NOT marked PASS; `M2.6B` NOT marked COMPLETE.** Real
 Gemini/hardware operator RETEST is the one remaining step — NOT YET RUN,
 see R0038 for the exact retest command.
+
+**`M2.6B.4A` — strict same-turn PL/EN language authority: RESEARCH ONLY**
+(`R0039`, 2026-09-11). R0038 diagnosed but did not fix the language-
+mirroring failure. Benchmarked `WhisperCppLanguageDetector` (base/q8_0)
+on the real PL/EN fixtures per the charter's own "measure LID first"
+instruction: **~1.15–1.7s per call, essentially CONSTANT regardless of
+input duration**, no reliable early-truncation point (PL misclassified
+as EN below ~1.5s). Read the installed `whisper.cpp` v1.9.3 source
+directly: `whisper_lang_auto_detect` always runs a full encoder forward
+pass over a FIXED ~30-second-equivalent context (`WHISPER_CHUNK_SIZE`, a
+Whisper architectural constant), regardless of actual audio length —
+confirms the cost is inherent, not a config/truncation problem. A "hold
+`activityEnd` for LID on every turn" gate (the charter's own strict-mode
+design) would therefore cost every ordinary same-language turn ~1.1–1.7s
+more than the M2.6A baseline — directly contradicting the charter's
+stated goal. Put this to the user with the measured numbers **before**
+writing any code; **the user chose: pause implementation, research a
+lighter LID model first.** Verified official Gemini Live API docs live
+(no Gemini call): confirmed realtime modalities are "concurrent streams"
+with "ordering... not guaranteed" (rules out a text hint as steering,
+independently confirming the charter's own caution); confirmed
+`system_instruction` cannot change on an open connection (re-confirms
+ADR-0004 Amendment 1); confirmed native-audio models have no
+`language_code` param and that a system-instruction language restriction
+is Google's own sanctioned mechanism — validating the charter's
+provider-replacement design as correct, once a viable low-latency LID
+exists. Surveyed (not implemented) lighter alternatives: a smaller `ggml`
+Whisper model (same binding, not yet downloaded/verified — this
+sandbox's `tiny.bin` files are whisper.cpp's own CI test stubs, not real
+weights) or a dedicated non-Whisper spoken-LID model (a genuinely new,
+heavier dependency, not adopted casually). Recorded the full STRICT MODE
+design (three precisely-named states, reusing R0038's
+`recover_from_mid_turn_loss`/`_ProviderHandle` machinery verbatim, a
+system-instruction wording proposal) as a specification for a future
+checkpoint — **not implemented**. Zero `src/nexa/**` change; full suite
+unchanged at 923 tests, OK. **`M2.6B` remains IN PROGRESS; the language-
+mirroring gap remains open and undecided** — pending either a lighter
+LID, an explicit product decision to accept the measured cost, or a
+narrower scope (e.g. first-turn + explicit-sticky-only).
 
 Local realtime voice with production barge-in (`R0029`) is the frozen
 baseline M2.6B builds beside — do not destabilise it; `bargein_enabled`

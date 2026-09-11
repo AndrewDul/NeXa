@@ -1,0 +1,166 @@
+{
+  "full_utterance": [
+    {
+      "fixture": "speed_of_light",
+      "expected": "en",
+      "duration_s": 3.5,
+      "elapsed_ms": 1186.7,
+      "p_pl": 0.0156,
+      "p_en": 0.5075,
+      "raw_language": "en",
+      "got": "en",
+      "correct": true
+    },
+    {
+      "fixture": "speed_of_light",
+      "expected": "pl",
+      "duration_s": 3.5,
+      "elapsed_ms": 1207.4,
+      "p_pl": 0.9905,
+      "p_en": 0.0018,
+      "raw_language": "pl",
+      "got": "pl",
+      "correct": true
+    },
+    {
+      "fixture": "colors",
+      "expected": "en",
+      "duration_s": 3.5,
+      "elapsed_ms": 1149.8,
+      "p_pl": 0.0367,
+      "p_en": 0.7343,
+      "raw_language": "en",
+      "got": "en",
+      "correct": true
+    },
+    {
+      "fixture": "colors",
+      "expected": "pl",
+      "duration_s": 3.5,
+      "elapsed_ms": 1177.9,
+      "p_pl": 0.3079,
+      "p_en": 0.0044,
+      "raw_language": "ja",
+      "got": "pl",
+      "correct": true
+    },
+    {
+      "fixture": "gravity",
+      "expected": "en",
+      "duration_s": 3.5,
+      "elapsed_ms": 1160.7,
+      "p_pl": 0.2056,
+      "p_en": 0.2359,
+      "raw_language": "en",
+      "got": "en",
+      "correct": true
+    },
+    {
+      "fixture": "gravity",
+      "expected": "pl",
+      "duration_s": 3.5,
+      "elapsed_ms": 1178.1,
+      "p_pl": 0.0328,
+      "p_en": 0.0124,
+      "raw_language": "pt",
+      "got": "pl",
+      "correct": true
+    }
+  ],
+  "truncated": [
+    {
+      "truncated_to_s": 0.5,
+      "expected": "en",
+      "elapsed_ms": 1190.0,
+      "p_pl": 0.0071,
+      "p_en": 0.5453,
+      "got": "en",
+      "correct": true,
+      "margin": 0.5382
+    },
+    {
+      "truncated_to_s": 0.5,
+      "expected": "pl",
+      "elapsed_ms": 1275.1,
+      "p_pl": 0.0069,
+      "p_en": 0.6991,
+      "got": "en",
+      "correct": false,
+      "margin": 0.6922
+    },
+    {
+      "truncated_to_s": 1.0,
+      "expected": "en",
+      "elapsed_ms": 1196.8,
+      "p_pl": 0.001,
+      "p_en": 0.8803,
+      "got": "en",
+      "correct": true,
+      "margin": 0.8793
+    },
+    {
+      "truncated_to_s": 1.0,
+      "expected": "pl",
+      "elapsed_ms": 1168.8,
+      "p_pl": 0.029,
+      "p_en": 0.2243,
+      "got": "en",
+      "correct": false,
+      "margin": 0.1953
+    },
+    {
+      "truncated_to_s": 1.5,
+      "expected": "en",
+      "elapsed_ms": 1151.3,
+      "p_pl": 0.0023,
+      "p_en": 0.7847,
+      "got": "en",
+      "correct": true,
+      "margin": 0.7824
+    },
+    {
+      "truncated_to_s": 1.5,
+      "expected": "pl",
+      "elapsed_ms": 1140.1,
+      "p_pl": 0.3868,
+      "p_en": 0.0312,
+      "got": "pl",
+      "correct": true,
+      "margin": 0.3556
+    },
+    {
+      "truncated_to_s": 2.0,
+      "expected": "en",
+      "elapsed_ms": 1138.3,
+      "p_pl": 0.0056,
+      "p_en": 0.5894,
+      "got": "en",
+      "correct": true,
+      "margin": 0.5838
+    },
+    {
+      "truncated_to_s": 2.0,
+      "expected": "pl",
+      "elapsed_ms": 1157.6,
+      "p_pl": 0.9882,
+      "p_en": 0.0022,
+      "got": "pl",
+      "correct": true,
+      "margin": 0.986
+    }
+  ],
+  "cold_start_ms": 1185.6,
+  "summary": {
+    "n_calls": 14,
+    "min_ms": 1138.3,
+    "max_ms": 1275.1,
+    "mean_ms": 1177.0,
+    "full_utterance_accuracy": 1.0,
+    "truncated_accuracy_by_duration": {
+      "0.5": 0.5,
+      "1.0": 0.5,
+      "1.5": 1.0,
+      "2.0": 1.0
+    }
+  }
+}

@@ -436,6 +436,88 @@ unpaid-quota data is used to improve Google products.
     is NOT marked COMPLETE.** The real Gemini/hardware operator RETEST is
     the one remaining step — NOT YET RUN, see R0038 for the exact retest
     command and READY lines (unchanged from R0035/R0036/R0037).
+  - **M2.6B.4A — strict same-turn PL/EN language authority: RESEARCH
+    ONLY** (`R0039`, 2026-09-11). R0038 diagnosed but did not fix the
+    language-mirroring failure. Benchmarked `WhisperCppLanguageDetector`
+    (base/q8_0, the same model local voice uses) on the real PL/EN
+    fixtures per the charter's own "measure LID first" instruction:
+    **~1.15–1.7s per call, essentially CONSTANT regardless of input
+    duration** (0.5s of speech costs about the same as the full 3.5s
+    utterance), with no reliable early-truncation point (PL misclassified
+    as EN below ~1.5s of speech). Read the installed `whisper.cpp` v1.9.3
+    source directly (not guessed): `whisper_lang_auto_detect` always runs
+    a full encoder forward pass over a FIXED ~30-second-equivalent
+    context (`WHISPER_CHUNK_SIZE`, an architectural Whisper constant,
+    `whisper.h:36`), regardless of actual audio length — the same fixed
+    cost underlies R0006's own measured ~1.69s full-transcription
+    baseline. This confirms the cost is inherent to the model
+    architecture, not a config/truncation problem, and not NeXa-side.
+    Holding `activityEnd` for this detector on EVERY turn (the charter's
+    own strict-mode design, needed to decide same-language vs. switch)
+    would therefore cost every ordinary SAME-language turn ~1.1–1.7s more
+    than the M2.6A baseline — directly contradicting the charter's own
+    stated goal ("same-language turns remain as close as possible to
+    M2.6A"). Put this to the user with the measured numbers **before**
+    writing any implementation code; **the user chose: pause
+    implementation, research a lighter LID model first** (rather than
+    ship the design at this cost, or narrow its scope unilaterally).
+    Verified the official Gemini Live API docs live via WebFetch (no
+    Gemini call): confirmed, verbatim, "the different modalities (audio,
+    video and text) are handled as concurrent streams. The ordering
+    across these streams is not guaranteed" — independently confirms the
+    charter's own caution against treating a realtime text hint as
+    deterministic same-turn steering (also confirmed by the installed
+    `google-genai` SDK's own docstring AND its runtime enforcement that
+    `send_realtime_input` accepts only one argument per call — text and
+    audio/`activity_start` can never even be sent together). Confirmed
+    "you cannot update the configuration while the connection is open"
+    (re-confirms ADR-0004 Amendment 1's own "VERIFIED FACT" independently
+    from the official docs, not just from Pipecat's own source). Confirmed
+    native-audio-output models (our `gemini-3.1-flash-live-preview`) have
+    no `language_code`/`SpeechConfig` parameter at all — "you can restrict
+    the languages it speaks in by specifying it in the system
+    instructions" is Google's own sanctioned mechanism — this directly
+    validates the charter's "controlled language-boundary provider
+    replacement" design (destroy old, fresh `CloudContextSnapshot` with
+    a language-restricted `system_instruction`, fresh provider, atomic
+    swap, replay the buffered utterance once) as the *correct* mechanism,
+    once a viable low-latency LID exists to drive it. Surveyed (did NOT
+    implement) two lighter-alternative candidates: a smaller `ggml`
+    Whisper model (e.g. `tiny`/`tiny.en` — same already-integrated
+    `ctypes` binding, very likely meaningfully faster, but not yet
+    downloaded/verified in this environment — the `tiny.bin` files
+    already present locally are whisper.cpp's own CI test stubs at
+    ~0.5MB, confirmed NOT real weights by file size alone, unusable for
+    real accuracy); and a dedicated non-Whisper spoken-language-ID model
+    (e.g. an x-vector/CNN-class classifier, plausibly tens of
+    milliseconds on CPU) — not adopted, since it would require a
+    genuinely new, likely much heavier dependency (no
+    `speechbrain`/`silero`/`torch`/`langid`/`fasttext` currently
+    installed), exactly the kind of "new framework casually" the charter
+    says not to install without evidence-backed cause. Recorded the full
+    STRICT MODE design as a specification for a future checkpoint —
+    **three precisely-named states**
+    (`detected_turn_language`/`sticky_language_preference`/
+    `active_session_response_language`), reusing R0038's
+    `ConversationRouter.recover_from_mid_turn_loss()`/`_ProviderHandle`
+    atomic-swap machinery verbatim (never a second reconnection
+    architecture), a proposed system-instruction wording following
+    existing `CLOUD_ROLE_CARD` convention, and the exact turn flow
+    (`activityStart`/audio stream live as today; only `activityEnd` is
+    held pending local LID on the full buffered utterance already
+    captured by R0038's `_PendingUtteranceAudio`) — **not implemented**.
+    Zero `src/nexa/**` or `apps/**` change this checkpoint; full suite
+    unchanged at **923 tests, OK (skipped=7)**; `ruff`/`pip check`/
+    `git diff --check` all clean. **`M2.6B` remains IN PROGRESS; the
+    language-mirroring gap remains open and undecided** — pending either
+    a lighter LID being found/verified, an explicit product decision to
+    accept the measured ~1.1–1.7s per-turn cost, or a narrower scope
+    (e.g. gate only the first turn and turns following an explicit sticky
+    command, leaving ordinary mid-conversation acoustic switches to
+    native mirroring's existing, measured-unreliable behaviour). R0038's
+    other two fixes (VAD bridge lifecycle, playback-generation guard)
+    are unaffected and remain ready for a hardware retest independent of
+    this open language question.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the
