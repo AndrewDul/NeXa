@@ -410,10 +410,10 @@ silently-replaced callback.)
 
 ## COMMIT HASHES
 
-(recorded in a follow-up commit once made — see the session's final
-message.)
+Pre-live hardening commit: `80e229a` — "fix(m2.6b.3a): playback-lifecycle,
+spoken-prefix, mid-turn recovery hardening (R0036)". Not pushed.
 
 ## GIT STATUS
 
 Not pushed (per the standing constraint for this entire M2.6 body of
-work).
+work). All files listed under FILES CHANGED are committed at `80e229a`.
