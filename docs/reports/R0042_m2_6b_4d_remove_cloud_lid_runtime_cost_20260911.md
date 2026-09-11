@@ -183,6 +183,8 @@ voice completely untouched this checkpoint (as in R0041).
 
 ## COMMIT HASHES
 
+cleanup commit: `dde5227`
+
 (recorded in the follow-up hash-record commit)
 
 ## GIT STATUS
