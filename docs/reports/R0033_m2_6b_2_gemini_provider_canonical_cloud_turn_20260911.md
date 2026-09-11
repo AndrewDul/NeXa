@@ -378,15 +378,16 @@ running the installed library in this sandbox (no network).
 
 ## COMMIT HASH
 
-`<PENDING — filled by the immediately-following hash-record commit,
-R0026–R0032 pattern>`
+`4d85820` — `feat(m2.6b.2): GeminiLiveProvider + canonical cloud-turn
+integration (R0033)`.
 
 Prior tip: `eeb3724` (R0032 M2.6B.1 hash-record commit).
 
 ## GIT STATUS
 
-Branch `main`, ahead of `origin/main` (`505627f`) by this commit. Working
-tree clean after commit. Not pushed.
+Branch `main`, ahead of `origin/main` (`505627f`) by 5 commits
+(`986e65a`, `e4b84ec`, `eeb3724`, `4d85820`, and this hash-record
+follow-up). Working tree clean after commit. Not pushed.
 
 ## NEXT RECOMMENDED ACTION
 
