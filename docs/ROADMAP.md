@@ -8,7 +8,7 @@ Only one milestone is active at a time. See `docs/CURRENT_STATE.md` for which.
 
 ---
 
-## M0 — Foundation  ✅ (current)
+## M0 — Foundation  ✅ (complete — see `docs/CURRENT_STATE.md` for the active milestone)
 
 Repository structure, documentation system, engineering conventions, legacy
 relationship. No product features.
@@ -159,13 +159,34 @@ unpaid-quota data is used to improve Google products.
   reconnecting, falls back to a fresh seeded session if safe resumption is
   impossible — **make-before-break connection overlap is no longer
   assumed** (socket sequencing → M2.6B).
-- **M2.6B** (next task) — production `RealtimeVoiceProvider` +
+- **M2.6B — IN PROGRESS.** Production `RealtimeVoiceProvider` +
   `GeminiLiveProvider` + `ConversationRouter` + `ConversationPolicy` +
   `SetConversationPolicy` + `CloudContextSnapshot` + inbound #5465 buffer +
   `ReconnectController` + usage telemetry + cloud credential loader +
   provider voice/language preference, per the ADR-0004 plan and gates.
   Local voice stays byte-for-byte frozen; real-hardware operator
-  acceptance required before COMPLETE. NOT STARTED.
+  acceptance required before COMPLETE.
+  - **M2.6B.1 — provider-agnostic foundation: IMPLEMENTED** (`R0032`,
+    2026-09-11). New `src/nexa/realtime/` package (no cloud SDK import):
+    `RealtimeVoiceProvider` (peer of `ModelProvider`) + `ProviderReadiness`;
+    `ConversationPolicy` (`LOCAL_ONLY` default) + `ProviderEligibilityPolicy`
+    (Amendment 1 — `distribution_mode`/`billing_verified`, not a key
+    property); `CloudContextSnapshot` (bounded, allow-listed, pure);
+    `InboundAudioBuffer` (#5465 protection — bounded, drop-oldest, no
+    duplicate delivery); `ProviderUsageEvent` telemetry; a deterministic
+    `ReconnectController` (no socket); `src/nexa/realtime/gemini/`
+    credential loader + voice-preference mapping (`warm_female` ->
+    `Sulafat`, no cloud SDK either). Mandatory Gemini/Pipecat
+    startup-sequencing source audit done against the *installed*
+    `pipecat-ai==1.8.1` + `google-genai==2.22.0` — **confirms, does not
+    contradict**, ADR-0004/Amendment 1 (Pipecat already implements the
+    initial-history seed and the resumable-handle-only rule internally);
+    see `docs/research/m2_6_cloud_realtime_voice/m2_6b_gemini_startup_sequencing_source_audit_20260911.md`.
+    +73 tests (812 total, 0 regressions); zero existing `src/nexa/**` file
+    modified; no `pyproject.toml` change; no cloud call.
+  - **M2.6B.2 (next)** — `GeminiLiveProvider` + canonical cloud-turn
+    integration (`ConversationSession.record_external_exchange` +
+    `ConversationRouter`). NOT STARTED.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

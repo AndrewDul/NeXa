@@ -5,7 +5,7 @@ Runtime / test evidence outranks anything else in this repo.
 
 ---
 
-- **Last verified:** 2026-09-10
+- **Last verified:** 2026-09-11
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
@@ -100,7 +100,66 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0030_cloud_realtime_voice_research_architecture_20260910.md`
+- **Latest report:** `docs/reports/R0032_m2_6b_1_cloud_realtime_voice_foundation_20260911.md`
+  (**M2.6B.1 — Production Cloud Realtime Voice, provider-agnostic
+  foundation — IMPLEMENTED, PASS (checkpoint), 2026-09-11.** ADR-0004 +
+  Amendment 1 remain Accepted, unmodified. New `src/nexa/realtime/`
+  package (zero cloud SDK import): `RealtimeVoiceProvider` ABC (a peer of
+  `ModelProvider`, never a subtype) + `ProviderReadiness` +
+  `RealtimeProviderCapabilities` + the typed provider->NeXa event stream;
+  `ConversationPolicy` (`LOCAL_ONLY` default, `CLOUD_PREFERRED`, `AUTO`
+  provisional) + `ActiveProvider` + `ProviderEligibilityPolicy`
+  (Amendment 1 — `distribution_mode` ∈ {DEVELOPMENT, DISTRIBUTED} +
+  `billing_verified`, **not** a key property); `CloudContextSnapshot` +
+  `build_cloud_context_snapshot` (pure, bounded by turn count *and* char
+  budget, never persona verbatim / memory / credentials / device
+  internals); `InboundAudioBuffer` (the NeXa-owned Pipecat #5465
+  protection — bounded by time *and* bytes, drop-oldest overflow with
+  metrics + logging, per-frame sequence id so a reconnect never
+  re-delivers already-flushed audio); `ProviderUsageEvent` /
+  `SessionUsageAggregate` / `UsagePriceTable` (authoritative counts only,
+  no raw audio, cost estimate always a labelled estimate); a deterministic
+  `ReconnectController` (age-timer, `GoAway` deadline, only-keep-a-
+  `resumable=true`-handle, bounded backoff+jitter — **no socket, no
+  Gemini-specific choreography**, that is M2.6B.2); `src/nexa/realtime/
+  gemini/credentials.py` (env-var-first + XDG-secrets-file
+  `CredentialSource`, redaction, no paid/tier inference) and `.../voice.py`
+  (`warm_female` -> `Sulafat` mapping) — neither imports `google.genai`.
+  **Mandatory Gemini/Pipecat startup-sequencing source audit** performed
+  against the *installed* `pipecat-ai==1.8.1` (2180-line
+  `gemini_live/llm.py`) + `google-genai==2.22.0`, **no cloud call**:
+  **CONFIRMS, does not contradict, ADR-0004/Amendment 1** — Pipecat 1.8.1
+  already sets `HistoryConfig(initial_history_in_client_content=True)`
+  unconditionally (the initial-history seed mechanism Amendment 1 §3
+  described is already implemented by the library); `_handle_context`
+  already forces a full `_reconnect()` if a later context's effective
+  `system_instruction` differs from the init-provided one (a structural
+  proof that config is immutable on an open connection — confirms
+  Amendment 1 §2); `_handle_msg_resumption_update` already only stores a
+  handle `if update.resumable and update.new_handle` (confirms Amendment 1
+  §4's rule already exists in the library); no `GoAway` handling exists
+  anywhere in the file (confirms the unchanged existing finding); the
+  `LLMRunFrame` -> `LLMContextFrame` -> `_handle_context` chain is
+  confirmed at the source level (matches the R0031 M2.6A root-cause
+  finding exactly). Full audit:
+  `docs/research/m2_6_cloud_realtime_voice/m2_6b_gemini_startup_sequencing_source_audit_20260911.md`.
+  **+73 new tests** (`test_realtime_provider/policy/snapshot/
+  inbound_audio_buffer/reconnect/usage/gemini_credentials/gemini_voice/
+  no_cloud_dependency.py`); full suite **812 tests, OK (skipped=7)** — 739
+  baseline + 73 new, **zero regressions**; import-isolation gates
+  (genuinely isolated subprocess) prove importing `nexa.realtime` and
+  `nexa.realtime.gemini.{credentials,voice}` never pulls in
+  `google.genai`, and `import nexa` alone never imports `nexa.realtime`.
+  **Zero existing `src/nexa/**` files modified** — every change is a new
+  file under `src/nexa/realtime/`; no `pyproject.toml` / dependency-file
+  change; `ruff` clean on every new file (whole-repo's 82 pre-existing
+  errors, all in `scripts/m1_bench/`, confirmed unchanged by `git stash`
+  against the base commit); `pip check` clean; no Gemini call; no hardware
+  test. **`GeminiLiveProvider`, `ConversationRouter`, the canonical cloud
+  write-path (`ConversationSession.record_external_exchange`), HYBRID
+  audio wiring, and everything user-facing remain M2.6B.2+, NOT started.**
+  Not pushed.)
+- **Prior report:** `docs/reports/R0030_cloud_realtime_voice_research_architecture_20260910.md`
   (**M2.6 — Cloud Realtime Voice — RESEARCH / ARCHITECTURE + Phase-0 fact
   corrections + M2.6A probe implemented (2026-09-10).** No `src/` change;
   no tracked-dependency change; not pushed. See R0030 *PHASE 0 CORRECTIONS*
@@ -507,13 +566,22 @@ Runtime / test evidence outranks anything else in this repo.
   the Gemini API Free Tier is available in the UK; `DISTRIBUTED` mode to
   EEA/CH/UK users requires `billing_verified`); full ordered M2.6B plan +
   19 acceptance gates inside the ADR.
-  **Recommended next implementation task: `M2.6B` — production
-  `RealtimeVoiceProvider` + `ConversationRouter` + `ConversationPolicy` +
-  `CloudContextSnapshot` + reconnect hardening. NOT STARTED.** The
-  operator's currently available Gemini API key/tier is sufficient to
-  begin `DEVELOPMENT`-mode M2.6B work (stored outside the repo); a verified
-  paid/billing-enabled project is required only before any `DISTRIBUTED`
-  release to EEA/CH/UK users.**
+  **`M2.6B` — production implementation — IN PROGRESS.
+  `M2.6B.1` (`R0032`, 2026-09-11): the provider-agnostic foundation
+  (`RealtimeVoiceProvider`, `ConversationPolicy` +
+  `ProviderEligibilityPolicy`, `CloudContextSnapshot`, the #5465
+  `InboundAudioBuffer`, usage telemetry, a deterministic
+  `ReconnectController`, Gemini credential/voice-mapping) is IMPLEMENTED —
+  no cloud SDK import, no live Gemini connection yet, zero existing
+  `src/nexa/**` file modified, +73 tests (812 total, 0 regressions). A
+  mandatory Gemini/Pipecat source audit against the installed
+  `pipecat-ai==1.8.1` **confirmed, did not contradict**, ADR-0004/
+  Amendment 1. **Next: `M2.6B.2` — `GeminiLiveProvider` + canonical
+  cloud-turn integration. NOT STARTED.** The operator's currently
+  available Gemini API key/tier is sufficient to continue `DEVELOPMENT`-
+  mode M2.6B work (stored outside the repo); a verified paid/billing-
+  enabled project is required only before any `DISTRIBUTED` release to
+  EEA/CH/UK users.**
 - **Current substage:** M1.1 COMPLETE, `OPERATOR-CONFIRMED` (2026-09-05).
   M1.0B COMPLETE; operator blind test COMPLETE 2026-09-04; M1.1 local
   baseline FROZEN to `gemma4:e4b`, ADR-0002 Amendment 2, 2026-09-05. M2
@@ -808,7 +876,21 @@ Runtime / test evidence outranks anything else in this repo.
   measurable **M2.6B acceptance gates**; local voice stays byte-for-byte
   frozen; real-hardware operator acceptance required before M2.6B COMPLETE.
   No `src/nexa/**` / `tests/**` / `pyproject.toml` change in the ADR task.
-  **Next: `M2.6B` production implementation. NOT STARTED.**
+  **`M2.6B` — IN PROGRESS. `M2.6B.1` — provider-agnostic foundation:
+  IMPLEMENTED (`R0032`, 2026-09-11)** — new `src/nexa/realtime/` package
+  (`RealtimeVoiceProvider`, `ConversationPolicy` + `ProviderEligibilityPolicy`,
+  `CloudContextSnapshot`, `InboundAudioBuffer` for #5465, usage telemetry,
+  a deterministic `ReconnectController`, Gemini credential/voice mapping —
+  **zero cloud SDK import**); a mandatory Gemini/Pipecat startup-sequencing
+  source audit against the installed `pipecat-ai==1.8.1` +
+  `google-genai==2.22.0` **confirmed, did not contradict, ADR-0004/
+  Amendment 1** (Pipecat already implements the initial-history seed and
+  the resumable-handle-only rule internally — see
+  `docs/research/m2_6_cloud_realtime_voice/m2_6b_gemini_startup_sequencing_source_audit_20260911.md`);
+  +73 tests, 812 total, 0 regressions; zero existing `src/nexa/**` file
+  modified; no `pyproject.toml` change; no cloud call.
+  **Next: `M2.6B.2` — `GeminiLiveProvider` + canonical cloud-turn
+  integration. NOT STARTED.**
   **Credential:** operator-provided key stored at
   `~/.config/nexa/secrets/gemini.env` (outside the repo, 700/600), var
   `NEXA_GEMINI_API_KEY`. Non-blocking, owed independently: the B.3.6
@@ -1451,14 +1533,16 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Exact next recommended task
 
-**Begin `M2.6B` — production Cloud Realtime Voice implementation.**
-`ADR-0004` — Cloud Realtime Voice provider boundary — is **written and
-Accepted (2026-09-10)**, **Amendment 1 (2026-09-10)** applied
+**Continue `M2.6B` — `M2.6B.2`: `GeminiLiveProvider` + canonical cloud-turn
+integration.** `ADR-0004` — Cloud Realtime Voice provider boundary — is
+**written and Accepted (2026-09-10)**, **Amendment 1 (2026-09-10)** applied
 (`docs/decisions/ADR-0004_cloud_realtime_voice_provider_boundary.md`); it
 decided items A–P and contains the ordered M2.6B implementation plan (15
 components) and 19 measurable M2.6B acceptance gates. M2.6A feasibility
 and the `Sulafat` voice are OPERATOR-CONFIRMED and remain the frozen v1
-cloud baseline. **M2.6B is NOT started.** Amendment 1 (no decision
+cloud baseline. **`M2.6B.1` — the provider-agnostic foundation — is
+IMPLEMENTED (`R0032`, 2026-09-11; see the "Latest report" entry above).
+`M2.6B.2` is NOT started.** Amendment 1 (no decision
 reversed): operator is in the **UK** not the EEA; eligibility is a
 deployment policy `ProviderEligibilityPolicy(distribution_mode,
 billing_verified)` not a key property — `distribution_mode` does not
@@ -1472,48 +1556,63 @@ session start via the initial-history mechanism, never turn-by-turn;
 session-resumption reconnect keeps only the latest `resumable=true` handle,
 never assumes make-before-break overlap.
 
-ADR-0004 decisions to implement in M2.6B: new provider-agnostic
-`src/nexa/realtime/` package — `RealtimeVoiceProvider` ABC (a **peer of**
+**`M2.6B.1` DONE (`R0032`, 2026-09-11)** — the provider-agnostic
+`src/nexa/realtime/` package: `RealtimeVoiceProvider` ABC (a **peer of**
 `ModelProvider`, not a subtype) + `ProviderReadiness`; `ConversationPolicy`
-(`LOCAL_ONLY` **default**, `CLOUD_PREFERRED`, `AUTO` provisional) vs
-runtime `active_provider` (`LOCAL`/`CLOUD`); `CloudContextSnapshot`
-(minimal role card + language preference + last ~12 turns + policy state;
-never full history / memory / persona / creds / raw audio; fresh per
-non-resumed session); NeXa-owned inbound audio buffer for Pipecat #5465;
-`ReconnectController` (proactive age-timer + `GoAway` + resumption, fresh
-snapshot on resumption failure); `ProviderUsageEvent` from authoritative
-`usageMetadata`; `credentials.py` (env-var-first, XDG secret file
-fallback, `CredentialSource` seam, **no tier flag on the key**) +
-`ProviderEligibilityPolicy` — `DISTRIBUTED` to EEA/CH/UK users needs
-`billing_verified`, `DEVELOPMENT` mode does not; `ConversationRouter`
-executes every LOCAL↔CLOUD switch; additive
-`ConversationSession.record_external_exchange`
+(`LOCAL_ONLY` **default**, `CLOUD_PREFERRED`, `AUTO` provisional) +
+`ActiveProvider` + `ProviderEligibilityPolicy` (`DISTRIBUTED` to EEA/CH/UK
+users needs `billing_verified`, `DEVELOPMENT` does not — **no tier flag on
+the key**); `CloudContextSnapshot` (minimal role card + language preference
++ last ~12 turns + policy state; never full history / memory / persona /
+creds / raw audio; pure, bounded, tested); `InboundAudioBuffer` for Pipecat
+#5465 (bounded time+bytes, drop-oldest, no duplicate delivery);
+`ProviderUsageEvent` / `SessionUsageAggregate` telemetry types; a
+deterministic `ReconnectController` (age-timer, `GoAway` deadline,
+resumable-handle-only, bounded backoff+jitter — no socket); `gemini/
+credentials.py` (env-var-first, XDG secret file fallback,
+`CredentialSource` seam) + `gemini/voice.py` (`warm_female` -> `Sulafat`) —
+**neither imports `google.genai`**. +73 tests, 812 total, 0 regressions,
+zero existing `src/nexa/**` file modified, no `pyproject.toml` change.
+
+**`M2.6B.2` (next, NOT started):** `ConversationRouter` (executes every
+LOCAL↔CLOUD switch); additive `ConversationSession.record_external_exchange`
 (user turn kept on cloud interruption, assistant = spoken-prefix only);
-`GeminiLiveProvider` wrapping Pipecat 1.8.1 `GeminiLiveLLMService`
-(Option C, `LLMRunFrame` kickoff, server VAD off, `Sulafat` via a
-provider-agnostic voice preference); HYBRID audio reuses the frozen
-XVF3800 AEC + Silero + `BargeInController`. Language routing = **Option A**
-(Gemini native same-turn mirroring; NeXa owns the preference permanently),
-Option B (delayed `activity_end` + local language-ID, ≈ +1.1 s) is the
-measured fallback. Dependency: `google-genai>=2.22,<3` + `websockets>=15,<17`
-as an **optional `cloud-gemini` extra** (`pip install .` stays Google-free;
+`GeminiLiveProvider` wrapping Pipecat 1.8.1 `GeminiLiveLLMService` (Option C,
+`LLMRunFrame` kickoff, server VAD off, `Sulafat` via the provider-agnostic
+voice preference); HYBRID audio reuses the frozen XVF3800 AEC + Silero +
+`BargeInController`. Language routing = **Option A** (Gemini native
+same-turn mirroring; NeXa owns the preference permanently), Option B
+(delayed `activity_end` + local language-ID, ≈ +1.1 s) is the measured
+fallback. Dependency: `google-genai>=2.22,<3` + `websockets>=15,<17` as an
+**optional `cloud-gemini` extra**, added only when M2.6B.2 actually needs
+it at runtime (`pip install .` stays Google-free;
 `src/nexa/realtime/gemini/` imports `google.genai` lazily).
 
-**M2.6B implementation-detail verification owed before coding the Gemini
-startup sequence (not an ADR-0004 reopening — an implementation check):**
-the exact composition/ordering of `BidiGenerateContentSetup`,
-`HistoryConfig.initialHistoryInClientContent` (ADR-0004 Amendment 1 §3, the
-one-time initial-history seed), the `LLMContext` / `LLMRunFrame` kickoff
-that the M2.6A research probe used to unblock `GeminiLiveLLMService`
-(R0031), and Pipecat's own session/context lifecycle must be **verified
-against the installed Pipecat 1.8.1 + `google-genai` 2.22.0 source** before
-`GeminiLiveProvider` is implemented. **Do not assume** the research-probe
-`LLMRunFrame` lifecycle and the initial-history mechanism compose in any
-particular order without reading that source — if source evidence
-contradicts an ADR-0004 architectural decision (not just an implementation
-detail), that is grounds to amend the ADR again; if it only affects
-sequencing/mechanics within Decision C / the M2.6B plan (row 8), resolve it
-in M2.6B and record the finding there.
+**M2.6B implementation-detail verification (owed before M2.6B.1, DONE in
+`R0032`):** the mandatory source audit against installed `pipecat-ai==1.8.1`
++ `google-genai==2.22.0` is complete — see
+`docs/research/m2_6_cloud_realtime_voice/m2_6b_gemini_startup_sequencing_source_audit_20260911.md`.
+**Confirmed, did not contradict, ADR-0004/Amendment 1**: `HistoryConfig(
+initial_history_in_client_content=True)` is already Pipecat's unconditional
+default (the initial-history seed mechanism is already implemented by the
+library); `_handle_context` already forces `_reconnect()` if a later
+context's effective `system_instruction` differs from the init-provided one
+(structural proof config is immutable on an open connection);
+`_handle_msg_resumption_update` already only stores a handle `if
+update.resumable and update.new_handle`; no `GoAway` handling exists
+anywhere in the file (unchanged finding); `LLMRunFrame` ->
+`LLMContextFrame` -> `_handle_context` is the exact, only path that makes
+`GeminiLiveLLMService` aware of any context (confirms the R0031 root-cause
+finding at the source level). M2.6B.2's exact sequencing: construct
+`GeminiLiveLLMService(system_instruction=snapshot.system_instruction, …,
+inference_on_context_initialization=False, …)`, seed an initial `LLMContext`
+from `snapshot.recent_turns`, queue one `LLMRunFrame()`, let Pipecat's own
+`_create_initial_response()` send the one-time `clientContent` seed itself.
+One open M2.6B.2 design question (not a blocker, not a contradiction): on a
+resumption-failure reconnect without a resumable handle, Pipecat's
+`_handle_session_ready` already re-seeds from its own internally-tracked
+`self._context` — M2.6B.2 must decide whether to let that run as-is or
+intercept it with a NeXa-rebuilt `CloudContextSnapshot`.
 
 Local realtime voice with production barge-in (`R0029`) is the frozen
 baseline M2.6B builds beside — do not destabilise it; `bargein_enabled`
