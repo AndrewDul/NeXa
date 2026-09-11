@@ -263,10 +263,10 @@ Unchanged from R0035/R0036 — wait for both before speaking:
 
 ## COMMIT HASHES
 
-(recorded in a follow-up commit once made — see the session's final
-message.)
+Narrow hardening commit: `52d152a` — "fix(m2.6b.3b): interrupted cloud
+history now unconditionally conservative (R0037)". Not pushed.
 
 ## GIT STATUS
 
 Not pushed (per the standing constraint for this entire M2.6 body of
-work).
+work). All files listed under FILES CHANGED are committed at `52d152a`.
