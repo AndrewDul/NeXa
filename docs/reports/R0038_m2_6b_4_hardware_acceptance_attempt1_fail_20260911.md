@@ -384,13 +384,13 @@ resolved.
 
 ## COMMIT HASHES
 
-(recorded in a follow-up commit once made — see the session's final
-message.)
+Fix commit: `fcb06a3` — "fix(m2.6b.4): fix three live hardware-acceptance
+regressions (R0038)". Not pushed.
 
 ## GIT STATUS
 
 Not pushed (per the standing constraint for this entire M2.6 body of
-work).
+work). All files listed under FILES CHANGED are committed at `fcb06a3`.
 
 ## EXACT NEXT LIVE RETEST COMMAND
 
