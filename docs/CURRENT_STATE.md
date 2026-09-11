@@ -44,8 +44,8 @@ Runtime / test evidence outranks anything else in this repo.
   infrastructure-only. M2.6A remains PASS/OPERATOR-CONFIRMED; M2.6B was
   NEXT / NOT STARTED as of this Amendment-1 commit **[since progressed —
   see "Latest report" above: M2.6B is now IN PROGRESS, M2.6B.1/M2.6B.2/
-  M2.6B.2A/M2.6B.3 IMPLEMENTED (M2.6B.3 TEST-READY, hardware/Gemini
-  operator acceptance not yet run)]**.
+  M2.6B.2A/M2.6B.3/M2.6B.3A IMPLEMENTED (hardware/Gemini operator
+  acceptance still not yet run)]**.
   Original Accepted content:
   **Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
   Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
@@ -103,7 +103,63 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0035_m2_6b_3_hybrid_cloud_audio_hardware_acceptance_20260911.md`
+- **Latest report:** `docs/reports/R0036_m2_6b_3a_pre_live_hardening_20260911.md`
+  (**M2.6B.3A — final pre-live playback/barge-in/recovery hardening —
+  PASS (deterministic checkpoint), hardware/Gemini operator acceptance
+  STILL NOT YET RUN, 2026-09-11.** ADR-0004 + Amendment 1 unchanged; no
+  cloud call, no hardware test, no reconnect-duration/quota test. Fixed
+  three production-significant seams R0035 got wrong or left undriven,
+  each confirmed against installed Pipecat 1.8.1 source (not assumed):
+  **(1)** `GenerationCompleteEvent` alone was flipping `BargeInController`
+  back to IDLE before any assistant audio necessarily reached the
+  speaker — `BaseOutputTransport` proves `BotStoppedSpeakingFrame` (a real
+  `TTSStoppedFrame`, or a 3s silence fallback) is the only true
+  playback-drain signal, unrelated to generation-complete. Fixed with new
+  `_ResponseLifecycle` (the cloud analogue of the already-accepted
+  `nexa.voice.gate.HalfDuplexGate` combinator) plus a deterministic
+  `TTSStoppedFrame` injected right after each generation's audio (FIFO
+  after every chunk), so the real stop is never a multi-second guess.
+  **(2)** R0035 used the raw, running `CloudTurnAccumulator.assistant_text`
+  as an interrupted turn's spoken prefix — Pipecat's own installed source
+  (`gemini_live/llm.py`) documents, verbatim, that output-transcription
+  "arrive[s] *before* the model_turn messages with audio" and "contain[s]
+  much *more* text" (look-ahead), so "on an interruption our recorded
+  context will contain some text that was actually never spoken" — a
+  source-proven failure mode, not theoretical. Fixed with new
+  `_SpokenPrefixHighWater`: a one-chunk-lag combinator that promotes text
+  to the high-water mark only once a LATER audio chunk confirms an
+  EARLIER snapshot has crossed the playback-output boundary (a response
+  interrupted after only one chunk ever played deliberately commits an
+  empty prefix — the conservative, safe choice given the proven overshoot
+  risk). **(3)** `ConversationRouter.recover_from_mid_turn_loss()` had NO
+  CALLER anywhere in `GeminiVoiceRuntime` — confirmed by direct
+  inspection; R0035's "wired" claim was true only of the router method's
+  existence. Fixed: `_consume_provider_events` now polls
+  `provider.needs_fresh_session` after every event and drives recovery the
+  instant it's observed, atomically swapping both `runtime.provider` and a
+  new `_ProviderHandle` box the VAD bridge reads through (so future local
+  audio always reaches the current provider) — never a second concurrent
+  `provider.events()` reader; the old, already-stopped provider's queue is
+  never read again (proven with a fabricated event on the abandoned
+  queue). A genuine test-design RACE was found and fixed while proving
+  this (the test's own stranded-audio injection could lose a race against
+  the runtime's own reaction to the same `ReconnectingEvent` — fixed by
+  sequencing the injection before the runtime's consumer task even
+  exists). **(4)** confirmed `should_proactively_reconnect()` has no
+  caller either — explicitly documented as DEFERRED (not silently
+  overclaimed); the mid-turn-unsafe path from (3) is the one actually
+  wired and functional. **(5)** the operator app was silently replacing
+  (not composing with) the metrics logger's AEC-status callback by
+  reaching into `AecReferenceHealth`'s private attribute — fixed with a
+  proper `on_aec_change` parameter on `build_gemini_voice_runtime`,
+  composed internally with the metrics logger. **+15 net new tests (911
+  total, 0 regressions)**; `ruff`/`pip check`/`git diff --check`/
+  secret-scan/import-isolation all clean; `apps/nexa_cloud_voice_app.py
+  --dry` re-verified live in-sandbox after every change. **Real
+  Gemini/hardware operator acceptance remains the one step before M2.6B
+  is COMPLETE — not run, no PASS claimed; see R0036 for the exact launch
+  command and READY lines (unchanged from R0035).** Not pushed.)
+- **Prior report:** `docs/reports/R0035_m2_6b_3_hybrid_cloud_audio_hardware_acceptance_20260911.md`
   (**M2.6B.3 — production HYBRID cloud audio + real-hardware operator
   acceptance — TEST-READY (deterministic checkpoint), hardware/Gemini
   operator acceptance NOT YET RUN, 2026-09-11.** ADR-0004 + Amendment 1
@@ -777,7 +833,26 @@ Runtime / test evidence outranks anything else in this repo.
   object graph constructs with no audio device/network touched). +10
   tests (896 total, 0 regressions). **Not yet run: the real Gemini/
   hardware operator conversation — see R0035 for the exact launch command
-  and READY lines.** The
+  and READY lines.**
+  **`M2.6B.3A` (`R0036`, 2026-09-11): final pre-live hardening —
+  IMPLEMENTED.** Fixed three production-significant gaps R0035 left:
+  bargein-finish now waits for real `BotStoppedSpeakingFrame` playback
+  truth via new `_ResponseLifecycle` (never `GenerationCompleteEvent`
+  alone — Pipecat's own source proves generation-complete says nothing
+  about the output-transport's own audio queue); the interrupted spoken
+  prefix now follows a new `_SpokenPrefixHighWater` one-chunk-lag
+  combinator instead of the raw running transcription (Pipecat's own
+  installed source documents output-transcription arriving ahead of, and
+  containing more text than, the audio actually produced); and
+  `ConversationRouter.recover_from_mid_turn_loss()` — previously
+  uncalled — is now actually driven by `_consume_provider_events`, with
+  an atomic provider/`_ProviderHandle` swap and never a second concurrent
+  event-stream reader. Also fixed a real AEC-callback bug (the operator
+  app was silently replacing, not composing with, the metrics logger) and
+  explicitly documented `should_proactively_reconnect()` as having no
+  caller (deferred, not overclaimed). +15 net new tests (911 total, 0
+  regressions). Still not yet run: the real Gemini/hardware operator
+  conversation — see R0036. The
   operator's currently available Gemini API key/tier is sufficient to
   continue `DEVELOPMENT`-mode M2.6B work (stored outside the repo); a
   verified paid/billing-enabled project is required only before any
@@ -1120,9 +1195,9 @@ Runtime / test evidence outranks anything else in this repo.
   tests, **886 total, 0 regressions**. Still no live Gemini connection;
   reconnect still not wired to a real socket (explicit, deferred to
   M2.6B.3).
-  **`M2.6B.3` (`R0035`) since IMPLEMENTED/TEST-READY — see "Latest
-  report" above. Next: the real Gemini/hardware operator acceptance run,
-  NOT YET RUN.**
+  **`M2.6B.3` (`R0035`) and `M2.6B.3A` pre-live hardening (`R0036`) since
+  IMPLEMENTED — see "Latest report" above. Next: the real Gemini/hardware
+  operator acceptance run, NOT YET RUN.**
   **Credential:** operator-provided key stored at
   `~/.config/nexa/secrets/gemini.env` (outside the repo, 700/600), var
   `NEXA_GEMINI_API_KEY`. Non-blocking, owed independently: the B.3.6
@@ -1759,11 +1834,11 @@ Runtime / test evidence outranks anything else in this repo.
   language-ID as the measured fallback. ADR-0004 = Accepted, Amendment 1
   Accepted. **[HISTORICAL — as of the ADR-0004 Amendment-1 task,
   superseded]** ~~M2.6B = NEXT / NOT STARTED.~~ **CURRENT: `M2.6B` is
-  IN PROGRESS — `M2.6B.1` (`R0032`), `M2.6B.2` (`R0033`) and `M2.6B.2A`
-  hardening (`R0034`) are IMPLEMENTED; `M2.6B.3` (`R0035`) is
-  IMPLEMENTED/TEST-READY — the real Gemini/hardware operator acceptance
-  is the one remaining step before `M2.6B` can be marked COMPLETE. See
-  "Latest report" above.**
+  IN PROGRESS — `M2.6B.1` (`R0032`), `M2.6B.2` (`R0033`), `M2.6B.2A`
+  hardening (`R0034`), `M2.6B.3` (`R0035`) and `M2.6B.3A` pre-live
+  hardening (`R0036`) are all IMPLEMENTED — the real Gemini/hardware
+  operator acceptance is the one remaining step before `M2.6B` can be
+  marked COMPLETE. See "Latest report" above.**
 - **After local + cloud voice** (unchanged plan): memory / identity /
   personality / capabilities → full graphical UI → typed chat in that UI
   on the **same** `ConversationSession` / NeXa brain as voice (never a
@@ -1772,14 +1847,15 @@ Runtime / test evidence outranks anything else in this repo.
 ## Exact next recommended task
 
 **Run the M2.6B.3 real-hardware/Gemini operator acceptance test.** All
-deterministic wiring (`M2.6B.1`/`.2`/`.2A`/`.3`) is IMPLEMENTED and green;
-`ADR-0004` + Amendment 1 remain Accepted, unchanged; M2.6A feasibility and
-the `Sulafat` voice remain OPERATOR-CONFIRMED and are the frozen v1 cloud
-baseline. Launch `apps/nexa_cloud_voice_app.py` (no `--dry`), wait for
-`CLOUD_PROVIDER_READY` + `AEC_REF_ACTIVE`, then a short natural PL/EN
-conversation with one interruption — see `R0035`'s EXACT LAUNCH COMMAND /
-READY LINES / WHAT THE OPERATOR SHOULD DO. Only after that evidence is
-returned can `M2.6B` be marked COMPLETE.
+deterministic wiring (`M2.6B.1`/`.2`/`.2A`/`.3`/`.3A`) is IMPLEMENTED and
+green; `ADR-0004` + Amendment 1 remain Accepted, unchanged; M2.6A
+feasibility and the `Sulafat` voice remain OPERATOR-CONFIRMED and are the
+frozen v1 cloud baseline. Launch `apps/nexa_cloud_voice_app.py` (no
+`--dry`), wait for `CLOUD_PROVIDER_READY` + `AEC_REF_ACTIVE`, then a short
+natural PL/EN conversation with one interruption — see `R0036`'s EXACT
+LIVE LAUNCH COMMAND / READY LINES (unchanged from R0035) and R0035's WHAT
+THE OPERATOR SHOULD DO. Only after that evidence is returned can `M2.6B`
+be marked COMPLETE.
 
 **`M2.6B.1` DONE (`R0032`, 2026-09-11)** — the provider-agnostic
 `src/nexa/realtime/` package: `RealtimeVoiceProvider` ABC (a peer of
@@ -1898,6 +1974,29 @@ unmodified `BargeInController`. New operator app
 required for this run (charter policy); minimum real-hardware operator
 acceptance is the one remaining step before M2.6B is marked COMPLETE —
 NOT YET RUN, see R0035.**
+
+**`M2.6B.3A` DONE (`R0036`, 2026-09-11)** — final pre-live hardening on
+three seams R0035 left wrong or undriven: new `_ResponseLifecycle`
+(cloud analogue of `nexa.voice.gate.HalfDuplexGate`'s combinator) makes
+bargein-finish wait for real `BotStoppedSpeakingFrame` playback truth
+(plus a deterministic `TTSStoppedFrame` injected after each generation's
+audio, in the same FIFO the audio chunks went through) instead of firing
+on `GenerationCompleteEvent` alone (installed Pipecat source proves
+generation-complete says nothing about the output transport's own
+queue); new `_SpokenPrefixHighWater` one-chunk-lag combinator replaces
+the raw running `CloudTurnAccumulator.assistant_text` as the interrupted
+spoken prefix (Pipecat's own source documents output-transcription
+arriving ahead of, and containing more text than, the audio actually
+produced — a proven, not theoretical, overshoot risk); and
+`recover_from_mid_turn_loss()` — previously uncalled anywhere — is now
+actually driven by `_consume_provider_events`, with a new
+`_ProviderHandle` box giving an atomic provider swap and never a second
+concurrent `provider.events()` reader. Also fixed a real bug (the
+operator app silently replaced, rather than composed with, the metrics
+AEC callback) and explicitly documented the proactive-reconnect caller
+as deferred (not overclaimed). +15 net new tests (911 total, 0
+regressions). Real Gemini/hardware operator acceptance remains the one
+step before M2.6B is COMPLETE — NOT YET RUN, see R0036.
 
 Local realtime voice with production barge-in (`R0029`) is the frozen
 baseline M2.6B builds beside — do not destabilise it; `bargein_enabled`

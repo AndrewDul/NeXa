@@ -136,6 +136,10 @@ async def main() -> None:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    def _on_aec_change(active: bool) -> None:
+        msg = "✓ AEC_REF_ACTIVE" if active else "✗ AEC REF DOWN — barge-in unsafe"
+        print(f"\n  {msg}")
+
     printed_ready = [False]
     session = build_default_session()
     runtime = build_gemini_voice_runtime(
@@ -143,14 +147,9 @@ async def main() -> None:
         api_key=credential.reveal(),
         policy=ConversationPolicy.CLOUD_PREFERRED,
         on_event=_make_event_printer(printed_ready),
+        on_aec_change=_on_aec_change,
         dry=False,
     )
-
-    def _on_aec_change(active: bool) -> None:
-        msg = "✓ AEC_REF_ACTIVE" if active else "✗ AEC REF DOWN — barge-in unsafe"
-        print(f"\n  {msg}")
-
-    runtime.aec_health._on_change = _on_aec_change  # noqa: SLF001 — operator status line only
 
     snapshot = runtime.router._snapshot_builder(  # noqa: SLF001
         session, policy_name=ConversationPolicy.CLOUD_PREFERRED.value,

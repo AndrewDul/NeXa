@@ -275,6 +275,52 @@ unpaid-quota data is used to improve Google products.
     **Real Gemini/hardware operator acceptance is the one remaining step
     before M2.6B is marked COMPLETE — NOT YET RUN, see R0035 for the
     exact launch command and READY lines.**
+  - **M2.6B.3A — final pre-live playback/barge-in/recovery hardening:
+    IMPLEMENTED, PASS** (`R0036`, 2026-09-11). Fixed three
+    production-significant seams R0035 got wrong or left undriven, each
+    confirmed (not assumed) against installed Pipecat 1.8.1 source: **(1)**
+    `GenerationCompleteEvent` alone was flipping `BargeInController` back
+    to IDLE before any assistant audio necessarily reached the speaker —
+    `BaseOutputTransport` proves `BotStoppedSpeakingFrame` (a real
+    `TTSStoppedFrame`, or a 3s silence fallback) is the only true
+    playback-drain signal. Fixed with new `_ResponseLifecycle` (the cloud
+    analogue of the already-accepted `nexa.voice.gate.HalfDuplexGate`
+    combinator) plus a deterministic `TTSStoppedFrame` injected right
+    after each generation's audio (same FIFO the audio chunks went
+    through), so the real stop is never a multi-second guess. **(2)** the
+    raw, running `CloudTurnAccumulator.assistant_text` was being used
+    directly as an interrupted turn's spoken prefix — Pipecat's own
+    installed source (`gemini_live/llm.py`) documents, verbatim, that
+    output-transcription "arrive[s] *before* the model_turn messages with
+    audio" and "contain[s] much *more* text" (look-ahead), so "on an
+    interruption our recorded context will contain some text that was
+    actually never spoken" — a source-proven failure mode. Fixed with new
+    `_SpokenPrefixHighWater`: a one-chunk-lag combinator promoting text to
+    the high-water mark only once a LATER audio chunk confirms an EARLIER
+    snapshot has crossed the playback-output boundary (a response
+    interrupted after only one chunk ever played deliberately commits an
+    empty prefix — the conservative, safe choice). **(3)**
+    `ConversationRouter.recover_from_mid_turn_loss()` had NO CALLER
+    anywhere in `GeminiVoiceRuntime` (confirmed by direct inspection).
+    Fixed: `_consume_provider_events` now polls
+    `provider.needs_fresh_session` after every event and drives recovery
+    the instant it's observed, atomically swapping both `runtime.provider`
+    and a new `_ProviderHandle` box the VAD bridge reads through — never a
+    second concurrent `provider.events()` reader; the old, already-stopped
+    provider's queue is never read again. A genuine test-design race was
+    found and fixed while proving this. **(4)** confirmed
+    `should_proactively_reconnect()` also has no caller — explicitly
+    documented as DEFERRED (not silently overclaimed); the mid-turn-unsafe
+    path from (3) is the one actually wired. **(5)** fixed a real bug: the
+    operator app was silently replacing (not composing with) the metrics
+    logger's AEC-status callback by reaching into `AecReferenceHealth`'s
+    private attribute — fixed with a proper `on_aec_change` parameter,
+    composed internally with the metrics logger. +15 net new tests (911
+    total, 0 regressions); `ruff`/`pip check`/`git diff --check`/
+    secret-scan/import-isolation all clean. **Real Gemini/hardware
+    operator acceptance remains the one step before M2.6B is COMPLETE —
+    NOT YET RUN, see R0036 for the exact launch command and READY lines
+    (unchanged from R0035).**
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the
