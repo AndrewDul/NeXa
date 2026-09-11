@@ -276,16 +276,17 @@ what ADR-0004 Amendment 1 already verified on 2026-09-10.
 
 ## COMMIT HASH
 
-`<PENDING — filled by the immediately-following hash-record commit,
-R0026–R0031 pattern>`
+`e4b84ec` — `feat(m2.6b.1): provider-agnostic Cloud Realtime Voice
+foundation (R0032)`.
 
 Prior tip: `986e65a` (ADR-0004 Amendment 1, cumulative doc-consistency
 commit).
 
 ## GIT STATUS
 
-Branch `main`, ahead of `origin/main` (`986e65a`) by this commit. Working
-tree clean after commit. Not pushed.
+Branch `main`, ahead of `origin/main` (`505627f`) by 3 commits
+(`986e65a`, `e4b84ec`, and this hash-record follow-up). Working tree clean
+after commit. Not pushed.
 
 ## NEXT RECOMMENDED ACTION
 
