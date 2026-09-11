@@ -117,11 +117,65 @@ any real Gemini/hardware operator run (see
    queue. The old, already-``stop()``'d provider's queue is never read
    again, so it can never commit a late turn.
 
+M2.6B.4 (R0038) — the FIRST real operator hardware/Gemini run FAILED with
+three regressions, fixed here (see
+``docs/reports/R0038_m2_6b_4_hardware_acceptance_attempt1_fail_20260911.md``):
+
+1. **`_VadToProviderBridge` setup/cleanup crashed.** Root cause: Pipecat's
+   own ``FrameProcessor.__init__`` already assigns
+   ``self._metrics = metrics or FrameProcessorMetrics()`` and its
+   ``setup()``/``cleanup()`` call ``self._metrics.setup(...)``/
+   ``self._metrics.cleanup()`` (installed source,
+   ``frame_processor.py:256,653,669``) — NeXa's own ``__init__`` stored
+   ``RuntimeMetrics`` under that SAME attribute name, silently clobbering
+   Pipecat's real metrics object, so Pipecat's own lifecycle went on to
+   call ``.setup()``/``.cleanup()`` on NeXa's telemetry instead. Fixed:
+   renamed to ``self._nexa_metrics`` — never share an attribute name with
+   any Pipecat-reserved one on a ``FrameProcessor`` subclass.
+2. **Local playback did not stop on barge-in; the interrupted reply kept
+   playing while the new one was already generating.**
+   ``BargeInController.broadcast_interruption()`` (unmodified) only clears
+   what ``BaseOutputTransport``'s own audio queue held at that instant —
+   it does nothing about a provider event already sitting in
+   ``provider.events()``'s own queue, or audio Gemini keeps generating for
+   a moment after the cancel signal. Fixed with ``_ResponseGenerationGuard``:
+   every ``AssistantAudioEvent`` is checked against the currently VALID
+   response-generation id before it is ever handed to
+   ``hw_worker.queue_frames()``; a confirmed local interruption
+   invalidates the current generation immediately (synchronously, so
+   there is no race on the single-threaded event loop) — "hard local
+   output clear (``broadcast_interruption``) + generation invalidation
+   (this guard)", never either alone.
+3. **Native language mirroring (ADR-0004 Option A) failed live** — two
+   English questions both answered in Polish. Reconstructed the exact
+   production snapshot: ``apps/nexa_cloud_voice_app.py`` never passed
+   ``language_preference`` to the snapshot builder (defaults to ``None``)
+   and ``build_default_session()`` starts with empty history — so the
+   snapshot IS neutral (no forced Polish bias anywhere in
+   ``system_instruction``/``recent_turns``); this is a genuine Gemini
+   native-mirroring reliability gap, not a NeXa-side bug, and activates
+   ADR-0004's own documented Option-B fallback. Added optional, local,
+   offline, same-turn PL/EN diagnostics — reusing the ALREADY-ACCEPTED
+   local-voice mechanisms verbatim: ``nexa.stt.WhisperCppLanguageDetector``
+   (R0024's ``argmax(p_pl, p_en)`` LID) and
+   ``nexa.conversation.ResponseLanguageResolver`` (sticky preference set
+   ONLY on an explicit directive, never from the language merely spoken).
+   This updates ``self._recovery_language_preference`` for any FUTURE
+   fresh-session snapshot (ADR-0004 Amendment 1 §2's own documented
+   mechanism) and logs the charter's exact diagnostic keys
+   (``SNAPSHOT_LANGUAGE_PREFERENCE``/``TURN_INPUT_LANGUAGE``/
+   ``TURN_INPUT_TRANSCRIPT``/``LANGUAGE_ROUTING_MODE``) — it does **not**
+   retroactively steer the response Gemini is already generating for the
+   CURRENT turn (native mirroring remains the active per-turn mechanism);
+   no verified, low-risk same-turn steering primitive was found reachable
+   through the installed stack without a live call to test it, so that
+   remains an explicit, honestly-documented open gap, not attempted here.
+
 Construction only (``dry=True``): builds every object EXCEPT the audio
 device / network — no ``pyaudio.PyAudio()``, no device index lookup, no
 Gemini connection. This module has NOT been validated against real
-hardware — see ``docs/reports/R0035_...``/``R0036_...`` for exactly what
-remains for a real operator run.
+hardware — see ``docs/reports/R0035_...``/``R0036_...``/``R0038_...`` for
+exactly what remains for a real operator run.
 """
 
 from __future__ import annotations
@@ -144,6 +198,7 @@ from ..provider import (
     GenerationCompleteEvent,
     ProviderReadiness,
     RealtimeProviderFailedError,
+    UserTranscriptionEvent,
 )
 from ..router import ConversationRouter
 from ..snapshot import CloudContextSnapshot
@@ -298,6 +353,82 @@ class _ResponseLifecycle:
 CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX = ""
 
 
+class _ResponseGenerationGuard:
+    """M2.6B.4 (R0038 FAILURE 2) — the single source of truth for which
+    local response generation may still produce audible output.
+
+    Root cause this exists to close: ``BargeInController.broadcast_interruption()``
+    (Pipecat's own mechanism, unchanged) clears only what
+    ``BaseOutputTransport``'s audio queue held at the instant it ran
+    (installed source: cancels/recreates the output audio task, or resets
+    the queue) — it does nothing about a provider event still sitting in
+    ``provider.events()``'s own queue, or audio Gemini keeps generating
+    for a few moments after receiving the cancel signal. Confirmed live in
+    the first real operator run: an interrupted reply's audio kept
+    playing to completion while the NEW reply was already being
+    generated. This guard is what stops those late frames from ever
+    reaching ``hw_worker.queue_frames()`` in the first place — "hard local
+    output clear (``broadcast_interruption``) + generation invalidation
+    (this guard)", never either alone, per the charter.
+
+    Deliberately does NOT decide *when* a new generation is dispatched —
+    an earlier draft tried to fold "the next assistant output needs a
+    fresh dispatch" into this guard too, keyed off the same
+    interrupt-vs-valid state, and that conflated two different signals:
+    "may this chunk play" (this class) and "has a genuinely NEW local
+    user turn started" (only a fresh, final ``UserTranscriptionEvent`` --
+    the interrupting utterance's own -- proves that; R0034's own proven
+    message-ordering guarantee is what makes this reliable). Trailing
+    audio for an invalidated generation and the interrupting utterance's
+    own brand-new reply both arrive as plain ``AssistantAudioEvent``s
+    with no marker distinguishing them, so conflating the two signals
+    made a late, invalid chunk look like a fresh, valid dispatch. Kept
+    deliberately dumb: only ``is_valid``/``start_new_generation``/
+    ``interrupt`` — the caller (``_consume_provider_events``) decides the
+    dispatch boundary from ``UserTranscriptionEvent(final=True)``.
+    """
+
+    def __init__(self) -> None:
+        self._current_id = 0
+        self._valid_id = 0
+
+    def start_new_generation(self) -> int:
+        self._current_id += 1
+        self._valid_id = self._current_id
+        return self._current_id
+
+    def is_valid(self, generation_id: int) -> bool:
+        return generation_id == self._valid_id
+
+    def interrupt(self) -> None:
+        """The CURRENT generation can never produce audible output again.
+        Called synchronously from ``_on_confirmed`` (no ``await`` before
+        it in that function), so this always completes before any other
+        coroutine gets a chance to run on this single-threaded event
+        loop — no race with ``_consume_provider_events``'s own check."""
+        self._valid_id = 0  # 0 is never a real id (the counter starts at 1)
+
+
+class _PendingUtteranceAudio:
+    """M2.6B.4 FAILURE 3 — a tiny FIFO correlating each closed user
+    utterance's locally-buffered PCM with the FINAL transcription that
+    later arrives for it from the provider's own event stream. Safe
+    because turn-taking here is strictly sequential (R0034's own proven
+    message-ordering guarantee): one utterance closes locally, then its
+    transcription arrives, before the next utterance can open."""
+
+    def __init__(self) -> None:
+        self._pending: list[bytes] = []
+
+    def push(self, pcm: bytes) -> None:
+        self._pending.append(pcm)
+
+    def pop_oldest(self) -> bytes | None:
+        if not self._pending:
+            return None
+        return self._pending.pop(0)
+
+
 def _make_vad_bridge_class(P: dict[str, Any]) -> type:
     """The one new FrameProcessor: local VAD frames -> provider turn I/O,
     and real playback-lifecycle frames -> ``_ResponseLifecycle``. Built
@@ -310,28 +441,56 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
             provider_handle: _ProviderHandle,
             metrics: RuntimeMetrics,
             lifecycle: _ResponseLifecycle,
+            pending_utterance_audio: _PendingUtteranceAudio | None = None,
         ) -> None:
             super().__init__()
             self._handle = provider_handle
-            self._metrics = metrics
+            # M2.6B.4 (R0038 FAILURE 1) -- ``FrameProcessor.__init__`` itself
+            # already sets ``self._metrics = metrics or FrameProcessorMetrics()``
+            # (installed source, frame_processor.py:256) and its own
+            # ``setup()``/``cleanup()`` call ``self._metrics.setup(...)``/
+            # ``self._metrics.cleanup()`` (frame_processor.py:653/669) on
+            # WHATEVER object holds that name. Storing NeXa's RuntimeMetrics
+            # under the SAME attribute name silently clobbered Pipecat's own
+            # ``FrameProcessorMetrics`` instance, so Pipecat's real lifecycle
+            # went on to call ``.setup()``/``.cleanup()`` on NeXa's telemetry
+            # object instead -- confirmed live in the first real operator
+            # run ("'RuntimeMetrics' object has no attribute 'setup'"),
+            # reproduced deterministically in
+            # ``TestVadBridgeProcessorLifecycle``. RuntimeMetrics is NeXa
+            # runtime telemetry, never a Pipecat processor-metrics object --
+            # a distinctly NeXa-prefixed attribute name is required for
+            # every NeXa-owned field on a Pipecat FrameProcessor subclass.
+            self._nexa_metrics = metrics
             self._lifecycle = lifecycle
             self._turn_open = False
+            # M2.6B.4 FAILURE 3 -- a PARALLEL local copy of the utterance
+            # audio, accumulated purely for offline same-turn language
+            # detection (never delays or alters what streams live to
+            # Gemini via ``send_user_audio`` below).
+            self._pending_utterance_audio = pending_utterance_audio
+            self._utterance_buffer = bytearray()
 
         async def process_frame(self, frame: Any, direction: Any) -> None:
             await super().process_frame(frame, direction)
             if isinstance(frame, P["VADUserStartedSpeakingFrame"]):
                 self._turn_open = True
-                self._metrics.local_vad_start()
+                self._utterance_buffer = bytearray()
+                self._nexa_metrics.local_vad_start()
                 await self._handle.current.user_turn_start()
             elif isinstance(frame, P["InputAudioRawFrame"]) and self._turn_open:
+                self._utterance_buffer.extend(frame.audio)
                 await self._handle.current.send_user_audio(frame.audio)
             elif isinstance(frame, P["VADUserStoppedSpeakingFrame"]):
                 self._turn_open = False
-                self._metrics.local_vad_eot()
+                self._nexa_metrics.local_vad_eot()
                 await self._handle.current.user_turn_end()
+                if self._pending_utterance_audio is not None and self._utterance_buffer:
+                    self._pending_utterance_audio.push(bytes(self._utterance_buffer))
+                self._utterance_buffer = bytearray()
             elif isinstance(frame, P["BotStartedSpeakingFrame"]):
                 self._lifecycle.observe_bot_started()
-                self._metrics.first_assistant_audio_played()
+                self._nexa_metrics.first_assistant_audio_played()
             elif isinstance(frame, P["BotStoppedSpeakingFrame"]):
                 self._lifecycle.observe_bot_stopped()
             await self.push_frame(frame, direction)
@@ -409,6 +568,35 @@ class RuntimeMetrics:
             event.output_text_tokens, event.output_audio_tokens,
         )
 
+    def dropped_invalidated_generation_audio(self, *, generation_id: int) -> None:
+        # M2.6B.4 FAILURE 2 -- visibility into the generation guard
+        # actually doing its job: a chunk belonging to an interrupted
+        # generation was correctly kept off the hardware pipeline.
+        logger.info(
+            "nexa.realtime.metrics: dropped invalidated-generation audio generation_id=%d",
+            generation_id,
+        )
+
+    def language_diagnostics(
+        self,
+        *,
+        snapshot_language_preference: str | None,
+        turn_input_language: str,
+        turn_input_transcript: str,
+        routing_mode: str,
+    ) -> None:
+        # M2.6B.4 FAILURE 3 -- the exact diagnostic keys the R0038 charter
+        # asked for, safe (no credentials, transcript is the operator's
+        # own already-printed speech, never raw audio).
+        logger.info(
+            "nexa.realtime.metrics: SNAPSHOT_LANGUAGE_PREFERENCE=%s "
+            "TURN_INPUT_LANGUAGE=%s TURN_INPUT_TRANSCRIPT=%r LANGUAGE_ROUTING_MODE=%s",
+            snapshot_language_preference or "none",
+            turn_input_language,
+            turn_input_transcript,
+            routing_mode,
+        )
+
 
 @dataclass
 class GeminiVoiceRuntime:
@@ -424,6 +612,12 @@ class GeminiVoiceRuntime:
     bargein: BargeInController
     metrics: RuntimeMetrics
     lifecycle: _ResponseLifecycle
+    generation_guard: _ResponseGenerationGuard
+    pending_utterance_audio: _PendingUtteranceAudio
+    #: ``None`` when local whisper.cpp LID is unavailable on this machine
+    #: (optional enhancement, never a hard dependency of cloud voice).
+    language_detector: Any = None
+    language_resolver: Any = None
     #: Optional operator/observability hook, called once per event
     #: *from the same single consumption loop* that drives the canonical
     #: write path -- ``provider.events()`` is backed by ONE
@@ -452,14 +646,33 @@ class GeminiVoiceRuntime:
         ``_ResponseLifecycle`` (real generation+playback truth, never a
         naive generation-complete==finished conflation), (3) inject
         assistant audio (and a deterministic ``TTSStoppedFrame``) into the
-        hardware pipeline, and (4) drive mid-turn fresh-session recovery
-        the instant ``provider.needs_fresh_session`` is observed true —
-        never a second concurrent ``provider.events()`` reader; the OLD
+        hardware pipeline -- but ONLY for the CURRENTLY VALID response
+        generation (M2.6B.4 FAILURE 2: ``_ResponseGenerationGuard`` drops
+        anything belonging to a generation a confirmed local interruption
+        already invalidated, no matter how many more events for it were
+        already in flight), (4) drive mid-turn fresh-session recovery the
+        instant ``provider.needs_fresh_session`` is observed true — never
+        a second concurrent ``provider.events()`` reader; the OLD
         provider's queue is abandoned (never read again) the moment
-        recovery begins."""
+        recovery begins, and (5) correlate each closed user utterance's
+        locally-buffered audio with its final transcription for offline
+        same-turn language diagnostics (M2.6B.4 FAILURE 3) -- fire-and-
+        forget, never on the critical audio path."""
         P = _pipecat_hw_imports()
         first_audio_seen = False
-        response_dispatched = False
+        current_gid = 0
+        # True once the CURRENT open user turn's assistant output has
+        # already been dispatched -- reset specifically on a fresh, FINAL
+        # UserTranscriptionEvent (a genuinely NEW local user turn was just
+        # heard), never merely because a generation was interrupted. This
+        # is what correctly tells apart "late trailing audio for the
+        # generation a barge-in just invalidated" (arrives while this is
+        # still True -- no new final transcription has arrived yet) from
+        # "the interrupting utterance's own brand-new reply" (arrives
+        # only after ITS OWN final transcription resets this to False;
+        # R0034's proven ordering guarantees input transcription always
+        # precedes that turn's own assistant content).
+        dispatched_for_turn = False
 
         while True:
             provider = self.provider
@@ -475,25 +688,36 @@ class GeminiVoiceRuntime:
 
                 if isinstance(
                     event, (AssistantAudioEvent, AssistantTranscriptionEvent)
-                ) and not response_dispatched:
-                    response_dispatched = True
+                ) and not dispatched_for_turn:
+                    dispatched_for_turn = True
+                    current_gid = self.generation_guard.start_new_generation()
                     self.bargein.notify_response_dispatched()
                     self.lifecycle.mark_dispatched()
 
                 outcome = self.router.handle_provider_event(event)
 
-                if isinstance(event, GenerationCompleteEvent):
+                if isinstance(event, UserTranscriptionEvent) and event.final:
+                    dispatched_for_turn = False
+                    self.metrics.input_transcription_final(event.text)
+                    pcm = self.pending_utterance_audio.pop_oldest()
+                    if pcm is not None:
+                        asyncio.create_task(self._analyze_turn_language(pcm, event.text))
+                elif isinstance(event, GenerationCompleteEvent):
                     self.lifecycle.mark_generation_done()
-                    # Deterministic BotStopped confirmation (M2.6B.3A §1):
-                    # queued strictly after every audio chunk of this
-                    # generation (same FIFO the audio chunks went through),
-                    # so the output transport fires a real
-                    # BotStoppedSpeakingFrame once (and only once) that
-                    # whole queue has actually drained -- never a
-                    # multi-second silence-fallback guess.
-                    await self.hw_worker.queue_frames([P["TTSStoppedFrame"]()])
+                    if self.generation_guard.is_valid(current_gid):
+                        # Deterministic BotStopped confirmation (M2.6B.3A
+                        # §1): queued strictly after every audio chunk of
+                        # this generation (same FIFO the audio chunks
+                        # went through), so the output transport fires a
+                        # real BotStoppedSpeakingFrame once (and only
+                        # once) that whole queue has actually drained --
+                        # never a multi-second silence-fallback guess. A
+                        # late generation-complete for an already-
+                        # invalidated generation never re-stops anything.
+                        await self.hw_worker.queue_frames([P["TTSStoppedFrame"]()])
                 elif isinstance(event, RealtimeProviderFailedError):
-                    response_dispatched = False
+                    dispatched_for_turn = False
+                    self.generation_guard.interrupt()
 
                 if outcome is not None:
                     turn = self.router._turn.current  # noqa: SLF001 - metrics only
@@ -505,10 +729,22 @@ class GeminiVoiceRuntime:
                         first_audio_seen = True
                         self.metrics.first_assistant_audio_received()
                     self.lifecycle.mark_audio_produced()
-                    frame = P["TTSAudioRawFrame"](
-                        audio=event.pcm, sample_rate=OUTPUT_SAMPLE_RATE_HZ, num_channels=1
-                    )
-                    await self.hw_worker.queue_frames([frame])
+                    if self.generation_guard.is_valid(current_gid):
+                        frame = P["TTSAudioRawFrame"](
+                            audio=event.pcm, sample_rate=OUTPUT_SAMPLE_RATE_HZ,
+                            num_channels=1,
+                        )
+                        await self.hw_worker.queue_frames([frame])
+                    else:
+                        # A confirmed local interruption already invalidated
+                        # this generation -- this chunk was already in
+                        # flight (queued on provider.events() before the
+                        # interruption, or produced by Gemini in the brief
+                        # window before it honoured the cancel signal) and
+                        # must NEVER reach the speaker or the AEC reference.
+                        self.metrics.dropped_invalidated_generation_audio(
+                            generation_id=current_gid
+                        )
 
                 if provider.needs_fresh_session:
                     new_provider = await self.router.recover_from_mid_turn_loss(
@@ -525,12 +761,53 @@ class GeminiVoiceRuntime:
                     self.metrics.mid_turn_recovery(succeeded=True)
                     self.provider = new_provider
                     self.provider_handle.current = new_provider
-                    response_dispatched = False
+                    dispatched_for_turn = False
+                    self.generation_guard.interrupt()
                     recovered = True
                     break  # stop reading the OLD provider's queue
 
             if not recovered:
                 return  # the provider's own events() ended (stop()/cancel)
+
+    async def _analyze_turn_language(self, pcm: bytes, transcript: str) -> None:
+        """M2.6B.4 FAILURE 3 -- offline, same-turn PL/EN diagnostics.
+        Fire-and-forget (``asyncio.create_task``, never awaited inline
+        from the event loop) so a slow or failing detector never adds
+        latency to, or breaks, the live turn-taking path. Reuses the
+        SAME mechanism already accepted for local voice
+        (``nexa.stt.WhisperCppLanguageDetector`` — R0024's own
+        ``argmax(p_pl, p_en)`` method, proven to classify every
+        monolingual corpus item correctly) and the SAME
+        provider-agnostic sticky/one-turn resolver already accepted for
+        local voice (``nexa.conversation.ResponseLanguageResolver`` — it
+        sets a sticky preference ONLY on an explicit directive like
+        "always answer in English"/"odpowiadaj mi po polsku", never from
+        the language merely spoken). Updates
+        ``self._recovery_language_preference`` ONLY on a sticky decision
+        -- ADR-0004 Amendment 1 §2: a sticky command reaches the provider
+        only on the next new/resumed session, never retroactively steers
+        the response already in flight for THIS turn (native mirroring,
+        Option A, remains the active per-turn mechanism; see R0038 for
+        why a same-turn steering mechanism is not implemented here)."""
+        if self.language_detector is None:
+            return
+        try:
+            result = await self.language_detector.detect(pcm)
+        except Exception:  # noqa: BLE001 - LID is an optional enhancement
+            logger.exception("nexa.realtime.gemini.runtime: language detection failed")
+            return
+        input_language = "pl" if result.p_pl >= result.p_en else "en"
+        decision = None
+        if self.language_resolver is not None:
+            decision = self.language_resolver.resolve(transcript, input_language=input_language)
+            if decision.preference_changed:
+                self._recovery_language_preference = decision.sticky_after
+        self.metrics.language_diagnostics(
+            snapshot_language_preference=self._recovery_language_preference,
+            turn_input_language=input_language,
+            turn_input_transcript=transcript,
+            routing_mode="native",
+        )
 
     async def stop(self, *, reason: str) -> None:
         if self._events_task is not None:
@@ -591,9 +868,43 @@ def build_gemini_voice_runtime(
 
     aec_health = AecReferenceHealth(on_change=_combined_aec_change)
     lifecycle = _ResponseLifecycle(on_finished=lambda: bargein.notify_response_finished())
+    generation_guard = _ResponseGenerationGuard()
+    pending_utterance_audio = _PendingUtteranceAudio()
+
+    # M2.6B.4 FAILURE 3 -- local same-turn language LID is an optional
+    # enhancement (diagnostics + future-session sticky-preference
+    # persistence only, never a hard dependency of cloud voice: if
+    # whisper.cpp isn't installed/configured on this machine, cloud voice
+    # still runs exactly as before, just without this diagnostic).
+    language_detector: Any = None
+    try:
+        from nexa.stt import WhisperCppLanguageDetector
+
+        language_detector = WhisperCppLanguageDetector()
+    except Exception as exc:  # noqa: BLE001 - optional enhancement
+        logger.warning(
+            "nexa.realtime.gemini.runtime: local language detector unavailable "
+            "(%r) -- cloud voice continues without same-turn language "
+            "diagnostics", exc,
+        )
+    language_resolver: Any = None
+    if language_detector is not None:
+        from nexa.conversation import ResponseLanguageResolver
+
+        language_resolver = ResponseLanguageResolver()
 
     def _on_confirmed(ctx: InterruptContext) -> None:
         metrics.local_interruption_confirmed()
+        # M2.6B.4 FAILURE 2 -- invalidate the CURRENT response generation
+        # BEFORE anything else below (see _ResponseGenerationGuard's own
+        # docstring for why this is race-free on a single-threaded event
+        # loop): broadcast_interruption() (already called by
+        # BargeInController just before this hook, per its own contract)
+        # only clears what the hardware output queue held at this
+        # instant -- this guard is what stops any MORE audio for this
+        # same generation, already in flight on provider.events()'s own
+        # queue, from ever reaching hw_worker.queue_frames() afterward.
+        generation_guard.interrupt()
         # Local speaker-stop authority already happened: BargeInController
         # calls Pipecat's own broadcast_interruption() (which tears down
         # queued/playing output audio) BEFORE this hook runs, and that call
@@ -645,6 +956,10 @@ def build_gemini_voice_runtime(
             bargein=bargein,
             metrics=metrics,
             lifecycle=lifecycle,
+            generation_guard=generation_guard,
+            pending_utterance_audio=pending_utterance_audio,
+            language_detector=language_detector,
+            language_resolver=language_resolver,
             on_event=on_event,
         )
 
@@ -672,7 +987,12 @@ def build_gemini_voice_runtime(
     )
     vad_processor = P["VADProcessor"](vad_analyzer=vad_analyzer)
     bridge_cls = _make_vad_bridge_class(P)
-    bridge = bridge_cls(provider_handle=provider_handle, metrics=metrics, lifecycle=lifecycle)
+    bridge = bridge_cls(
+        provider_handle=provider_handle,
+        metrics=metrics,
+        lifecycle=lifecycle,
+        pending_utterance_audio=pending_utterance_audio,
+    )
     aec_feeder = AecReferenceFeeder(
         aec_health=aec_health, sample_rate=OUTPUT_SAMPLE_RATE_HZ, channels=1
     )
@@ -708,5 +1028,9 @@ def build_gemini_voice_runtime(
         bargein=bargein,
         metrics=metrics,
         lifecycle=lifecycle,
+        generation_guard=generation_guard,
+        pending_utterance_audio=pending_utterance_audio,
+        language_detector=language_detector,
+        language_resolver=language_resolver,
         on_event=on_event,
     )

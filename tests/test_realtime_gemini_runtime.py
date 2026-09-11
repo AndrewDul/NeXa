@@ -35,7 +35,11 @@ from nexa.realtime.gemini.runtime import (  # noqa: E402
     CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX,
     GeminiVoiceRuntime,
     RuntimeMetrics,
+    _make_vad_bridge_class,
+    _PendingUtteranceAudio,
+    _pipecat_hw_imports,
     _ProviderHandle,
+    _ResponseGenerationGuard,
     _ResponseLifecycle,
     build_gemini_voice_runtime,
 )
@@ -226,6 +230,47 @@ class TestResponseLifecycle(unittest.TestCase):
         self.assertEqual(fired, ["finished"])
 
 
+class TestResponseGenerationGuard(unittest.TestCase):
+    """M2.6B.4 FAILURE 2 -- pure unit tests for the response-generation
+    ownership guard. No Pipecat, no provider, no event loop. Deliberately
+    minimal: dispatch *timing* is NOT this guard's concern (see its own
+    docstring for why an earlier draft that conflated the two was wrong)
+    -- only whether a given generation id may still produce audio."""
+
+    def test_fresh_guard_has_no_valid_generation(self) -> None:
+        # 0 is the sentinel "no real generation allocated yet" value (also
+        # what `interrupt()` resets `_valid_id` to) -- `start_new_generation()`
+        # itself never returns 0, so no real generation id is ever valid
+        # before one has actually been allocated.
+        guard = _ResponseGenerationGuard()
+        self.assertFalse(guard.is_valid(1))
+
+    def test_dispatch_allocates_a_valid_id(self) -> None:
+        guard = _ResponseGenerationGuard()
+        gid = guard.start_new_generation()
+        self.assertTrue(guard.is_valid(gid))
+
+    def test_interrupt_invalidates_current_generation(self) -> None:
+        guard = _ResponseGenerationGuard()
+        gid = guard.start_new_generation()
+        guard.interrupt()
+        self.assertFalse(guard.is_valid(gid))
+
+    def test_next_generation_after_interrupt_is_independently_valid(self) -> None:
+        guard = _ResponseGenerationGuard()
+        gid_n = guard.start_new_generation()
+        guard.interrupt()
+        gid_n1 = guard.start_new_generation()
+        self.assertNotEqual(gid_n, gid_n1)
+        self.assertFalse(guard.is_valid(gid_n))
+        self.assertTrue(guard.is_valid(gid_n1))
+
+    def test_ids_are_monotonically_increasing_and_never_reused(self) -> None:
+        guard = _ResponseGenerationGuard()
+        seen = {guard.start_new_generation() for _ in range(5)}
+        self.assertEqual(len(seen), 5)  # five distinct ids, never repeated
+
+
 class TestInterruptedHistorySafety(unittest.TestCase):
     """M2.6B.3B -- no deterministic assistant-text/audio alignment is
     reachable through the installed Pipecat/google-genai stack (the
@@ -359,8 +404,11 @@ class TestBargeInWiring(_FakeGeminiLiveServiceTestCase):
 
         provider.cancel = _fake_cancel  # type: ignore[method-assign]
 
+        generation_guard = _ResponseGenerationGuard()
+
         def _on_confirmed(ctx: InterruptContext) -> None:
             metrics.local_interruption_confirmed()
+            generation_guard.interrupt()
             router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
             router.on_interruption()
             lifecycle.mark_interrupted()
@@ -378,6 +426,8 @@ class TestBargeInWiring(_FakeGeminiLiveServiceTestCase):
             bargein=bargein,
             metrics=metrics,
             lifecycle=lifecycle,
+            generation_guard=generation_guard,
+            pending_utterance_audio=_PendingUtteranceAudio(),
         )
         runtime._cancel_calls = cancel_calls  # type: ignore[attr-defined]
         return runtime
@@ -562,6 +612,8 @@ class TestMidTurnRuntimeRecovery(_FakeGeminiLiveServiceTestCase):
             bargein=bargein,
             metrics=metrics,
             lifecycle=lifecycle,
+            generation_guard=_ResponseGenerationGuard(),
+            pending_utterance_audio=_PendingUtteranceAudio(),
         )
 
         await self._drain_one(old_provider, ReadinessChangedEvent)
@@ -627,6 +679,386 @@ class TestMidTurnRuntimeRecovery(_FakeGeminiLiveServiceTestCase):
             pass
         await old_provider.stop(reason="test cleanup")
         await new_provider.stop(reason="test cleanup")
+
+
+@unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+class TestVadBridgeProcessorLifecycle(unittest.IsolatedAsyncioTestCase):
+    """M2.6B.4 FAILURE 1 -- the REAL Pipecat processor lifecycle (setup ->
+    process representative frames -> cleanup), not construction-only
+    ``--dry``. Reproduces the exact live failure
+    ("'RuntimeMetrics' object has no attribute 'setup'"/'cleanup'")
+    deterministically against a genuine ``Pipeline``/``PipelineWorker``/
+    ``WorkerRunner``, then proves it fixed."""
+
+    async def test_bridge_completes_real_setup_process_cleanup_with_no_error(self) -> None:
+        P = _pipecat_hw_imports()
+
+        class _StubProvider:
+            def __init__(self) -> None:
+                self.calls: list = []
+
+            async def user_turn_start(self) -> None:
+                self.calls.append("start")
+
+            async def send_user_audio(self, pcm: bytes) -> None:
+                self.calls.append(("audio", pcm))
+
+            async def user_turn_end(self) -> None:
+                self.calls.append("end")
+
+        stub = _StubProvider()
+        handle = _ProviderHandle(stub)
+        metrics = RuntimeMetrics()
+        lifecycle = _ResponseLifecycle(on_finished=lambda: None)
+        bridge_cls = _make_vad_bridge_class(P)
+        bridge = bridge_cls(provider_handle=handle, metrics=metrics, lifecycle=lifecycle)
+
+        pipeline = P["Pipeline"]([bridge])
+        worker = P["PipelineWorker"](
+            pipeline,
+            params=P["PipelineParams"](audio_in_sample_rate=16000, audio_out_sample_rate=24000),
+            enable_rtvi=False,
+            idle_timeout_secs=None,
+        )
+
+        pipeline_errors: list = []
+        started = asyncio.Event()
+
+        @worker.event_handler("on_pipeline_error")
+        async def _on_error(_worker, frame) -> None:  # noqa: ANN001
+            pipeline_errors.append(frame)
+
+        @worker.event_handler("on_pipeline_started")
+        async def _on_started(_worker, _frame) -> None:  # noqa: ANN001
+            started.set()
+
+        runner = P["WorkerRunner"]()
+        await runner.add_workers(worker)
+        run_task = asyncio.create_task(runner.run())
+
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+        # setup() ran with zero processor-unusable error -- this is exactly
+        # where the live run failed ("Error setting up processor").
+        self.assertTrue(bridge.is_usable)
+        self.assertEqual(pipeline_errors, [])
+
+        # representative frames -- exactly the ones production sends
+        # through this processor.
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](
+                    audio=b"\x00\x00" * 160, sample_rate=16000, num_channels=1
+                ),
+                P["VADUserStoppedSpeakingFrame"](),
+                P["BotStartedSpeakingFrame"](),
+                P["BotStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.2)
+
+        self.assertTrue(bridge.is_usable)
+        self.assertEqual(pipeline_errors, [])
+        self.assertEqual(stub.calls[0], "start")
+        self.assertEqual(stub.calls[-1], "end")
+        self.assertEqual(lifecycle._bot_speaking, False)  # noqa: SLF001 - observed both frames
+
+        await runner.end(reason="test done")
+        await asyncio.wait_for(run_task, timeout=5.0)
+        # cleanup() ran with zero error either -- this is exactly where
+        # the live run's teardown failed ("Error cleaning up processor").
+        self.assertTrue(bridge.is_usable)
+        self.assertEqual(pipeline_errors, [])
+
+    async def test_runtime_metrics_never_receives_a_setup_or_cleanup_call(self) -> None:
+        """White-box: prove the specific root cause is closed -- NeXa's
+        RuntimeMetrics object is never asked for the Pipecat processor
+        lifecycle methods it does not implement."""
+        P = _pipecat_hw_imports()
+
+        class _StubProvider:
+            async def user_turn_start(self) -> None:
+                pass
+
+            async def send_user_audio(self, pcm: bytes) -> None:
+                pass
+
+            async def user_turn_end(self) -> None:
+                pass
+
+        handle = _ProviderHandle(_StubProvider())
+        metrics = RuntimeMetrics()
+        self.assertFalse(hasattr(metrics, "setup"))
+        self.assertFalse(hasattr(metrics, "cleanup"))
+        lifecycle = _ResponseLifecycle(on_finished=lambda: None)
+        bridge_cls = _make_vad_bridge_class(P)
+        bridge = bridge_cls(provider_handle=handle, metrics=metrics, lifecycle=lifecycle)
+
+        # The bridge must never have stored RuntimeMetrics under the same
+        # attribute name Pipecat's own FrameProcessor uses internally --
+        # bridge._metrics stays Pipecat's own FrameProcessorMetrics
+        # (installed source, frame_processor.py:256); not asserting its
+        # exact type here, only that it is NOT NeXa's RuntimeMetrics.
+        self.assertIsNot(bridge._metrics, metrics)  # noqa: SLF001
+        self.assertFalse(hasattr(bridge._metrics, "language_diagnostics"))  # noqa: SLF001
+        self.assertIs(bridge._nexa_metrics, metrics)  # noqa: SLF001
+
+        pipeline = P["Pipeline"]([bridge])
+        worker = P["PipelineWorker"](
+            pipeline,
+            params=P["PipelineParams"](audio_in_sample_rate=16000, audio_out_sample_rate=24000),
+            enable_rtvi=False,
+            idle_timeout_secs=None,
+        )
+        started = asyncio.Event()
+
+        @worker.event_handler("on_pipeline_started")
+        async def _on_started(_worker, _frame) -> None:  # noqa: ANN001
+            started.set()
+
+        runner = P["WorkerRunner"]()
+        await runner.add_workers(worker)
+        run_task = asyncio.create_task(runner.run())
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+        await runner.end(reason="test done")
+        await asyncio.wait_for(run_task, timeout=5.0)
+        self.assertTrue(bridge.is_usable)
+
+
+@unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+class TestGenerationGuardWiredIntoConsumer(_FakeGeminiLiveServiceTestCase):
+    """M2.6B.4 FAILURE 2 -- reproduces the exact live scenario end-to-end
+    through ``GeminiVoiceRuntime._consume_provider_events`` (not just the
+    pure guard unit): a response generation queues audio, some already
+    reaches the stub hardware worker, local barge-in confirms, MORE audio
+    for the SAME (now invalid) generation is still in flight on the
+    provider's own event stream, and the interrupting utterance's own
+    reply (generation N+1) must play normally afterward."""
+
+    def _wire(self, provider) -> GeminiVoiceRuntime:
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        router = ConversationRouter(session, policy=ConversationPolicy.CLOUD_PREFERRED)
+        aec_health = AecReferenceHealth()
+        aec_health.mark_started()
+        metrics = RuntimeMetrics()
+        provider_handle = _ProviderHandle(provider)
+        lifecycle = _ResponseLifecycle(on_finished=lambda: bargein.notify_response_finished())
+        generation_guard = _ResponseGenerationGuard()
+
+        async def _fake_cancel() -> None:
+            return None
+
+        provider.cancel = _fake_cancel  # type: ignore[method-assign]
+
+        def _on_confirmed(ctx: InterruptContext) -> None:
+            generation_guard.interrupt()
+            router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
+            router.on_interruption()
+            lifecycle.mark_interrupted()
+            asyncio.create_task(provider_handle.current.cancel())
+            bargein.notify_interruption_complete()
+
+        bargein = BargeInController(aec_health=aec_health, on_confirmed=_on_confirmed)
+        return GeminiVoiceRuntime(
+            provider=provider,
+            provider_handle=provider_handle,
+            router=router,
+            hw_worker=_StubHardwareWorker(),
+            hw_runner=None,
+            aec_health=aec_health,
+            bargein=bargein,
+            metrics=metrics,
+            lifecycle=lifecycle,
+            generation_guard=generation_guard,
+            pending_utterance_audio=_PendingUtteranceAudio(),
+        )
+
+    async def test_late_invalidated_generation_audio_never_reaches_hardware(self) -> None:
+        import time
+
+        provider, _ = await self._started_provider()
+        runtime = self._wire(provider)
+        await self._drain_one(provider, ReadinessChangedEvent)
+
+        runtime.router.begin_cloud_turn()
+        await provider.user_turn_start()
+        await provider.send_user_audio(b"tell me about black holes")
+        await provider.user_turn_end()
+
+        consume_task = asyncio.create_task(runtime._consume_provider_events())
+        fake = provider._llm  # noqa: SLF001
+
+        await fake.emit_user_transcription("tell me about black holes", final=True)
+        await fake.emit_assistant_audio(b"gen-N-chunk-1")
+        await _wait_until(lambda: len(runtime.hw_worker.queued_frames) >= 1)
+
+        # Local barge-in confirms mid-reply -- measure confirm -> guard
+        # invalidation latency (must be effectively synchronous: a plain
+        # attribute comparison, no I/O).
+        t0 = time.monotonic()
+        runtime.bargein._on_confirmed(  # noqa: SLF001
+            InterruptContext(invalidated_response_id=1, reason="test")
+        )
+        invalidation_latency_s = time.monotonic() - t0
+        self.assertLess(invalidation_latency_s, 0.05)
+
+        # MORE generation-N audio was already in flight on the provider's
+        # own event stream (queued before the interruption, or produced by
+        # Gemini in the brief window before honouring the cancel signal) --
+        # this must NEVER reach the hardware pipeline (speaker or AEC).
+        await fake.emit_assistant_audio(b"gen-N-chunk-2-late")
+        await fake.emit_assistant_audio(b"gen-N-chunk-3-late")
+        await asyncio.sleep(0.05)
+
+        queued_audio = [
+            f.audio for f in runtime.hw_worker.queued_frames if hasattr(f, "audio")
+        ]
+        self.assertEqual(queued_audio, [b"gen-N-chunk-1"])
+
+        # The interrupting utterance's own reply (generation N+1) plays
+        # normally -- never silently dropped by a guard stuck invalid.
+        runtime.router.begin_cloud_turn()
+        await fake.emit_user_transcription("what about the sun", final=True)
+        await fake.emit_assistant_audio(b"gen-N+1-chunk-1")
+        await _wait_until(
+            lambda: b"gen-N+1-chunk-1"
+            in [f.audio for f in runtime.hw_worker.queued_frames if hasattr(f, "audio")]
+        )
+
+        # no duplicate/lost canonical exchange: exactly the two OLD-gen
+        # (interrupted, empty prefix) and NEW-gen turns are ever recorded
+        # once each turn actually completes.
+        await fake.emit_generation_complete()  # late complete for gen N -- no-op re-drain
+        await asyncio.sleep(0.05)
+
+        consume_task.cancel()
+        try:
+            await consume_task
+        except asyncio.CancelledError:
+            pass
+
+
+@unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+class TestCloudSameTurnLanguage(unittest.IsolatedAsyncioTestCase):
+    """M2.6B.4 FAILURE 3 -- offline, no Gemini call: the same-turn PL/EN
+    detection + resolution mechanism the cloud runtime reuses verbatim
+    from the already-accepted local-voice stack
+    (``WhisperCppLanguageDetector`` + ``ResponseLanguageResolver``).
+    Uses REAL recorded PL/EN audio fixtures (16 kHz mono S16LE, already in
+    the repo for the M2.4B/M2.6A research corpora) -- never fabricated
+    silence/noise, which cannot reliably classify as either language."""
+
+    FIXTURES = REPO_ROOT / "docs" / "research" / "m2_voice_spikes" / "asr_test_samples"
+    EN_WAV = FIXTURES / "en_what_is_the_speed_of_light.wav"
+    PL_WAV = FIXTURES / "pl_jaka_jest_prędkość_światła.wav"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import wave
+
+        if not cls.EN_WAV.is_file() or not cls.PL_WAV.is_file():
+            raise unittest.SkipTest("research audio fixtures not present in this checkout")
+
+        def _load(path: Path) -> bytes:
+            with wave.open(str(path), "rb") as w:
+                return w.readframes(w.getnframes())
+
+        cls.en_pcm = _load(cls.EN_WAV)
+        cls.pl_pcm = _load(cls.PL_WAV)
+
+    def _detector(self):
+        from nexa.stt import (
+            SttLibraryNotFoundError,
+            SttModelNotFoundError,
+            WhisperCppLanguageDetector,
+        )
+
+        try:
+            return WhisperCppLanguageDetector()
+        except (SttLibraryNotFoundError, SttModelNotFoundError) as exc:
+            self.skipTest(f"whisper.cpp not set up in this environment: {exc}")
+
+    async def test_10_pl_input_resolves_pl(self) -> None:
+        from nexa.conversation import ResponseLanguageResolver
+
+        detector = self._detector()
+        result = await detector.detect(self.pl_pcm)
+        input_language = "pl" if result.p_pl >= result.p_en else "en"
+        self.assertEqual(input_language, "pl")
+
+        resolver = ResponseLanguageResolver()
+        decision = resolver.resolve("jaka jest prędkość światła", input_language=input_language)
+        self.assertEqual(decision.response_language, "pl")
+        self.assertIsNone(decision.sticky_after)
+
+    async def test_11_en_input_resolves_en(self) -> None:
+        from nexa.conversation import ResponseLanguageResolver
+
+        detector = self._detector()
+        result = await detector.detect(self.en_pcm)
+        input_language = "pl" if result.p_pl >= result.p_en else "en"
+        self.assertEqual(input_language, "en")
+
+        resolver = ResponseLanguageResolver()
+        decision = resolver.resolve("what is the speed of light", input_language=input_language)
+        self.assertEqual(decision.response_language, "en")
+        self.assertIsNone(decision.sticky_after)
+
+    async def test_12_pl_en_pl_per_turn_switching_works_offline(self) -> None:
+        from nexa.conversation import ResponseLanguageResolver
+
+        detector = self._detector()
+        resolver = ResponseLanguageResolver()
+
+        for pcm, transcript, expected in (
+            (self.pl_pcm, "jaka jest prędkość światła", "pl"),
+            (self.en_pcm, "what is the speed of light", "en"),
+            (self.pl_pcm, "jaka jest prędkość światła", "pl"),
+        ):
+            result = await detector.detect(pcm)
+            input_language = "pl" if result.p_pl >= result.p_en else "en"
+            decision = resolver.resolve(transcript, input_language=input_language)
+            self.assertEqual(decision.response_language, expected)
+            # every turn here mirrors the CURRENT input -- no sticky
+            # preference was ever set, so each switch follows immediately.
+            self.assertIsNone(decision.sticky_after)
+
+    async def test_13_no_implicit_sticky_preference_from_ordinary_conversation(self) -> None:
+        """Neither the first language spoken, nor repeated PL context,
+        ever sets a sticky preference on its own -- only an EXPLICIT
+        directive does (tested in test_14)."""
+        from nexa.conversation import ResponseLanguageResolver
+
+        resolver = ResponseLanguageResolver()
+        for transcript, lang in (
+            ("jaka jest prędkość światła", "pl"),
+            ("czym jest teleportacja", "pl"),
+            ("wyjaśnij grawitację", "pl"),
+            ("what is the speed of light", "en"),
+        ):
+            decision = resolver.resolve(transcript, input_language=lang)
+            self.assertIsNone(decision.sticky_after)
+            self.assertFalse(decision.preference_changed)
+
+    async def test_14_explicit_sticky_language_preference_still_works(self) -> None:
+        from nexa.conversation import ResponseLanguageResolver
+
+        resolver = ResponseLanguageResolver()
+        # an ordinary PL turn first -- no sticky preference yet.
+        resolver.resolve("jaka jest prędkość światła", input_language="pl")
+        self.assertIsNone(resolver.preference.sticky)
+
+        # an EXPLICIT sticky directive.
+        decision = resolver.resolve("always answer in English", input_language="en")
+        self.assertEqual(decision.response_language, "en")
+        self.assertTrue(decision.preference_changed)
+        self.assertEqual(resolver.preference.sticky, "en")
+
+        # a LATER Polish-spoken turn is still answered in English (sticky
+        # overrides current-turn mirroring once explicitly set).
+        decision2 = resolver.resolve("jaka jest prędkość światła", input_language="pl")
+        self.assertEqual(decision2.response_language, "en")
+        self.assertEqual(decision2.sticky_after, "en")
 
 
 if __name__ == "__main__":

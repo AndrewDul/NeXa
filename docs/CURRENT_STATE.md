@@ -44,8 +44,9 @@ Runtime / test evidence outranks anything else in this repo.
   infrastructure-only. M2.6A remains PASS/OPERATOR-CONFIRMED; M2.6B was
   NEXT / NOT STARTED as of this Amendment-1 commit **[since progressed —
   see "Latest report" above: M2.6B is now IN PROGRESS, M2.6B.1/M2.6B.2/
-  M2.6B.2A/M2.6B.3/M2.6B.3A/M2.6B.3B IMPLEMENTED (hardware/Gemini operator
-  acceptance still not yet run)]**.
+  M2.6B.2A/M2.6B.3/M2.6B.3A/M2.6B.3B/M2.6B.4 IMPLEMENTED (first real
+  hardware/Gemini operator run: ATTEMPT #1 FAILED, three regressions
+  found and fixed, retest pending)]**.
   Original Accepted content:
   **Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
   Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
@@ -103,7 +104,64 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0037_m2_6b_3b_interrupted_cloud_history_safety_20260911.md`
+- **Latest report:** `docs/reports/R0038_m2_6b_4_hardware_acceptance_attempt1_fail_20260911.md`
+  (**M2.6B.4 — production hardware acceptance ATTEMPT #1 — FAIL,
+  2026-09-11.** The FIRST real operator hardware/Gemini run happened:
+  reached `CLOUD_PROVIDER_READY`, `AEC_REF_ACTIVE`, audible Sulafat,
+  normal conversation possible — but **three real regressions**, found
+  and fixed (deterministically; no further Gemini call made).
+  **(1)** `_VadToProviderBridge` crashed Pipecat's real setup/cleanup:
+  confirmed from installed source that `FrameProcessor.__init__` already
+  owns `self._metrics`/calls `.setup()`/`.cleanup()` on it — NeXa's own
+  code stored `RuntimeMetrics` under that SAME name, clobbering Pipecat's
+  real metrics object. Fixed: renamed to `self._nexa_metrics`.
+  **(2)** local playback did NOT stop on barge-in — the interrupted reply
+  played to completion while the NEW reply was already generating.
+  Source-audited the exact chain: `broadcast_interruption()` (unchanged)
+  only clears the output queue's contents AT THAT INSTANT; it does
+  nothing about audio still in `provider.events()`'s own queue or
+  produced by Gemini in the brief window before honouring the cancel
+  signal — confirmed as the real cause, not the cloud model. Fixed with
+  new `_ResponseGenerationGuard`: every assistant audio chunk is checked
+  against the currently VALID response-generation id before ever reaching
+  `hw_worker.queue_frames()`; a confirmed interruption invalidates the
+  current generation synchronously (no race). A genuine design bug was
+  found and fixed while building this (conflating "may this chunk play"
+  with "has a new local turn started" let trailing old-generation audio
+  masquerade as a fresh dispatch) — closed by keying dispatch timing to a
+  fresh, final `UserTranscriptionEvent` instead (R0034's own proven
+  message-ordering guarantee), which also fixed a second, previously-
+  latent bug (dispatch tracking never reset on a normal
+  `GenerationCompleteEvent`, only on a fatal error). **(3)** two English
+  questions were both answered in Polish (ADR-0004 Option A). Reconstructed
+  the exact production snapshot: `apps/nexa_cloud_voice_app.py` never
+  passed `language_preference` (defaults to `None`, so NO "Current
+  language preference" line was ever appended) and
+  `build_default_session()` starts with empty history — **the snapshot
+  was genuinely neutral, NeXa did not force Polish anywhere** — a real
+  Gemini native-mirroring reliability gap, activating ADR-0004's own
+  documented Option-B fallback. Built the offline detection half:
+  `_VadToProviderBridge` now also buffers each utterance's PCM locally
+  (parallel copy, never delays what streams to Gemini) and
+  `_consume_provider_events` correlates it with that turn's final
+  transcription, reusing verbatim the ALREADY-ACCEPTED
+  `nexa.stt.WhisperCppLanguageDetector` + `nexa.conversation.ResponseLanguageResolver`
+  (sticky preference only on an EXPLICIT directive, never implicit) —
+  updates any FUTURE fresh-session snapshot, logs the charter's exact
+  diagnostic keys. **Honestly did NOT build** same-turn steering of the
+  response already in flight — no verified, low-risk mechanism was found
+  reachable through the installed stack without a live call; native
+  mirroring remains active, the gap is explicitly documented, not
+  papered over. **+13 net new tests (923 total, 0 regressions)** —
+  including a real Pipecat `Pipeline`/`PipelineWorker`/`WorkerRunner`
+  setup/process/cleanup test (not construction-only `--dry`) and a
+  language test using REAL recorded PL/EN audio fixtures.
+  `ruff`/`pip check`/`git diff --check`/secret-scan/import-isolation all
+  clean; local voice completely untouched (only
+  `src/nexa/realtime/gemini/runtime.py` + its own test file changed).
+  **Hardware acceptance NOT marked PASS; `M2.6B` NOT marked COMPLETE.**
+  Not pushed.)
+- **Prior report:** `docs/reports/R0037_m2_6b_3b_interrupted_cloud_history_safety_20260911.md`
   (**M2.6B.3B — interrupted cloud history safety only — PASS (narrow
   deterministic checkpoint), hardware/Gemini operator acceptance STILL
   NOT YET RUN, 2026-09-11.** ADR-0004 + Amendment 1 unchanged; no cloud
@@ -1908,18 +1966,25 @@ Runtime / test evidence outranks anything else in this repo.
 
 ## Exact next recommended task
 
-**Run the M2.6B.3 real-hardware/Gemini operator acceptance test.** All
-deterministic wiring (`M2.6B.1`/`.2`/`.2A`/`.3`/`.3A`/`.3B`) is
-IMPLEMENTED and green; `ADR-0004` + Amendment 1 remain Accepted,
-unchanged; M2.6A feasibility and the `Sulafat` voice remain
-OPERATOR-CONFIRMED and are the frozen v1 cloud baseline. Launch
+**Re-run the M2.6B real-hardware/Gemini operator acceptance test
+(ATTEMPT #2).** ATTEMPT #1 (`R0038`, 2026-09-11) FAILED with three real
+regressions — a `_VadToProviderBridge` Pipecat setup/cleanup crash, local
+playback not stopping on barge-in, and English input answered in Polish —
+all three found, root-caused against installed source, and fixed
+deterministically (923 tests, 0 regressions); none re-tested on real
+hardware yet. `ADR-0004` + Amendment 1 remain Accepted, unchanged; M2.6A
+feasibility and the `Sulafat` voice remain OPERATOR-CONFIRMED. Launch
 `apps/nexa_cloud_voice_app.py` (no `--dry`), wait for
-`CLOUD_PROVIDER_READY` + `AEC_REF_ACTIVE`, then a short natural PL/EN
-conversation with one interruption — see `R0037`'s EXACT LIVE LAUNCH
-COMMAND / READY LINES (unchanged from R0035/R0036) and R0035's WHAT THE
-OPERATOR SHOULD DO. Only after that evidence is returned, **and only once
-the proactive-reconnect gate is resolved (R0037's standing note)**, can
-`M2.6B` be marked COMPLETE.
+`CLOUD_PROVIDER_READY` + `AEC_REF_ACTIVE`, then a short natural
+conversation deliberately re-exercising what failed: one clear mid-reply
+interruption (confirm playback stops immediately and never resumes), and
+at least one English question after some Polish conversation (observe
+the new `TURN_INPUT_LANGUAGE`/`SNAPSHOT_LANGUAGE_PREFERENCE` diagnostic
+lines — native mirroring is not expected to be forced correct by this
+checkpoint, only observed) — see `R0038`'s EXACT NEXT LIVE RETEST
+COMMAND. Only after a clean PASS on this retest, **and only once the
+proactive-reconnect gate is resolved (standing note, carried since
+R0036/R0037)**, can `M2.6B` be marked COMPLETE.
 
 **`M2.6B.1` DONE (`R0032`, 2026-09-11)** — the provider-agnostic
 `src/nexa/realtime/` package: `RealtimeVoiceProvider` ABC (a peer of
@@ -2088,9 +2153,55 @@ VAD, and barge-in thresholds untouched. 5 tests replace R0036's 6
 OK (skipped=7)**, 0 regressions. **Standing note: `M2.6B` must NOT be
 marked COMPLETE after the hardware run until the proactive-reconnect/
 age-trigger gate is either implemented+validated or explicitly changed by
-an ADR amendment** — restated from R0036, not newly resolved. Real
-Gemini/hardware operator acceptance remains the one step before M2.6B is
-COMPLETE — NOT YET RUN, see R0037 (launch command/READY lines unchanged).
+an ADR amendment** — restated from R0036, not newly resolved.
+
+**`M2.6B.4` — production hardware acceptance ATTEMPT #1: FAIL** (`R0038`,
+2026-09-11). The FIRST real operator hardware/Gemini run happened:
+`CLOUD_PROVIDER_READY`, `AEC_REF_ACTIVE`, audible Sulafat, normal
+conversation all reached — but **three real regressions**, each
+root-caused against installed source (not guessed) and fixed
+deterministically (no further Gemini call made): **(1)**
+`_VadToProviderBridge` crashed Pipecat's real setup/cleanup —
+`FrameProcessor.__init__` already owns `self._metrics`
+(`frame_processor.py:256,653,669`); NeXa's code stored `RuntimeMetrics`
+under that same name, clobbering it. Fixed: renamed to
+`self._nexa_metrics`. **(2)** local playback did not stop on barge-in —
+the interrupted reply played to completion while the new reply was
+already generating. Source-audited: `broadcast_interruption()`
+(unchanged) only clears the output queue's contents at that instant; it
+does nothing about audio still on `provider.events()`'s own queue or
+produced by Gemini in the brief window before honouring the cancel
+signal — confirmed as the real cause, not a cloud-model problem. Fixed
+with new `_ResponseGenerationGuard`: every assistant audio chunk checked
+against the currently valid response-generation id before ever reaching
+`hw_worker.queue_frames()`; interruption invalidates the current
+generation synchronously (no race). A real design bug was found and
+fixed while building this (conflating "may this chunk play" with "has a
+new local turn started" let trailing old-generation audio masquerade as
+a fresh dispatch) — fixed by keying dispatch timing to a fresh, final
+`UserTranscriptionEvent` instead (R0034's own proven message-ordering
+guarantee), which also fixed a second, previously-latent bug (dispatch
+tracking never reset on a normal `GenerationCompleteEvent`). **(3)** two
+English questions were both answered in Polish. Reconstructed the exact
+production snapshot: `apps/nexa_cloud_voice_app.py` never passed
+`language_preference` and `build_default_session()` starts with empty
+history — **the snapshot was genuinely neutral**, a real Gemini
+native-mirroring reliability gap, activating ADR-0004's own documented
+Option-B fallback. Built the offline detection half (reusing verbatim
+`nexa.stt.WhisperCppLanguageDetector` + `nexa.conversation.
+ResponseLanguageResolver` — sticky only on an explicit directive) with
+utterance-audio buffering + correlation + the charter's exact diagnostic
+log keys; **honestly did NOT build** same-turn steering of the response
+already in flight (no verified, low-risk mechanism reachable without a
+live call) — native mirroring stays active, the gap is explicit, not
+papered over. **+13 net new tests (923 total, 0 regressions)**, including
+a real Pipecat `Pipeline`/`PipelineWorker`/`WorkerRunner` setup/process/
+cleanup test (not `--dry`) and a language test using real recorded PL/EN
+audio. Local voice completely untouched (only
+`realtime/gemini/runtime.py` + its test file changed this checkpoint).
+**Hardware acceptance NOT marked PASS; `M2.6B` NOT marked COMPLETE.** Real
+Gemini/hardware operator RETEST is the one remaining step — NOT YET RUN,
+see R0038 for the exact retest command.
 
 Local realtime voice with production barge-in (`R0029`) is the frozen
 baseline M2.6B builds beside — do not destabilise it; `bargein_enabled`
