@@ -421,13 +421,13 @@ IN PROGRESS, not COMPLETE.**
 
 ## COMMIT HASHES
 
-(recorded in a follow-up commit once made — see the session's final
-message.)
+Research commit: `373f012` — "research(m2.6b.4a): strict same-turn
+language authority -- LID too slow, paused (R0039)". Not pushed.
 
 ## GIT STATUS
 
 Not pushed (per the standing constraint for this entire M2.6 body of
-work).
+work). All files listed under FILES CHANGED are committed at `373f012`.
 
 ## EXACT NEXT LIVE RETEST COMMAND
 
