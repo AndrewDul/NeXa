@@ -91,7 +91,14 @@ class CloudTurnAccumulator:
 
     def on_assistant_transcription(self, text: str, *, final: bool) -> None:
         cur = self._current
-        if cur is None or cur.is_terminal:
+        if cur is None or cur.is_terminal or cur.interrupted:
+            # Once locally interrupted, the server may still emit trailing
+            # transcription deltas for the reply it would have kept giving
+            # (M2.6B.2A — "local interruption authority wins over late
+            # server ACK"); these must never grow the stored assistant
+            # text past the actually-spoken prefix. ``set_spoken_prefix``
+            # remains the sole way to set the assistant text once
+            # interrupted.
             return
         cur.assistant_text += text
         cur.assistant_final = final

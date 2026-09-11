@@ -41,8 +41,10 @@ Runtime / test evidence outranks anything else in this repo.
   policy/provider split, `CloudContextSnapshot`, Option A + Option B,
   `Sulafat`, NeXa-owned #5465 protection, XVF3800 AEC, local Silero + local
   barge-in authority, optional `cloud-gemini` extra, Pipecat
-  infrastructure-only. M2.6A remains PASS/OPERATOR-CONFIRMED; M2.6B remains
-  NEXT / NOT STARTED.
+  infrastructure-only. M2.6A remains PASS/OPERATOR-CONFIRMED; M2.6B was
+  NEXT / NOT STARTED as of this Amendment-1 commit **[since progressed —
+  see "Latest report" above: M2.6B is now IN PROGRESS, M2.6B.1/M2.6B.2/
+  M2.6B.2A IMPLEMENTED]**.
   Original Accepted content:
   **Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
   Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
@@ -100,7 +102,71 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0033_m2_6b_2_gemini_provider_canonical_cloud_turn_20260911.md`
+- **Latest report:** `docs/reports/R0034_m2_6b_2a_cloud_turn_reconnect_hardening_20260911.md`
+  (**M2.6B.2A — pre-hardware cloud-turn / reconnect hardening —
+  IMPLEMENTED, PASS (checkpoint), 2026-09-11.** ADR-0004 + Amendment 1
+  unchanged; no cloud call, no hardware test. Found and fixed a **real
+  silent-user-speech-loss bug**: `GeminiLiveProvider.user_turn_start()`
+  decided "send live vs. buffer" once, at call time, and never recorded
+  that decision — a turn that started live and then lost readiness
+  mid-utterance had every further `send_user_audio` rejected by
+  `UtteranceFramer` as an orphan (no `activity_start` recorded there), and
+  the eventual `user_turn_end()` silently ignored too (no live
+  `activity_end` ever reached Gemini either). **Fixed** with a
+  `_live_turn_open` flag + deterministic abort-and-restart: the stranded
+  live segment is marked aborted (logged, never silent — it never gets a
+  live `activity_end`) and every subsequent frame becomes a NEW,
+  self-contained buffered utterance, flushed once `READY` returns.
+  **Production policy, stated explicitly: a connectivity loss exactly
+  mid-utterance may split one utterance into two from Gemini's
+  perspective, but never silently drops user audio and never delivers the
+  same audio twice.** New `take_pending_audio()` lets a fresh-session
+  hand-off retrieve (destructively — never redelivered) whatever was
+  buffered but undelivered on a discarded provider instance. **Completed
+  the provider->NeXa event map**: `InterimTranscriptionFrame` (partial
+  user transcription, previously unhandled) + `TranscriptionFrame.
+  finalized` (previously hard-coded `True`); a new, unambiguous
+  `GenerationCompleteEvent` (replaces an earlier ambiguous empty-text
+  `AssistantTranscriptionEvent` for turn-complete); `ErrorFrame`/
+  `FatalErrorFrame` -> `RealtimeProviderError`/`RealtimeProviderFailedError`.
+  **Found and fixed a second real gap**: Pipecat's own `push_error()`
+  pushes error frames **upstream**, but the only event tap sat downstream
+  of the Gemini service — it could never have seen an error. Fixed with a
+  second `up_tap` before the user aggregator (mirrors the M2.6A probe's
+  own upstream/downstream dual-tap pattern), proven with a test that
+  pushes a `FatalErrorFrame` upstream and confirms it reaches
+  `provider.events()`. **Closed the "manual injection" test gap**: new
+  `ConversationRouter.handle_provider_event()` is now the *only* path by
+  which a provider's event stream reaches the router/session; a new
+  integration test drives a full cloud turn exclusively through real
+  provider events (never by calling `on_user_transcription`/
+  `commit_cloud_turn` with hand-picked text) and proves exactly one
+  canonical exchange results. **5 turn-ordering/interruption permutations
+  tested** (user-then-assistant-then-complete; local interruption beating
+  a late server ACK — which also exposed and fixed a THIRD gap,
+  `CloudTurnAccumulator.on_assistant_transcription` appending a late delta
+  even after `on_interruption()`, now refused; provider death before vs.
+  after a spoken prefix). **Turn-complete-before-delayed-transcription
+  proven IMPOSSIBLE from the installed Pipecat source** (not assumed):
+  `GeminiLiveLLMService._connection_task_handler` processes messages
+  strictly in arrival order from one loop, and its own code comment
+  confirms input_transcription is handled before turn_complete even
+  within one bundled message. **Fresh-snapshot-on-resumption-failure
+  mechanism made precise**: destroy-and-recreate — a brand-new
+  `GeminiLiveProvider` builds its own `LLMContext` from a freshly built
+  `CloudContextSnapshot` and holds no reference to any previous instance,
+  so stale Pipecat-owned context cannot structurally leak into it; proven
+  with a test using a deliberately stale old provider context vs. a fresh
+  canonical snapshot. **+16 tests (886 total, 0 regressions).** Also
+  corrected a stale test-count sentence in `R0033`'s own "WHAT I DID"
+  section (said 88, was always 57+1=58, matching R0033's own TEST
+  RESULTS). **Still explicitly deferred to M2.6B.3**: `ReconnectController`
+  is not yet driven by `GeminiLiveProvider` on a real connection error —
+  no live GoAway/age-timer reconnect wiring exists yet; this checkpoint
+  hardens what happens once a fresh session is decided and while
+  readiness is degraded mid-turn, not when that decision is made from a
+  real socket. Not pushed.)
+- **Prior report:** `docs/reports/R0033_m2_6b_2_gemini_provider_canonical_cloud_turn_20260911.md`
   (**M2.6B.2 — GeminiLiveProvider + canonical cloud-turn integration —
   IMPLEMENTED, PASS (checkpoint), 2026-09-11.** ADR-0004 + Amendment 1
   unchanged. Built on M2.6B.1 (`R0032`): `src/nexa/realtime/turn.py`
@@ -621,13 +687,26 @@ Runtime / test evidence outranks anything else in this repo.
   no cloud call) + the canonical cloud-turn write path
   (`CloudTurnAccumulator`, `UtteranceFramer`, `ConversationRouter`,
   additive `ConversationSession.record_external_exchange`) — IMPLEMENTED.**
-  +57 new tests this checkpoint (870 total, 0 regressions); `cloud-gemini`
-  optional `pyproject.toml` extra added (core deps unchanged, `pip
-  install .` stays Google-free). **Known gap:** `ReconnectController` is
-  not yet driven by `GeminiLiveProvider` on a real connection error — no
-  live reconnect wiring yet. **Next: `M2.6B.3` — HYBRID cloud audio wiring
-  + minimum real-hardware/operator conversation acceptance. NOT STARTED.**
-  The operator's currently available Gemini API key/tier is sufficient to
+  +57 new tests (870 total, 0 regressions); `cloud-gemini` optional
+  `pyproject.toml` extra added (core deps unchanged, `pip install .` stays
+  Google-free). **`M2.6B.2A` (`R0034`, 2026-09-11): pre-hardware
+  hardening — IMPLEMENTED.** Fixed a real silent-user-speech-loss bug
+  (mid-turn readiness loss — see "Latest report" above for the full
+  writeup) with a deterministic abort-and-restart policy; completed the
+  provider event map (interim transcription, a proper
+  `GenerationCompleteEvent`, error frames — which also exposed and fixed
+  an upstream-vs-downstream tap gap); closed the "manual injection" test
+  gap with `ConversationRouter.handle_provider_event()`; tested 5
+  turn-ordering/interruption permutations (found and fixed a related
+  accumulator gap: a late assistant-transcription delta after
+  interruption was still being appended); made the fresh-snapshot
+  reconnect mechanism precise (destroy-and-recreate) and tested against a
+  deliberately stale context. +16 tests (886 total, 0 regressions).
+  **Known gap, unchanged:** `ReconnectController` is not yet driven by
+  `GeminiLiveProvider` on a real connection error — no live reconnect
+  wiring yet. **Next: `M2.6B.3` — HYBRID cloud audio wiring + minimum
+  real-hardware/operator conversation acceptance. NOT STARTED.** The
+  operator's currently available Gemini API key/tier is sufficient to
   continue `DEVELOPMENT`-mode M2.6B work (stored outside the repo); a
   verified paid/billing-enabled project is required only before any
   `DISTRIBUTED` release to EEA/CH/UK users.**
@@ -947,6 +1026,28 @@ Runtime / test evidence outranks anything else in this repo.
   regressions**; zero non-additive `src/nexa/**` change; no live Gemini
   connection; **reconnect not yet wired into `GeminiLiveProvider`** (known
   gap, explicit).
+  **`M2.6B.2A` — pre-hardware cloud-turn / reconnect hardening:
+  IMPLEMENTED (`R0034`, 2026-09-11)** — fixed a real silent-user-speech-
+  loss bug (mid-turn readiness loss: a turn that started live and then
+  lost readiness had its further audio rejected as an orphan and its
+  `activity_end` silently swallowed) with a deterministic
+  abort-and-restart policy (never silent loss, never duplicated audio; a
+  connectivity hiccup mid-utterance may split it into two utterances from
+  Gemini's perspective — a documented trade-off, not data loss); completed
+  the provider->NeXa event map (interim transcription, a proper
+  `GenerationCompleteEvent`, error frames) which exposed and fixed a
+  second gap (Pipecat's `push_error()` pushes upstream; the only tap was
+  downstream — fixed with a second `up_tap`); closed the "manual
+  injection" test gap with `ConversationRouter.handle_provider_event()`;
+  tested 5 turn-ordering/interruption permutations (found and fixed a
+  third gap: a late assistant-transcription delta after interruption was
+  still being appended); proved one permutation (turnComplete before a
+  delayed final transcription) impossible from the installed Pipecat
+  source; made the fresh-snapshot-on-resumption-failure mechanism precise
+  (destroy-and-recreate, never leaks stale context) and tested it. +16
+  tests, **886 total, 0 regressions**. Still no live Gemini connection;
+  reconnect still not wired to a real socket (explicit, deferred to
+  M2.6B.3).
   **Next: `M2.6B.3` — HYBRID cloud audio wiring + minimum real-hardware
   operator conversation acceptance. NOT STARTED.**
   **Credential:** operator-provided key stored at
@@ -1582,8 +1683,12 @@ Runtime / test evidence outranks anything else in this repo.
   already sent), and there is no observed mechanism for NeXa to steer the
   *same* response — so ADR-0004 defaults to Gemini native language
   mirroring (which worked), with delayed-`activity_end` + a local
-  language-ID as the measured fallback. **ADR-0004 = Accepted, Amendment 1
-  Accepted. M2.6B = NEXT / NOT STARTED.**
+  language-ID as the measured fallback. ADR-0004 = Accepted, Amendment 1
+  Accepted. **[HISTORICAL — as of the ADR-0004 Amendment-1 task,
+  superseded]** ~~M2.6B = NEXT / NOT STARTED.~~ **CURRENT: `M2.6B` is
+  IN PROGRESS — `M2.6B.1` (`R0032`) and `M2.6B.2` (`R0033`) are
+  IMPLEMENTED, `M2.6B.2A` hardening (`R0034`) is IMPLEMENTED; next is
+  `M2.6B.3`. See "Latest report" above.**
 - **After local + cloud voice** (unchanged plan): memory / identity /
   personality / capabilities → full graphical UI → typed chat in that UI
   on the **same** `ConversationSession` / NeXa brain as voice (never a
@@ -1635,11 +1740,65 @@ path and the production provider:
   `pip install .` stays Google-cloud-free.
 - +57 new tests (870 total, 0 regressions); zero non-additive
   `src/nexa/**` change.
-- **Known gap, explicit:** `ReconnectController` is not yet driven by
-  `GeminiLiveProvider` on a real connection error — no live GoAway/
-  age-timer reconnect wiring yet; the "stale Pipecat context vs. fresh
-  NeXa snapshot on resumption failure" design question from R0032 remains
-  open, to be resolved alongside that wiring.
+- **Known gap (resolved in M2.6B.2A below):** `ReconnectController` is not
+  yet driven by `GeminiLiveProvider` on a real connection error — no live
+  GoAway/age-timer reconnect wiring yet.
+
+**`M2.6B.2A` DONE (`R0034`, 2026-09-11)** — pre-hardware cloud-turn /
+reconnect hardening:
+- **Fixed a real silent-user-speech-loss bug:** `user_turn_start()`
+  decided "send live vs. buffer" only once, at call time, with no record
+  of that decision — a turn that started live and then lost readiness
+  mid-utterance had all further audio rejected as an orphan by
+  `UtteranceFramer` (no `activity_start` was ever recorded there), and the
+  eventual `user_turn_end()` silently ignored too (no live `activity_end`
+  ever reached Gemini). Fixed with a `_live_turn_open` flag +
+  deterministic abort-and-restart: the stranded live segment is marked
+  aborted (logged, never silent) and every subsequent frame becomes a
+  NEW, self-contained buffered utterance, flushed once `READY` returns.
+  **Production policy:** a connectivity loss exactly mid-utterance may
+  split it into two utterances from Gemini's perspective, but never
+  silently drops user audio and never delivers the same audio twice. New
+  `take_pending_audio()` lets a fresh-session hand-off retrieve (once,
+  destructively) whatever was buffered but undelivered.
+- **Completed the provider->NeXa event map:** `InterimTranscriptionFrame`
+  (partial user transcription, previously unhandled) +
+  `TranscriptionFrame.finalized` (previously hard-coded `True`); a new,
+  unambiguous `GenerationCompleteEvent` (replaces an earlier ambiguous
+  empty-text `AssistantTranscriptionEvent` for turn-complete);
+  `ErrorFrame`/`FatalErrorFrame` -> `RealtimeProviderError`/
+  `RealtimeProviderFailedError`. **Found and fixed a second gap:**
+  Pipecat's own `push_error()` pushes error frames **upstream**, but the
+  only tap sat downstream of the Gemini service — could never see one.
+  Fixed with a second `up_tap` before the user aggregator.
+- **Closed the "manual injection" test gap:** new
+  `ConversationRouter.handle_provider_event()` is the only path by which a
+  provider's event stream reaches the router/session; a new integration
+  test drives one full cloud turn exclusively through real provider
+  events and proves exactly one canonical exchange results.
+- **5 turn-ordering/interruption permutations tested** (user→assistant→
+  complete; local interruption beating a late server ACK — exposing and
+  fixing a third gap, `CloudTurnAccumulator.on_assistant_transcription`
+  still appending a late delta after `on_interruption()`, now refused;
+  provider death before vs. after a spoken prefix). **Turn-complete-
+  before-delayed-transcription proven IMPOSSIBLE from the installed
+  Pipecat source** (not assumed): `_connection_task_handler` processes
+  messages strictly in arrival order, handling input_transcription before
+  turn_complete even within one bundled message.
+- **Fresh-snapshot-on-resumption-failure mechanism made precise:**
+  destroy-and-recreate — a brand-new `GeminiLiveProvider` builds its own
+  `LLMContext` from a freshly built `CloudContextSnapshot` and holds no
+  reference to any previous instance, so stale Pipecat-owned context
+  cannot structurally leak in; proven with a deliberately stale old
+  context vs. a fresh canonical snapshot.
+- +16 tests (886 total, 0 regressions); zero non-additive `src/nexa/**`
+  change (no existing file outside `src/nexa/realtime/**` touched this
+  checkpoint).
+- **Known gap, still explicit:** `ReconnectController` is not yet driven
+  by `GeminiLiveProvider` on a real connection error — no live GoAway/
+  age-timer reconnect wiring yet; this checkpoint hardens what happens
+  once a fresh session is decided and while readiness is degraded
+  mid-turn, not when that decision is made from a real socket.
 
 **`M2.6B.3` (next, NOT started):** wire `ReconnectController` into
 `GeminiLiveProvider` for a real connection-error path (deterministic/

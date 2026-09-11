@@ -63,8 +63,12 @@ reconnect-duration test, per this task's scope.
    `websockets>=15,<17`, matching the versions already resolved in the
    research venv (R0030/R0031); `pipecat-ai[local]==1.8.1` unchanged; no
    `pipecat-ai[google]`.
-5. Added 88 new deterministic tests across 6 new files + 1 extended file
-   (see TEST RESULTS).
+5. Added 57 new deterministic tests across 5 new files, plus a net +1 in
+   one extended file (58 net new — see TEST RESULTS; an earlier draft of
+   this bullet said "88 new tests across 6 new files", which was wrong —
+   corrected here in the M2.6B.2A pass, `R0034`, per the operator's review;
+   the actual count was always 57+1=58, as TEST RESULTS below correctly
+   stated).
 6. Wrote this report; updated `docs/CURRENT_STATE.md` and
    `docs/ROADMAP.md`.
 

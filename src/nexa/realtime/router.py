@@ -20,7 +20,15 @@ from dataclasses import dataclass
 
 from ..conversation.session import ConversationSession, ExternalExchangeOutcome
 from .policy import ActiveProvider, ConversationPolicy, ProviderEligibilityPolicy
-from .provider import RealtimeVoiceProvider
+from .provider import (
+    AssistantTranscriptionEvent,
+    GenerationCompleteEvent,
+    ProviderEvent,
+    ProviderInterruptionEvent,
+    RealtimeProviderFailedError,
+    RealtimeVoiceProvider,
+    UserTranscriptionEvent,
+)
 from .snapshot import CloudContextSnapshot, build_cloud_context_snapshot
 from .turn import CloudTurnAccumulator
 
@@ -210,3 +218,38 @@ class ConversationRouter:
             )
         self._handle_cloud_failure(reason=reason)
         return outcome
+
+    def handle_provider_event(self, event: ProviderEvent) -> ExternalExchangeOutcome | None:
+        """Consume ONE event from a ``RealtimeVoiceProvider``'s event
+        stream (ADR-0004 provider interface contract) and drive the
+        canonical cloud-turn write path from it — this is the *only*
+        place a provider's output ever reaches ``ConversationSession``,
+        and it always goes through ``CloudTurnAccumulator`` first
+        (M2.6B.2A: closes the gap where a test could otherwise call
+        ``on_user_transcription`` directly and claim the provider path
+        works without ever driving it from a real event).
+
+        Returns whatever ``commit_cloud_turn`` /
+        ``handle_cloud_session_lost`` returns when the event closes a
+        turn; ``None`` for every other event (mid-turn events, telemetry,
+        recoverable errors — none of those commit anything by
+        themselves).
+        """
+        if isinstance(event, UserTranscriptionEvent):
+            self.on_user_transcription(event.text, final=event.final)
+            return None
+        if isinstance(event, AssistantTranscriptionEvent):
+            self.on_assistant_transcription(event.text, final=event.final)
+            return None
+        if isinstance(event, ProviderInterruptionEvent):
+            self.on_interruption()
+            return None
+        if isinstance(event, GenerationCompleteEvent):
+            return self.commit_cloud_turn()
+        if isinstance(event, RealtimeProviderFailedError):
+            return self.handle_cloud_session_lost(reason=str(event))
+        # ReadinessChangedEvent / ProviderUsageEvent / CancellationCompleteEvent
+        # / ReconnectingEvent / ResumedEvent / RealtimeProviderError:
+        # telemetry or reconnect-policy concerns, not canonical-turn state
+        # (M2.6B.3 wires reconnect policy off these).
+        return None

@@ -62,6 +62,20 @@ class TestInterruption(unittest.TestCase):
         self.assertTrue(committed.interrupted)
         self.assertEqual(committed.assistant_text, "Once upon a ti")
 
+    def test_late_assistant_transcription_after_interruption_is_ignored(self) -> None:
+        """M2.6B.2A — local interruption authority wins over a late server
+        ACK/transcription delta: once interrupted, further assistant text
+        must never grow past the actually-spoken prefix."""
+        acc = CloudTurnAccumulator()
+        acc.start_turn()
+        acc.on_user_transcription("tell me a story", final=True)
+        acc.on_assistant_transcription("Once upon a ti", final=False)
+        acc.on_interruption()
+        acc.set_spoken_prefix("Once upon a ti")
+        acc.on_assistant_transcription(" the end", final=True)  # late, must be ignored
+        committed = acc.on_turn_complete()
+        self.assertEqual(committed.assistant_text, "Once upon a ti")
+
     def test_interrupted_before_any_audio(self) -> None:
         acc = CloudTurnAccumulator()
         acc.start_turn()

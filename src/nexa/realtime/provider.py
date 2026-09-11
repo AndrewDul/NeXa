@@ -111,6 +111,16 @@ class CancellationCompleteEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class GenerationCompleteEvent:
+    """The provider finished generating its reply for the current turn
+    (e.g. Gemini's ``serverContent.turnComplete`` / Pipecat's
+    ``LLMFullResponseEndFrame``). This is the ``ConversationRouter``'s
+    signal to commit the accumulated cloud turn (ADR-0004 Decision A) —
+    distinct from any assistant transcription text event, so "turn
+    complete" is never conflated with "assistant said nothing"."""
+
+
+@dataclass(frozen=True, slots=True)
 class ReconnectingEvent:
     """The provider is reconnecting (proactive age-timer, ``GoAway``, or a
     connection error) — ADR-0004 Decision I."""
@@ -151,11 +161,13 @@ ProviderEvent = (
     | AssistantAudioEvent
     | ProviderInterruptionEvent
     | CancellationCompleteEvent
+    | GenerationCompleteEvent
     | ReconnectingEvent
     | ResumedEvent
     | ReadinessChangedEvent
     | ProviderUsageEvent
     | RealtimeProviderError
+    | RealtimeProviderFailedError
 )
 
 

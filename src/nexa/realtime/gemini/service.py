@@ -26,6 +26,22 @@ This module imports **no** Pipecat/Gemini symbol at module load time
 ``nexa.realtime.gemini.service`` itself does not require the
 ``cloud-gemini`` optional dependency extra to be installed; only
 *constructing and starting* a ``GeminiLiveProvider`` does.
+
+Fresh-session recovery mechanism (M2.6B.2A, finishing ADR-0004 Decision I):
+when NeXa decides ``FRESH_SESSION_REQUIRED`` (no safe resumption handle, or
+resumption failed), the mechanism is **destroy and recreate** — a brand
+new ``GeminiLiveProvider`` instance is constructed with a freshly built
+``CloudContextSnapshot``
+(``ConversationRouter.request_fresh_snapshot_after_resumption_failure``),
+never an in-place repair of the old instance. This is not a policy this
+class enforces at runtime — it is a structural guarantee: a new instance
+builds its own brand-new ``LLMContext`` from the fresh snapshot in
+``start()`` and has no reference whatsoever to any previous instance's
+``self._llm`` / ``self._llm._context``, so a stale Pipecat-owned context
+can never seed the new session. The old instance's still-undelivered
+buffered audio (if any) is retrievable via ``take_pending_audio()`` before
+it is discarded, so nothing already captured is silently lost across the
+hand-off (M2.6B.2A hardening — see the turn-I/O methods below).
 """
 
 from __future__ import annotations
@@ -40,6 +56,7 @@ from ..provider import (
     AssistantAudioEvent,
     AssistantTranscriptionEvent,
     CancellationCompleteEvent,
+    GenerationCompleteEvent,
     ProviderEvent,
     ProviderInterruptionEvent,
     ProviderReadiness,
@@ -73,7 +90,10 @@ def _pipecat_imports() -> dict[str, Any]:
     Never called at module import time."""
     from pipecat.frames.frames import (
         EndFrame,
+        ErrorFrame,
+        FatalErrorFrame,
         InputAudioRawFrame,
+        InterimTranscriptionFrame,
         InterruptionFrame,
         LLMFullResponseEndFrame,
         LLMRunFrame,
@@ -101,7 +121,10 @@ def _pipecat_imports() -> dict[str, Any]:
 
     return {
         "EndFrame": EndFrame,
+        "ErrorFrame": ErrorFrame,
+        "FatalErrorFrame": FatalErrorFrame,
         "InputAudioRawFrame": InputAudioRawFrame,
+        "InterimTranscriptionFrame": InterimTranscriptionFrame,
         "InterruptionFrame": InterruptionFrame,
         "LLMFullResponseEndFrame": LLMFullResponseEndFrame,
         "LLMRunFrame": LLMRunFrame,
@@ -193,6 +216,10 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
         self._run_task: asyncio.Task | None = None
         self._reconnect_handle: SessionResumptionHandle | None = None
         self._turn_open = False
+        #: True from a LIVE ``activity_start`` until a LIVE
+        #: ``activity_end`` — see the "mid-turn readiness loss" note on
+        #: the turn-I/O methods below (M2.6B.2A hardening).
+        self._live_turn_open = False
         #: ADR-0004 Decision H — while ``readiness != READY`` (including a
         #: future reconnect's DEGRADED/RECONNECTING window, M2.6B.3), the
         #: local turn envelope (activityStart / audio / activityEnd) is
@@ -281,8 +308,15 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
 
         event_tap_cls = _make_event_tap_class(P)
         down_tap = event_tap_cls(queue=self._events, on_frame=self._translate_frame)
+        # ``push_error()`` (used by GeminiLiveLLMService for both
+        # recoverable and fatal errors) pushes its ErrorFrame/FatalErrorFrame
+        # UPSTREAM, not downstream — a tap placed only after ``self._llm``
+        # would never see it. ``up_tap`` mirrors the M2.6A research probe's
+        # own upstream/downstream dual-tap pattern so both directions are
+        # observed.
+        up_tap = event_tap_cls(queue=self._events, on_frame=self._translate_frame)
 
-        pipeline = P["Pipeline"]([user_agg, self._llm, down_tap, asst_agg])
+        pipeline = P["Pipeline"]([up_tap, user_agg, self._llm, down_tap, asst_agg])
         self._worker = P["PipelineWorker"](
             pipeline,
             params=P["PipelineParams"](
@@ -348,38 +382,89 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
             self._set_readiness(ProviderReadiness.FAILED)
 
     # -- turn I/O --------------------------------------------------------------
-    # ADR-0004 Decision H: while not READY (including a future reconnect's
-    # DEGRADED/RECONNECTING window, M2.6B.3), the turn envelope is captured
-    # by ``self._framer`` instead of being sent — never dropped, never sent
-    # out of order. ``_flush_framer`` delivers it once READY is reached.
+    # ADR-0004 Decision H, hardened (M2.6B.2A): while not READY (including a
+    # reconnect's DEGRADED/RECONNECTING window), the turn envelope is
+    # captured by ``self._framer`` instead of being sent — never dropped,
+    # never sent out of order. ``_flush_framer`` delivers it once READY is
+    # reached.
+    #
+    # Mid-turn readiness loss (M2.6B.2A hardening — this is the fix): a turn
+    # whose ``activity_start`` already went out LIVE (``readiness`` was
+    # READY at ``user_turn_start()``) tracks that with ``self._live_turn_open``.
+    # If readiness then drops before ``user_turn_end()``, the framer would
+    # previously reject any further audio as an "orphan" (no matching
+    # ``activity_start`` had ever been recorded there) — silent user-speech
+    # loss. The fix: on the FIRST piece of audio that arrives once not
+    # ready, the stranded live segment is deterministically ABORTED (it
+    # will never receive a matching live ``activity_end`` — Gemini/the
+    # resumed session sees an incomplete first fragment) and every frame
+    # from that point on becomes a NEW, self-contained buffered utterance
+    # (its own ``activity_start``/audio/``activity_end``, flushed once
+    # READY returns). This guarantees: no audio byte is ever silently
+    # dropped, and no audio byte already sent live is ever replayed/
+    # duplicated. The cost — accepted, documented, ADR-0004-compatible — is
+    # that Gemini may perceive the split as two utterances instead of one
+    # continuous one; this is a semantic degradation under a real
+    # connectivity loss, not data loss.
     async def user_turn_start(self) -> None:
         self._turn_open = True
-        if self._readiness is not ProviderReadiness.READY:
-            self._framer.user_turn_start()
+        if self._readiness is ProviderReadiness.READY:
+            self._live_turn_open = True
+            if self._worker is not None and self._P is not None:
+                await self._worker.queue_frames([self._P["UserStartedSpeakingFrame"]()])
             return
-        if self._worker is None or self._P is None:
-            return
-        await self._worker.queue_frames([self._P["UserStartedSpeakingFrame"]()])
+        self._live_turn_open = False
+        self._framer.user_turn_start()
 
     async def send_user_audio(self, pcm: bytes) -> None:
-        if self._readiness is not ProviderReadiness.READY:
+        if self._readiness is ProviderReadiness.READY:
+            if self._live_turn_open:
+                if self._worker is not None and self._P is not None:
+                    frame = self._P["InputAudioRawFrame"](
+                        audio=pcm, sample_rate=INPUT_SAMPLE_RATE_HZ, num_channels=1
+                    )
+                    await self._worker.queue_frames([frame])
+                return
+            # READY, but this utterance's start was never sent live (e.g.
+            # captured before the READY transition and not yet flushed) —
+            # buffer safely rather than guess at framing.
             self._framer.capture_audio(pcm)
             return
-        if self._worker is None or self._P is None:
-            return
-        frame = self._P["InputAudioRawFrame"](
-            audio=pcm, sample_rate=INPUT_SAMPLE_RATE_HZ, num_channels=1
-        )
-        await self._worker.queue_frames([frame])
+        # not READY:
+        if self._live_turn_open:
+            logger.warning(
+                "nexa.realtime.gemini: provider not ready mid-utterance — "
+                "aborting the live segment (no matching activity_end will "
+                "be sent for it) and continuing as a new buffered "
+                "utterance; no audio is dropped or duplicated"
+            )
+            self._live_turn_open = False
+            self._framer.user_turn_start()
+        self._framer.capture_audio(pcm)
 
     async def user_turn_end(self) -> None:
         self._turn_open = False
-        if self._readiness is not ProviderReadiness.READY:
-            self._framer.user_turn_end()
+        was_live = self._live_turn_open
+        self._live_turn_open = False
+        if self._readiness is ProviderReadiness.READY and was_live:
+            if self._worker is not None and self._P is not None:
+                await self._worker.queue_frames([self._P["UserStoppedSpeakingFrame"]()])
             return
-        if self._worker is None or self._P is None:
-            return
-        await self._worker.queue_frames([self._P["UserStoppedSpeakingFrame"]()])
+        # Either not ready, or READY but nothing was ever live for this
+        # utterance (it was captured/aborted into the framer above) —
+        # close whatever is open there. A no-op if nothing is open.
+        self._framer.user_turn_end()
+
+    def take_pending_audio(self) -> list[bytes]:
+        """Extract any user audio buffered but not yet delivered — e.g.
+        because a fresh provider session is required (ADR-0004 Decision I)
+        and this instance is about to be discarded. Returns raw PCM chunks
+        only, in order; the caller supplies its own fresh
+        ``user_turn_start``/``user_turn_end`` framing on the NEW provider —
+        this never replays stale envelope markers from this (about-to-be-
+        discarded) instance, so nothing is duplicated."""
+        pending = self._framer.flush()
+        return [event.pcm for event in pending if event.pcm is not None]
 
     async def cancel(self) -> None:
         if self._worker is None or self._P is None:
@@ -394,12 +479,21 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
 
     # -- frame -> typed-event translation --------------------------------------
     def _translate_frame(self, frame: Any) -> None:
+        """Provider -> NeXa event mapping (ADR-0004 provider interface
+        contract). See
+        ``docs/research/m2_6_cloud_realtime_voice/m2_6b_provider_event_mapping_20260911.md``
+        for the full source-frame -> event -> router -> canonical-session
+        table this implements."""
         P = self._P
         assert P is not None
         try:
-            if isinstance(frame, P["TranscriptionFrame"]):
+            if isinstance(frame, P["InterimTranscriptionFrame"]):
                 text = getattr(frame, "text", "") or ""
-                self._events.put_nowait(UserTranscriptionEvent(text=text, final=True))
+                self._events.put_nowait(UserTranscriptionEvent(text=text, final=False))
+            elif isinstance(frame, P["TranscriptionFrame"]):
+                text = getattr(frame, "text", "") or ""
+                final = bool(getattr(frame, "finalized", True))
+                self._events.put_nowait(UserTranscriptionEvent(text=text, final=final))
             elif isinstance(frame, P["TTSTextFrame"]):
                 text = getattr(frame, "text", "") or ""
                 self._events.put_nowait(AssistantTranscriptionEvent(text=text, final=False))
@@ -409,7 +503,17 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
             elif isinstance(frame, P["InterruptionFrame"]):
                 self._events.put_nowait(ProviderInterruptionEvent())
             elif isinstance(frame, P["LLMFullResponseEndFrame"]):
-                self._events.put_nowait(AssistantTranscriptionEvent(text="", final=True))
+                # Generation/turn complete — the ConversationRouter's signal
+                # to commit (ADR-0004 Decision A). Deliberately a distinct
+                # event type, never conflated with "assistant said nothing"
+                # (an earlier draft used AssistantTranscriptionEvent(text="",
+                # final=True) for this, which was ambiguous — corrected).
+                self._events.put_nowait(GenerationCompleteEvent())
+            elif isinstance(frame, P["FatalErrorFrame"]):
+                self._set_readiness(ProviderReadiness.FAILED)
+                self._events.put_nowait(RealtimeProviderFailedError(str(frame)))
+            elif isinstance(frame, P["ErrorFrame"]):
+                self._events.put_nowait(RealtimeProviderError(str(frame)))
             resumption = getattr(frame, "session_resumption_update", None)
             if resumption is not None:
                 self._observe_resumption_update(resumption)

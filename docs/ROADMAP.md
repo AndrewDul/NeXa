@@ -209,10 +209,35 @@ unpaid-quota data is used to improve Google products.
     `cloud-gemini` optional extra added
     (`google-genai>=2.22,<3` + `websockets>=15,<17`; core deps unchanged,
     `pip install .` stays Google-free). +57 tests (870 total, 0
-    regressions); zero non-additive `src/nexa/**` change. **Known gap:**
-    `ReconnectController` not yet driven by `GeminiLiveProvider` on a real
-    connection error — no live reconnect wiring yet; the stale-context-
-    vs-fresh-snapshot design question from R0032 remains open.
+    regressions); zero non-additive `src/nexa/**` change. **Known gap
+    (resolved in M2.6B.2A below):** `ReconnectController` not yet driven
+    by `GeminiLiveProvider` on a real connection error — no live reconnect
+    wiring yet.
+  - **M2.6B.2A — pre-hardware cloud-turn / reconnect hardening:
+    IMPLEMENTED** (`R0034`, 2026-09-11). Fixed a real silent-user-speech-
+    loss bug (mid-turn readiness loss — a turn started live then lost
+    readiness had further audio rejected as an orphan and its
+    `activity_end` silently swallowed) with a deterministic
+    abort-and-restart policy: the stranded live segment is aborted
+    (logged, never silent) and everything after becomes a new,
+    self-contained buffered utterance — never silent loss, never
+    duplicated audio; a connectivity hiccup mid-utterance may present as
+    two utterances to Gemini instead of one, a documented trade-off, not
+    data loss. New `take_pending_audio()` for a fresh-session hand-off.
+    Completed the provider->NeXa event map (interim transcription, a
+    proper `GenerationCompleteEvent`, error frames) — which exposed and
+    fixed a second gap: Pipecat's `push_error()` pushes upstream, but the
+    only tap was downstream; fixed with a second `up_tap`. Closed the
+    "manual injection" test gap with
+    `ConversationRouter.handle_provider_event()`. Tested 5 turn-ordering/
+    interruption permutations (found and fixed a third gap: a late
+    assistant-transcription delta after interruption was still being
+    appended); proved turn-complete-before-delayed-transcription
+    impossible from the installed Pipecat source, not assumed. Made the
+    fresh-snapshot-on-resumption-failure mechanism precise
+    (destroy-and-recreate, proven never to leak stale context). +16 tests
+    (886 total, 0 regressions). Still no live Gemini connection; reconnect
+    still not wired to a real socket (explicit, deferred to M2.6B.3).
   - **M2.6B.3 (next)** — wire `ReconnectController` into
     `GeminiLiveProvider` for a real connection-error path; HYBRID cloud
     audio wiring (tee to `AecReferenceFeeder`, keep Silero +

@@ -22,14 +22,23 @@ SRC = REPO_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from nexa.conversation.session import ConversationSession, ExternalExchangeOutcome  # noqa: E402
 from nexa.conversation.turn import Role  # noqa: E402
 from nexa.realtime.provider import (  # noqa: E402
     AssistantAudioEvent,
     AssistantTranscriptionEvent,
+    GenerationCompleteEvent,
+    ProviderInterruptionEvent,
     ProviderReadiness,
     ReadinessChangedEvent,
+    RealtimeProviderFailedError,
+    UserTranscriptionEvent,
 )
+from nexa.realtime.router import ConversationRouter  # noqa: E402
 from nexa.realtime.snapshot import CloudContextSnapshot, SnapshotTurn  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fakes import FakeModelProvider  # noqa: E402
 
 try:
     from nexa.realtime.gemini.service import GeminiLiveProvider, _pipecat_imports
@@ -76,14 +85,19 @@ class _FakeGeminiLiveServiceTestCase(unittest.IsolatedAsyncioTestCase):
                 self._ready_for_realtime_input = False
                 self._context = None
                 self.received_frames: list[str] = []
+                self.received_audio: list[bytes] = []
+                self.turn_starts = 0
+                self.turn_ends = 0
 
             async def process_frame(self, frame, direction):
                 await super().process_frame(frame, direction)
                 self.received_frames.append(type(frame).__name__)
-                if isinstance(frame, P["LLMRunFrame"]):
-                    pass  # LLMRunFrame is consumed upstream by the aggregator;
-                    # it never reaches the service directly. Counted via
-                    # LLMContextFrame instead (the aggregator's translation).
+                if isinstance(frame, P["InputAudioRawFrame"]):
+                    self.received_audio.append(frame.audio)
+                elif isinstance(frame, P["UserStartedSpeakingFrame"]):
+                    self.turn_starts += 1
+                elif isinstance(frame, P["UserStoppedSpeakingFrame"]):
+                    self.turn_ends += 1
                 from pipecat.frames.frames import LLMContextFrame
 
                 if isinstance(frame, LLMContextFrame):
@@ -101,6 +115,34 @@ class _FakeGeminiLiveServiceTestCase(unittest.IsolatedAsyncioTestCase):
                 await self.push_frame(
                     P["TTSAudioRawFrame"](audio=pcm, sample_rate=24000, num_channels=1),
                     P["FrameDirection"].DOWNSTREAM,
+                )
+
+            async def emit_user_transcription(self, text: str, *, final: bool = True) -> None:
+                if final:
+                    frame = P["TranscriptionFrame"](
+                        text=text, user_id="operator", timestamp="", finalized=True
+                    )
+                else:
+                    frame = P["InterimTranscriptionFrame"](
+                        text=text, user_id="operator", timestamp=""
+                    )
+                await self.push_frame(frame, P["FrameDirection"].DOWNSTREAM)
+
+            async def emit_generation_complete(self) -> None:
+                await self.push_frame(
+                    P["LLMFullResponseEndFrame"](), P["FrameDirection"].DOWNSTREAM
+                )
+
+            async def emit_interruption(self) -> None:
+                await self.push_frame(P["InterruptionFrame"](), P["FrameDirection"].DOWNSTREAM)
+
+            async def emit_fatal_error(self, message: str = "boom") -> None:
+                # Real GeminiLiveLLMService reports errors via push_error(),
+                # which pushes UPSTREAM (frame_processor.py) — faithfully
+                # matched here rather than the simpler DOWNSTREAM direction,
+                # since that is exactly why an upstream tap is required.
+                await self.push_frame(
+                    P["FatalErrorFrame"](error=message), P["FrameDirection"].UPSTREAM
                 )
 
         return FakeGeminiLiveService, calls
@@ -126,6 +168,18 @@ class _FakeGeminiLiveServiceTestCase(unittest.IsolatedAsyncioTestCase):
         # runs forever and hangs the test process's teardown.
         self.addAsyncCleanup(provider.stop, reason="test cleanup")
         return provider, calls
+
+    async def _drain_one(self, provider, expected_type) -> None:
+        event = await asyncio.wait_for(provider.events().__anext__(), timeout=2.0)
+        self.assertIsInstance(event, expected_type)
+
+    async def _next_of_type(self, provider, event_type, *, max_events: int = 10):
+        stream = provider.events()
+        for _ in range(max_events):
+            event = await asyncio.wait_for(stream.__anext__(), timeout=2.0)
+            if isinstance(event, event_type):
+                return event
+        raise AssertionError(f"no {event_type} seen within {max_events} events")
 
 
 class TestConstruction(_FakeGeminiLiveServiceTestCase):
@@ -243,6 +297,52 @@ class TestEventTranslation(_FakeGeminiLiveServiceTestCase):
         self.assertEqual(provider.latest_resumption_handle.value, "handle-1")  # unchanged
         await provider.stop(reason="test done")
 
+    async def test_interim_user_transcription_is_not_final(self) -> None:
+        provider, _ = await self._started_provider()
+        await self._drain_one(provider, ReadinessChangedEvent)
+        await provider._llm.emit_user_transcription("cze", final=False)  # noqa: SLF001
+        event = await self._next_of_type(provider, UserTranscriptionEvent)
+        self.assertFalse(event.final)
+        self.assertEqual(event.text, "cze")
+        await provider.stop(reason="test done")
+
+    async def test_final_user_transcription_is_final(self) -> None:
+        provider, _ = await self._started_provider()
+        await self._drain_one(provider, ReadinessChangedEvent)
+        await provider._llm.emit_user_transcription("cześć", final=True)  # noqa: SLF001
+        event = await self._next_of_type(provider, UserTranscriptionEvent)
+        self.assertTrue(event.final)
+        self.assertEqual(event.text, "cześć")
+        await provider.stop(reason="test done")
+
+    async def test_generation_complete_event_is_distinct_from_transcription(self) -> None:
+        provider, _ = await self._started_provider()
+        await self._drain_one(provider, ReadinessChangedEvent)
+        await provider._llm.emit_generation_complete()  # noqa: SLF001
+        event = await self._next_of_type(provider, GenerationCompleteEvent)
+        self.assertIsInstance(event, GenerationCompleteEvent)
+        await provider.stop(reason="test done")
+
+    async def test_interruption_event_translated(self) -> None:
+        provider, _ = await self._started_provider()
+        await self._drain_one(provider, ReadinessChangedEvent)
+        await provider._llm.emit_interruption()  # noqa: SLF001
+        event = await self._next_of_type(provider, ProviderInterruptionEvent)
+        self.assertIsInstance(event, ProviderInterruptionEvent)
+        await provider.stop(reason="test done")
+
+    async def test_fatal_error_pushed_upstream_still_reaches_events(self) -> None:
+        """``push_error()`` (the real service's error path) pushes UPSTREAM
+        — proves the ``up_tap`` addition actually matters, not just the
+        downstream tap."""
+        provider, _ = await self._started_provider()
+        await self._drain_one(provider, ReadinessChangedEvent)
+        await provider._llm.emit_fatal_error("simulated fatal error")  # noqa: SLF001
+        event = await self._next_of_type(provider, RealtimeProviderFailedError)
+        self.assertIsInstance(event, RealtimeProviderFailedError)
+        self.assertEqual(provider.readiness, ProviderReadiness.FAILED)
+        await provider.stop(reason="test done")
+
 
 class TestNotReadyTurnFraming(_FakeGeminiLiveServiceTestCase):
     """ADR-0004 Decision H wiring: while not READY, turn I/O goes through
@@ -286,6 +386,365 @@ class TestNotReadyTurnFraming(_FakeGeminiLiveServiceTestCase):
         await provider._flush_framer()  # noqa: SLF001
         self.assertEqual(received.count("UserStartedSpeakingFrame"), 1)
         self.assertEqual(received.count("UserStoppedSpeakingFrame"), 1)
+
+
+async def _wait_until(predicate, *, timeout: float = 2.0, step: float = 0.01) -> None:
+    elapsed = 0.0
+    while elapsed < timeout:
+        if predicate():
+            return
+        await asyncio.sleep(step)
+        elapsed += step
+    raise AssertionError(f"condition not met within {timeout}s")
+
+
+class TestMidTurnReadinessLoss(_FakeGeminiLiveServiceTestCase):
+    """M2.6B.2A hardening — the mid-turn readiness-loss fix. Invariant:
+    NO SILENT USER SPEECH LOSS; no duplicated audio; valid
+    activity_start/audio/activity_end ordering; no duplicate start/end;
+    bounded buffering."""
+
+    async def test_ready_outage_mid_turn_ready_again_no_loss_no_duplication(self) -> None:
+        provider, _ = await self._started_provider()
+        fake = provider._llm  # noqa: SLF001
+
+        await provider.user_turn_start()  # READY -> sent live
+        await provider.send_user_audio(b"live-1")  # READY -> sent live
+        await _wait_until(lambda: len(fake.received_audio) >= 1)
+        self.assertEqual(fake.turn_starts, 1)
+        self.assertEqual(fake.received_audio, [b"live-1"])
+
+        provider._readiness = ProviderReadiness.RECONNECTING  # noqa: SLF001 - fault injection
+
+        await provider.send_user_audio(b"during-outage-1")  # must NOT be silently dropped
+        await provider.send_user_audio(b"during-outage-2")
+        await provider.user_turn_end()  # still not ready
+
+        # nothing new reached the fake live yet — it's buffered as a NEW,
+        # self-contained utterance (the old live one is deterministically
+        # aborted, never duplicated).
+        self.assertEqual(fake.received_audio, [b"live-1"])
+        self.assertEqual(fake.turn_ends, 0)
+
+        provider._set_readiness(ProviderReadiness.READY)  # noqa: SLF001
+        await provider._flush_framer()  # noqa: SLF001
+        await _wait_until(lambda: fake.turn_ends >= 1)
+
+        # every buffered byte was delivered, in order, exactly once; the
+        # already-live byte was never replayed.
+        self.assertEqual(fake.received_audio, [b"live-1", b"during-outage-1", b"during-outage-2"])
+        self.assertEqual(len(fake.received_audio), len(set(fake.received_audio)))
+        self.assertEqual(fake.turn_starts, 2)  # the original live start + the new buffered one
+        self.assertEqual(fake.turn_ends, 1)  # only the buffered (2nd) segment got a live end
+        # ordering within the flushed (2nd) segment: its own start precedes
+        # its own audio precedes its own end.
+        received = fake.received_frames
+        second_start_i = len(received) - received[::-1].index("UserStartedSpeakingFrame") - 1
+        end_i = received.index("UserStoppedSpeakingFrame")
+        self.assertLess(second_start_i, end_i)
+        await provider.stop(reason="test done")
+
+    async def test_ready_immediate_outage_before_first_audio(self) -> None:
+        provider, _ = await self._started_provider()
+        fake = provider._llm  # noqa: SLF001
+
+        await provider.user_turn_start()  # READY -> live start sent
+        await _wait_until(lambda: fake.turn_starts >= 1)
+
+        provider._readiness = ProviderReadiness.RECONNECTING  # noqa: SLF001
+        await provider.user_turn_end()  # not ready, no audio ever arrived
+
+        # No data was ever produced, so none can be lost; the framer has
+        # nothing buffered (there was no audio to buffer), and no
+        # duplicate/bare frames are queued.
+        self.assertEqual(len(provider._framer), 0)  # noqa: SLF001
+        self.assertEqual(fake.turn_starts, 1)
+        self.assertEqual(fake.turn_ends, 0)
+        self.assertEqual(fake.received_audio, [])
+        await provider.stop(reason="test done")
+
+    async def test_mid_turn_outage_then_fresh_session_required(self) -> None:
+        """Reconnect fails outright and a FRESH provider session is
+        required (ADR-0004 Decision I) — the OLD provider is discarded.
+        Its not-yet-delivered audio must be retrievable, not silently
+        thrown away with the old instance."""
+        provider, _ = await self._started_provider()
+        fake = provider._llm  # noqa: SLF001
+
+        await provider.user_turn_start()
+        await provider.send_user_audio(b"live-1")
+        await _wait_until(lambda: len(fake.received_audio) >= 1)
+
+        provider._readiness = ProviderReadiness.RECONNECTING  # noqa: SLF001
+        await provider.send_user_audio(b"stranded-1")
+        await provider.send_user_audio(b"stranded-2")
+        # user_turn_end() never arrives yet -- the outage is still ongoing
+        # when NeXa decides a fresh session is required.
+
+        pending = provider.take_pending_audio()
+        self.assertEqual(pending, [b"stranded-1", b"stranded-2"])
+        # taking it clears it from the old instance -- never re-deliverable
+        # from here (avoids duplication if the old instance is stopped and
+        # discarded rather than immediately garbage-collected).
+        self.assertEqual(provider.take_pending_audio(), [])
+        await provider.stop(reason="fresh session required")
+
+        # Replayed into a brand-new provider instance with fresh framing --
+        # never the stale one's envelope markers.
+        new_provider, new_calls = await self._started_provider()
+        new_fake = new_provider._llm  # noqa: SLF001
+        await new_provider.user_turn_start()
+        for chunk in pending:
+            await new_provider.send_user_audio(chunk)
+        await new_provider.user_turn_end()
+        await _wait_until(lambda: new_fake.turn_ends >= 1)
+        self.assertEqual(new_fake.received_audio, [b"stranded-1", b"stranded-2"])
+        self.assertEqual(new_fake.turn_starts, 1)
+        self.assertEqual(new_fake.turn_ends, 1)
+        await new_provider.stop(reason="test done")
+
+    async def test_stale_provider_context_never_seeds_the_fresh_session(self) -> None:
+        """ADR-0004 Decision I, finished (M2.6B.2A): fresh-session recovery
+        is destroy-and-recreate — a brand new ``GeminiLiveProvider``
+        builds its own ``LLMContext`` from a freshly built
+        ``CloudContextSnapshot``, never from any previous instance's
+        Pipecat-owned context."""
+        # The OLD provider was seeded from a stale/old snapshot (as if a
+        # long-disconnected session had been carrying "A/OLD").
+        old_provider, old_calls = await self._started_provider(
+            recent_turns=(
+                SnapshotTurn(role=Role.USER, content="turn A"),
+                SnapshotTurn(role=Role.ASSISTANT, content="OLD stale reply"),
+            )
+        )
+        old_seen = [msg.get("content", "") for msg in old_calls["contexts_seen"][0]]
+        self.assertIn("OLD stale reply", old_seen)
+        await old_provider.stop(reason="resumption failed, fresh session required")
+
+        # Canonical NeXa state has since moved on to turns A/B/C.
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        router = ConversationRouter(session)
+        session.record_external_exchange("turn A", "reply A")
+        session.record_external_exchange("turn B", "reply B")
+        session.record_external_exchange("turn C", "reply C")
+
+        fresh_snapshot = await router.request_fresh_snapshot_after_resumption_failure()
+        fresh_contents = [t.content for t in fresh_snapshot.recent_turns]
+        self.assertIn("turn C", fresh_contents)
+        self.assertIn("reply C", fresh_contents)
+        self.assertNotIn("OLD stale reply", fresh_contents)
+
+        # A brand new provider, seeded with the FRESH snapshot, must never
+        # see the old provider's stale content -- and structurally cannot,
+        # since it builds its own LLMContext from scratch.
+        new_fake_cls, new_calls = self._make_fake_service_class()
+        new_provider = GeminiLiveProvider(
+            api_key="FAKE-TEST-KEY", service_class=new_fake_cls, ready_timeout_s=5.0
+        )
+        await new_provider.start(fresh_snapshot)
+        self.addAsyncCleanup(new_provider.stop, reason="test cleanup")
+
+        new_seen = [msg.get("content", "") for msg in new_calls["contexts_seen"][0]]
+        self.assertIn("turn C", new_seen)
+        self.assertIn("reply C", new_seen)
+        self.assertNotIn("OLD stale reply", new_seen)
+
+
+class _RouterDrivenTestCase(_FakeGeminiLiveServiceTestCase):
+    """Base for tests that drive a real ``ConversationRouter`` exclusively
+    from real ``GeminiLiveProvider`` events — never by calling
+    ``router.on_user_transcription`` / ``commit_cloud_turn`` etc. directly
+    with hand-picked text (M2.6B.2A closes that gap)."""
+
+    def _router(self) -> tuple[ConversationSession, ConversationRouter]:
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        # policy is irrelevant to these tests (no start_cloud() call) --
+        # LOCAL_ONLY is just a concrete, valid default.
+        router = ConversationRouter(session)
+        return session, router
+
+    async def _pump_events(self, provider, router, count: int):
+        """Consume exactly ``count`` events from the provider's stream and
+        feed each one through ``router.handle_provider_event`` — the ONLY
+        path by which a provider's output may reach the router/session."""
+        stream = provider.events()
+        outcomes = []
+        for _ in range(count):
+            event = await asyncio.wait_for(stream.__anext__(), timeout=2.0)
+            outcomes.append(router.handle_provider_event(event))
+        return outcomes
+
+
+class TestNoManualInjectionFullCloudTurn(_RouterDrivenTestCase):
+    """A normal cloud turn, driven exclusively by real provider events
+    through the real Pipecat pipeline -- no test ever calls
+    ``ConversationSession.record_external_exchange`` or
+    ``router.on_user_transcription`` directly with hand-picked text."""
+
+    async def test_full_turn_via_provider_events_commits_exactly_once(self) -> None:
+        provider, _ = await self._started_provider()
+        session, router = self._router()
+        fake = provider._llm  # noqa: SLF001
+
+        await self._drain_one(provider, ReadinessChangedEvent)
+
+        router.begin_cloud_turn()  # NeXa's local turn authority marks a new turn
+        await provider.user_turn_start()
+        await provider.send_user_audio(b"user-audio")
+        await fake.emit_user_transcription("hej", final=True)
+        await fake.emit_assistant_text("cze")
+        await fake.emit_assistant_audio(b"assistant-audio")
+        await fake.emit_assistant_text("ść")
+        await fake.emit_generation_complete()
+        await provider.user_turn_end()
+
+        outcomes = await self._pump_events(provider, router, 5)
+        self.assertEqual(
+            [o for o in outcomes if o is not None], [ExternalExchangeOutcome.COMMITTED_EXCHANGE]
+        )
+
+        self.assertEqual(len(session.history), 2)
+        self.assertEqual(session.history[0].content, "hej")
+        self.assertEqual(session.history[1].content, "cześć")
+        await provider.stop(reason="test done")
+
+
+class TestTurnOrderingPermutations(_RouterDrivenTestCase):
+    """Realistic event permutations (item 3 of the M2.6B.2A charter).
+    Scenario C (turnComplete before a delayed final transcription) is
+    proven IMPOSSIBLE from the installed Pipecat source, not assumed —
+    see the class docstring below for the citation."""
+
+    async def test_a_user_then_assistant_partial_then_final_then_complete(self) -> None:
+        provider, _ = await self._started_provider()
+        session, router = self._router()
+        fake = provider._llm  # noqa: SLF001
+        await self._drain_one(provider, ReadinessChangedEvent)
+
+        router.begin_cloud_turn()
+        await fake.emit_user_transcription("hej", final=True)
+        await fake.emit_assistant_text("Cze")
+        await fake.emit_assistant_text("ść!")
+        await fake.emit_generation_complete()
+
+        await self._pump_events(provider, router, 4)
+        self.assertEqual(len(session.history), 2)
+        self.assertEqual(session.history[1].content, "Cześć!")
+
+    async def test_b_interruption_wins_over_late_server_ack(self) -> None:
+        provider, _ = await self._started_provider()
+        session, router = self._router()
+        fake = provider._llm  # noqa: SLF001
+        await self._drain_one(provider, ReadinessChangedEvent)
+
+        router.begin_cloud_turn()
+        await fake.emit_user_transcription("tell me a story", final=True)
+        await fake.emit_assistant_text("Once upon a ti")
+        await self._pump_events(provider, router, 2)  # process these first, in order
+
+        # Local interruption authority fires (NeXa's own barge-in signal —
+        # never a provider event; BargeInController drives this
+        # independently of the cloud provider's event stream in
+        # production, so it is called directly here too).
+        router.on_interruption()
+        router.set_spoken_prefix("Once upon a ti")
+
+        # the server's own interruption ACK / any further generation
+        # arrives LATE -- must never overturn the local decision or
+        # produce a second commit.
+        await fake.emit_interruption()
+        await fake.emit_assistant_text(" the end")  # late text, must be ignored
+        await fake.emit_generation_complete()
+
+        await self._pump_events(provider, router, 3)
+        self.assertEqual(len(session.history), 2)
+        self.assertTrue(session.history[1].interrupted)
+        self.assertEqual(session.history[1].content, "Once upon a ti")
+
+        # a further, later generation-complete for the SAME (already
+        # committed) turn produces no second commit.
+        outcome = router.commit_cloud_turn()
+        self.assertIsNone(outcome)
+        self.assertEqual(len(session.history), 2)
+
+    async def test_c_turn_complete_before_delayed_final_transcription_is_impossible(
+        self,
+    ) -> None:
+        """VERIFIED FACT (installed pipecat-ai==1.8.1,
+        services/google/gemini_live/llm.py, ``_connection_task_handler``):
+        messages are processed strictly in receive order from a single
+        ``async for message in turn`` loop, and — per that method's own
+        comment ("server_content fields are NOT mutually exclusive --
+        Gemini 3.x can bundle multiple content fields and turn_complete on
+        the same message, so process the content-bearing fields before
+        closing the turn") — even a message that bundles BOTH
+        input_transcription and turn_complete together is handled with
+        input_transcription first:
+            if sc and sc.input_transcription: await self.
+                _handle_msg_input_transcription(message)
+            ...
+            if sc and sc.turn_complete: await self._handle_msg_turn_complete(message)
+        So a LATER message's turn_complete can never be processed before
+        an EARLIER (or same-message) final transcription. Scenario C
+        cannot occur with the installed Pipecat/Gemini-3.x combination.
+        This test proves the ROUTER is still safe if it ever did (defence
+        in depth): a generation-complete with no user text yet commits
+        nothing until the user text arrives, and nothing is ever
+        double-committed once it does.
+        """
+        provider, _ = await self._started_provider()
+        session, router = self._router()
+        fake = provider._llm  # noqa: SLF001
+        await self._drain_one(provider, ReadinessChangedEvent)
+
+        router.begin_cloud_turn()
+        await fake.emit_assistant_text("reply")
+        await fake.emit_generation_complete()  # "arrives" before the user transcript
+        await fake.emit_user_transcription("hej", final=True)  # delayed
+
+        outcomes = await self._pump_events(provider, router, 3)
+        # the premature generation-complete commits nothing (no user text
+        # yet) -- CloudTurnAccumulator.on_turn_complete() returns a turn
+        # with user_text=None, which the router refuses to commit.
+        self.assertEqual([o for o in outcomes if o is not None], [])
+        self.assertEqual(len(session.history), 0)
+
+        # the turn is now COMMITTED-empty in the accumulator (M2.6B
+        # invariant: at most one commit) -- a real Gemini/Pipecat sequence
+        # never produces this ordering, so no further recovery is required
+        # or attempted here.
+
+    async def test_d_provider_dies_after_user_transcription_before_assistant(self) -> None:
+        provider, _ = await self._started_provider()
+        session, router = self._router()
+        fake = provider._llm  # noqa: SLF001
+        await self._drain_one(provider, ReadinessChangedEvent)
+
+        router.begin_cloud_turn()
+        await fake.emit_user_transcription("hej", final=True)
+        await self._pump_events(provider, router, 1)
+
+        outcome = router.handle_cloud_session_lost(reason="provider died")
+        self.assertEqual(outcome, ExternalExchangeOutcome.COMMITTED_USER_ONLY)
+        self.assertEqual(len(session.history), 1)
+        self.assertEqual(session.history[0].content, "hej")
+
+    async def test_e_provider_dies_after_spoken_assistant_prefix(self) -> None:
+        provider, _ = await self._started_provider()
+        session, router = self._router()
+        fake = provider._llm  # noqa: SLF001
+        await self._drain_one(provider, ReadinessChangedEvent)
+
+        router.begin_cloud_turn()
+        await fake.emit_user_transcription("tell me a story", final=True)
+        await fake.emit_assistant_text("Once upon a ti")
+        await self._pump_events(provider, router, 2)
+
+        router.set_spoken_prefix("Once upon a ti")  # playback layer's high-water mark
+        outcome = router.handle_cloud_session_lost(reason="provider died mid-speech")
+        self.assertEqual(outcome, ExternalExchangeOutcome.COMMITTED_EXCHANGE)
+        self.assertEqual(len(session.history), 2)
+        self.assertEqual(session.history[1].content, "Once upon a ti")
 
 
 class TestLifecycle(_FakeGeminiLiveServiceTestCase):
