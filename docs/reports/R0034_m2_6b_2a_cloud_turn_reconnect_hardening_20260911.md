@@ -335,12 +335,13 @@ acceptance.** Local voice stays frozen. No push.
 
 ## COMMIT HASH
 
-`<PENDING — filled by the immediately-following hash-record commit,
-R0026–R0033 pattern>`
+`c334ccd` — `fix(m2.6b.2a): mid-turn readiness loss, event map, reconnect
+hardening (R0034)`.
 
 Prior tip: `4547e59` (R0033 M2.6B.2 hash-record commit).
 
 ## GIT STATUS
 
-Branch `main`, ahead of `origin/main` (`505627f`) by this commit. Working
-tree clean after commit. Not pushed.
+Branch `main`, ahead of `origin/main` (`505627f`) by 7 commits
+(`986e65a`, `e4b84ec`, `eeb3724`, `4d85820`, `4547e59`, `c334ccd`, and this
+hash-record follow-up). Working tree clean after commit. Not pushed.
