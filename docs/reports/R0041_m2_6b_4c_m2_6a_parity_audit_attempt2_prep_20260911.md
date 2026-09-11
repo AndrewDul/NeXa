@@ -243,6 +243,8 @@ voice completely untouched this checkpoint.
 
 ## COMMIT HASHES
 
+audit/fix/report commit: `b6e8ebc`
+
 (recorded in the follow-up hash-record commit)
 
 ## GIT STATUS
