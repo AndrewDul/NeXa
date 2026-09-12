@@ -213,7 +213,9 @@ the actual, just-run numbers, not estimates).
 
 ## COMMIT HASHES
 
-Recorded in the follow-up hash-record commit.
+fix/report commit: `5b31cf5`
+
+(recorded in the follow-up hash-record commit)
 
 ## GIT STATUS
 
