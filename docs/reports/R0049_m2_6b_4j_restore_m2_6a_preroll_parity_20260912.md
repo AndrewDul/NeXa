@@ -344,7 +344,9 @@ verbatim, by an import from the cloud module.
 
 ## COMMIT HASHES
 
-Recorded in the follow-up hash-record commit.
+fix/report commit: `29ea4b6`
+
+(recorded in the follow-up hash-record commit)
 
 ## GIT STATUS
 
