@@ -373,8 +373,8 @@ or `src/nexa/stt` was modified.
 
 ## COMMIT HASHES
 
-Recorded in the follow-up "docs: record R0052 commit hash" commit,
-per this session's established two-commit convention.
+- `6804ace` — research: false self-barge-in / speaker-echo root cause
+  diagnostic (M2.6B.4M / R0052).
 
 ## GIT STATUS
 
