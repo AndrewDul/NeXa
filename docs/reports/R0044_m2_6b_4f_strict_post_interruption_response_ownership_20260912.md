@@ -329,6 +329,8 @@ voice completely untouched this checkpoint.
 
 ## COMMIT HASHES
 
+fix/report commit: `8ce7139`
+
 (recorded in the follow-up hash-record commit)
 
 ## GIT STATUS
