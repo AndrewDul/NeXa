@@ -160,7 +160,9 @@ empty.
 
 ## COMMIT HASHES
 
-Recorded in the follow-up hash-record commit.
+fix/report commit: `46251b8`
+
+(recorded in the follow-up hash-record commit)
 
 ## GIT STATUS
 
