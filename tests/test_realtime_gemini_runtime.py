@@ -776,7 +776,8 @@ class TestVadBridgeProcessorLifecycle(unittest.IsolatedAsyncioTestCase):
         lifecycle = _ResponseLifecycle(on_finished=lambda: None)
         bridge_cls = _make_vad_bridge_class(P)
         bridge = bridge_cls(
-            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router()
+            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router(),
+            preroll_ms=300,
         )
 
         pipeline = P["Pipeline"]([bridge])
@@ -859,7 +860,8 @@ class TestVadBridgeProcessorLifecycle(unittest.IsolatedAsyncioTestCase):
         lifecycle = _ResponseLifecycle(on_finished=lambda: None)
         bridge_cls = _make_vad_bridge_class(P)
         bridge = bridge_cls(
-            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router()
+            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router(),
+            preroll_ms=300,
         )
 
         # The bridge must never have stored RuntimeMetrics under the same
@@ -1305,7 +1307,8 @@ class TestVadBridgeQuarantine(unittest.IsolatedAsyncioTestCase):
         lifecycle = _ResponseLifecycle(on_finished=lambda: None)
         bridge_cls = _make_vad_bridge_class(P)
         bridge = bridge_cls(
-            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router()
+            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router(),
+            preroll_ms=300,
         )
 
         pipeline = P["Pipeline"]([bridge])
@@ -1384,7 +1387,8 @@ class TestVadBridgeQuarantine(unittest.IsolatedAsyncioTestCase):
         lifecycle = _ResponseLifecycle(on_finished=lambda: None)
         bridge_cls = _make_vad_bridge_class(P)
         bridge = bridge_cls(
-            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router()
+            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router(),
+            preroll_ms=300,
         )
         pipeline = P["Pipeline"]([bridge])
         worker = P["PipelineWorker"](
@@ -1427,6 +1431,195 @@ class TestVadBridgeQuarantine(unittest.IsolatedAsyncioTestCase):
 
         await runner.end(reason="test done")
         await asyncio.wait_for(run_task, timeout=5.0)
+
+
+@unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+class TestVadBridgePrerollParity(unittest.IsolatedAsyncioTestCase):
+    """M2.6B.4J (R0049) -- restores the accepted M2.6A property (audio
+    immediately BEFORE local VAD confirms speech start is included in the
+    user turn) via a bounded rolling PCM pre-buffer inside
+    ``_VadToProviderBridge`` (reusing ``nexa.stt.utterance_buffer.
+    UtteranceBuffer`` verbatim). Exercised through a REAL Pipecat
+    ``Pipeline``/``PipelineWorker`` (the same pattern
+    ``TestVadBridgeQuarantine`` already established), never a hand-rolled
+    simulation."""
+
+    class _StubProvider:
+        def __init__(self) -> None:
+            self.calls: list = []
+
+        async def user_turn_start(self) -> None:
+            self.calls.append("start")
+
+        async def send_user_audio(self, pcm: bytes) -> None:
+            self.calls.append(("audio", pcm))
+
+        async def user_turn_end(self) -> None:
+            self.calls.append("end")
+
+    async def _build(self, *, preroll_ms: int = 300):
+        P = _pipecat_hw_imports()
+        stub = self._StubProvider()
+        handle = _ProviderHandle(stub)
+        metrics = RuntimeMetrics()
+        lifecycle = _ResponseLifecycle(on_finished=lambda: None)
+        bridge_cls = _make_vad_bridge_class(P)
+        bridge = bridge_cls(
+            provider_handle=handle,
+            metrics=metrics,
+            lifecycle=lifecycle,
+            router=_fresh_router(),
+            preroll_ms=preroll_ms,
+        )
+        pipeline = P["Pipeline"]([bridge])
+        worker = P["PipelineWorker"](
+            pipeline,
+            params=P["PipelineParams"](audio_in_sample_rate=16000, audio_out_sample_rate=24000),
+            enable_rtvi=False,
+            idle_timeout_secs=None,
+        )
+        runner = P["WorkerRunner"]()
+        await runner.add_workers(worker)
+        run_task = asyncio.create_task(runner.run())
+        await asyncio.sleep(0.1)
+        return P, stub, handle, bridge, worker, runner, run_task
+
+    async def _teardown(self, runner, run_task) -> None:
+        await runner.end(reason="test done")
+        await asyncio.wait_for(run_task, timeout=5.0)
+
+    async def test_1_pcm_before_vad_start_is_retained_not_forwarded(self) -> None:
+        P, stub, _handle, bridge, worker, runner, run_task = await self._build()
+        await worker.queue_frames(
+            [P["InputAudioRawFrame"](audio=b"PREAMBLE", sample_rate=16000, num_channels=1)]
+        )
+        await asyncio.sleep(0.1)
+        self.assertEqual(stub.calls, [])  # never forwarded while no turn is open
+        self.assertIn(b"PREAMBLE", b"".join(bridge._pcm._ring))  # noqa: SLF001
+        await self._teardown(runner, run_task)
+
+    async def test_2_idle_rolling_buffer_stays_bounded(self) -> None:
+        preroll_ms = 20  # 20ms * 16000Hz * 2 bytes = 640 bytes capacity
+        P, stub, _handle, bridge, worker, runner, run_task = await self._build(
+            preroll_ms=preroll_ms
+        )
+        for _ in range(10):
+            await worker.queue_frames(
+                [P["InputAudioRawFrame"](audio=b"Q" * 200, sample_rate=16000, num_channels=1)]
+            )
+        await asyncio.sleep(0.2)
+        ring_bytes = sum(len(c) for c in bridge._pcm._ring)  # noqa: SLF001
+        cap_bytes = int(16000 * (preroll_ms / 1000) * 2)
+        # bounded (UtteranceBuffer's own trim never pops the LAST
+        # remaining chunk even if that alone exceeds the cap -- so the
+        # bound is the configured capacity plus at most one chunk).
+        self.assertLessEqual(ring_bytes, cap_bytes + 200)
+        self.assertLess(ring_bytes, 2000)  # nowhere near all 10 chunks (2000 bytes)
+        await self._teardown(runner, run_task)
+
+    async def test_3_4_5_vad_start_sends_start_then_preroll_then_live_in_order(
+        self,
+    ) -> None:
+        """Invariants 3, 4, 5: ``user_turn_start()`` fires, then the
+        COMPLETE retained preroll is sent as ONE call, then subsequent
+        live frames follow in the exact order received -- the preroll's
+        own bytes (``PREE``) never duplicated into the live stream too."""
+        P, stub, _handle, bridge, worker, runner, run_task = await self._build(preroll_ms=300)
+        await worker.queue_frames(
+            [P["InputAudioRawFrame"](audio=b"PREE", sample_rate=16000, num_channels=1)]
+        )
+        await asyncio.sleep(0.05)
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](audio=b"LIVE1", sample_rate=16000, num_channels=1),
+                P["InputAudioRawFrame"](audio=b"LIVE2", sample_rate=16000, num_channels=1),
+                P["VADUserStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.2)
+        self.assertEqual(
+            stub.calls,
+            ["start", ("audio", b"PREE"), ("audio", b"LIVE1"), ("audio", b"LIVE2"), "end"],
+        )
+        await self._teardown(runner, run_task)
+
+    async def test_6_normal_turn_receives_complete_preroll_plus_live_pcm(self) -> None:
+        """Invariant 6: the RAW MIC contract — ``[pre-VAD onset][post-VAD
+        speech]`` — reaches the provider exactly once, in order, with no
+        gap and no reordering, as one concatenated stream."""
+        P, stub, _handle, bridge, worker, runner, run_task = await self._build(preroll_ms=300)
+        await worker.queue_frames(
+            [P["InputAudioRawFrame"](audio=b"ONSET", sample_rate=16000, num_channels=1)]
+        )
+        await asyncio.sleep(0.05)
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](audio=b"REST", sample_rate=16000, num_channels=1),
+                P["VADUserStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.2)
+        delivered = b"".join(c[1] for c in stub.calls if isinstance(c, tuple))
+        self.assertEqual(delivered, b"ONSETREST")
+        await self._teardown(runner, run_task)
+
+    async def test_7_8_confirmed_bargein_replay_includes_preroll_exactly_once(
+        self,
+    ) -> None:
+        """Invariants 7 + 8, the charter's own worked example: raw
+        interrupting speech ``[PREE][POST]`` (PREE before VAD START) —
+        after a confirmed barge-in (quarantine), the fresh provider must
+        receive exactly ``[PREEPOST]`` once. R0045's own
+        ``sealed_utterances`` FIFO is now seeded directly from this SAME
+        preroll -- the ACTIVE utterance buffer IS the pre-buffer once
+        ``mark_speech_started()`` transfers ownership."""
+        P, stub, handle, bridge, worker, runner, run_task = await self._build(preroll_ms=300)
+        await worker.queue_frames(
+            [P["InputAudioRawFrame"](audio=b"PREE", sample_rate=16000, num_channels=1)]
+        )
+        await asyncio.sleep(0.05)
+        handle.quarantined = True  # exactly what _on_confirmed does synchronously
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](audio=b"POST", sample_rate=16000, num_channels=1),
+                P["VADUserStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.2)
+        self.assertEqual(stub.calls, [])  # never sent live to the doomed provider
+        self.assertEqual(handle.sealed_utterances, [b"PREEPOST"])  # exactly once
+        await self._teardown(runner, run_task)
+
+    async def test_11_two_consecutive_turns_do_not_leak_preroll_between_them(
+        self,
+    ) -> None:
+        """Invariant 11: no stale PCM from utterance N may prefix
+        utterance N+1 — turn 2 starts immediately after turn 1's own
+        stop, with no idle audio fed in between, so its own preroll must
+        be empty."""
+        P, stub, _handle, bridge, worker, runner, run_task = await self._build(preroll_ms=300)
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](audio=b"ONE1", sample_rate=16000, num_channels=1),
+                P["VADUserStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.1)
+        stub.calls.clear()
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](audio=b"TWO1", sample_rate=16000, num_channels=1),
+                P["VADUserStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.1)
+        self.assertEqual(stub.calls, ["start", ("audio", b"TWO1"), "end"])
+        await self._teardown(runner, run_task)
 
 
 @unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
@@ -2086,6 +2279,76 @@ class TestNoLocalLidInCloudRuntime(unittest.TestCase):
         self.assertFalse(hasattr(runtime, "language_resolver"))
         self.assertFalse(hasattr(runtime, "pending_utterance_audio"))
 
+    @unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+    def test_bridge_preroll_buffer_never_constructs_any_lid_class(self) -> None:
+        """M2.6B.4J (R0049) -- re-verified after this checkpoint added
+        ``from ...stt.utterance_buffer import UtteranceBuffer`` (a
+        pure-Python, zero-cost ring buffer, confirmed by direct source
+        read of ``nexa/stt/__init__.py`` to load no whisper.cpp binding,
+        spawn no subprocess, and touch no filesystem at import time).
+        ``dry=True`` never reaches bridge construction at all (it returns
+        before the hardware pipeline is built), so this constructs the
+        REAL bridge directly -- the only path that actually imports and
+        uses ``UtteranceBuffer`` -- and proves NONE of
+        ``WhisperCppLanguageDetector``/``WhisperCppTranscriber``/
+        ``BilingualSpeechTranscriber`` is ever constructed by it."""
+        try:
+            import nexa.stt as stt_module
+        except Exception:  # pragma: no cover - optional dependency
+            self.skipTest("nexa.stt not importable in this environment")
+
+        from unittest import mock
+
+        construct_calls: list[tuple[str, object]] = []
+
+        def _spy(name):
+            original = getattr(stt_module, name).__init__
+
+            def _init(self, *args, **kwargs):
+                construct_calls.append((name, self))
+                return original(self, *args, **kwargs)
+
+            return _init
+
+        with (
+            mock.patch.object(
+                stt_module.WhisperCppLanguageDetector,
+                "__init__",
+                _spy("WhisperCppLanguageDetector"),
+            ),
+            mock.patch.object(
+                stt_module.WhisperCppTranscriber, "__init__", _spy("WhisperCppTranscriber")
+            ),
+            mock.patch.object(
+                stt_module.BilingualSpeechTranscriber,
+                "__init__",
+                _spy("BilingualSpeechTranscriber"),
+            ),
+        ):
+            P = _pipecat_hw_imports()
+
+            class _StubProvider:
+                async def user_turn_start(self) -> None:
+                    pass
+
+                async def send_user_audio(self, pcm: bytes) -> None:
+                    pass
+
+                async def user_turn_end(self) -> None:
+                    pass
+
+            handle = _ProviderHandle(_StubProvider())
+            bridge_cls = _make_vad_bridge_class(P)
+            bridge_cls(
+                provider_handle=handle,
+                metrics=RuntimeMetrics(),
+                lifecycle=_ResponseLifecycle(on_finished=lambda: None),
+                router=_fresh_router(),
+                preroll_ms=300,
+            )
+
+        self.assertEqual(construct_calls, [])
+
 
 @unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
 class TestNativeOnlyLanguageDispatch(_FakeGeminiLiveServiceTestCase):
@@ -2289,7 +2552,11 @@ class TestProductionCanonicalTurnLifecycle(unittest.IsolatedAsyncioTestCase):
         router = ConversationRouter(session, policy=ConversationPolicy.CLOUD_PREFERRED)
         bridge_cls = _make_vad_bridge_class(P)
         bridge = bridge_cls(
-            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=router
+            provider_handle=handle,
+            metrics=metrics,
+            lifecycle=lifecycle,
+            router=router,
+            preroll_ms=300,
         )
         pipeline = P["Pipeline"]([bridge])
         worker = P["PipelineWorker"](

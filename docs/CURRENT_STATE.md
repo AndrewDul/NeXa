@@ -144,7 +144,55 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0048_m2_6b_4i_real_audio_ingress_parity_audit_20260912.md`
+- **Latest report:** `docs/reports/R0049_m2_6b_4j_restore_m2_6a_preroll_parity_20260912.md`
+  (**M2.6B.4J — restore accepted M2.6A user-audio preroll parity,
+  2026-09-12.** After R0048's diagnostic tool, the operator ran the REAL
+  reSpeaker capture: 10 utterances, every RAW WAV contained the complete
+  spoken phrase, every PRODUCTION_FORWARDED WAV was audibly clipped at
+  the start — "Czarna dziura" forwarded as "dziura"/"arna dziura,"
+  "Czarna dziura powstaje" forwarded as "dziura powstaje" — a fourth,
+  independent, real-hardware line of evidence on top of R0048's
+  source-read + synthetic-bridge-test + mechanical-derivation trio (R0048
+  amended with this follow-up). **Fix: Option A** — a bounded rolling
+  PCM pre-buffer added to `_VadToProviderBridge`, reusing
+  `nexa.stt.utterance_buffer.UtteranceBuffer` VERBATIM (unmodified — the
+  existing, already-tested, LOCAL-VOICE-proven mechanism `nexa.voice.
+  runtime` already depends on for the identical M2.2 pre-roll
+  requirement) rather than reimplementing an equivalent buffer; `git diff
+  --stat -- src/nexa/stt` is empty. Capacity derived, never hardcoded:
+  `(vad_analyzer.params.start_secs + AUTOSIZED_PREROLL_MARGIN_SECS) *
+  1000` — the SAME `0.1s` margin Pipecat's own `GeminiLiveLLMService`
+  uses, evaluating to 300ms with production's unmodified `start_secs=0.2`
+  — the SAME effective preroll the accepted M2.6A spike had. One
+  coherent buffer (`self._pcm`) now serves BOTH the pre-roll-while-idle
+  role and R0045's own active-utterance-accumulation role via
+  `UtteranceBuffer`'s existing ring→linear/idempotent-start-stop state
+  machine — no more separate, overlapping-ownership fields. R0045's
+  `_replace_provider_after_bargein`/quarantine/`sealed_utterances` logic
+  needed ZERO changes (it already receives the correct, complete PCM
+  once the bridge seeds it correctly) — the charter's own worked example
+  (`[PREE][POST]` → fresh provider receives `[PREEPOST]` exactly once)
+  is now a literal passing test. R0046 canonical-turn-ownership logic
+  also needed ZERO changes (`git diff` confirms zero lines touched in
+  `router.py`/`turn.py`). All 18 charter test requirements proven,
+  including a NEW test confirming this checkpoint's new
+  `nexa.stt.utterance_buffer` import still constructs zero
+  `WhisperCppLanguageDetector`/`WhisperCppTranscriber`/
+  `BilingualSpeechTranscriber` instances (R0042's zero-LID guarantee
+  re-verified, not merely assumed, after adding a cross-package import).
+  A deterministic, no-Gemini, synthetic-PCM A/B proof (the exact R0048
+  test that once proved clipping, now proving its absence) — PASS.
+  **Real-hardware A/B post-fix capture: PENDING, not fabricated** — the
+  operator must re-run the SAME, unchanged probe command and confirm by
+  listening. +9 new tests (`TestVadBridgePrerollParity`) + 1 new zero-LID
+  test + 1 rewritten post-fix parity test — **981 tests total, OK
+  (skipped=7)**, 0 regressions (all R0044/R0045/R0046 tests re-verified
+  green, unmodified); `ruff`/`pip check`/`git diff --check` all clean;
+  local voice AND `src/nexa/stt` both completely untouched (empty diff).
+  **Hardware acceptance remains FAIL; `M2.6B` remains IN PROGRESS** —
+  pending the operator's real post-fix hardware capture before the next
+  live Gemini attempt. Not pushed.)
+- **Prior report:** `docs/reports/R0048_m2_6b_4i_real_audio_ingress_parity_audit_20260912.md`
   (**M2.6B.4I — accepted M2.6A vs production real audio ingress parity
   audit, 2026-09-12, DIAGNOSTIC ONLY.** Real Attempt #3 hardware run: the
   operator's first utterance, "czarna dziura", was misheard as "Czorna

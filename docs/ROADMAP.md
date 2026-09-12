@@ -929,6 +929,40 @@ unpaid-quota data is used to improve Google products.
     remains FAIL; `M2.6B` remains IN PROGRESS** — the operator can now
     run the real 10-take capture command and listen to the WAV pairs
     before R0049 picks a fix.
+  - **M2.6B.4J — restore accepted M2.6A user-audio preroll parity**
+    (`R0049`, 2026-09-12). The operator's real R0048 hardware capture
+    confirmed the clipping hypothesis on real reSpeaker audio: every
+    PRODUCTION_FORWARDED WAV was audibly clipped at the start ("Czarna
+    dziura" forwarded as "dziura"/"arna dziura"). Fix: Option A — a
+    bounded rolling PCM pre-buffer added to `_VadToProviderBridge`,
+    reusing `nexa.stt.utterance_buffer.UtteranceBuffer` VERBATIM
+    (unmodified — the same, already-tested, LOCAL-VOICE-proven mechanism
+    `nexa.voice.runtime` already depends on) rather than reimplementing
+    an equivalent buffer; `git diff --stat -- src/nexa/stt` is empty.
+    Capacity derived, never hardcoded, from the ACTUAL constructed VAD
+    analyzer's own `start_secs` plus Pipecat's own documented 0.1s
+    margin (300ms with production's unmodified `start_secs=0.2` — the
+    same effective preroll M2.6A had). One coherent buffer now serves
+    both the pre-roll-while-idle role and R0045's own
+    active-utterance-accumulation role. R0045's provider-replacement
+    logic and R0046's canonical-turn-ownership logic needed ZERO code
+    changes — both already correctly receive/gate on whatever PCM the
+    bridge now correctly seeds. The charter's own worked barge-in
+    example (`[PREE][POST]` → fresh provider receives `[PREEPOST]`
+    exactly once) is now a literal passing test. All 18 charter test
+    requirements proven, including a new test re-verifying R0042's
+    zero-LID guarantee after this checkpoint's new cross-package import.
+    Deterministic, no-Gemini synthetic-PCM A/B proof: PASS (the exact
+    R0048 test that once proved clipping now proves its absence).
+    **Real-hardware post-fix A/B capture: PENDING** — not fabricated;
+    the operator must re-run the same, unchanged probe command and
+    confirm by listening. +9 new tests, +1 zero-LID test, 1 test
+    rewritten for the post-fix assertion — **981 tests total, OK
+    (skipped=7)**, 0 regressions; `ruff`/`pip check`/`git diff --check`
+    all clean; local voice AND `src/nexa/stt` both untouched. **Hardware
+    acceptance remains FAIL; `M2.6B` remains IN PROGRESS** — pending the
+    operator's real post-fix hardware capture before the next live
+    Gemini attempt.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

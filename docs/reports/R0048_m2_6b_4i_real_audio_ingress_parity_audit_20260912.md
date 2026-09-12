@@ -10,6 +10,64 @@ this checkpoint** (per the charter: R0048 = evidence, R0049 = fix). No
 Gemini call, no hardware, not pushed. **Hardware acceptance remains FAIL.
 `M2.6B` remains IN PROGRESS.**
 
+## OPERATOR REAL HARDWARE FOLLOW-UP — 2026-09-12
+
+After this checkpoint's own diagnostic tool was built and validated
+offline, the operator ran it for real, on the real reSpeaker, with no
+Gemini involved:
+
+```
+.venv/bin/python \
+docs/research/m2_6_cloud_realtime_voice/m2_6b4i_audio_ingress_parity_probe.py
+```
+
+**10 utterances captured successfully** — the terminal showed all 10 VAD
+turns correctly. Summary JSON:
+`docs/research/m2_6_cloud_realtime_voice/ingress_captures/
+ingress_capture_20260912T184419Z.json` (git-ignored, per this
+checkpoint's own `.gitignore` entry — not committed; read and summarized
+here). Every one of the 10 entries shows the SAME consistent pattern:
+`ms_raw_audio_before_first_forwarded ≈ 500 ms` (range 500.2–500.5 ms
+across the 10 takes), `onset_gap_vad_start_to_first_forwarded_s ≈ 0.019 s`
+(forwarding begins almost immediately once local VAD confirms — the
+~19 ms is real audio-chunk granularity, not diagnostic overhead), and
+`postroll_never_forwarded_s ≈ 0.52 s` (the trailing raw-capture context
+window, present by the diagnostic's own design, not evidence of any
+output-side loss).
+
+**IMPORTANT, and stated exactly as instructed:** the ~500 ms figure is
+**not** to be read as "500 ms of speech was clipped." It is the
+diagnostic's own deliberately-generous `PRE_CONTEXT_SECS = 0.5` raw
+capture window (see REAL HARDWARE CAPTURE METHOD, below) — chosen so the
+raw WAV would comfortably contain whatever was clipped, with margin. The
+source-backed speech-start delay remains `VAD_START_SECS = 0.2 s`
+(Pipecat's own default). The evidence that matters is not the ~500 ms
+number — it is what the operator actually **heard** inside that window.
+
+**The operator listened to RAW vs PRODUCTION_FORWARDED WAV pairs
+directly.** Real result: RAW files contain the complete spoken phrase in
+every case. PRODUCTION_FORWARDED files are audibly clipped at the start.
+For "Czarna dziura," the operator specifically heard forwarded captures
+beginning at **"dziura"** or **"arna dziura"** — never the complete
+"Czarna dziura" that RAW always contained. For "Czarna dziura powstaje,"
+a forwarded capture could begin at **"dziura powstaje"** while RAW
+contained the complete phrase.
+
+This is now confirmed by **real reSpeaker + real operator speech + real
+production VAD/bridge path + direct human listening of RAW vs FORWARDED
+WAVs** — a fourth, independent line of evidence on top of the three
+already established in this report (installed-source read, synthetic
+real-bridge test, and the mechanical VAD_START_SECS derivation). This
+materially raises confidence that the Attempt #3 "Czorna Jura"
+misrecognition was caused, at least in significant part, by onset
+clipping — moving ROOT CAUSE CONFIDENCE for the clipping mechanism itself
+from "high, mechanically proven" to "high, mechanically AND empirically
+proven on real hardware with real speech," while the mishearing's exact
+attribution (below) remains honestly at MEDIUM (a single real-world
+anecdote; no controlled Gemini A/B was run). No Gemini was used for this
+follow-up capture. **See `docs/reports/R0049_...md` for the production
+fix this evidence justified and implemented.**
+
 ## ATTEMPT #3 OBSERVED SYMPTOM
 
 The operator's first utterance of the session, intended as "czarna

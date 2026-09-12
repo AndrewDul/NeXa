@@ -161,17 +161,22 @@ class TestIngressCaptureWindowing(unittest.TestCase):
 
 
 @unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
-class TestRealProcessorChainClipsPreVadStartAudio(unittest.IsolatedAsyncioTestCase):
-    """Drives synthetic PCM + hand-injected VAD marker frames through the
-    REAL processor chain (real ``VADProcessor``/``BargeInController``/
-    ``_VadToProviderBridge`` construction, not a reimplementation) and
-    proves the exact hypothesis under test: audio arriving before
-    ``VADUserStartedSpeakingFrame`` is captured in the raw stream but
-    NEVER reaches the (fake) provider's ``send_user_audio()`` — i.e. the
-    production-forwarded capture is missing exactly the pre-VAD-start
-    window that the raw capture retains."""
+class TestRealProcessorChainPreVadStartAudioParity(unittest.IsolatedAsyncioTestCase):
+    """M2.6B.4J (R0049) POST-FIX A/B PROOF. Drives synthetic PCM +
+    hand-injected VAD marker frames through the REAL processor chain
+    (real ``VADProcessor``/``BargeInController``/``_VadToProviderBridge``
+    construction, not a reimplementation).
 
-    async def test_bridge_forwards_nothing_before_vad_start_but_raw_tap_keeps_it(
+    BEFORE R0049 (the exact test this replaces, from R0048): the
+    production-forwarded capture was missing the pre-VAD-start window the
+    raw capture retained -- proving the clipping hypothesis.
+
+    AFTER R0049 (this test): the production-forwarded capture now
+    contains that SAME pre-VAD-start window too -- exactly once, in
+    order, ahead of the live audio -- proving the fix restores parity
+    without duplicating or reordering anything."""
+
+    async def test_bridge_now_forwards_the_preroll_before_vad_start_exactly_once(
         self,
     ) -> None:
         P = _pipecat_hw_imports()
@@ -181,6 +186,7 @@ class TestRealProcessorChainClipsPreVadStartAudio(unittest.IsolatedAsyncioTestCa
             capture = probe.IngressCapture(sample_rate=16000, out_dir=tmp)
             processors, meta = probe.build_processor_chain(capture=capture)
             self.assertEqual(meta["vad_start_secs"], 0.2)  # unmodified Pipecat default
+            self.assertEqual(meta["preroll_ms"], 300)  # (0.2 + 0.1) * 1000
 
             pipeline = P["Pipeline"](processors)
             worker = P["PipelineWorker"](
@@ -212,14 +218,14 @@ class TestRealProcessorChainClipsPreVadStartAudio(unittest.IsolatedAsyncioTestCa
             with wave.open(str(tmp / derived["forwarded_wav"]), "rb") as wf:
                 forwarded_pcm = wf.readframes(wf.getnframes())
 
-            # the raw capture retains the pre-VAD-start onset audio...
+            # the raw capture retains the pre-VAD-start onset audio
+            # (unchanged from R0048)...
             self.assertIn(pre_onset, raw_pcm)
-            # ...but production's own forwarded stream NEVER received it --
-            # the real _VadToProviderBridge only forwards audio once its
-            # own _turn_open flag is true (set by VADUserStartedSpeakingFrame).
-            self.assertNotIn(pre_onset, forwarded_pcm)
-            self.assertEqual(forwarded_pcm, spoken)
             self.assertIn(spoken, raw_pcm)
+            # ...and, AFTER R0049, so does the production-forwarded
+            # stream -- exactly once, preroll first, then the live
+            # audio, never duplicated or reordered.
+            self.assertEqual(forwarded_pcm, pre_onset + spoken)
 
             await runner.end(reason="test done")
             await asyncio.wait_for(run_task, timeout=5.0)

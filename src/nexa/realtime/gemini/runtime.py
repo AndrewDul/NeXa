@@ -273,6 +273,77 @@ Audio ownership (R0045's active-utterance PCM buffer) and canonical
 conversation-turn ownership (this section) are, and remain, distinct
 mechanisms.
 
+M2.6B.4J (R0049) — **R0048's real-hardware audio ingress parity audit
+proved current production clips the first ``VAD_START_SECS`` (Pipecat's
+own unmodified 0.2 s default) of every utterance**, both mechanically
+(the installed ``pipecat`` source: ``VADProcessor`` forwards every frame
+downstream before running VAD detection, so nothing is dropped upstream
+of this module; ``_VadToProviderBridge`` itself only ever called
+``send_user_audio()`` once ``VADUserStartedSpeakingFrame`` had already
+fired) and empirically, on real reSpeaker hardware with real operator
+speech (`docs/reports/R0048_...md`'s OPERATOR REAL HARDWARE FOLLOW-UP:
+"Czarna dziura" arrived at the provider as "arna dziura"/"dziura"). The
+accepted M2.6A spike never had this problem because its own Silero VAD
+analyzer lived in the SAME Pipecat pipeline as ``GeminiLiveLLMService``,
+whose own built-in preroll buffer (``user_audio_preroll_secs``) was
+therefore continuously fed and auto-sized (to ``start_secs + 0.1 s``, via
+a ``SpeechControlParamsFrame`` only a co-located ``VADController``
+broadcasts) — current production's topology (VAD in a separate hardware
+pipeline, turn boundaries delivered to the provider via explicit method
+calls) left that SAME mechanism inside ``GeminiLiveLLMService``
+permanently starved, never reimplemented, never removed — just never fed.
+
+**Fix: `_VadToProviderBridge` now owns a bounded rolling PCM
+pre-buffer**, restoring the exact M2.6A property (audio immediately
+BEFORE local VAD confirms speech start is included in the user turn) with
+the smallest possible change — no provider-boundary redesign, no
+continuous-idle-audio streaming to Gemini, no second VAD instance, no
+change to ``start_secs``/``stop_secs``/confidence/barge-in thresholds.
+Reuses ``nexa.stt.utterance_buffer.UtteranceBuffer`` VERBATIM (unmodified
+— the existing, already-tested, LOCAL-VOICE-proven "ring while idle,
+linear buffer while capturing, exactly-once idempotent
+start/stop" mechanism `nexa.voice.runtime` already depends on for the
+SAME reason: M2.2's own pre-roll requirement) rather than reimplementing
+an equivalent ring buffer — this import touches only a pure-Python,
+zero-cost class (no whisper.cpp binding, no subprocess, no filesystem
+access at import time — confirmed by direct source read of
+``nexa/stt/__init__.py``'s own imports) and constructs no
+``WhisperCppLanguageDetector``/``WhisperCppTranscriber``/
+``BilingualSpeechTranscriber`` instance anywhere; R0042's actual,
+mechanically-enforced guarantee ("`build_gemini_voice_runtime` must never
+CONSTRUCT `WhisperCppLanguageDetector`" — see
+``TestNoLocalLidInCloudRuntime``) is unaffected and re-verified. The
+pre-buffer's capacity is derived, never hardcoded: ``AUTOSIZED_PREROLL_MARGIN_SECS
+= 0.1`` (mirrors Pipecat's own ``AUTOSIZED_USER_AUDIO_PREROLL_MARGIN_SECS``,
+same value, same source) plus the ACTUAL constructed
+``vad_analyzer.params.start_secs`` (never a hardcoded ``0.2``), times
+``INPUT_SAMPLE_RATE_HZ`` — so it always tracks whatever VAD config is
+actually active, self-consistently.
+
+``_VadToProviderBridge`` no longer maintains its own separate
+``_utterance_buffer`` bytearray at all: ``UtteranceBuffer`` now serves
+BOTH roles through its own existing, unmodified state machine —
+``append_audio()`` routes every frame to its bounded ring while idle, or
+to its linear per-utterance buffer while "capturing" (i.e. R0045's own
+active-utterance accumulation, needed for exact-once barge-in replay,
+now IS the same buffer the preroll seeds). ``mark_speech_started()``
+transfers ring ownership into that linear buffer atomically — "one
+coherent source of truth," never two buffers with overlapping ownership.
+On ``VADUserStartedSpeakingFrame``: the ring's current bytes (the
+preroll — already containing the very frame that triggered VAD
+confirmation, since ``VADProcessor`` forwards it before emitting the
+marker) are read, ``mark_speech_started()`` transfers them into the
+linear buffer, the canonical turn opens exactly as R0046 already
+requires, then (if not quarantined) ``user_turn_start()`` is called
+followed by exactly ONE ``send_user_audio(preroll)`` call for that
+retained prefix — before any further live frame. On
+``VADUserStoppedSpeakingFrame``: ``mark_speech_stopped()`` returns the
+COMPLETE utterance (preroll + every live frame since) idempotently
+(``b""`` on a duplicate/spurious stop) — R0045's sealed-utterance replay
+path is completely unchanged; it already receives the FULL, now-correct
+PCM without any modification to ``_replace_provider_after_bargein``
+itself.
+
 Construction only (``dry=True``): builds every object EXCEPT the audio
 device / network — no ``pyaudio.PyAudio()``, no device index lookup, no
 Gemini connection. This module has NOT been validated against real
@@ -290,6 +361,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...stt.utterance_buffer import UtteranceBuffer
 from ...voice.aec import AecReferenceHealth
 from ...voice.bargein import BargeInController, InterruptContext
 from ...voice.config import LocalAudioConfig
@@ -497,6 +569,22 @@ class _ResponseLifecycle:
 #: Under-crediting is acceptable; crediting unspoken words is not.
 CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX = ""
 
+#: M2.6B.4J (R0049) — mirrors Pipecat's own
+#: ``AUTOSIZED_USER_AUDIO_PREROLL_MARGIN_SECS`` (``pipecat/services/google/
+#: gemini_live/llm.py``, same value, same source: a cushion added on top of
+#: the VAD's own ``start_secs`` "to absorb small timing slop between
+#: start_secs and the audio actually clipped, and to give a bit of extra
+#: audio context for the model"). Used here to size
+#: ``_VadToProviderBridge``'s own rolling PCM pre-buffer to
+#: ``vad_analyzer.params.start_secs + AUTOSIZED_PREROLL_MARGIN_SECS`` — the
+#: SAME effective preroll duration (~0.3 s, with production's unmodified
+#: ``start_secs=0.2``) the accepted M2.6A spike had, restored, since
+#: Gemini's own preroll mechanism (present, unmodified, inside
+#: ``GeminiLiveLLMService``) was structurally starved by this module's
+#: separate-pipeline topology (see the module docstring's M2.6B.4J
+#: section) — never a hardcoded byte count.
+AUTOSIZED_PREROLL_MARGIN_SECS = 0.1
+
 class _ResponseGenerationGuard:
     """M2.6B.4 (R0038 FAILURE 2) — the single source of truth for which
     local response generation may still produce audible output.
@@ -603,6 +691,7 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
             metrics: RuntimeMetrics,
             lifecycle: _ResponseLifecycle,
             router: ConversationRouter,
+            preroll_ms: int,
         ) -> None:
             super().__init__()
             self._handle = provider_handle
@@ -625,23 +714,39 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
             # every NeXa-owned field on a Pipecat FrameProcessor subclass.
             self._nexa_metrics = metrics
             self._lifecycle = lifecycle
-            self._turn_open = False
-            # M2.6B.4G (R0045) -- the ACTIVE utterance buffer: a parallel,
-            # in-memory copy of the CURRENTLY open local utterance's PCM,
-            # maintained UNCONDITIONALLY (cheap `bytearray.extend()`, no
-            # I/O -- never delays or alters the live send below, so a
-            # normal, non-interrupted turn incurs zero added latency).
-            # Exists SOLELY to support exact-once replay to a freshly
-            # started provider after a confirmed barge-in -- this is NOT
-            # local language-ID (R0042's zero-LID decision is unchanged;
-            # nothing here ever runs an inference).
-            self._utterance_buffer = bytearray()
+            # M2.6B.4G (R0045) + M2.6B.4J (R0049) -- ONE coherent PCM
+            # buffer serves BOTH roles that used to be two separate,
+            # overlapping-ownership fields: a bounded rolling pre-roll
+            # ring while NO local turn is open, and the ACTIVE utterance
+            # accumulation (R0045's own exact-once-barge-in-replay need)
+            # while one is. ``UtteranceBuffer`` (``nexa.stt``, unmodified,
+            # already the LOCAL-VOICE-proven mechanism for the SAME M2.2
+            # pre-roll requirement) already implements exactly this
+            # ring-while-idle / linear-while-capturing state machine, with
+            # idempotent start/stop -- reused verbatim rather than
+            # reimplementing an equivalent buffer. Its own internal
+            # ``append_audio()`` call is UNCONDITIONAL and cheap (no I/O,
+            # no inference -- NOT local language-ID; R0042's zero-LID
+            # decision is unaffected, see the module docstring's M2.6B.4J
+            # section for why this import is zero-cost), so a normal,
+            # non-interrupted turn incurs zero added latency.
+            self._pcm = UtteranceBuffer(sample_rate=INPUT_SAMPLE_RATE_HZ, pre_roll_ms=preroll_ms)
 
         async def process_frame(self, frame: Any, direction: Any) -> None:
             await super().process_frame(frame, direction)
             if isinstance(frame, P["VADUserStartedSpeakingFrame"]):
-                self._turn_open = True
-                self._utterance_buffer = bytearray()
+                # M2.6B.4J (R0049) -- read the retained pre-roll BEFORE
+                # ``mark_speech_started()`` transfers its ownership into
+                # the linear (capturing) buffer. Because ``VADProcessor``
+                # forwards every ``InputAudioRawFrame`` downstream BEFORE
+                # running VAD detection on it (installed source,
+                # confirmed in R0048), the very frame whose arrival
+                # finally confirmed speech start is already IN this ring
+                # by the time this marker frame reaches us -- restoring
+                # the accepted M2.6A property that audio immediately
+                # before local VAD confirmation is never lost.
+                preroll = b"".join(self._pcm._ring)  # noqa: SLF001 - read-only snapshot
+                self._pcm.mark_speech_started()
                 self._nexa_metrics.local_vad_start()
                 # M2.6B.4H (R0046) -- open exactly one canonical cloud turn
                 # for a GENUINE new local user turn. ``has_turn_awaiting_
@@ -663,26 +768,39 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
                     self._router.begin_cloud_turn()
                 if not self._handle.quarantined:
                     await self._handle.current.user_turn_start()
-            elif isinstance(frame, P["InputAudioRawFrame"]) and self._turn_open:
-                self._utterance_buffer.extend(frame.audio)
-                if not self._handle.quarantined:
+                    # M2.6B.4J (R0049) -- inject the retained prefix
+                    # exactly ONCE, before any further live frame, in one
+                    # call (never per-byte, never re-chunked).
+                    if preroll:
+                        await self._handle.current.send_user_audio(preroll)
+            elif isinstance(frame, P["InputAudioRawFrame"]):
+                # Unconditional: routes to the ring (idle) or the linear
+                # capture buffer (open turn) via ``UtteranceBuffer``'s own
+                # ``is_capturing`` state -- never a separate NeXa-owned
+                # flag that could drift from it.
+                self._pcm.append_audio(frame.audio)
+                if self._pcm.is_capturing and not self._handle.quarantined:
                     await self._handle.current.send_user_audio(frame.audio)
             elif isinstance(frame, P["VADUserStoppedSpeakingFrame"]):
-                self._turn_open = False
                 self._nexa_metrics.local_vad_eot()
+                # M2.6B.4J (R0049) -- the COMPLETE utterance (preroll +
+                # every live frame since), idempotent (``b""`` on a
+                # duplicate/spurious stop -- never leaks a previous
+                # turn's audio forward).
+                complete_utterance = self._pcm.mark_speech_stopped()
                 if self._handle.quarantined:
                     # M2.6B.4G (R0045) -- this utterance was never sent
                     # live past the point quarantine began (it may have
                     # begun BEFORE quarantine started -- the prefix
                     # already reached the OLD, doomed provider live and
                     # is harmless there, since its output is never read
-                    # again). Hand the COMPLETE sealed copy to the
-                    # replacement flow instead of closing a turn on
-                    # `current` (which, while quarantined, may still be
-                    # the doomed OLD provider, or a not-yet-ready NEW one
-                    # that must receive this as ONE coherent replay, never
-                    # a live partial send).
-                    self._handle.sealed_utterances.append(bytes(self._utterance_buffer))
+                    # again). Hand the COMPLETE sealed copy (preroll
+                    # included) to the replacement flow instead of
+                    # closing a turn on `current` (which, while
+                    # quarantined, may still be the doomed OLD provider,
+                    # or a not-yet-ready NEW one that must receive this
+                    # as ONE coherent replay, never a live partial send).
+                    self._handle.sealed_utterances.append(complete_utterance)
                     self._handle.sealed_utterance_ready.set()
                 else:
                     await self._handle.current.user_turn_end()
@@ -1517,12 +1635,20 @@ def build_gemini_voice_runtime(
         sample_rate=INPUT_SAMPLE_RATE_HZ, params=P["VADParams"](stop_secs=0.5)
     )
     vad_processor = P["VADProcessor"](vad_analyzer=vad_analyzer)
+    # M2.6B.4J (R0049) -- derived, never hardcoded: the SAME effective
+    # preroll the accepted M2.6A spike had (start_secs + the source-backed
+    # 0.1s margin), from the ACTUAL constructed VAD analyzer's own
+    # start_secs -- always self-consistent even if that ever changes.
+    preroll_ms = int(
+        (vad_analyzer.params.start_secs + AUTOSIZED_PREROLL_MARGIN_SECS) * 1000
+    )
     bridge_cls = _make_vad_bridge_class(P)
     bridge = bridge_cls(
         provider_handle=provider_handle,
         metrics=metrics,
         lifecycle=lifecycle,
         router=router,
+        preroll_ms=preroll_ms,
     )
     aec_feeder = AecReferenceFeeder(
         aec_health=aec_health, sample_rate=OUTPUT_SAMPLE_RATE_HZ, channels=1

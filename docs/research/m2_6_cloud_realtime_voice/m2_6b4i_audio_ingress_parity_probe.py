@@ -368,6 +368,7 @@ def build_processor_chain(*, capture: IngressCapture) -> tuple[list[Any], dict[s
     """
     from nexa.conversation.session import ConversationSession
     from nexa.realtime.gemini.runtime import (
+        AUTOSIZED_PREROLL_MARGIN_SECS,
         RuntimeMetrics,
         _make_vad_bridge_class,
         _ProviderHandle,
@@ -390,11 +391,22 @@ def build_processor_chain(*, capture: IngressCapture) -> tuple[list[Any], dict[s
     provider_handle = _ProviderHandle(stub)
 
     P = _pipecat_hw_imports()
+    # M2.6B.4J (R0049) -- constructed HERE (not below) so the bridge's own
+    # preroll capacity derives from THIS SAME analyzer instance, exactly
+    # mirroring build_gemini_voice_runtime's own derivation.
+    vad_analyzer = P["SileroVADAnalyzer"](
+        sample_rate=INPUT_SAMPLE_RATE_HZ, params=P["VADParams"](stop_secs=0.5)
+    )
+    preroll_ms = int((vad_analyzer.params.start_secs + AUTOSIZED_PREROLL_MARGIN_SECS) * 1000)
     bridge_cls = _make_vad_bridge_class(P)
     metrics = RuntimeMetrics()
     lifecycle = _ResponseLifecycle(on_finished=lambda: None)
     bridge = bridge_cls(
-        provider_handle=provider_handle, metrics=metrics, lifecycle=lifecycle, router=router
+        provider_handle=provider_handle,
+        metrics=metrics,
+        lifecycle=lifecycle,
+        router=router,
+        preroll_ms=preroll_ms,
     )
 
     aec_health = AecReferenceHealth()
@@ -439,9 +451,6 @@ def build_processor_chain(*, capture: IngressCapture) -> tuple[list[Any], dict[s
                 f"ms_raw_before_first_forwarded={derived['ms_raw_audio_before_first_forwarded']}"
             )
 
-    vad_analyzer = P["SileroVADAnalyzer"](
-        sample_rate=INPUT_SAMPLE_RATE_HZ, params=P["VADParams"](stop_secs=0.5)
-    )
     vad_processor = P["VADProcessor"](vad_analyzer=vad_analyzer)
     raw_tap = _RawCaptureTap()
     marker_tap = _VadMarkerTap()
@@ -451,6 +460,7 @@ def build_processor_chain(*, capture: IngressCapture) -> tuple[list[Any], dict[s
         "sample_rate": INPUT_SAMPLE_RATE_HZ,
         "vad_start_secs": vad_analyzer.params.start_secs,
         "vad_stop_secs": vad_analyzer.params.stop_secs,
+        "preroll_ms": preroll_ms,
     }
     return processors, meta
 
