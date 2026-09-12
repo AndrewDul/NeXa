@@ -3,15 +3,40 @@
 **Date:** 2026-09-12
 **Milestone:** M2.6B.4N (self-echo/false-barge-in fix, following R0052's
 diagnostic + real-hardware evidence)
-**Status:** Root cause identified and confirmed by direct, real system
-inspection (not inferred, not fabricated). Smallest evidence-backed
-fix implemented (reference/audible gain coherence). Two real bugs in
-R0052's own diagnostic instrumentation found and fixed while analyzing
-its real data (see R0052's erratum). All deterministic tests green.
-**Real hardware re-validation of THIS fix is still required from the
+**Status:** **Leading evidence-backed root-cause hypothesis / implemented
+fix, pending real hardware validation.** A real ALSA mixer-ownership
+defect was found and confirmed to EXIST by direct, real system
+inspection (not inferred, not fabricated) — that a real defect exists
+is proven; that it is *the* (or the only) cause of the false
+self-barge-ins is not yet proven, and will not be until the post-fix
+real hardware run below shows the false confirms disappear. Smallest
+evidence-backed fix implemented for this defect (reference/audible gain
+coherence). Two real bugs in R0052's own diagnostic instrumentation
+found and fixed while analyzing its real data (see R0052's erratum).
+A separate, real validation-contract gap was then found and fixed in
+THIS checkpoint's own probe (see VALIDATION CONTRACT CORRECTION below)
+— an earlier revision of this fix's own validation probe would not
+have exercised the fix at all. All deterministic tests green. **Real
+hardware re-validation of THIS fix is still required from the
 operator** — this report STOPS before claiming that PASS, per the
 checkpoint's own required real-acceptance gate. No Gemini run. Not
 pushed.
+
+## VALIDATION CONTRACT CORRECTION (same-day self-check)
+
+Before handing the operator any hardware command, this checkpoint's
+own probe was source-audited against the fix it was meant to validate.
+**Finding: the probe's `build_probe_pipeline` constructed
+`AecReferenceFeeder` with no `gain_source` at all** — byte-for-byte the
+pre-fix, unscaled construction. A "0 false barge-ins" result from that
+probe would have proven **nothing** about this checkpoint's actual fix,
+because the fix lives entirely in `gain_source`. This was caught and
+fixed before any hardware command was issued to the operator — see
+FIX DECISION / PRODUCTION CHANGE below for the corrected probe wiring,
+and ASSISTANT-ONLY DETERMINISTIC TESTS for the new tests
+(`tests/test_self_echo_probe_production_gain_parity.py`) that now
+structurally guarantee the probe and production stay wired the same
+way, so this class of gap cannot silently recur.
 
 ## REAL R0052 HARDWARE EVIDENCE
 
@@ -267,8 +292,27 @@ Front Right: Playback 60 [100%] [0.00dB] [on]
    −0.94dB). **(5)** at MAX, if the operator pushed this mixer near its
    own ceiling, the DAC/amplifier could additionally enter a nonlinear
    region (Class E) — a real, plausible SECONDARY contributor this
-   report does not rule out, but not needed to explain the primary,
-   already-confirmed mechanism below.
+   report does not rule out, but not needed to explain the primary
+   mechanism below.
+
+**Live-change verification (this checkpoint):** to prove
+`CoherentReferenceGain.current_gain()` actually tracks the real mixer
+rather than a cached/stale value, the USB speaker's real mixer was
+read (100/147, −9.72dB), changed to 50/147 (−19.05dB), re-read through
+a fresh `CoherentReferenceGain(card="UACDemoV10")` (`current_gain()` →
+`0.11156`, matching `10**(-19.05/20)` exactly), then restored to its
+original 100/147 — a real, reversible, local check, no Gemini, no
+production code touched:
+
+```
+$ amixer -c UACDemoV10 get PCM        # before: 100/147, -9.72dB
+$ amixer -c UACDemoV10 sset PCM 50    # change
+$ amixer -c UACDemoV10 get PCM        # after: 50/147, -19.05dB
+>>> CoherentReferenceGain(card="UACDemoV10").current_gain()
+0.11155781513508523                   # == 10**(-19.05/20), exactly
+$ amixer -c UACDemoV10 sset PCM 100   # restored
+$ amixer -c UACDemoV10 get PCM        # confirmed: 100/147, -9.72dB again
+```
 
 ## REFERENCE GAIN/TIMING FINDING
 
@@ -288,7 +332,7 @@ mechanism (no clock/lag mismatch required to explain it) and does not
 require nonlinear clipping to explain the LOW→NORMAL→MAX escalation,
 though clipping at MAX (Class E) may compound it.
 
-## ROOT CAUSE
+## ROOT CAUSE (leading evidence-backed hypothesis, pending real hardware validation)
 
 **Class A/B/2 (charter's decision tree): far-end reference amplitude
 mismatch, caused by reference/audible gain ownership incoherence.**
@@ -296,22 +340,28 @@ Two independent ALSA hardware mixers exist for the two paths; only the
 audible path's mixer is reachable by "system volume," and NeXa's
 software has never read or compensated for the resulting, arbitrary
 divergence between the digital reference amplitude and the true
-acoustic playback amplitude. This is confirmed by direct, real system
-inspection (not inferred from statistics alone), and is fully
-consistent with every real-hardware observation collected: the
-monotonic LOW→NORMAL→MAX escalation, the highly repeatable ~1.08–1.12s
-onset timing at MAX (a stable acoustic/content region of the fixture
-crossing an increasingly-mismatched cancellation threshold at a
-consistent point every time), and the fact that real human "przerwij"
-speech still triggers correctly regardless (the discrepancy is in
-*this specific PCM-vs-acoustic gain relationship*, not in VAD's
-generic sensitivity to real speech).
+acoustic playback amplitude. **What is confirmed, by direct real
+system inspection, not inferred from statistics alone:** this
+mismatch mechanism genuinely exists on this hardware right now, exactly
+as described. **What is NOT yet confirmed:** that this mechanism is
+the (or the only) cause of the false self-barge-ins — that claim is a
+hypothesis, consistent with every real-hardware observation collected
+(the monotonic LOW→NORMAL→MAX escalation, the highly repeatable
+~1.08–1.12s onset timing at MAX, and real human "przerwij" speech still
+triggering correctly regardless), but a hypothesis only until the
+post-fix real hardware run below shows the false confirms actually
+disappear. Until then, this section states a **leading evidence-backed
+root-cause hypothesis**, not a proven root cause.
 
 Root cause Classes B/C (independent-stack timing divergence between
 `aplay` and PortAudio) and D (XVF3800 misconfiguration) remain
 unproven and are not needed to explain the evidence; Class E (nonlinear
 clipping at MAX) is a plausible secondary contributor at the highest
-volume, not excluded, but not required either.
+volume, not excluded, but not required either. If the post-fix
+real-hardware run does NOT show the false confirms disappearing, one
+or more of these other classes — or a combination with Class A/2 — is
+still in play, and this hypothesis would need to be revisited rather
+than assumed correct.
 
 ## WHY GENERIC VAD TUNING IS REJECTED
 
@@ -345,11 +395,14 @@ ever touches it, and nothing in this system's normal operation is known
 to change it — documented as an explicit, checked-in assumption, not
 hidden.
 
-No echo-discriminator (Class F) was added: the confirmed mechanism is a
-reference-signal defect, not a BargeInController confirmation-logic
-defect, so per the charter's own instruction ("If root cause is
-reference timing/signal parity: fix the AEC reference path, not VAD")
-the fix belongs at the reference path.
+No echo-discriminator (Class F) was added: the mechanism this fix
+targets is a reference-signal defect, not a BargeInController
+confirmation-logic defect, so per the charter's own instruction ("If
+root cause is reference timing/signal parity: fix the AEC reference
+path, not VAD") the fix belongs at the reference path — pending the
+real-hardware run below actually confirming this layer was sufficient.
+If it is not, a Class F discriminator remains the documented next
+option, not implemented here.
 
 ## PRODUCTION CHANGE
 
@@ -382,6 +435,16 @@ the fix belongs at the reference path.
 - Local voice's own `build_bargein_stack` (`src/nexa/voice_tts/__init__.py`)
   never passes `gain_source` — its `AecReferenceFeeder` instances keep
   the exact prior behavior.
+- **`docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py`**
+  (validation-contract correction, see above) — `build_probe_pipeline`
+  now constructs the identical `CoherentReferenceGain(card=cfg.
+  output_alsa_mixer_card)` and passes `reference_gain.current_gain` as
+  `AecReferenceFeeder`'s `gain_source`, exactly like production. Prints
+  `audible_mixer_card`/`audible_gain_db`/`audible_linear_gain`/
+  `reference_gain_applied` at startup and records
+  `reference_gain_applied` in every trial's own JSON summary, so a
+  run's own output is itself the proof the fix was active — never an
+  assertion the operator has to take on faith.
 
 ## ASSISTANT-ONLY DETERMINISTIC TESTS
 
@@ -399,16 +462,38 @@ the fix belongs at the reference path.
   `gain_source` scales enqueued PCM; `gain_source` returning 1.0 is a
   true no-op; a raising `gain_source` falls back to unscaled PCM
   without dropping the frame or crashing.
-- `tests/test_m2_6b4m_self_echo_probe.py` (extended, +14 tests):
+- `tests/test_m2_6b4m_self_echo_probe.py` (extended: 23 from R0052 + 13
+  new this checkpoint = 36 total):
   `cross_correlate_pcm` (known positive lag, known negative lag,
   uncorrelated noise gives low correlation, empty reference/mic/pure
-  silence all handled without raising) and the confirmed Silero
+  silence all handled without raising), the confirmed Silero
   confidence conversion fix (shape-(1,) ndarray, the original bug
-  reproduced as a documented regression guard, a bare scalar).
+  reproduced as a documented regression guard, a bare scalar), and
+  `_gain_to_db_text` (unity gain is 0dB, a known real captured gain
+  matches its own dB value, zero/negative gain reports "muted" rather
+  than raising on `log10`).
 - `tests/test_voice_architecture.py` — updated the existing
   `LocalAudioConfig` field-inventory lock-down test to include the new
   `output_alsa_mixer_card` field (an intentional, additive change to
   an intentionally strict test, not a relaxation of it).
+- `tests/test_self_echo_probe_production_gain_parity.py` (new, 7
+  tests) — the validation-contract check itself: parses
+  `build_gemini_voice_runtime`'s and `build_probe_pipeline`'s own
+  source with `ast` (neither function is ever called — both are heavy,
+  device-opening functions, and this repo's own convention, confirmed
+  by every existing `build_gemini_voice_runtime` test, is `dry=True`
+  construction only) and proves each constructs exactly one
+  `CoherentReferenceGain` with `card=` sourced from
+  `output_alsa_mixer_card`, and exactly one `AecReferenceFeeder` with
+  `gain_source=` bound to that SAME instance's `.current_gain` — not
+  identical object instances, but identical ownership and calculation
+  semantics, exactly as the charter requires. Three meta-tests prove
+  this check itself actually rejects the original bug shape (a bare
+  feeder with no `gain_source=`, a `gain_source=` from an unrelated
+  variable, a `card=` not sourced from the config field) — so the
+  check is not an accidental tautology. Two more tests confirm the
+  probe imports the REAL `CoherentReferenceGain`/`AecReferenceFeeder`
+  classes, never a reimplementation.
 
 All new/modified tests pass; see FULL TEST RESULT.
 
@@ -468,16 +553,21 @@ the new, additive path). `src/nexa/stt` was not touched at all.
 
 ## FULL TEST RESULT
 
-- New: `tests/test_voice_aec_gain.py` — 18/18 pass.
+- New: `tests/test_voice_aec_gain.py` — 17/17 pass.
 - New: `tests/test_bargein_m2_5b.py::TestAecReferenceFeederGain` — 4/4
   pass; full file 42/42 pass (unchanged pre-existing tests included).
-- Extended: `tests/test_m2_6b4m_self_echo_probe.py` — 32/32 pass.
-- Updated: `tests/test_voice_architecture.py` — full file green.
+- Extended: `tests/test_m2_6b4m_self_echo_probe.py` — 36/36 pass (23
+  from R0052 + 13 new this checkpoint, including the validation-contract
+  correction's `_gain_to_db_text` tests).
+- New: `tests/test_self_echo_probe_production_gain_parity.py` — 7/7
+  pass (the validation-contract check itself, added after finding and
+  fixing the probe's own gain-wiring gap).
+- Updated: `tests/test_voice_architecture.py` — full file 5/5 pass.
 - Full project suite:
   `.venv/bin/python -m unittest discover -s tests -p "test_*.py"` →
-  **1044 tests, OK (skipped=7)**.
-- `ruff check` on every touched file: clean (one import-order finding
-  in `runtime.py` auto-fixed with `--fix` before commit; the 82
+  **1055 tests, OK (skipped=7)**.
+- `ruff check` on every touched file: clean (two import-order/line-
+  length findings auto-fixed with `--fix` before commit; the 82
   pre-existing, unrelated findings elsewhere in the repo — e.g.
   `scripts/m1_bench/blind_launcher.py` — are untouched and out of
   scope).
@@ -497,14 +587,21 @@ the new, additive path). `src/nexa/stt` was not touched at all.
   tap contamination, added `cross_correlate_pcm` +
   `--capture-pcm`/`--max-lag-ms` (Step 4's bounded-PCM-window +
   offline correlation capability, available but not yet exercised on
-  real hardware).
-- `tests/test_voice_aec_gain.py` (new) — 18 tests.
+  real hardware); **then, per the validation-contract check, wired
+  `CoherentReferenceGain`/`gain_source` into `build_probe_pipeline`
+  (it had none) and added startup + per-trial
+  `audible_mixer_card`/`audible_gain_db`/`audible_linear_gain`/
+  `reference_gain_applied` diagnostic printing + JSON fields.**
+- `tests/test_voice_aec_gain.py` (new) — 17 tests.
 - `tests/test_bargein_m2_5b.py` — +4 tests
   (`TestAecReferenceFeederGain`).
-- `tests/test_m2_6b4m_self_echo_probe.py` — +14 tests
-  (`TestCrossCorrelatePcm`, `TestSileroConfidenceConversionFix`).
+- `tests/test_m2_6b4m_self_echo_probe.py` — +13 tests
+  (`TestCrossCorrelatePcm`, `TestSileroConfidenceConversionFix`,
+  `TestGainToDbText`).
 - `tests/test_voice_architecture.py` — updated the `LocalAudioConfig`
   field-inventory lock-down test.
+- `tests/test_self_echo_probe_production_gain_parity.py` (new) — 7
+  tests; the validation-contract check.
 - `docs/reports/R0052_..._20260912.md` — erratum recording the real
   hardware evidence and the two confirmed probe bugs.
 - `docs/reports/R0053_..._20260912.md` (this report).
@@ -521,13 +618,30 @@ Clean working tree after commit (no push).
 
 ## EXACT LOCAL-ONLY HARDWARE VALIDATION COMMAND
 
-Operator: remain **completely silent** for every silent-operator run;
-set your **real** speaker volume to the labeled level before each one.
-No Gemini is involved in any of these. `--capture-pcm` is optional but
-recommended on at least the MAX run and one control run — it saves
-bounded raw PCM (mic + reference) as WAV pairs and prints an offline
-cross-correlation result, giving direct, additional confirmation beyond
-the confirmed-barge-in count.
+**Step 0 — cheap preliminary smoke test, run this first:** MAX volume,
+3 silent trials, before committing to the full 5/10/10/5 + 3-control
+matrix below. Watch the printed `audible_mixer_card`/`audible_gain_db`/
+`audible_linear_gain`/`reference_gain_applied` lines — they prove the
+fix is actually active in this run, not merely assumed.
+
+```bash
+.venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py --level max --repeats 3
+```
+
+**Expected preliminary result: MAX 0/3 false confirmed barge-ins.** If
+MAX still self-interrupts here, STOP — do not run the rest of the
+matrix — and report back the full printed output (including the
+gain-diagnostic lines) plus the JSON path for evidence-based
+inspection instead.
+
+Only once the 0/3 preliminary result is confirmed, proceed to the full
+acceptance matrix. Operator: remain **completely silent** for every
+silent-operator run; set your **real** speaker volume to the labeled
+level before each one. No Gemini is involved in any of these.
+`--capture-pcm` is optional but recommended on at least the MAX run and
+one control run — it saves bounded raw PCM (mic + reference) as WAV
+pairs and prints an offline cross-correlation result, giving direct,
+additional confirmation beyond the confirmed-barge-in count.
 
 ```bash
 # 1) LOW volume -- 5 trials, expect 0/5 confirmed barge-ins:

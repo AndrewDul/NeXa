@@ -319,5 +319,29 @@ class TestSileroConfidenceConversionFix(unittest.TestCase):
         self.assertEqual(float(probe.np.asarray(0.42).reshape(-1)[0]), 0.42)
 
 
+class TestGainToDbText(unittest.TestCase):
+    """R0053 CONTRACT FIX: the probe's startup/per-trial diagnostic print
+    of ``audible_gain_db`` -- a display-only inverse of the SAME linear
+    gain ``CoherentReferenceGain.current_gain()`` reports, never a
+    second gain computation."""
+
+    def test_unity_gain_is_0db(self) -> None:
+        self.assertEqual(probe._gain_to_db_text(1.0), "0.00")
+
+    def test_known_gain_matches_its_own_db_value(self) -> None:
+        # 10**(-9.72/20) -- the real value this checkpoint's own system
+        # audit measured on the USB speaker's mixer.
+        gain = 10.0 ** (-9.72 / 20.0)
+        self.assertEqual(probe._gain_to_db_text(gain), "-9.72")
+
+    def test_zero_gain_is_muted_not_a_crash(self) -> None:
+        self.assertEqual(probe._gain_to_db_text(0.0), "-inf (muted)")
+
+    def test_negative_gain_is_also_reported_as_muted(self) -> None:
+        # defensive: current_gain() never returns negative, but this
+        # must not raise on log10 of a non-positive number either way.
+        self.assertEqual(probe._gain_to_db_text(-0.1), "-inf (muted)")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -171,11 +171,14 @@ Runtime / test evidence outranks anything else in this repo.
   hardware controls; `/etc/asound.conf`'s `ctl.!default { card
   UACDemoV10 }` means the system's one "volume" control only ever
   reaches the USB speaker — never the reSpeaker's own reference mixer
-  (found fixed at 60/60, 0dB). **Root cause: reference/audible gain
-  ownership incoherence** — the digital reference PCM XVF3800's AEC
-  models against is always unscaled, completely decoupled from
-  whatever the physically separate speaker volume actually is, so
-  cancellation degrades as real volume rises. **Fix (smallest
+  (found fixed at 60/60, 0dB). **Leading evidence-backed root-cause
+  hypothesis: reference/audible gain ownership incoherence** — the
+  digital reference PCM XVF3800's AEC models against is always
+  unscaled, completely decoupled from whatever the physically separate
+  speaker volume actually is, so cancellation degrades as real volume
+  rises. That this MECHANISM exists is confirmed by direct system
+  inspection; that it is *the* cause of the false barge-ins is not yet
+  proven — pending the post-fix real hardware run. **Fix (smallest
   evidence-backed layer, no VAD/Silero/BargeInController/preroll
   touched):** new `nexa.voice.aec_gain.CoherentReferenceGain` reads the
   audible device's real, current ALSA mixer gain (bounded-cost, cached
@@ -185,15 +188,26 @@ Runtime / test evidence outranks anything else in this repo.
   into the cloud runtime (`build_gemini_voice_runtime`); local voice's
   own `build_bargein_stack` never passes `gain_source`, so its behavior
   is untouched (existing `AecReferenceFeeder` tests re-verified green,
-  unmodified, alongside 4 new gain-specific tests). +36 new tests
-  total (`aec_gain` 18, `AecReferenceFeederGain` 4,
-  `cross_correlate_pcm`/confidence-fix 14) plus a `LocalAudioConfig`
-  field-inventory test update — **1044 tests, OK (skipped=7)**;
-  `ruff`/`pip check`/`git diff --check` all clean. R0051 preroll, R0045
-  provider isolation, R0046 canonical history, zero local LID,
-  connection-loss tests all re-verified green, unmodified. No Gemini
-  call. Not pushed. **Real hardware re-validation of THIS fix is still
-  required from the operator — not yet performed, not claimed PASS.**
+  unmodified, alongside 4 new gain-specific tests). **Same-day
+  validation-contract self-check found the probe itself constructed
+  `AecReferenceFeeder` with NO `gain_source` at all** — a "0 false
+  barge-ins" result from it would have proven nothing about this fix.
+  Fixed before any hardware command was given to the operator: the
+  probe now wires the identical `CoherentReferenceGain`, prints
+  `audible_mixer_card`/`audible_gain_db`/`audible_linear_gain`/
+  `reference_gain_applied` at startup and per trial, and a new test
+  (`test_self_echo_probe_production_gain_parity.py`, 7 tests,
+  AST-based) structurally guarantees production and the probe stay
+  wired the same way. +47 new tests total (`aec_gain` 17,
+  `AecReferenceFeederGain` 4, probe extensions 13, gain-parity check 7,
+  plus a `LocalAudioConfig` field-inventory test update) —
+  **1055 tests, OK (skipped=7)**; `ruff`/`pip check`/`git diff --check`
+  all clean. R0051 preroll, R0045 provider isolation, R0046 canonical
+  history, zero local LID, connection-loss tests all re-verified green,
+  unmodified. No Gemini call. Not pushed. **Leading evidence-backed
+  root-cause hypothesis / implemented fix, pending real hardware
+  validation — real hardware re-validation of THIS fix is still
+  required from the operator, not yet performed, not claimed PASS.**
   `M2.6B` remains IN PROGRESS: this fix's own real-hardware acceptance,
   the still-pending minimal live Gemini conversational validation, and
   the proactive-reconnect-caller gap all remain open completion items.)

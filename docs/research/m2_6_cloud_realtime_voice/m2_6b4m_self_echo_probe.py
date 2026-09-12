@@ -7,10 +7,26 @@ Reuses the REAL production classes verbatim: ``nexa.voice_tts.
 aec_reference.AecReferenceFeeder``, ``nexa.voice.aec.AecReferenceHealth``,
 ``nexa.voice.bargein.BargeInController``, ``nexa.realtime.gemini.
 runtime._ResponseLifecycle`` (the exact playback-lifecycle combinator
-production uses to decide when a response is "finished"), and the SAME
+production uses to decide when a response is "finished"), the SAME
 ``SileroVADAnalyzer``/``VADParams(stop_secs=0.5)`` construction the cloud
-runtime (``build_gemini_voice_runtime``) uses -- never a
-reimplementation of any of these.
+runtime (``build_gemini_voice_runtime``) uses, and -- since R0053 --
+the SAME ``nexa.voice.aec_gain.CoherentReferenceGain`` +
+``LocalAudioConfig.output_alsa_mixer_card`` gain-coherence wiring
+production uses. None of these are reimplemented differently here.
+
+R0053 CONTRACT FIX: an earlier revision of this probe (R0052) built a
+bare, unscaled ``AecReferenceFeeder`` with no ``gain_source`` at all --
+so a "0 false barge-ins" result from it would have proven nothing about
+R0053's actual production fix (which lives entirely in
+``gain_source``). This probe now constructs the identical
+``CoherentReferenceGain(card=cfg.output_alsa_mixer_card)`` production
+itself constructs and passes its ``current_gain`` method as
+``AecReferenceFeeder``'s ``gain_source`` -- reused, not duplicated. It
+prints the resulting ``audible_mixer_card``/``audible_gain_db``/
+``audible_linear_gain``/``reference_gain_applied`` at startup and
+records ``reference_gain_applied`` in every trial's own JSON summary,
+so a run's own output is itself the proof the fix was active, not an
+assertion.
 
 Purpose: reproduce the REAL production audio path —
 
@@ -56,6 +72,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import math
 import statistics
 import struct
 import sys
@@ -107,6 +124,17 @@ ASSISTANT_CHUNK_MS = 100
 
 def _pcm_ms(nbytes: int, sample_rate: int) -> float:
     return 1000.0 * (nbytes / 2) / max(1, sample_rate)
+
+
+def _gain_to_db_text(gain: float) -> str:
+    """Display-only inverse of the linear gain
+    ``nexa.voice.aec_gain.CoherentReferenceGain.current_gain()`` reports
+    -- never a second gain computation, just ``20*log10`` for a
+    human-readable print. ``gain <= 0.0`` (muted) prints as such rather
+    than raising on ``log10(0)``."""
+    if gain <= 0.0:
+        return "-inf (muted)"
+    return f"{20.0 * math.log10(gain):.2f}"
 
 
 def _rms(pcm_chunk: bytes) -> float:
@@ -468,6 +496,7 @@ def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sam
     from nexa.realtime.gemini.runtime import _ResponseLifecycle
     from nexa.realtime.gemini.service import INPUT_SAMPLE_RATE_HZ
     from nexa.voice.aec import AecReferenceHealth
+    from nexa.voice.aec_gain import CoherentReferenceGain
     from nexa.voice.bargein import BargeInController
     from nexa.voice.config import LocalAudioConfig
     from nexa.voice.device import find_device_index
@@ -642,8 +671,19 @@ def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sam
         sample_rate=INPUT_SAMPLE_RATE_HZ, params=P["VADParams"](stop_secs=0.5)
     )
     vad_processor = P["VADProcessor"](vad_analyzer=vad_analyzer)
+    # R0053 CONTRACT FIX: the probe must exercise the SAME gain-coherence
+    # component and config field production actually uses
+    # (``build_gemini_voice_runtime``), not a bare, unscaled
+    # ``AecReferenceFeeder`` -- otherwise a "0 false barge-ins" result
+    # here would prove nothing about the R0053 fix. Reused verbatim, not
+    # reimplemented: same class, same ``cfg.output_alsa_mixer_card``
+    # field, same ``gain_source=reference_gain.current_gain`` wiring.
+    reference_gain = CoherentReferenceGain(card=cfg.output_alsa_mixer_card)
     aec_feeder = AecReferenceFeeder(
-        aec_health=aec_health, sample_rate=assistant_sample_rate, channels=1
+        aec_health=aec_health,
+        sample_rate=assistant_sample_rate,
+        channels=1,
+        gain_source=reference_gain.current_gain,
     )
 
     pipeline = P["Pipeline"](
@@ -667,7 +707,7 @@ def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sam
         enable_rtvi=False,
         idle_timeout_secs=None,
     )
-    return worker, P["WorkerRunner"], bargein, lifecycle, aec_health
+    return worker, P["WorkerRunner"], bargein, lifecycle, aec_health, reference_gain, cfg
 
 
 async def _play_assistant_phrase(
@@ -909,7 +949,7 @@ async def _run(args: argparse.Namespace) -> int:
     recorder = Recorder(capture_pcm=args.capture_pcm)
     if args.capture_pcm:
         print(f"  capture-pcm              ON (max_lag_ms={args.max_lag_ms})")
-    worker, runner_cls, bargein, lifecycle, aec_health = build_probe_pipeline(
+    worker, runner_cls, bargein, lifecycle, aec_health, reference_gain, cfg = build_probe_pipeline(
         P, recorder=recorder, assistant_sample_rate=rate
     )
     runner = runner_cls()
@@ -918,6 +958,15 @@ async def _run(args: argparse.Namespace) -> int:
     await asyncio.sleep(WARMUP_S)
     print(f"  AEC_REF_ACTIVE           {aec_health.active}")
 
+    # R0053 CONTRACT FIX: prove the fix is actually active in THIS run --
+    # never assert it, print the SAME production gain component's own
+    # live reading.
+    startup_gain = reference_gain.current_gain()
+    print(f"  audible_mixer_card       {cfg.output_alsa_mixer_card}")
+    print(f"  audible_gain_db          {_gain_to_db_text(startup_gain)}")
+    print(f"  audible_linear_gain      {startup_gain:.4f}")
+    print(f"  reference_gain_applied   {startup_gain:.4f}  (fed to AecReferenceFeeder.gain_source)")
+
     trials: list[dict[str, Any]] = []
     try:
         if args.control:
@@ -925,10 +974,15 @@ async def _run(args: argparse.Namespace) -> int:
                 P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
                 sample_rate=rate, control_index=1, max_lag_ms=args.max_lag_ms,
             )
+            # R0053 CONTRACT FIX: re-read the SAME live gain per trial
+            # (not just once at startup) -- proves the fix stays active,
+            # and would visibly change if the operator adjusted the real
+            # mixer mid-run.
+            r["reference_gain_applied"] = reference_gain.current_gain()
             trials.append(r)
             print(
                 f"  control: confirmed_barge_ins={r['bargein_confirmed_count']} "
-                f"(expect exactly 1)"
+                f"(expect exactly 1) reference_gain_applied={r['reference_gain_applied']:.4f}"
             )
         else:
             print(
@@ -943,12 +997,14 @@ async def _run(args: argparse.Namespace) -> int:
                     pcm=pcm, sample_rate=rate, level=args.level, trial_index=i,
                     max_lag_ms=args.max_lag_ms,
                 )
+                r["reference_gain_applied"] = reference_gain.current_gain()
                 trials.append(r)
                 print(
                     f"      vad_starts={r['vad_start_count']} "
                     f"confirmed={r['bargein_confirmed_count']} "
                     f"candidates={r['bargein_candidate_count']} "
-                    f"rejected={r['bargein_rejected_count']}"
+                    f"rejected={r['bargein_rejected_count']} "
+                    f"reference_gain_applied={r['reference_gain_applied']:.4f}"
                 )
     finally:
         with contextlib.suppress(Exception):
@@ -959,10 +1015,13 @@ async def _run(args: argparse.Namespace) -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     payload = {
-        "report": "M2.6B.4M / R0052 self-echo / false-barge-in probe",
+        "report": "M2.6B.4M / R0052, gain fix wiring R0053, self-echo probe",
         "generated_utc": datetime.now(UTC).isoformat(),
         "mode": "control" if args.control else f"silent_level_{args.level}",
         "aec_ref_active_at_start": aec_health.active,
+        "audible_mixer_card": cfg.output_alsa_mixer_card,
+        "audible_gain_db_at_startup": _gain_to_db_text(startup_gain),
+        "audible_linear_gain_at_startup": startup_gain,
         "trials": trials,
     }
     path = OUT_DIR / f"self_echo_probe_{ts}.json"
