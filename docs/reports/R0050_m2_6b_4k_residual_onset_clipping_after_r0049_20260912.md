@@ -388,18 +388,9 @@ baseline from R0049 stands unmodified.
 
 ## GIT STATUS
 
-Working tree changes at time of writing:
+research/report commit: `b77792e`
 
-```
- M docs/CURRENT_STATE.md
- M docs/ROADMAP.md
- M docs/reports/R0049_m2_6b_4j_restore_m2_6a_preroll_parity_20260912.md
-?? docs/reports/R0050_m2_6b_4k_residual_onset_clipping_after_r0049_20260912.md
-?? docs/research/m2_6_cloud_realtime_voice/wav_alignment.py
-?? tests/test_m2_6b4k_wav_alignment.py
-```
-
-Not pushed. The real WAV/JSON evidence
+Clean working tree (hash-record follow-up pending). Not pushed. The real WAV/JSON evidence
 (`docs/research/m2_6_cloud_realtime_voice/ingress_captures/`) remains
 git-ignored, per R0048/R0049's own `.gitignore` entry — not committed,
 consistent with never distributing the operator's real voice recordings.
