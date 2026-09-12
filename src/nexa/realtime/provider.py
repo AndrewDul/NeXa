@@ -101,7 +101,24 @@ class ProviderInterruptionEvent:
     """The provider acknowledged an interruption server-side (e.g. Gemini
     ``serverContent.interrupted``). Informational only — NeXa's own local
     barge-in authority (``BargeInController``) is never derived from this
-    (ADR-0004 Decision C); the local speaker stop always happens first."""
+    (ADR-0004 Decision C); the local speaker stop always happens first.
+
+    M2.6B.4F (R0044) — ``source`` distinguishes the two origins R0043's
+    source audit found: one confirmed local interruption legitimately
+    produces MULTIPLE of these events (Pipecat's own
+    ``broadcast_interruption()`` fans out an upstream + downstream
+    ``InterruptionFrame`` per call), from TWO independent origins —
+    ``"local_cancel"`` (our own ``GeminiLiveProvider.cancel()`` queuing
+    one frame that passes both taps) and ``"remote_server_ack"``
+    (Gemini's own ``serverContent.interrupted`` triggering
+    ``GeminiLiveLLMService``'s own broadcast). **Diagnostic only** — R0044's
+    own source audit proved NEITHER origin can serve as an airtight
+    "no more old-generation audio will ever arrive" barrier (see
+    ``docs/reports/R0044_...``), so nothing in the runtime's dispatch
+    logic branches on this field; it exists purely to make the real,
+    already-normal multiplicity observable instead of a mystery."""
+
+    source: str = "unknown"
 
 
 @dataclass(frozen=True, slots=True)

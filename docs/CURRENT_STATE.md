@@ -61,11 +61,20 @@ Runtime / test evidence outranks anything else in this repo.
   evidence is a clean Attempt #2, not a LID gate; M2.6B.4D tightened
   this further — the fire-and-forget LID construction/invocation itself
   was REMOVED from the production cloud runtime, so Attempt #2 ran with
-  zero local LID CPU cost of any kind. **Attempt #2 then actually ran
-  (M2.6B.4E, below): native PL/EN mirroring worked live, but a real
-  throat-clear mid-reply exposed a genuine, now-fixed bug — assistant
-  audio was permanently lost for the rest of the session once a
-  non-lexical interrupting sound produced no transcript at all)]**.
+  zero local LID CPU cost of any kind. Attempt #2 then actually ran
+  (M2.6B.4E): native PL/EN mirroring worked live, but a real
+  throat-clear mid-reply exposed a genuine bug — assistant audio was
+  permanently lost for the rest of the session once a non-lexical
+  interrupting sound produced no transcript at all; fixed with a local-
+  turn-closure fallback re-arm, but that fix's own residual risk (one
+  stray old-generation chunk possibly misclassified at an interruption
+  boundary) was correctly flagged as not yet closed. **M2.6B.4F (below)
+  quantified that risk precisely — found and fixed a CONCRETE,
+  deterministically-reproducible regression in R0043's fallback
+  (satisfied by the interrupting sound's OWN closure alone), narrowed it
+  to require a genuinely separate subsequent turn, and proved by source
+  audit that ONE remaining gap cannot be closed without provider/session
+  replacement — reported, not implemented)]**.
   Original Accepted content:
   **Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
   Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
@@ -123,7 +132,64 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0043_m2_6b_4e_attempt2_post_interruption_audio_loss_20260911.md`
+- **Latest report:** `docs/reports/R0044_m2_6b_4f_strict_post_interruption_response_ownership_20260912.md`
+  (**M2.6B.4F — strict post-interruption response ownership, 2026-09-12.**
+  R0043's `local_turn_closed_seq` fallback fix was VALID (recovering
+  audio after a non-transcribed interruption is real and necessary) but
+  its own disclosed "one stray chunk" residual risk turned out to be a
+  CONCRETE, 100%-reproducible defect, not a narrow edge case: the
+  fallback only required the counter to advance by 1 past its
+  DISPATCH-time value — satisfied merely by the INTERRUPTING sound's
+  OWN local turn closing — so trailing OLD-generation audio arriving
+  right after that single closure (but before any real new turn) was
+  wrongly promoted into a fresh, valid generation and played audibly.
+  **Verified empirically**: reverting the fix to "+1" reproduces the
+  exact failure (`[gen-1-chunk, OLD-1, OLD-2]`); restoring "+2" corrects
+  it. Exhaustively source-audited the installed Pipecat 1.8.1/
+  `google-genai` stack (Live API message types, `serverContent.interrupted`,
+  `generation_complete`, `turn_complete`, `LLMFullResponseStartFrame`,
+  `BotStarted/StoppedSpeakingFrame`, WebSocket ordering,
+  `CancellationCompleteEvent`, the SystemFrame-priority mechanics behind
+  the four provider-interruption acks) and found **no airtight in-session
+  boundary exists**: `LiveServerMessage`/`LiveServerContent` expose NO
+  response/turn/generation identifier anywhere (confirmed by reading the
+  full field list directly); `generation_complete`/`turn_complete` are
+  explicitly suppressed for an interrupted generation;
+  `LLMFullResponseStartFrame` is untagged local bookkeeping provably
+  falsifiable by trailing old audio; none of the four interruption acks
+  correlate with the actual downstream queue that would need to be
+  proven empty. **Fix**: `_ResponseGenerationGuard.interrupt()` now
+  records `provider.local_turn_closed_seq` AT INTERRUPT TIME (not
+  dispatch time), and the fallback re-arm requires it to advance by 2 —
+  one for the interrupting utterance's own closure, one for a genuinely
+  SEPARATE subsequent turn — closing the concrete CASE-1 regression
+  while HONESTLY leaving one gap open (CASE 2: old audio arriving after
+  a genuinely new turn's own closure, indistinguishable from real new
+  content by any local signal) — proven, not merely suspected, by a
+  dedicated adversarial test documenting the actual (not idealized)
+  outcome. Also added purely-diagnostic `ProviderInterruptionEvent.source`
+  tagging (`local_cancel`/`remote_server_ack`) — confirmed neither origin
+  can serve as a barrier either. Evaluated all 5 charter-listed
+  alternatives; concluded provider/session replacement per confirmed
+  interruption is the ONLY architecturally airtight option, with real,
+  unsized costs (reconnect latency, cloud-context loss, applies to EVERY
+  barge-in not just edge cases) — reported per the charter's own
+  instruction, deliberately **not implemented** this checkpoint. **All 5
+  adversarial cases run and reported honestly** (1/3/4/5 PASS, 2 is a
+  documented open gap, not a false PASS). **+17 net new tests** (4
+  `_ResponseGenerationGuard` unit tests, 5 adversarial CASE tests, 1
+  service-level source-tagging test, plus 7 tests re-run via subclassing)
+  — **956 tests total, OK (skipped=7)**, 0 regressions;
+  `ruff`/`pip check`/`git diff --check` all clean; local voice completely
+  untouched (empty diff). **Hardware acceptance remains FAIL; `M2.6B`
+  remains IN PROGRESS** — an Attempt #3 that deliberately exercises a
+  non-lexical interruption plus further real turns remains the next
+  evidence; a brief stale-audio artifact at an interruption boundary, if
+  ever observed live, is expected/documented residual behaviour (CASE 2),
+  not a fix failure — and would be the concrete evidence needed to size
+  Option E (provider/session replacement) as a future checkpoint. Not
+  pushed.)
+- **Prior report:** `docs/reports/R0043_m2_6b_4e_attempt2_post_interruption_audio_loss_20260911.md`
   (**M2.6B.4E — Attempt #2 post-interruption audio-loss failure — root
   cause CONFIRMED + fixed, 2026-09-11.** The REAL Attempt #2 hardware run
   happened: `CLOUD_PROVIDER_READY`/`AEC_REF_ACTIVE` reached, no VAD-

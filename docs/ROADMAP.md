@@ -729,6 +729,55 @@ unpaid-quota data is used to improve Google products.
     `M2.6B` remains IN PROGRESS** — contingent on an Attempt #3 that
     deliberately includes a non-lexical interruption followed by further
     real turns.
+  - **M2.6B.4F — strict post-interruption response ownership** (`R0044`,
+    2026-09-12). R0043's `local_turn_closed_seq` fallback fix was valid
+    but its own disclosed "one stray chunk" residual risk turned out to
+    be a CONCRETE, 100%-reproducible defect, not a narrow edge case: the
+    fallback only required the counter to advance by 1 past its
+    DISPATCH-time value — satisfied merely by the INTERRUPTING sound's
+    OWN local turn closing — so trailing OLD-generation audio arriving
+    right after that single closure (but before any real new turn) was
+    wrongly promoted into a fresh, valid generation and played audibly.
+    Verified empirically: reverting to "+1" reproduces the exact failure;
+    restoring "+2" corrects it. Exhaustively source-audited installed
+    Pipecat 1.8.1/`google-genai` (Live API message types,
+    `serverContent.interrupted`, `generation_complete`, `turn_complete`,
+    `LLMFullResponseStartFrame`, Bot Started/Stopped frames, WebSocket
+    ordering, `CancellationCompleteEvent`, the SystemFrame-priority
+    mechanics behind the four provider-interruption acks) and found NO
+    airtight in-session boundary exists: `LiveServerMessage`/
+    `LiveServerContent` expose no response/turn/generation identifier
+    anywhere (confirmed from the full field list);
+    `generation_complete`/`turn_complete` are explicitly suppressed for
+    an interrupted generation; `LLMFullResponseStartFrame` is untagged
+    local bookkeeping provably falsifiable by trailing old audio; none of
+    the four acks correlate with the downstream queue that would need to
+    be proven empty. Fix: `_ResponseGenerationGuard.interrupt()` now
+    records `provider.local_turn_closed_seq` AT INTERRUPT TIME, and the
+    fallback re-arm requires it to advance by 2 — one for the
+    interrupting utterance's own closure, one for a genuinely SEPARATE
+    subsequent turn — closing the concrete CASE-1 regression while
+    honestly leaving ONE gap open (CASE 2: old audio arriving after a
+    genuinely new turn's own closure, indistinguishable from real new
+    content by any local signal) — proven, not merely suspected, by a
+    dedicated test documenting the actual outcome. Also added purely-
+    diagnostic `ProviderInterruptionEvent.source` tagging
+    (`local_cancel`/`remote_server_ack`) — confirmed neither origin can
+    serve as a barrier either. Evaluated all 5 charter-listed
+    alternatives; concluded provider/session replacement per confirmed
+    interruption is the ONLY architecturally airtight option, with real,
+    unsized costs (reconnect latency, cloud-context loss, applies to
+    EVERY barge-in) — reported, deliberately NOT implemented this
+    checkpoint. All 5 adversarial cases run and reported honestly
+    (1/3/4/5 PASS, 2 is a documented open gap). **+17 net new tests** —
+    **956 tests total, OK (skipped=7)**, 0 regressions;
+    `ruff`/`pip check`/`git diff --check` all clean; local voice
+    completely untouched (empty diff). **Hardware acceptance remains
+    FAIL; `M2.6B` remains IN PROGRESS** — an Attempt #3 exercising a
+    non-lexical interruption plus further real turns remains the next
+    evidence; a brief stale-audio artifact at an interruption boundary,
+    if ever observed live, is expected/documented residual behaviour
+    (CASE 2), not a fix failure.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

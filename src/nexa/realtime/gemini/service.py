@@ -279,6 +279,15 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
         #: ``GeminiVoiceRuntime._consume_provider_events``'s own use of
         #: this for the exact failure this closes.
         self._local_turn_closed_seq = 0
+        #: M2.6B.4F (R0044) -- ids of ``InterruptionFrame`` instances THIS
+        #: provider itself constructed (in ``cancel()``), so
+        #: ``_translate_frame`` can tag ``ProviderInterruptionEvent.source``
+        #: as ``"local_cancel"`` vs ``"remote_server_ack"`` -- diagnostic
+        #: only. Never cleared: bounded in practice by how many times
+        #: ``cancel()`` is ever called in one provider's lifetime (one
+        #: session-worth of confirmed interruptions -- at most tens of
+        #: entries, negligible memory), never once per audio chunk.
+        self._local_cancel_frame_ids: set[int] = set()
 
     def capabilities(self) -> RealtimeProviderCapabilities:
         return RealtimeProviderCapabilities(
@@ -594,7 +603,16 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
     async def cancel(self) -> None:
         if self._worker is None or self._P is None:
             return
-        await self._worker.queue_frames([self._P["InterruptionFrame"]()])
+        frame = self._P["InterruptionFrame"]()
+        # M2.6B.4F (R0044) -- record this exact frame instance's id BEFORE
+        # queuing it. It is the ONLY InterruptionFrame this provider ever
+        # constructs itself; `broadcast_interruption()` (Gemini's own
+        # ack path, service.py's receive loop) creates its own fresh
+        # up/downstream instances instead (see `_translate_frame`). This
+        # is diagnostic only -- see `ProviderInterruptionEvent.source`'s
+        # own docstring for why neither origin is used as a barrier.
+        self._local_cancel_frame_ids.add(frame.id)
+        await self._worker.queue_frames([frame])
         self._events.put_nowait(CancellationCompleteEvent())
 
     async def events(self) -> AsyncIterator[ProviderEvent]:
@@ -626,7 +644,22 @@ class GeminiLiveProvider(RealtimeVoiceProvider):
                 pcm = getattr(frame, "audio", b"") or b""
                 self._events.put_nowait(AssistantAudioEvent(pcm=pcm))
             elif isinstance(frame, P["InterruptionFrame"]):
-                self._events.put_nowait(ProviderInterruptionEvent())
+                # M2.6B.4F (R0044) -- our own cancel() is the ONLY place
+                # this provider ever constructs an InterruptionFrame; its
+                # id is recorded there before queuing. Anything else
+                # reaching here is, by elimination (confirmed exhaustively
+                # from installed source -- see docs/reports/R0044_...),
+                # Gemini's own serverContent.interrupted triggering
+                # GeminiLiveLLMService's own broadcast_interruption(). A
+                # membership check (never removed) tags BOTH expected
+                # sightings of our own single queued instance (up_tap,
+                # then down_tap) consistently as "local_cancel".
+                frame_id = getattr(frame, "id", None)
+                if frame_id is not None and frame_id in self._local_cancel_frame_ids:
+                    source = "local_cancel"
+                else:
+                    source = "remote_server_ack"
+                self._events.put_nowait(ProviderInterruptionEvent(source=source))
             elif isinstance(frame, P["LLMFullResponseEndFrame"]):
                 # Generation/turn complete — the ConversationRouter's signal
                 # to commit (ADR-0004 Decision A). Deliberately a distinct

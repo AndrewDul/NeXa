@@ -333,6 +333,29 @@ class TestEventTranslation(_FakeGeminiLiveServiceTestCase):
         self.assertIsInstance(event, ProviderInterruptionEvent)
         await provider.stop(reason="test done")
 
+    async def test_10_interruption_source_distinguishes_local_cancel_from_remote_ack(
+        self,
+    ) -> None:
+        """M2.6B.4F (R0044) -- our own ``cancel()`` is tagged
+        ``"local_cancel"``; anything else reaching ``_translate_frame`` as
+        an ``InterruptionFrame`` (here, the fake service's own
+        ``emit_interruption()``, standing in for Gemini's own
+        ``serverContent.interrupted`` -> ``broadcast_interruption()`` path)
+        is tagged ``"remote_server_ack"``. Diagnostic only -- neither
+        drives any dispatch decision (see R0044's own source audit)."""
+        provider, _ = await self._started_provider()
+        await self._drain_one(provider, ReadinessChangedEvent)
+
+        await provider.cancel()
+        local_event = await self._next_of_type(provider, ProviderInterruptionEvent)
+        self.assertEqual(local_event.source, "local_cancel")
+
+        await provider._llm.emit_interruption()  # noqa: SLF001
+        remote_event = await self._next_of_type(provider, ProviderInterruptionEvent)
+        self.assertEqual(remote_event.source, "remote_server_ack")
+
+        await provider.stop(reason="test done")
+
     async def test_fatal_error_pushed_upstream_still_reaches_events(self) -> None:
         """``push_error()`` (the real service's error path) pushes UPSTREAM
         — proves the ``up_tap`` addition actually matters, not just the

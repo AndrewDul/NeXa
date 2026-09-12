@@ -422,6 +422,13 @@ class _ResponseLifecycle:
 #: Under-crediting is acceptable; crediting unspoken words is not.
 CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX = ""
 
+#: M2.6B.4F (R0044) — see ``_ResponseGenerationGuard``'s own docstring.
+#: "1" (R0043's original, too-eager fallback design) is satisfied merely
+#: by the INTERRUPTING utterance's own local turn closing; "2" also
+#: requires a genuinely SEPARATE, subsequent local turn to close before
+#: the fallback re-arm trusts the next assistant event.
+MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM = 2
+
 
 class _ResponseGenerationGuard:
     """M2.6B.4 (R0038 FAILURE 2) — the single source of truth for which
@@ -447,24 +454,47 @@ class _ResponseGenerationGuard:
     interrupt-vs-valid state, and that conflated two different signals:
     "may this chunk play" (this class) and "has a genuinely NEW local
     user turn started". Kept deliberately dumb: only
-    ``is_valid``/``start_new_generation``/``interrupt``/``valid_id`` —
-    the caller (``_consume_provider_events``) decides the dispatch
-    boundary. Originally (R0038) that boundary was a fresh, final
-    ``UserTranscriptionEvent`` (the interrupting utterance's own —
-    R0034's proven message-ordering guarantee). M2.6B.4E (R0043) added a
-    second, NeXa/Gemini-independent fallback boundary
+    ``is_valid``/``start_new_generation``/``interrupt``/``valid_id``/
+    ``invalidated_at_turn_seq`` — the caller (``_consume_provider_events``)
+    decides the dispatch boundary. Originally (R0038) that boundary was a
+    fresh, final ``UserTranscriptionEvent`` (the interrupting utterance's
+    own — R0034's proven message-ordering guarantee). M2.6B.4E (R0043)
+    added a second, NeXa/Gemini-independent fallback boundary
     (``provider.local_turn_closed_seq`` advancing) for the case a
-    non-lexical interrupting sound produces no transcript at all — see
-    that method's own docstring in ``_consume_provider_events``.
+    non-lexical interrupting sound produces no transcript at all.
+
+    M2.6B.4F (R0044) — R0043's own fallback, AS FIRST WRITTEN, required
+    only that the counter advance PAST its value at DISPATCH time — which
+    a NEW deterministic adversarial test proved is satisfied merely by
+    the INTERRUPTING utterance's OWN local turn closing (CASE 1 in
+    ``docs/reports/R0044_...``), wrongly promoting trailing OLD-generation
+    audio that arrives right after that single closure but before any
+    REAL subsequent turn. ``interrupt()`` now records the counter's value
+    AT INTERRUPT TIME (``invalidated_at_turn_seq``), and the fallback
+    re-arm (in ``_consume_provider_events``) requires it to advance by
+    ``MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM`` (2) — one for the
+    interrupting utterance's own closure, one for a genuinely SEPARATE,
+    subsequent local turn — closing that specific gap. This narrows, but
+    (proven in the same report, CASE 2) cannot fully eliminate, the
+    residual risk: no local, non-timer signal can identify WHICH assistant
+    event, among those arriving after the threshold, is truly new versus
+    still-draining old content, because Gemini's Live API exposes no
+    response/turn/generation identifier on any server message (verified
+    from ``google.genai.types.LiveServerContent``/``LiveServerMessage`` —
+    see the report). Full airtightness would require provider/session
+    replacement per confirmed interruption, deliberately NOT implemented
+    here (unsized, costly, a separate decision).
     """
 
     def __init__(self) -> None:
         self._current_id = 0
         self._valid_id = 0
+        self._invalidated_at_turn_seq: int | None = None
 
     def start_new_generation(self) -> int:
         self._current_id += 1
         self._valid_id = self._current_id
+        self._invalidated_at_turn_seq = None
         return self._current_id
 
     def is_valid(self, generation_id: int) -> bool:
@@ -478,13 +508,31 @@ class _ResponseGenerationGuard:
         used to decide dispatch; ``is_valid`` remains the sole gate."""
         return self._valid_id or None
 
-    def interrupt(self) -> None:
+    @property
+    def invalidated_at_turn_seq(self) -> int | None:
+        """M2.6B.4F (R0044) — the ``provider.local_turn_closed_seq`` value
+        recorded when ``interrupt()`` was last called, or ``None`` if
+        ``interrupt()`` was called without one (e.g. a provider swap or
+        fatal-error path, where ``dispatched_for_turn`` is already forced
+        False directly and this gate is never consulted). Read-only."""
+        return self._invalidated_at_turn_seq
+
+    def interrupt(self, *, local_turn_seq_at_interrupt: int | None = None) -> None:
         """The CURRENT generation can never produce audible output again.
         Called synchronously from ``_on_confirmed`` (no ``await`` before
         it in that function), so this always completes before any other
         coroutine gets a chance to run on this single-threaded event
-        loop — no race with ``_consume_provider_events``'s own check."""
+        loop — no race with ``_consume_provider_events``'s own check.
+
+        ``local_turn_seq_at_interrupt`` (M2.6B.4F/R0044) — the CALLER's
+        ``provider.local_turn_closed_seq`` value at this exact moment
+        (read synchronously, same as everything else in this method);
+        ``None`` when the caller has no meaningful baseline to record
+        (provider swap / fatal error — ``dispatched_for_turn`` is forced
+        False directly at those call sites, so this value is never
+        consulted for them)."""
         self._valid_id = 0  # 0 is never a real id (the counter starts at 1)
+        self._invalidated_at_turn_seq = local_turn_seq_at_interrupt
 
 
 def _make_vad_bridge_class(P: dict[str, Any]) -> type:
@@ -798,12 +846,31 @@ class GeminiVoiceRuntime:
         turn ever got a fresh valid generation id, and all of it was
         silently dropped, while assistant TEXT kept flowing (text commit
         does not depend on the generation guard at all) -- exactly the
-        live symptom (text visible, audio permanently gone). Fixed with a
-        second, NeXa/Gemini-independent fallback re-arm signal:
+        live symptom (text visible, audio permanently gone). Fixed (R0043)
+        with a second, NeXa/Gemini-independent fallback re-arm signal:
         ``provider.local_turn_closed_seq`` (incremented once per
         ``user_turn_end()`` call, regardless of transcription outcome).
-        See ``GeminiLiveProvider``'s own docstring and
-        ``docs/reports/R0043_...`` for the full source audit."""
+
+        M2.6B.4F (R0044) -- R0043's own fallback, as first written, only
+        required this counter to advance by 1 past its DISPATCH-time
+        value -- satisfied merely by the INTERRUPTING utterance's OWN
+        local turn closing, which a new adversarial test proved wrongly
+        promotes trailing OLD-generation audio arriving right after that
+        single closure but before any REAL subsequent turn. Fixed:
+        ``_ResponseGenerationGuard`` now records the counter's value AT
+        INTERRUPT TIME (``invalidated_at_turn_seq``, set inside
+        ``interrupt()``), and the fallback re-arm below requires it to
+        advance by ``MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM``
+        (2) -- one for the interrupting utterance's own closure, one for
+        a genuinely SEPARATE, subsequent local turn. This narrows, but
+        (per source audit -- no response/turn/generation identifier
+        exists anywhere in Gemini's Live API message types, confirmed
+        from ``google.genai.types``) cannot fully eliminate, the residual
+        risk of a still-later stale chunk being misclassified; achieving
+        that with certainty would require provider/session replacement
+        per confirmed interruption, deliberately NOT implemented here
+        (unsized, costly, a separate decision -- see
+        ``docs/reports/R0044_...``)."""
         P = _pipecat_hw_imports()
         first_audio_seen = False
         current_gid = 0
@@ -812,19 +879,18 @@ class GeminiVoiceRuntime:
         # UserTranscriptionEvent (a genuinely NEW local user turn was just
         # heard -- R0034's proven message-ordering guarantee: for a
         # NORMAL, transcribed turn this always arrives before that turn's
-        # own assistant content) OR, as of R0043, once
-        # ``provider.local_turn_closed_seq`` has advanced past the value
+        # own assistant content) OR, as of R0043/R0044, once
+        # ``provider.local_turn_closed_seq`` has advanced by at least
+        # ``MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM`` past the value
         # recorded when the CURRENT (now-invalidated) generation was
-        # dispatched -- proof, from local VAD alone, that at least one
-        # more local turn has genuinely closed since the interruption,
-        # even if Gemini never transcribed it. This never fires while the
-        # current generation is still VALID (an ordinary in-progress
-        # reply), only once a confirmed interruption has invalidated it --
-        # so it cannot promote trailing audio into a fresh generation
-        # while the interrupted reply might merely be paused, only once
-        # it is provably dead.
+        # INTERRUPTED (``generation_guard.invalidated_at_turn_seq``) --
+        # proof, from local VAD alone, that the interrupting utterance's
+        # own turn AND a genuinely separate subsequent turn have both
+        # closed, even if Gemini never transcribed either. This never
+        # fires while the current generation is still VALID (an ordinary
+        # in-progress reply), only once a confirmed interruption has
+        # invalidated it.
         dispatched_for_turn = False
-        dispatched_at_turn_closed_seq: int | None = None
         provider_interruption_ack_count = 0
         audio_chunk_count = 0
 
@@ -858,8 +924,10 @@ class GeminiVoiceRuntime:
                 if (
                     dispatched_for_turn
                     and not self.generation_guard.is_valid(current_gid)
-                    and dispatched_at_turn_closed_seq is not None
-                    and provider.local_turn_closed_seq > dispatched_at_turn_closed_seq
+                    and self.generation_guard.invalidated_at_turn_seq is not None
+                    and provider.local_turn_closed_seq
+                    >= self.generation_guard.invalidated_at_turn_seq
+                    + MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM
                 ):
                     dispatched_for_turn = False
 
@@ -867,7 +935,6 @@ class GeminiVoiceRuntime:
                     event, (AssistantAudioEvent, AssistantTranscriptionEvent)
                 ) and not dispatched_for_turn:
                     dispatched_for_turn = True
-                    dispatched_at_turn_closed_seq = provider.local_turn_closed_seq
                     current_gid = self.generation_guard.start_new_generation()
                     self.bargein.notify_response_dispatched()
                     self.lifecycle.mark_dispatched()
@@ -1055,7 +1122,12 @@ def build_gemini_voice_runtime(
         # instant -- this guard is what stops any MORE audio for this
         # same generation, already in flight on provider.events()'s own
         # queue, from ever reaching hw_worker.queue_frames() afterward.
-        generation_guard.interrupt()
+        # M2.6B.4F (R0044) -- record provider_handle.current's
+        # local_turn_closed_seq AT THIS EXACT MOMENT as the fallback
+        # re-arm's baseline (see _ResponseGenerationGuard's own docstring).
+        generation_guard.interrupt(
+            local_turn_seq_at_interrupt=provider_handle.current.local_turn_closed_seq
+        )
         if ctx.invalidated_response_id is not None:
             metrics.generation_invalidated(generation_id=ctx.invalidated_response_id)
         # M2.6B.4E (R0043) -- ``BargeInController._do_confirm`` calls this
