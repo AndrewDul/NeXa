@@ -384,6 +384,7 @@ from typing import Any
 
 from ...stt.utterance_buffer import PRE_ROLL_MS, UtteranceBuffer
 from ...voice.aec import AecReferenceHealth
+from ...voice.aec_gain import CoherentReferenceGain
 from ...voice.bargein import BargeInController, InterruptContext
 from ...voice.config import LocalAudioConfig
 from ...voice.device import find_device_index
@@ -1658,8 +1659,21 @@ def build_gemini_voice_runtime(
         router=router,
         preroll_ms=preroll_ms,
     )
+    # M2.6B.4N (R0053) -- coherent reference/audible gain. Root cause: the
+    # reSpeaker's own reference-injection mixer and the USB speaker's own
+    # audible-output mixer are two independent ALSA hardware controls
+    # (real amixer/asound.conf audit); raising real speaker volume never
+    # changed the reference PCM's amplitude, degrading the XVF3800's own
+    # AEC cancellation at higher volume (real evidence: 0/5 false
+    # barge-ins at LOW, 1/5 at NORMAL, 5/5 at MAX). Reads the audible
+    # device's own real mixer gain (bounded-cost, cached) and scales the
+    # reference PCM to match -- never touches VAD/Silero/BargeInController.
+    reference_gain = CoherentReferenceGain(card=cfg.output_alsa_mixer_card)
     aec_feeder = AecReferenceFeeder(
-        aec_health=aec_health, sample_rate=OUTPUT_SAMPLE_RATE_HZ, channels=1
+        aec_health=aec_health,
+        sample_rate=OUTPUT_SAMPLE_RATE_HZ,
+        channels=1,
+        gain_source=reference_gain.current_gain,
     )
 
     pipeline = P["Pipeline"](

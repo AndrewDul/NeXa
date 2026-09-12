@@ -144,7 +144,60 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0052_m2_6b_4m_self_echo_diagnostic_20260912.md`
+- **Latest report:** `docs/reports/R0053_self_echo_discrimination_root_cause_and_fix_20260912.md`
+  (**M2.6B.4N — self-echo discrimination root cause and production fix,
+  2026-09-12.** R0052's real hardware evidence came back: **0/5** false
+  confirmed barge-ins at LOW, **1/5** at NORMAL, **5/5** at MAX, with a
+  highly repeatable ~1.08–1.12s playback→false-VAD onset at MAX
+  (stdev≈0.016s) and confirm timing landing at ~0.301s (the configured
+  hold) every time — real human "przerwij" control correctly confirmed
+  2/2. While analyzing that data, found and fixed TWO real bugs in
+  R0052's OWN diagnostic instrumentation (documented as an erratum on
+  R0052, not hidden): (1) Silero's real `voice_confidence()` returns a
+  numpy shape-(1,) array; `float()` on it raises under this repo's
+  installed NumPy 2.5.2 — R0052's probe silently caught that and
+  recorded confidence as 0.0 on every frame in all 5 real captures
+  (production's own decision was never affected — it only ever
+  compares/`bool()`s the array); (2) the probe's mic/reference RMS taps
+  sat in one linear, bidirectional pipeline and double-counted the
+  injected assistant PCM as "mic" telemetry, contaminating the
+  mic-vs-reference RMS comparison in every file including both real
+  control runs. Both fixed with new regression tests; VAD/timing/
+  confirmed-count evidence itself was never affected by either bug.
+  Real, direct ALSA system audit (read-only: `aplay -l`, `amixer -c 2/3
+  get PCM`, `/etc/asound.conf`) found the actual mechanism: the
+  reSpeaker's reference-injection mixer (card `Array`) and the USB
+  speaker's audible mixer (card `UACDemoV10`) are two INDEPENDENT ALSA
+  hardware controls; `/etc/asound.conf`'s `ctl.!default { card
+  UACDemoV10 }` means the system's one "volume" control only ever
+  reaches the USB speaker — never the reSpeaker's own reference mixer
+  (found fixed at 60/60, 0dB). **Root cause: reference/audible gain
+  ownership incoherence** — the digital reference PCM XVF3800's AEC
+  models against is always unscaled, completely decoupled from
+  whatever the physically separate speaker volume actually is, so
+  cancellation degrades as real volume rises. **Fix (smallest
+  evidence-backed layer, no VAD/Silero/BargeInController/preroll
+  touched):** new `nexa.voice.aec_gain.CoherentReferenceGain` reads the
+  audible device's real, current ALSA mixer gain (bounded-cost, cached
+  every 2s) and `AecReferenceFeeder` (new optional `gain_source`
+  parameter, default `None` = exact prior unscaled behavior) scales the
+  reference PCM to match before it reaches `plug:respeaker`. Wired only
+  into the cloud runtime (`build_gemini_voice_runtime`); local voice's
+  own `build_bargein_stack` never passes `gain_source`, so its behavior
+  is untouched (existing `AecReferenceFeeder` tests re-verified green,
+  unmodified, alongside 4 new gain-specific tests). +36 new tests
+  total (`aec_gain` 18, `AecReferenceFeederGain` 4,
+  `cross_correlate_pcm`/confidence-fix 14) plus a `LocalAudioConfig`
+  field-inventory test update — **1044 tests, OK (skipped=7)**;
+  `ruff`/`pip check`/`git diff --check` all clean. R0051 preroll, R0045
+  provider isolation, R0046 canonical history, zero local LID,
+  connection-loss tests all re-verified green, unmodified. No Gemini
+  call. Not pushed. **Real hardware re-validation of THIS fix is still
+  required from the operator — not yet performed, not claimed PASS.**
+  `M2.6B` remains IN PROGRESS: this fix's own real-hardware acceptance,
+  the still-pending minimal live Gemini conversational validation, and
+  the proactive-reconnect-caller gap all remain open completion items.)
+- **Prior report:** `docs/reports/R0052_m2_6b_4m_self_echo_diagnostic_20260912.md`
   (**M2.6B.4M — false self-barge-in / speaker-echo root cause diagnostic,
   2026-09-12.** A NEW failure class, distinct from the just-closed
   preroll issue: a live Gemini run showed NeXa sometimes triggering her

@@ -40,10 +40,26 @@ class LocalAudioConfig:
     each piece of hardware natively wants (the reSpeaker is 16 kHz stereo;
     the UACDemoV1.0 is 48 kHz stereo) — no channel/rate handling is needed
     in NeXa itself.
+
+    `VERIFIED FACT` (R0053, 2026-09-12, this Pi, real ``amixer``/`/etc/
+    asound.conf` audit): the reSpeaker (``Array``) and the USB DAC
+    (``UACDemoV10``) each expose their **own, independent** ALSA playback
+    mixer — `/etc/asound.conf`'s ``ctl.!default { card UACDemoV10 }``
+    means the system's one "default" volume control only ever reaches the
+    USB DAC's mixer, never the reSpeaker's own. See
+    ``output_alsa_mixer_card`` and ``nexa.voice.aec_gain``.
     """
 
     input_device_name: str = "respeaker"
     output_device_name: str = "usb_speaker"
+    #: M2.6B.4N / R0053 — the ALSA card name backing ``output_device_name``
+    #: (`/etc/asound.conf`'s own ``hw:CARD=UACDemoV10``), used to read the
+    #: audible path's REAL playback mixer gain for
+    #: ``nexa.voice.aec_gain.CoherentReferenceGain``. Kept as its own field
+    #: (not derived from ``output_device_name``) because the ALSA `plug:`
+    #: alias and the ALSA card name are two different identities — see
+    #: this class's own docstring.
+    output_alsa_mixer_card: str = "UACDemoV10"
     sample_rate: int = 16000
     channels: int = 1
     #: M2.5B — enable production barge-in / interruption. **Default False =

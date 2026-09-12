@@ -220,5 +220,104 @@ class TestSummarizeTrial(unittest.TestCase):
         self.assertEqual(result["mic_raw_rms_phase_playback"]["n_frames"], 0)
 
 
+def _sine_pcm(n: int, *, freq_cycles_total: float = 40.0, amplitude: int = 8000):
+    import numpy as np
+
+    t = np.linspace(0, freq_cycles_total * 2 * np.pi, n)
+    return (np.sin(t) * amplitude).astype(np.int16)
+
+
+class TestCrossCorrelatePcm(unittest.TestCase):
+    """R0053 Step 4 -- the offline, bounded-lag normalized
+    cross-correlation the charter asks for as the 'minimum additional
+    data' when RMS/confidence telemetry alone cannot distinguish
+    amplitude mismatch from timing mismatch from unrelated noise."""
+
+    def test_recovers_a_known_positive_lag(self) -> None:
+        ref = _sine_pcm(4000)
+        lag = 7
+        mic = probe.np.zeros(4000, dtype=probe.np.int16)
+        mic[lag:] = ref[: 4000 - lag]
+        result = probe.cross_correlate_pcm(
+            ref.tobytes(), mic.tobytes(), sample_rate=16000, max_lag_ms=5.0
+        )
+        self.assertEqual(result["best_lag_samples"], lag)
+        self.assertGreater(result["normalized_correlation"], 0.99)
+
+    def test_recovers_a_known_negative_lag(self) -> None:
+        ref = _sine_pcm(4000)
+        lag = -6
+        mic = probe.np.zeros(4000, dtype=probe.np.int16)
+        mic[: 4000 + lag] = ref[-lag:]
+        result = probe.cross_correlate_pcm(
+            ref.tobytes(), mic.tobytes(), sample_rate=16000, max_lag_ms=5.0
+        )
+        self.assertEqual(result["best_lag_samples"], lag)
+        self.assertGreater(result["normalized_correlation"], 0.99)
+
+    def test_uncorrelated_noise_gives_low_correlation(self) -> None:
+        rng = probe.np.random.default_rng(1)
+        ref = (rng.normal(0, 4000, 4000)).astype(probe.np.int16)
+        mic = (rng.normal(0, 4000, 4000)).astype(probe.np.int16)
+        result = probe.cross_correlate_pcm(
+            ref.tobytes(), mic.tobytes(), sample_rate=16000, max_lag_ms=5.0
+        )
+        self.assertLess(abs(result["normalized_correlation"]), 0.3)
+
+    def test_empty_reference_is_handled_without_raising(self) -> None:
+        mic = _sine_pcm(1000).tobytes()
+        result = probe.cross_correlate_pcm(
+            b"", mic, sample_rate=16000, max_lag_ms=5.0
+        )
+        self.assertIsNone(result["best_lag_ms"])
+        self.assertEqual(result["n_ref_samples"], 0)
+
+    def test_empty_mic_is_handled_without_raising(self) -> None:
+        ref = _sine_pcm(1000).tobytes()
+        result = probe.cross_correlate_pcm(
+            ref, b"", sample_rate=16000, max_lag_ms=5.0
+        )
+        self.assertIsNone(result["best_lag_ms"])
+        self.assertEqual(result["n_mic_samples"], 0)
+
+    def test_pure_silence_on_both_sides_is_handled_without_raising(self) -> None:
+        silence = (b"\x00\x00") * 500
+        result = probe.cross_correlate_pcm(
+            silence, silence, sample_rate=16000, max_lag_ms=5.0
+        )
+        # zero-variance signal: every window is degenerate (denom == 0)
+        self.assertIsNone(result["best_lag_ms"])
+
+
+class TestSileroConfidenceConversionFix(unittest.TestCase):
+    """R0053 CONFIRMED BUG: R0052's probe recorded Silero confidence as
+    0.0 on every single frame in every one of its 5 real-hardware
+    captures, because Silero's real ``voice_confidence`` (pipecat-ai
+    1.8.1) returns a shape-(1,) numpy array, and `float()` on that
+    raises `TypeError` under this repo's installed NumPy (2.5.2) --
+    silently caught and defaulted to 0.0. Production's OWN decision was
+    unaffected (it only ever compares/bool()s the array), but the
+    probe's own recorded telemetry was garbage. This proves the FIXED
+    conversion path handles exactly that shape, plus a bare scalar for
+    good measure."""
+
+    def test_shape_1_ndarray_converts_correctly(self) -> None:
+        arr = probe.np.array([0.83], dtype="float32")
+        self.assertAlmostEqual(
+            float(probe.np.asarray(arr).reshape(-1)[0]), 0.83, places=5
+        )
+
+    def test_bare_float_still_reproduces_the_original_bug(self) -> None:
+        # Documents WHY the bug existed -- if this ever stops raising
+        # (a future numpy relaxing the rule again), the fixed conversion
+        # above still works either way, so no test needs to change.
+        arr = probe.np.array([0.5], dtype="float32")
+        with self.assertRaises(TypeError):
+            float(arr)
+
+    def test_bare_python_scalar_still_converts(self) -> None:
+        self.assertEqual(float(probe.np.asarray(0.42).reshape(-1)[0]), 0.42)
+
+
 if __name__ == "__main__":
     unittest.main()

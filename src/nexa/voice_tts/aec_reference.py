@@ -26,6 +26,18 @@ without barge-in this processor is simply not inserted.
 
 The ALSA sink is injectable (``sink_factory``) so the frame-handling and
 health logic is deterministically testable with no audio device.
+
+M2.6B.4N / R0053 — an optional ``gain_source`` (see
+``nexa.voice.aec_gain.CoherentReferenceGain``) scales the reference PCM
+by the audible output device's own real, current ALSA mixer gain before
+it is queued. Root cause: the reference-injection card and the audible
+speaker card are two independent ALSA hardware mixers, so raising real
+speaker volume changed true acoustic loudness without ever changing the
+reference amplitude the XVF3800's AEC modeled against — degrading
+cancellation at higher volume and letting residual echo cross the local
+VAD gate (real hardware evidence: 0/5 false barge-ins at LOW, 1/5 at
+NORMAL, 5/5 at MAX). Default ``gain_source=None`` preserves the exact
+prior unscaled behavior.
 """
 
 from __future__ import annotations
@@ -44,6 +56,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from nexa.voice.aec import AecReferenceHealth
+from nexa.voice.aec_gain import apply_gain
 
 #: XVF3800 USB playback endpoint = its AEC far-end reference input.
 AEC_REFERENCE_PCM = "plug:respeaker"
@@ -95,6 +108,7 @@ class AecReferenceFeeder(FrameProcessor):
         device: str = AEC_REFERENCE_PCM,
         max_queued_chunks: int = DEFAULT_MAX_QUEUED_CHUNKS,
         sink_factory: Callable[[], _PcmSink] | None = None,
+        gain_source: Callable[[], float] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -102,6 +116,11 @@ class AecReferenceFeeder(FrameProcessor):
         self._sample_rate = sample_rate
         self._channels = channels
         self._device = device
+        #: M2.6B.4N / R0053 — coherent reference/audible gain (see module
+        #: docstring). ``None`` (default) preserves the exact prior
+        #: unscaled behavior; never required for correctness of the tee
+        #: itself, only for the amplitude it carries.
+        self._gain_source = gain_source
         self._sink_factory = sink_factory or (
             lambda: _PcmSink(sample_rate=sample_rate, channels=channels, device=device)
         )
@@ -169,7 +188,18 @@ class AecReferenceFeeder(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if isinstance(frame, TTSAudioRawFrame) and frame.audio:
-            self._enqueue(frame.audio)
+            pcm = frame.audio
+            if self._gain_source is not None:
+                try:
+                    pcm = apply_gain(pcm, self._gain_source())
+                except Exception:
+                    # A gain read must never break the reference tee — feed
+                    # the original, unscaled PCM rather than drop it.
+                    logger.exception(
+                        "nexa.voice_tts: gain_source raised — feeding "
+                        "unscaled reference PCM this frame"
+                    )
+            self._enqueue(pcm)
         elif isinstance(frame, (EndFrame, CancelFrame)):
             pass  # cleanup() handles teardown
         await self.push_frame(frame, direction)

@@ -806,6 +806,74 @@ class TestAecReferenceFeeder(_FpHarness):
         await f.end()
 
 
+class TestAecReferenceFeederGain(_FpHarness):
+    """M2.6B.4N / R0053 — coherent reference/audible gain, the smallest
+    evidence-backed production fix for the false self-barge-in root
+    cause (see ``nexa.voice.aec_gain``'s own module docstring). Default
+    ``gain_source=None`` must remain byte-for-byte the prior, unscaled
+    behavior — this is what ``TestAecReferenceFeeder`` above already
+    covers and must keep passing unmodified."""
+
+    async def _feeder(self, *, gain_source=None, **kw):
+        health = AecReferenceHealth()
+        sinks: list[_FakeSink] = []
+
+        def factory():
+            s = _FakeSink(**kw)
+            sinks.append(s)
+            return s
+
+        f = AecReferenceFeeder(
+            aec_health=health,
+            sample_rate=16000,
+            sink_factory=factory,
+            gain_source=gain_source,
+        )
+        self._instrument(f)
+        f.begin()
+        return f, health, sinks
+
+    async def test_default_gain_source_is_byte_for_byte_unscaled(self) -> None:
+        f, health, sinks = await self._feeder()
+        pcm = b"\x01\x02" * 160
+        await f.process_frame(TTSAudioRawFrame(pcm, 16000, 1), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.05)
+        self.assertEqual(sinks[0].written, pcm)
+        await f.end()
+
+    async def test_gain_source_scales_reference_pcm(self) -> None:
+        import struct
+
+        f, health, sinks = await self._feeder(gain_source=lambda: 0.5)
+        pcm = struct.pack("<4h", 1000, -1000, 20000, -20000)
+        await f.process_frame(TTSAudioRawFrame(pcm, 16000, 1), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.05)
+        self.assertEqual(
+            struct.unpack("<4h", sinks[0].written), (500, -500, 10000, -10000)
+        )
+        await f.end()
+
+    async def test_gain_source_of_1_0_is_a_true_noop(self) -> None:
+        f, health, sinks = await self._feeder(gain_source=lambda: 1.0)
+        pcm = b"\x03\x04" * 160
+        await f.process_frame(TTSAudioRawFrame(pcm, 16000, 1), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.05)
+        self.assertEqual(sinks[0].written, pcm)
+        await f.end()
+
+    async def test_gain_source_exception_falls_back_to_unscaled_pcm(self) -> None:
+        def boom():
+            raise RuntimeError("mixer read exploded")
+
+        f, health, sinks = await self._feeder(gain_source=boom)
+        pcm = b"\x05\x06" * 160
+        # must not raise, and must still forward the frame + tee unscaled
+        await f.process_frame(TTSAudioRawFrame(pcm, 16000, 1), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.05)
+        self.assertEqual(sinks[0].written, pcm)
+        await f.end()
+
+
 async def _noop():
     return None
 

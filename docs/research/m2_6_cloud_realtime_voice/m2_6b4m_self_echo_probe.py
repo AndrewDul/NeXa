@@ -66,6 +66,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC = REPO_ROOT / "src"
 if str(SRC) not in sys.path:
@@ -160,6 +162,77 @@ def rms_windows_from_events(
             sum(1 for f in xs if f["speaking"]) / len(xs), 4
         ),
     }
+
+
+def cross_correlate_pcm(
+    reference_pcm: bytes,
+    mic_pcm: bytes,
+    *,
+    sample_rate: int,
+    max_lag_ms: float = 200.0,
+) -> dict[str, Any]:
+    """R0053 / Step 4 -- offline, bounded-lag normalized cross-correlation
+    between a far-end reference PCM window and a post-hardware-AEC mic
+    PCM window. Diagnostic only: this function does not decide anything
+    by itself and is never called from the production pipeline.
+
+    A positive ``best_lag_ms`` means the mic signal best matches the
+    reference delayed by that many ms (the acoustically/hardware-expected
+    direction: mic after reference). ``normalized_correlation`` is in
+    [-1, 1]; a high correlation at a stable, small lag during an
+    assistant-only false barge-in is direct evidence the local VAD
+    triggered on genuine echo of the assistant's own signal rather than
+    on unrelated noise; a comparably high correlation during REAL human
+    "przerwij" double-talk (over the assistant's own audio, which is
+    still playing) would show ``normalized_correlation`` is not by
+    itself a safe confirm/reject gate.
+
+    Bounded lag search (never a full O(n^2) correlation) keeps this
+    Raspberry-Pi-appropriate even for multi-second windows: cost is
+    O(n * max_lag_samples), each term a vectorized numpy dot product.
+    """
+    ref = np.frombuffer(reference_pcm, dtype="<i2").astype(np.float64)
+    mic = np.frombuffer(mic_pcm, dtype="<i2").astype(np.float64)
+    result: dict[str, Any] = {
+        "n_ref_samples": int(ref.size),
+        "n_mic_samples": int(mic.size),
+        "max_lag_ms": max_lag_ms,
+        "best_lag_ms": None,
+        "best_lag_samples": None,
+        "normalized_correlation": None,
+    }
+    if ref.size == 0 or mic.size == 0:
+        return result
+    ref = ref - ref.mean()
+    mic = mic - mic.mean()
+    max_lag = max(1, int(sample_rate * max_lag_ms / 1000.0))
+    best_lag = 0
+    best_corr = -2.0
+    for lag in range(-max_lag, max_lag + 1):
+        if lag >= 0:
+            a = ref[: ref.size - lag] if lag > 0 else ref
+            b = mic[lag:]
+        else:
+            a = ref[-lag:]
+            b = mic[: mic.size + lag]
+        m = min(a.size, b.size)
+        if m <= 1:
+            continue
+        a = a[:m]
+        b = b[:m]
+        denom = float(np.sqrt(np.sum(a * a)) * np.sqrt(np.sum(b * b)))
+        if denom == 0.0:
+            continue
+        corr = float(np.dot(a, b) / denom)
+        if corr > best_corr:
+            best_corr = corr
+            best_lag = lag
+    if best_corr <= -2.0:
+        return result  # every candidate window was degenerate (silence)
+    result["best_lag_samples"] = best_lag
+    result["best_lag_ms"] = round(1000.0 * best_lag / sample_rate, 2)
+    result["normalized_correlation"] = round(best_corr, 4)
+    return result
 
 
 def raw_rms_windows_from_events(
@@ -313,6 +386,13 @@ class Recorder:
     bargein_events: list[dict] = field(default_factory=list)
     playback_start_t: float | None = None
     playback_end_t: float | None = None
+    #: M2.6B.4N / R0053 -- Step 4's "minimum additional data": bounded raw
+    #: PCM windows for offline cross-correlation. Only populated when
+    #: ``capture_pcm=True`` (kept off by default -- these accumulate real
+    #: audio bytes, not aggregate stats, so they must stay opt-in).
+    capture_pcm: bool = False
+    mic_pcm_chunks: list[bytes] = field(default_factory=list)
+    ref_pcm_chunks: list[bytes] = field(default_factory=list)
 
     def mark_vad(self, kind: str) -> None:
         self.vad_events.append({"t": time.monotonic(), "kind": kind})
@@ -329,6 +409,14 @@ class Recorder:
         proxy above (which the charter also asks to log, but which is
         Silero's own internal metric, not a raw-signal measurement)."""
         self.mic_rms_frames.append({"t": time.monotonic(), "rms": round(rms, 2), "peak": peak})
+
+    def mark_mic_pcm(self, pcm: bytes) -> None:
+        if self.capture_pcm:
+            self.mic_pcm_chunks.append(pcm)
+
+    def mark_ref_pcm(self, pcm: bytes) -> None:
+        if self.capture_pcm:
+            self.ref_pcm_chunks.append(pcm)
 
     def mark_ref_rms(self, *, rms: float, peak: int) -> None:
         """Far-end reference PCM RMS/peak -- the exact bytes handed to
@@ -354,6 +442,8 @@ class Recorder:
         self.bargein_events = []
         self.playback_start_t = None
         self.playback_end_t = None
+        self.mic_pcm_chunks = []
+        self.ref_pcm_chunks = []
 
 
 def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sample_rate: int):
@@ -393,26 +483,51 @@ def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sam
         mutates a frame; purely observes raw mic PCM for RMS/peak
         telemetry (separate from Silero's own confidence/volume, which
         the probed analyzer subclass below records from the REAL
-        production computation)."""
+        production computation).
+
+        R0053 CONFIRMED BUG FIX: this pipeline is ONE linear, bidirectional
+        Pipecat chain -- frames the probe injects via
+        ``worker.queue_frames()`` (the assistant fixture, as
+        ``TTSAudioRawFrame``) enter at the pipeline's own Source and so
+        ALSO pass through this tap (positioned right after
+        ``transport.input()``) on their way to ``aec_feeder``/
+        ``transport.output()``, alongside the real, separately-arriving
+        ``InputAudioRawFrame`` frames from the actual microphone. R0052's
+        original tap recorded RMS/peak for ANY frame with an ``.audio``
+        attribute, so its "mic" telemetry during a playback window was
+        contaminated with the raw, un-attenuated assistant PCM in transit
+        -- not a measurement of real post-hardware-AEC residual echo.
+        Filtering to ``InputAudioRawFrame`` (the SAME type
+        ``VADController.process_frame`` itself gates real VAD analysis
+        on, confirmed in Pipecat's own source) makes this tap measure
+        exactly, and only, what Silero itself analyzes."""
 
         async def process_frame(self, frame: Any, direction: Any) -> None:
             await super().process_frame(frame, direction)
-            audio = getattr(frame, "audio", None)
-            if audio:
-                recorder.mark_mic_rms(rms=_rms(audio), peak=_peak(audio))
+            if isinstance(frame, P["InputAudioRawFrame"]) and frame.audio:
+                recorder.mark_mic_rms(rms=_rms(frame.audio), peak=_peak(frame.audio))
+                recorder.mark_mic_pcm(frame.audio)
             await self.push_frame(frame, direction)
 
     class _RefRmsTap(P["FrameProcessor"]):
         """DIAGNOSTIC ONLY -- sits immediately before ``aec_feeder``, so
         it observes the EXACT bytes the feeder itself will enqueue to
         ``plug:respeaker`` (the far-end reference). Never drops or
-        mutates a frame."""
+        mutates a frame.
+
+        R0053 CONFIRMED BUG FIX: filters to ``TTSAudioRawFrame`` -- the
+        SAME type ``AecReferenceFeeder.process_frame`` itself gates on
+        (confirmed in its source) -- for the same reason as
+        ``_MicRmsTap`` above: real ``InputAudioRawFrame`` frames also
+        pass this point (Pipecat forwards frame types it doesn't act on
+        unchanged), and R0052's original untyped tap counted them into
+        "reference" RMS too."""
 
         async def process_frame(self, frame: Any, direction: Any) -> None:
             await super().process_frame(frame, direction)
-            audio = getattr(frame, "audio", None)
-            if audio:
-                recorder.mark_ref_rms(rms=_rms(audio), peak=_peak(audio))
+            if isinstance(frame, P["TTSAudioRawFrame"]) and frame.audio:
+                recorder.mark_ref_rms(rms=_rms(frame.audio), peak=_peak(frame.audio))
+                recorder.mark_ref_pcm(frame.audio)
             await self.push_frame(frame, direction)
 
     class _ProbedSilero(P["SileroVADAnalyzer"]):
@@ -427,9 +542,23 @@ def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sam
 
         def voice_confidence(self, buffer):  # type: ignore[override]
             c = super().voice_confidence(buffer)
+            # R0053 CONFIRMED BUG FIX: Silero's real ``voice_confidence``
+            # (pipecat-ai 1.8.1, ``SileroOnnxModel.__call__``) returns a
+            # shape-(1,) numpy array, not a bare scalar. `float(arr)` on a
+            # 1-element ndarray raises `TypeError: only 0-dimensional
+            # arrays can be converted to Python scalars` under NumPy 2.x
+            # (verified directly against this repo's own installed numpy
+            # 2.5.2) -- the original R0052 probe's bare `float(c)` silently
+            # hit this exception on EVERY frame and recorded 0.0 always,
+            # even during real confirmed barge-ins. `np.asarray(c).reshape(-1)[0]`
+            # (or `.item()`) works for both a bare scalar and a shape-(1,)
+            # array; production itself never hit this because it only
+            # ever compares/bool()s the array (`confidence >= x`, which
+            # numpy permits for a single-element array), never calls
+            # `float()` on it.
             try:
-                self._last_conf = float(c)
-            except (TypeError, ValueError):
+                self._last_conf = float(np.asarray(c).reshape(-1)[0])
+            except (TypeError, ValueError, IndexError):
                 self._last_conf = 0.0
             return c
 
@@ -582,7 +711,8 @@ async def _wait_for_finish(lifecycle, *, timeout: float) -> bool:
 
 
 async def _run_silent_trial(
-    P: dict[str, Any], worker, recorder: Recorder, *, lifecycle, bargein, pcm: bytes, sample_rate: int, level: str
+    P: dict[str, Any], worker, recorder: Recorder, *, lifecycle, bargein, pcm: bytes,
+    sample_rate: int, level: str, trial_index: int, max_lag_ms: float,
 ) -> dict[str, Any]:
     recorder.reset_trial()
     trial_start = time.monotonic()
@@ -607,12 +737,18 @@ async def _run_silent_trial(
         ref_rms_frames=recorder.ref_rms_frames,
     )
     result["trial_start_t"] = round(trial_start, 4)
+    corr = _save_pcm_and_correlate(
+        recorder, sample_rate=sample_rate, label=f"{level}_trial{trial_index}", max_lag_ms=max_lag_ms
+    )
+    if corr is not None:
+        result["cross_correlation"] = corr
     await asyncio.sleep(GAP_S)
     return result
 
 
 async def _run_control_trial(
-    P: dict[str, Any], worker, recorder: Recorder, *, lifecycle, bargein, pcm: bytes, sample_rate: int
+    P: dict[str, Any], worker, recorder: Recorder, *, lifecycle, bargein, pcm: bytes,
+    sample_rate: int, control_index: int, max_lag_ms: float,
 ) -> dict[str, Any]:
     """The human control: assistant plays, operator deliberately says
     "przerwij" -- proves whatever the eventual fix is does NOT also
@@ -639,7 +775,49 @@ async def _run_control_trial(
         ref_rms_frames=recorder.ref_rms_frames,
     )
     result["trial_start_t"] = round(trial_start, 4)
+    corr = _save_pcm_and_correlate(
+        recorder, sample_rate=sample_rate, label=f"control{control_index}", max_lag_ms=max_lag_ms
+    )
+    if corr is not None:
+        result["cross_correlation"] = corr
     return result
+
+
+def _write_wav(path: Path, pcm: bytes, *, sample_rate: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm)
+
+
+def _save_pcm_and_correlate(
+    recorder: Recorder, *, sample_rate: int, label: str, max_lag_ms: float
+) -> dict[str, Any] | None:
+    """R0053 Step 4: if ``--capture-pcm`` was requested and this trial
+    actually captured any raw PCM, write the bounded mic/reference
+    windows to WAV (git-ignored, never committed) and run the offline
+    cross-correlation between them. Returns ``None`` (not an empty dict)
+    when nothing was captured, so callers can tell "not requested" apart
+    from "captured, degenerate result"."""
+    if not recorder.capture_pcm:
+        return None
+    mic_pcm = b"".join(recorder.mic_pcm_chunks)
+    ref_pcm = b"".join(recorder.ref_pcm_chunks)
+    if not mic_pcm and not ref_pcm:
+        return None
+    pcm_dir = OUT_DIR / "pcm"
+    mic_path = pcm_dir / f"{label}_mic.wav"
+    ref_path = pcm_dir / f"{label}_ref.wav"
+    _write_wav(mic_path, mic_pcm, sample_rate=sample_rate)
+    _write_wav(ref_path, ref_pcm, sample_rate=sample_rate)
+    corr = cross_correlate_pcm(
+        ref_pcm, mic_pcm, sample_rate=sample_rate, max_lag_ms=max_lag_ms
+    )
+    corr["mic_wav"] = str(mic_path)
+    corr["ref_wav"] = str(ref_path)
+    return corr
 
 
 def _load_wav(path: Path) -> tuple[bytes, int]:
@@ -684,6 +862,18 @@ def parse_args() -> argparse.Namespace:
         "--voice", choices=["pl", "en"], default="pl",
         help="Piper voice for --synthesize-piper (maps to nexa.tts.PL_VOICE/EN_VOICE)",
     )
+    p.add_argument(
+        "--capture-pcm", action="store_true",
+        help=(
+            "R0053 Step 4: also save bounded raw PCM (mic + far-end reference) "
+            "for each trial as WAV pairs under self_echo_captures/pcm/, and run "
+            "an offline normalized cross-correlation between them"
+        ),
+    )
+    p.add_argument(
+        "--max-lag-ms", type=float, default=200.0,
+        help="max lag searched by --capture-pcm's cross-correlation (default 200ms)",
+    )
     return p.parse_args()
 
 
@@ -716,7 +906,9 @@ async def _run(args: argparse.Namespace) -> int:
         pcm, rate = _load_wav(wav_path)
     print(f"  assistant fixture        {_pcm_ms(len(pcm), rate) / 1000:.2f}s @ {rate}Hz")
 
-    recorder = Recorder()
+    recorder = Recorder(capture_pcm=args.capture_pcm)
+    if args.capture_pcm:
+        print(f"  capture-pcm              ON (max_lag_ms={args.max_lag_ms})")
     worker, runner_cls, bargein, lifecycle, aec_health = build_probe_pipeline(
         P, recorder=recorder, assistant_sample_rate=rate
     )
@@ -730,7 +922,8 @@ async def _run(args: argparse.Namespace) -> int:
     try:
         if args.control:
             r = await _run_control_trial(
-                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm, sample_rate=rate
+                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                sample_rate=rate, control_index=1, max_lag_ms=args.max_lag_ms,
             )
             trials.append(r)
             print(
@@ -747,7 +940,8 @@ async def _run(args: argparse.Namespace) -> int:
                 print(f"  [{args.level}] trial {i}/{args.repeats} ...", flush=True)
                 r = await _run_silent_trial(
                     P, worker, recorder, lifecycle=lifecycle, bargein=bargein,
-                    pcm=pcm, sample_rate=rate, level=args.level,
+                    pcm=pcm, sample_rate=rate, level=args.level, trial_index=i,
+                    max_lag_ms=args.max_lag_ms,
                 )
                 trials.append(r)
                 print(

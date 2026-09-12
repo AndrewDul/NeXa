@@ -1079,6 +1079,51 @@ unpaid-quota data is used to improve Google products.
     Gemini call. `M2.6B` remains IN PROGRESS — self-echo root
     cause/fix, the still-pending minimal live Gemini conversational
     validation, and the proactive-reconnect-caller gap all remain open.
+  - **M2.6B.4N — self-echo discrimination root cause and production
+    fix** (`R0053`, 2026-09-12). R0052's real hardware evidence came
+    back: 0/5 false confirmed barge-ins at LOW, 1/5 at NORMAL, 5/5 at
+    MAX, with a highly repeatable ~1.08–1.12s onset at MAX (stdev
+    ≈0.016s); real "przerwij" control correctly confirmed 2/2. While
+    analyzing this data, found and fixed two real bugs in R0052's OWN
+    diagnostic instrumentation (documented as an R0052 erratum): Silero's
+    real `voice_confidence()` returns a numpy shape-(1,) array, and
+    `float()` on it raises under this repo's installed NumPy 2.5.2 --
+    the probe's own tap silently defaulted confidence to 0.0 on every
+    frame (production's real decision was unaffected); and the probe's
+    mic/reference RMS taps double-counted the injected assistant PCM as
+    "mic" telemetry (one linear, bidirectional pipeline), contaminating
+    the mic-vs-reference comparison in every file including both real
+    control runs. Real, direct ALSA system audit (read-only) found the
+    actual mechanism: the reSpeaker's reference-injection mixer (card
+    `Array`) and the USB speaker's audible mixer (card `UACDemoV10`) are
+    two INDEPENDENT ALSA hardware controls; `/etc/asound.conf`'s
+    `ctl.!default { card UACDemoV10 }` means the system's one "volume"
+    control only ever reaches the USB speaker, never the reSpeaker's own
+    reference mixer (found fixed at 0dB). **Root cause: reference/
+    audible gain ownership incoherence** -- the digital reference PCM
+    the XVF3800's AEC models against is always unscaled, completely
+    decoupled from the physically separate speaker's real volume, so
+    cancellation degrades as real volume rises. **Fix (smallest
+    evidence-backed layer; no VAD/Silero/BargeInController/preroll
+    touched):** new `nexa.voice.aec_gain.CoherentReferenceGain` reads
+    the audible device's real, current ALSA mixer gain (bounded-cost,
+    cached 2s) and `AecReferenceFeeder` (new optional `gain_source`
+    parameter, default `None` = exact prior unscaled behavior) scales
+    the reference PCM to match. Wired only into the cloud runtime;
+    local voice's own stack never passes `gain_source`, so its behavior
+    is untouched (existing tests re-verified green unmodified, +4 new
+    gain-specific tests). +36 new tests total across `aec_gain` (18),
+    `AecReferenceFeederGain` (4), and the probe's `cross_correlate_pcm`/
+    confidence-fix tests (14) plus a `LocalAudioConfig` field-inventory
+    update. **1044 tests total, OK (skipped=7)**; `ruff`/`pip check`/
+    `git diff --check` all clean. R0051 preroll, R0045 provider
+    isolation, R0046 canonical history, zero local LID, connection-loss
+    tests all re-verified green, unmodified. No Gemini call. **Real
+    hardware re-validation of THIS fix is still required from the
+    operator -- not yet performed, not claimed PASS.** `M2.6B` remains
+    IN PROGRESS: this fix's own real-hardware acceptance, the
+    still-pending minimal live Gemini conversational validation, and the
+    proactive-reconnect-caller gap all remain open.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

@@ -409,3 +409,69 @@ exists to diagnose — report the printed summary and the JSON path
 self_echo_probe_<timestamp>.json`, git-ignored) back for the root-cause
 determination and fix, which will be R0053 (or a continuation of this
 checkpoint) — **not decided or implemented here.**
+
+---
+
+## ERRATUM (R0053) — REAL HARDWARE RESULT + TWO CONFIRMED PROBE BUGS
+
+The operator ran the exact command above on the real reSpeaker + real
+USB speaker. **Real result:**
+
+| Level | Trials | False confirmed barge-ins | Verdict |
+|---|---|---|---|
+| LOW | 5 | 0/5 | PASS |
+| NORMAL | 5 | 1/5 (trial 5) | **FAIL** |
+| MAX | 5 | 5/5 | **FAIL** |
+| Control ("przerwij") #1 | 1 | 1/1 correct | PASS |
+| Control ("przerwij") #2 | 1 | 1/1 correct | PASS |
+
+At MAX, the false VAD onset landed at an almost identical relative
+offset after playback start in all 5 trials (~1.08–1.12s), and every
+confirmed interruption followed ~0.301–0.302s later (the configured
+`confirm_hold_secs`) — a highly repeatable pattern, not random noise.
+Full ingestion, analysis, and root-cause determination is R0053 (see
+`docs/reports/R0053_...md`).
+
+**Two real bugs in THIS probe's own instrumentation were found while
+analyzing that real data** — both now fixed in R0053, neither affects
+the validity of the VAD/barge-in timing/count evidence above:
+
+1. **Silero confidence always recorded as 0.0.** Silero's real
+   `voice_confidence()` (pipecat-ai 1.8.1) returns a shape-(1,) numpy
+   array; `float()` on it raises `TypeError` under this repo's
+   installed NumPy (2.5.2) — R0052's probe silently caught that and
+   defaulted to 0.0 on every single frame, in every one of the 5 real
+   captures above. **Every `conf_mean`/`conf_max` field in those 5
+   JSON files is therefore invalid and must be disregarded.**
+   Production's own decision was never affected (it only ever
+   compares/`bool()`s the array, which numpy permits for one element).
+   The `vol_mean`/`vol_max`/`speaking_frame_frac` fields in the same
+   files ARE valid (a different, unaffected code path).
+2. **`mic_raw_rms_phase_*`/`ref_raw_rms_phase_*` were cross-contaminated.**
+   The probe is one linear, bidirectional Pipecat pipeline; frames
+   queued via `worker.queue_frames()` (the injected assistant fixture)
+   enter at the pipeline's own Source and so pass through the earlier
+   `_MicRmsTap` too, on their way to `aec_feeder`/`transport.output()`
+   — alongside the real, separately-arriving mic `InputAudioRawFrame`s.
+   R0052's taps recorded RMS/peak for ANY frame with an `.audio`
+   attribute, so `mic_raw_rms_phase_playback` was contaminated with
+   raw, un-attenuated assistant PCM in transit, not real
+   post-hardware-AEC residual echo — this is why it came out nearly
+   identical to `ref_raw_rms_phase_playback` in every one of the 5
+   files, including both real "przerwij" controls. **All 5 files'
+   `mic_raw_rms_phase_playback`/`ref_raw_rms_phase_playback` fields
+   must be disregarded as a mic-vs-reference amplitude comparison.**
+   `mic_raw_rms_phase_quiet_before` (before any assistant PCM is
+   queued) was NOT affected and remains valid.
+
+Both bugs are now fixed (frame-type filtering added to both taps;
+`np.asarray(c).reshape(-1)[0]` replaces the bare `float(c)`), with new
+regression tests. **None of this reopens or invalidates the VAD
+start/stop timestamps, playback timestamps, or barge-in
+candidate/confirmed/rejected counts and timing above** — those come
+from real `VADUserStartedSpeakingFrame`/`BotStartedSpeakingFrame`/
+`BargeInController` hooks, an entirely different, unaffected code path
+(confirmed by direct source read of Pipecat's own `VADController.
+process_frame`, which gates real VAD analysis on `isinstance(frame,
+InputAudioRawFrame)` alone). See R0053 for the full analysis, the real
+ALSA system audit, root cause, and production fix.

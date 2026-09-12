@@ -81,6 +81,9 @@ class TestConfigIsExplicitAndTyped(unittest.TestCase):
             {
                 "input_device_name": "str",
                 "output_device_name": "str",
+                # M2.6B.4N / R0053 — ALSA card backing output_device_name,
+                # for reading the audible path's own real mixer gain.
+                "output_alsa_mixer_card": "str",
                 "sample_rate": "int",
                 "channels": "int",
                 # M2.5B — production barge-in switch; default False = R0026.
