@@ -376,15 +376,28 @@ evidence only, exactly as directed ("Do NOT change preroll yet").
 
 ## TEST RESULTS
 
+**Correction (R0051, same-day amendment):** the line below originally
+read "Full-suite/regression re-run deferred to R0051" — that was not
+accurate; the full project suite WAS actually run and passed during
+this checkpoint's own validation pass, before the commit. Corrected to
+record what actually happened:
+
 ```
 $ .venv/bin/python -m pytest tests/test_m2_6b4k_wav_alignment.py -q
 10 passed in 0.03s
+
+$ .venv/bin/python -m unittest discover -s tests -p "test_*.py"
+Ran 991 tests in 64.946s
+OK (skipped=7)
 ```
 
-`ruff check docs/research/m2_6_cloud_realtime_voice/wav_alignment.py tests/test_m2_6b4k_wav_alignment.py`
-— All checks passed. Full-suite/regression re-run deferred to R0051
-(no production code changed this checkpoint to regress); the 981-test
-baseline from R0049 stands unmodified.
+`ruff check src/ tests/ apps/ docs/research/m2_6_cloud_realtime_voice/`
+— All checks passed. `.venv/bin/pip check` — No broken requirements
+found. `git diff --check` — clean. Local voice freeze
+(`git diff --stat -- src/nexa/voice src/nexa/voice_tts src/nexa/stt`) —
+empty. All consistent with "zero `src/nexa/**` changes this checkpoint"
+— the 991-test full-suite run confirms no regression was introduced by
+the new diagnostic-only files, not merely that none was expected.
 
 ## GIT STATUS
 

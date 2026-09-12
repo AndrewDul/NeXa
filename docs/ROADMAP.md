@@ -996,6 +996,32 @@ unpaid-quota data is used to improve Google products.
     `UtteranceBuffer`'s own already-validated `PRE_ROLL_MS=500` default
     directly. Zero `src/nexa/**` changes this checkpoint. Hardware
     acceptance remains FAIL; `M2.6B` remains IN PROGRESS. No Gemini call.
+  - **M2.6B.4L — use empirically validated 500ms user-audio preroll**
+    (`R0051`, 2026-09-12). Implements R0050's identified fix: replaced
+    R0049's `AUTOSIZED_PREROLL_MARGIN_SECS`-derived 300ms preroll
+    (proven insufficient by real hardware evidence) with NeXa's own,
+    already-empirically-validated `nexa.stt.utterance_buffer.
+    PRE_ROLL_MS = 500` — an independent, pre-existing R0006-era
+    measurement against real speech fixtures for the IDENTICAL VAD
+    mechanism, already trusted by local voice, reused directly rather
+    than re-deriving a second number. Zero new layering (same
+    dependency edge R0049 already introduced for `UtteranceBuffer`
+    itself); the now-proven-wrong `AUTOSIZED_PREROLL_MARGIN_SECS`
+    constant removed entirely, not left dead. Zero changes to Silero
+    params, barge-in thresholds, R0045's replacement/quarantine logic,
+    or R0046's canonical-history logic — capacity only. `git diff
+    --stat -- src/nexa/stt` remains empty (local voice's own
+    `PRE_ROLL_MS`/`UtteranceBuffer` untouched, its own 9-test suite
+    re-verified green). Also corrected a same-day R0050 documentation
+    slip (claimed the full suite was deferred when it had actually
+    already run and passed). All offline validation green — **991
+    tests total, OK (skipped=7)**, 0 regressions; `ruff`/`pip check`/
+    `git diff --check` all clean; the R0048 probe's `--dry` now
+    live-confirms `preroll_ms 500`. **Real hardware post-fix result:
+    PENDING** — the operator must re-run the exact, unchanged capture
+    command and confirm by listening; no hardware PASS is fabricated.
+    Hardware acceptance remains FAIL; `M2.6B` remains IN PROGRESS. No
+    Gemini call.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

@@ -312,13 +312,34 @@ access at import time — confirmed by direct source read of
 ``BilingualSpeechTranscriber`` instance anywhere; R0042's actual,
 mechanically-enforced guarantee ("`build_gemini_voice_runtime` must never
 CONSTRUCT `WhisperCppLanguageDetector`" — see
-``TestNoLocalLidInCloudRuntime``) is unaffected and re-verified. The
-pre-buffer's capacity is derived, never hardcoded: ``AUTOSIZED_PREROLL_MARGIN_SECS
-= 0.1`` (mirrors Pipecat's own ``AUTOSIZED_USER_AUDIO_PREROLL_MARGIN_SECS``,
-same value, same source) plus the ACTUAL constructed
-``vad_analyzer.params.start_secs`` (never a hardcoded ``0.2``), times
-``INPUT_SAMPLE_RATE_HZ`` — so it always tracks whatever VAD config is
-actually active, self-consistently.
+``TestNoLocalLidInCloudRuntime``) is unaffected and re-verified.
+
+M2.6B.4L (R0051) — **the pre-buffer's capacity was originally (R0049)
+derived from Pipecat's own documented auto-sizing arithmetic
+(``start_secs + a 0.1 s margin`` = 300 ms) — real hardware evidence
+(``docs/reports/R0050_...md``) proved this insufficient**: a byte-exact
+alignment of real operator captures showed the 300 ms preroll left
+exactly 200 ms of the diagnostic's own pre-VAD-start window omitted,
+and a plain PCM energy (RMS) analysis of that omitted window showed
+real, rising acoustic energy in 8 of 10 real takes, beginning roughly
+300-460 ms before VAD confirmation — consistent with a deeper source
+audit showing ``start_secs`` alone (192 ms, from Silero's own 6×32 ms
+chunk requirement) excludes Pipecat's own exponential volume-smoothing
+lag (data-dependent, ~100-330 ms) and Silero's own model-internal
+confidence timing. **This exact question was already answered once
+before, empirically, for the IDENTICAL VAD mechanism** —
+``nexa.stt.utterance_buffer``'s own docstring documents a real,
+R0006-era measurement of confirmation delay at 288-352 ms against real
+speech fixtures, which is why that module's own ``PRE_ROLL_MS`` default
+is 500, not a Pipecat-derived 300. The pre-buffer's capacity is now
+simply ``UtteranceBuffer``'s own canonical, already-validated
+``PRE_ROLL_MS`` constant (imported directly, the SAME already-established
+dependency edge R0049 introduced for the class itself — no new
+layering, no second "500" defined anywhere else) — never a
+NeXa/Pipecat-specific re-derivation of a number this codebase had
+already measured correctly once. ``AUTOSIZED_PREROLL_MARGIN_SECS`` (the
+now-proven-insufficient derivation) is removed entirely, not left
+behind as a dead/misleading constant.
 
 ``_VadToProviderBridge`` no longer maintains its own separate
 ``_utterance_buffer`` bytearray at all: ``UtteranceBuffer`` now serves
@@ -361,7 +382,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from ...stt.utterance_buffer import UtteranceBuffer
+from ...stt.utterance_buffer import PRE_ROLL_MS, UtteranceBuffer
 from ...voice.aec import AecReferenceHealth
 from ...voice.bargein import BargeInController, InterruptContext
 from ...voice.config import LocalAudioConfig
@@ -569,21 +590,6 @@ class _ResponseLifecycle:
 #: Under-crediting is acceptable; crediting unspoken words is not.
 CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX = ""
 
-#: M2.6B.4J (R0049) — mirrors Pipecat's own
-#: ``AUTOSIZED_USER_AUDIO_PREROLL_MARGIN_SECS`` (``pipecat/services/google/
-#: gemini_live/llm.py``, same value, same source: a cushion added on top of
-#: the VAD's own ``start_secs`` "to absorb small timing slop between
-#: start_secs and the audio actually clipped, and to give a bit of extra
-#: audio context for the model"). Used here to size
-#: ``_VadToProviderBridge``'s own rolling PCM pre-buffer to
-#: ``vad_analyzer.params.start_secs + AUTOSIZED_PREROLL_MARGIN_SECS`` — the
-#: SAME effective preroll duration (~0.3 s, with production's unmodified
-#: ``start_secs=0.2``) the accepted M2.6A spike had, restored, since
-#: Gemini's own preroll mechanism (present, unmodified, inside
-#: ``GeminiLiveLLMService``) was structurally starved by this module's
-#: separate-pipeline topology (see the module docstring's M2.6B.4J
-#: section) — never a hardcoded byte count.
-AUTOSIZED_PREROLL_MARGIN_SECS = 0.1
 
 class _ResponseGenerationGuard:
     """M2.6B.4 (R0038 FAILURE 2) — the single source of truth for which
@@ -1635,13 +1641,15 @@ def build_gemini_voice_runtime(
         sample_rate=INPUT_SAMPLE_RATE_HZ, params=P["VADParams"](stop_secs=0.5)
     )
     vad_processor = P["VADProcessor"](vad_analyzer=vad_analyzer)
-    # M2.6B.4J (R0049) -- derived, never hardcoded: the SAME effective
-    # preroll the accepted M2.6A spike had (start_secs + the source-backed
-    # 0.1s margin), from the ACTUAL constructed VAD analyzer's own
-    # start_secs -- always self-consistent even if that ever changes.
-    preroll_ms = int(
-        (vad_analyzer.params.start_secs + AUTOSIZED_PREROLL_MARGIN_SECS) * 1000
-    )
+    # M2.6B.4L (R0051) -- R0049's own derivation (start_secs + a 0.1s
+    # margin = 300ms) was PROVEN insufficient by real hardware evidence
+    # (docs/reports/R0050_...md: byte-exact alignment + PCM energy
+    # analysis of real operator captures). Use NeXa's own canonical,
+    # already-EMPIRICALLY-validated preroll capacity instead --
+    # ``UtteranceBuffer``'s own ``PRE_ROLL_MS`` (500ms, measured against
+    # real speech for this EXACT VAD mechanism, R0006-era) -- never a
+    # second, re-derived "500" defined anywhere else.
+    preroll_ms = PRE_ROLL_MS
     bridge_cls = _make_vad_bridge_class(P)
     bridge = bridge_cls(
         provider_handle=provider_handle,

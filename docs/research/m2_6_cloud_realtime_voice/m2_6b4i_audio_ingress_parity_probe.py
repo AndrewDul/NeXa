@@ -368,7 +368,6 @@ def build_processor_chain(*, capture: IngressCapture) -> tuple[list[Any], dict[s
     """
     from nexa.conversation.session import ConversationSession
     from nexa.realtime.gemini.runtime import (
-        AUTOSIZED_PREROLL_MARGIN_SECS,
         RuntimeMetrics,
         _make_vad_bridge_class,
         _ProviderHandle,
@@ -377,6 +376,7 @@ def build_processor_chain(*, capture: IngressCapture) -> tuple[list[Any], dict[s
     from nexa.realtime.gemini.service import INPUT_SAMPLE_RATE_HZ
     from nexa.realtime.policy import ConversationPolicy
     from nexa.realtime.router import ConversationRouter
+    from nexa.stt.utterance_buffer import PRE_ROLL_MS
     from nexa.voice.aec import AecReferenceHealth
     from nexa.voice.bargein import BargeInController
 
@@ -391,13 +391,13 @@ def build_processor_chain(*, capture: IngressCapture) -> tuple[list[Any], dict[s
     provider_handle = _ProviderHandle(stub)
 
     P = _pipecat_hw_imports()
-    # M2.6B.4J (R0049) -- constructed HERE (not below) so the bridge's own
-    # preroll capacity derives from THIS SAME analyzer instance, exactly
-    # mirroring build_gemini_voice_runtime's own derivation.
     vad_analyzer = P["SileroVADAnalyzer"](
         sample_rate=INPUT_SAMPLE_RATE_HZ, params=P["VADParams"](stop_secs=0.5)
     )
-    preroll_ms = int((vad_analyzer.params.start_secs + AUTOSIZED_PREROLL_MARGIN_SECS) * 1000)
+    # M2.6B.4L (R0051) -- mirrors build_gemini_voice_runtime's own
+    # (corrected) derivation EXACTLY: NeXa's canonical, empirically
+    # validated preroll capacity, never a re-derived/hardcoded value.
+    preroll_ms = PRE_ROLL_MS
     bridge_cls = _make_vad_bridge_class(P)
     metrics = RuntimeMetrics()
     lifecycle = _ResponseLifecycle(on_finished=lambda: None)
@@ -522,8 +522,19 @@ def parse_args() -> argparse.Namespace:
 
 
 async def _run(args: argparse.Namespace) -> int:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    capture = IngressCapture(sample_rate=16000, out_dir=OUT_DIR)
+    # M2.6B.4L (R0051) -- diagnostic-only: each real (non-dry) session
+    # gets its own timestamped subdirectory, so a later run's 001..NNN
+    # WAVs never silently overwrite an earlier run's (the exact
+    # file-name-reuse confusion R0050 had to explicitly flag and work
+    # around). Never affects production; --dry never even creates a
+    # session directory since it writes nothing.
+    session_dir = (
+        OUT_DIR
+        if args.dry
+        else OUT_DIR / datetime.now(UTC).strftime("session_%Y%m%dT%H%M%SZ")
+    )
+    session_dir.mkdir(parents=True, exist_ok=True)
+    capture = IngressCapture(sample_rate=16000, out_dir=session_dir)
     worker, runner_cls, meta = build_diagnostic_pipeline(capture=capture, dry=args.dry)
     capture.sample_rate = meta["sample_rate"]
 
@@ -574,7 +585,7 @@ async def _run(args: argparse.Namespace) -> int:
 
     path = capture.write_summary(note=args.note or "operator ingress-parity session")
     print(f"\n{len(capture.completed)} utterance(s) captured.")
-    print(f"WAV files + summary JSON under: {OUT_DIR}")
+    print(f"WAV files + summary JSON under: {session_dir}")
     print(f"summary JSON: {path}")
     print("This probe does NOT judge audio quality -- listen to both WAVs")
     print("per utterance and compare (that is the operator's call).")

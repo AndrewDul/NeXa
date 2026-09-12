@@ -44,6 +44,7 @@ from nexa.realtime.gemini.runtime import (  # noqa: E402
 )
 from nexa.realtime.policy import ActiveProvider, ConversationPolicy  # noqa: E402
 from nexa.realtime.router import ConversationRouter  # noqa: E402
+from nexa.stt.utterance_buffer import PRE_ROLL_MS  # noqa: E402
 from nexa.voice.aec import AecReferenceHealth  # noqa: E402
 from nexa.voice.bargein import BargeInController, InterruptContext  # noqa: E402
 from nexa.voice.interruption import InterruptionState  # noqa: E402
@@ -777,7 +778,7 @@ class TestVadBridgeProcessorLifecycle(unittest.IsolatedAsyncioTestCase):
         bridge_cls = _make_vad_bridge_class(P)
         bridge = bridge_cls(
             provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router(),
-            preroll_ms=300,
+            preroll_ms=PRE_ROLL_MS,
         )
 
         pipeline = P["Pipeline"]([bridge])
@@ -861,7 +862,7 @@ class TestVadBridgeProcessorLifecycle(unittest.IsolatedAsyncioTestCase):
         bridge_cls = _make_vad_bridge_class(P)
         bridge = bridge_cls(
             provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router(),
-            preroll_ms=300,
+            preroll_ms=PRE_ROLL_MS,
         )
 
         # The bridge must never have stored RuntimeMetrics under the same
@@ -1308,7 +1309,7 @@ class TestVadBridgeQuarantine(unittest.IsolatedAsyncioTestCase):
         bridge_cls = _make_vad_bridge_class(P)
         bridge = bridge_cls(
             provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router(),
-            preroll_ms=300,
+            preroll_ms=PRE_ROLL_MS,
         )
 
         pipeline = P["Pipeline"]([bridge])
@@ -1388,7 +1389,7 @@ class TestVadBridgeQuarantine(unittest.IsolatedAsyncioTestCase):
         bridge_cls = _make_vad_bridge_class(P)
         bridge = bridge_cls(
             provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router(),
-            preroll_ms=300,
+            preroll_ms=PRE_ROLL_MS,
         )
         pipeline = P["Pipeline"]([bridge])
         worker = P["PipelineWorker"](
@@ -1457,7 +1458,7 @@ class TestVadBridgePrerollParity(unittest.IsolatedAsyncioTestCase):
         async def user_turn_end(self) -> None:
             self.calls.append("end")
 
-    async def _build(self, *, preroll_ms: int = 300):
+    async def _build(self, *, preroll_ms: int = PRE_ROLL_MS):
         P = _pipecat_hw_imports()
         stub = self._StubProvider()
         handle = _ProviderHandle(stub)
@@ -1524,7 +1525,7 @@ class TestVadBridgePrerollParity(unittest.IsolatedAsyncioTestCase):
         COMPLETE retained preroll is sent as ONE call, then subsequent
         live frames follow in the exact order received -- the preroll's
         own bytes (``PREE``) never duplicated into the live stream too."""
-        P, stub, _handle, bridge, worker, runner, run_task = await self._build(preroll_ms=300)
+        P, stub, _handle, bridge, worker, runner, run_task = await self._build()
         await worker.queue_frames(
             [P["InputAudioRawFrame"](audio=b"PREE", sample_rate=16000, num_channels=1)]
         )
@@ -1548,7 +1549,7 @@ class TestVadBridgePrerollParity(unittest.IsolatedAsyncioTestCase):
         """Invariant 6: the RAW MIC contract — ``[pre-VAD onset][post-VAD
         speech]`` — reaches the provider exactly once, in order, with no
         gap and no reordering, as one concatenated stream."""
-        P, stub, _handle, bridge, worker, runner, run_task = await self._build(preroll_ms=300)
+        P, stub, _handle, bridge, worker, runner, run_task = await self._build()
         await worker.queue_frames(
             [P["InputAudioRawFrame"](audio=b"ONSET", sample_rate=16000, num_channels=1)]
         )
@@ -1575,7 +1576,7 @@ class TestVadBridgePrerollParity(unittest.IsolatedAsyncioTestCase):
         ``sealed_utterances`` FIFO is now seeded directly from this SAME
         preroll -- the ACTIVE utterance buffer IS the pre-buffer once
         ``mark_speech_started()`` transfers ownership."""
-        P, stub, handle, bridge, worker, runner, run_task = await self._build(preroll_ms=300)
+        P, stub, handle, bridge, worker, runner, run_task = await self._build()
         await worker.queue_frames(
             [P["InputAudioRawFrame"](audio=b"PREE", sample_rate=16000, num_channels=1)]
         )
@@ -1600,7 +1601,7 @@ class TestVadBridgePrerollParity(unittest.IsolatedAsyncioTestCase):
         utterance N+1 — turn 2 starts immediately after turn 1's own
         stop, with no idle audio fed in between, so its own preroll must
         be empty."""
-        P, stub, _handle, bridge, worker, runner, run_task = await self._build(preroll_ms=300)
+        P, stub, _handle, bridge, worker, runner, run_task = await self._build()
         await worker.queue_frames(
             [
                 P["VADUserStartedSpeakingFrame"](),
@@ -2344,7 +2345,7 @@ class TestNoLocalLidInCloudRuntime(unittest.TestCase):
                 metrics=RuntimeMetrics(),
                 lifecycle=_ResponseLifecycle(on_finished=lambda: None),
                 router=_fresh_router(),
-                preroll_ms=300,
+                preroll_ms=PRE_ROLL_MS,
             )
 
         self.assertEqual(construct_calls, [])
@@ -2556,7 +2557,7 @@ class TestProductionCanonicalTurnLifecycle(unittest.IsolatedAsyncioTestCase):
             metrics=metrics,
             lifecycle=lifecycle,
             router=router,
-            preroll_ms=300,
+            preroll_ms=PRE_ROLL_MS,
         )
         pipeline = P["Pipeline"]([bridge])
         worker = P["PipelineWorker"](

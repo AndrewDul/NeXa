@@ -144,7 +144,41 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0050_m2_6b_4k_residual_onset_clipping_after_r0049_20260912.md`
+- **Latest report:** `docs/reports/R0051_m2_6b_4l_500ms_canonical_preroll_20260912.md`
+  (**M2.6B.4L — use empirically validated 500ms user-audio preroll,
+  2026-09-12.** R0050's forensic evidence (byte-exact alignment + PCM
+  RMS energy analysis of real captures, plus a deeper VAD-latency source
+  audit) pointed at one clear fix: R0049's 300ms preroll (derived from
+  Pipecat's own, never-validated-against-real-speech auto-sizing
+  arithmetic) understated real onset latency (288–460ms, two independent
+  lines of evidence) on this hardware. **Fix: reuse NeXa's OWN
+  already-empirically-validated preroll capacity** —
+  `nexa.stt.utterance_buffer.PRE_ROLL_MS = 500` (an independent,
+  pre-existing, R0006-era measurement against real speech fixtures for
+  the IDENTICAL VAD mechanism, already trusted by local voice) — instead
+  of a second, re-derived NeXa/Pipecat-specific number. Removed
+  R0049's `AUTOSIZED_PREROLL_MARGIN_SECS` constant and its 300ms
+  derivation entirely (not left behind as dead/misleading); `preroll_ms
+  = PRE_ROLL_MS` directly, imported via the SAME dependency edge R0049
+  already introduced for `UtteranceBuffer` itself (zero new layering,
+  no second "500" defined anywhere). Zero changes to Silero
+  `start_secs`/`stop_secs`/`confidence`/`min_volume`, barge-in
+  thresholds, `_VadToProviderBridge`'s own frame-handling logic, R0045's
+  provider-replacement/quarantine logic, or R0046's canonical-history
+  logic — capacity only. `git diff --stat -- src/nexa/stt` remains
+  empty (local voice's own `PRE_ROLL_MS`/`UtteranceBuffer` untouched,
+  re-verified with its own 9-test suite). Also corrected a same-day
+  R0050 documentation slip (its report claimed the full suite was
+  "deferred to R0051" when it had actually already been run and passed).
+  All offline validation green, including the R0048 probe (`--dry` now
+  live-confirms `preroll_ms 500`) and R0050's `wav_alignment.py` tests —
+  **991 tests total, OK (skipped=7)**, 0 regressions; `ruff`/`pip check`/
+  `git diff --check` all clean. **Real hardware post-fix result:
+  PENDING** — the operator must re-run the exact, unchanged capture
+  command and confirm by listening before this can move to PASS or FAIL;
+  no hardware PASS is fabricated. **Hardware acceptance remains FAIL;
+  `M2.6B` remains IN PROGRESS.** No Gemini call. Not pushed.)
+- **Prior report:** `docs/reports/R0050_m2_6b_4k_residual_onset_clipping_after_r0049_20260912.md`
   (**M2.6B.4K — residual onset clipping after R0049, forensic audit,
   2026-09-12.** The operator re-ran the R0048/R0049 real-hardware
   capture after the 300ms preroll fix: RAW remains complete, but

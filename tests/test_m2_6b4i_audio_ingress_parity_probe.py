@@ -186,7 +186,11 @@ class TestRealProcessorChainPreVadStartAudioParity(unittest.IsolatedAsyncioTestC
             capture = probe.IngressCapture(sample_rate=16000, out_dir=tmp)
             processors, meta = probe.build_processor_chain(capture=capture)
             self.assertEqual(meta["vad_start_secs"], 0.2)  # unmodified Pipecat default
-            self.assertEqual(meta["preroll_ms"], 300)  # (0.2 + 0.1) * 1000
+            # M2.6B.4L (R0051) -- NeXa's canonical, empirically validated
+            # preroll capacity (nexa.stt.utterance_buffer.PRE_ROLL_MS),
+            # not the R0049 derivation (start_secs + 0.1s margin = 300ms)
+            # real hardware evidence (R0050) proved insufficient.
+            self.assertEqual(meta["preroll_ms"], 500)
 
             pipeline = P["Pipeline"](processors)
             worker = P["PipelineWorker"](
