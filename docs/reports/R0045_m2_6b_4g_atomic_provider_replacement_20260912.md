@@ -376,9 +376,9 @@ Zero diff — local voice is completely untouched by this checkpoint.
 
 ## COMMIT HASHES
 
-Recorded in a follow-up commit after this report is committed (see next
-message / follow-up action) — not yet committed as of this report's
-writing.
+fix/report commit: `4f6cb1d`
+
+(recorded in the follow-up hash-record commit)
 
 ## GIT STATUS
 
