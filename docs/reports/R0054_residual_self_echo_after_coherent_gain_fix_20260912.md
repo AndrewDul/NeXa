@@ -352,6 +352,11 @@ self-echo production fix implemented.
 - `pip check`: "No broken requirements found."
 - `git diff --check`: clean (exit 0).
 
+## COMMIT HASHES
+
+- `7be8ea5` — fix: two confirmed bugs found during post-R0053
+  forensics (M2.6B.4N follow-up / R0054).
+
 ## GIT STATUS
 
 Clean working tree after commit. Not pushed.
