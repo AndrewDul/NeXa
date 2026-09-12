@@ -512,7 +512,8 @@ the new, additive path). `src/nexa/stt` was not touched at all.
 
 ## COMMIT HASHES
 
-Recorded in the follow-up "docs: record R0053 commit hash" commit.
+- `009a0e7` — fix: coherent AEC reference/audible gain -- self-echo
+  root cause fix (M2.6B.4N / R0053).
 
 ## GIT STATUS
 
