@@ -954,15 +954,48 @@ unpaid-quota data is used to improve Google products.
     zero-LID guarantee after this checkpoint's new cross-package import.
     Deterministic, no-Gemini synthetic-PCM A/B proof: PASS (the exact
     R0048 test that once proved clipping now proves its absence).
-    **Real-hardware post-fix A/B capture: PENDING** — not fabricated;
-    the operator must re-run the same, unchanged probe command and
-    confirm by listening. +9 new tests, +1 zero-LID test, 1 test
-    rewritten for the post-fix assertion — **981 tests total, OK
-    (skipped=7)**, 0 regressions; `ruff`/`pip check`/`git diff --check`
-    all clean; local voice AND `src/nexa/stt` both untouched. **Hardware
-    acceptance remains FAIL; `M2.6B` remains IN PROGRESS** — pending the
-    operator's real post-fix hardware capture before the next live
-    Gemini attempt.
+    +9 new tests, +1 zero-LID test, 1 test rewritten for the post-fix
+    assertion — **981 tests total, OK (skipped=7)**, 0 regressions;
+    `ruff`/`pip check`/`git diff --check` all clean; local voice AND
+    `src/nexa/stt` both untouched. **Real-hardware post-fix A/B capture
+    performed by the operator — RESULT: FAIL, corrected by R0050 (below):
+    300ms materially improved onset retention but did not fully restore
+    it.** Hardware acceptance remains FAIL; `M2.6B` remains IN PROGRESS.
+  - **M2.6B.4K — residual onset clipping after R0049, forensic audit**
+    (`R0050`, 2026-09-12). The operator's post-fix real capture confirms
+    R0049's 300ms preroll improved but did not eliminate audible onset
+    clipping ("Czarna dziura" → "arna dziura"/"carna dziura"; English
+    too — systemic). A new diagnostic tool (`wav_alignment.py`, 10
+    tests, no Gemini/hardware) proves byte-exact that
+    `production_forwarded.wav` starts precisely 200ms into
+    `raw_with_context.wav` in every one of 6 real takes (500ms diagnostic
+    pre-context − 300ms retained = 200ms omitted — the fix mechanism
+    works exactly as designed). A plain PCM RMS analysis of that omitted
+    200ms (no invented detector) shows real, rising acoustic energy in
+    8 of 10 real captured takes (both post- and pre-fix), beginning
+    roughly 300–460ms before VAD confirms speech start — real speech is
+    being cut, not silence. Source re-audit confirms M2.6A's own
+    effective preroll was ALSO ~300ms in practice (the
+    `SpeechControlParamsFrame` auto-sizing applies identically in its
+    co-located-VAD topology) — M2.6A likely had the same underlying
+    risk; its "accepted" status reflected overall quality, not verified
+    zero onset loss. Deeper VAD latency audit: the nominal
+    `start_secs=0.2` is an exact 192ms (6×32ms) confirmation window
+    only — it excludes Pipecat's own exponential volume-smoothing delay
+    (~100–330ms, data-dependent) and Silero's model-internal confidence
+    timing, both additive. This exact investigation was already done
+    once before for LOCAL voice: `nexa/stt/utterance_buffer.py`'s own
+    docstring (untouched) documents an independent R0006-era empirical
+    measurement of real confirmation delay at 288–352ms for the
+    identical mechanism — why local voice's own default is 500ms, not
+    300ms; R0049 did not reuse this pre-existing answer. **Root cause:
+    R0049's 300ms capacity, from an unvalidated generic Pipecat formula,
+    understates real onset latency on this hardware (288–460ms range,
+    two independent lines of evidence).** Minimum next fix identified,
+    NOT implemented (R0050 = evidence, R0051 = fix): reuse
+    `UtteranceBuffer`'s own already-validated `PRE_ROLL_MS=500` default
+    directly. Zero `src/nexa/**` changes this checkpoint. Hardware
+    acceptance remains FAIL; `M2.6B` remains IN PROGRESS. No Gemini call.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

@@ -3,11 +3,21 @@
 **Date:** 2026-09-12
 **Milestone:** M2.6B.4J (fix, following the R0048 diagnostic audit)
 **Status:** Architecture implemented and proven deterministically (18/18
-charter test requirements). **LOCAL HARDWARE POST-FIX ACCEPTANCE
-PENDING** — a real-hardware A/B re-capture with the fixed bridge has not
-yet been performed by the operator; no PASS is fabricated here. No
-Gemini call, not pushed. **Hardware acceptance remains FAIL. `M2.6B`
-remains IN PROGRESS.**
+charter test requirements) — **this part stands, unchanged.**
+**REAL HARDWARE POST-FIX ACCEPTANCE: FAIL, not PENDING** (corrected by
+R0050, `docs/reports/R0050_...md`, 2026-09-12, same day): the operator's
+real post-fix reSpeaker capture (`ingress_capture_20260912T193226Z.json`)
+shows the 300 ms preroll this checkpoint implemented **materially
+improved** onset retention (`raw_minus_forwarded_ms` dropped from a
+constant 700 ms pre-fix pattern implying full onset loss, to a
+byte-exact 200 ms/500 ms prefix/suffix split — see R0050) but **did
+NOT fully restore the accepted M2.6A onset** — the operator still
+audibly hears the first phoneme/syllable clipped ("Czarna dziura" →
+"arna dziura"/"carna dziura"), on BOTH Polish and English phrases (so
+this is systemic, not Polish-specific). **Do not read this report as
+claiming real-hardware parity was restored — it was not.** No Gemini
+call, not pushed. **Hardware acceptance remains FAIL. `M2.6B` remains IN
+PROGRESS.**
 
 ## REAL HARDWARE CONFIRMATION FROM R0048
 
@@ -254,14 +264,22 @@ setup now asserts and confirms `production_forwarded` ==
 `pre_onset + spoken`, exactly once, in order — the local, no-Gemini,
 synthetic-PCM proof the architecture is correct.
 
-**Real hardware A/B: PENDING — not fabricated.** No real-hardware
-re-capture with the FIXED bridge has been performed this checkpoint (no
-Gemini, no hardware touched by this session, per the charter). The exact
-command for the operator to re-run (identical CLI to the R0048 capture,
-now exercising the fixed bridge automatically since it imports current
-`nexa.realtime.gemini.runtime`) is given below. **LOCAL HARDWARE
-POST-FIX ACCEPTANCE remains PENDING** until that real capture is done and
-the operator listens to the new WAV pairs.
+**Real hardware A/B — UPDATE (R0050, same day): performed, result FAIL.**
+The operator ran the exact command given below. Result: byte-exact
+alignment confirms `production_forwarded` now contains exactly the last
+300 ms of the diagnostic's 500 ms pre-VAD-start raw window (up from 0 ms
+pre-fix) — a real, measured improvement — but a deterministic PCM-energy
+(RMS) analysis of the STILL-omitted 200 ms prefix shows substantial,
+rising acoustic energy in every take, consistent with the operator's own
+report that the first phoneme/syllable remains audibly clipped. **300 ms
+was insufficient in practice.** Full forensic detail, byte-exact
+per-take numbers, and the energy analysis: `docs/reports/R0050_...md`.
+This does not invalidate the deterministic (synthetic) A/B result above,
+which remains a correct proof that the ARCHITECTURE (buffer wiring,
+exact-once delivery, R0045/R0046 preservation) works exactly as
+designed — only the CAPACITY (300 ms) chosen from the M2.6A/Pipecat
+auto-sizing arithmetic turned out to be too small for this hardware's
+real onset-detection latency.
 
 ## FILES CHANGED
 
