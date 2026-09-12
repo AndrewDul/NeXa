@@ -336,7 +336,9 @@ Zero diff — local voice is completely untouched by this checkpoint.
 
 ## COMMIT HASHES
 
-Recorded in the follow-up hash-record commit.
+fix/report commit: `24ace00`
+
+(recorded in the follow-up hash-record commit)
 
 ## GIT STATUS
 
