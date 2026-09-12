@@ -675,3 +675,29 @@ longer fixture, and **at least 3/3** correct confirmed barge-ins on the
 WAV paths under `docs/research/m2_6_cloud_realtime_voice/
 self_echo_captures/pcm/`, all git-ignored) back for a final PASS
 determination — **not claimed here.**
+
+---
+
+## ERRATUM (R0054) — REAL HARDWARE RESULT: PARTIAL IMPROVEMENT / FAIL
+
+The operator ran the preliminary MAX-volume smoke test above (3 silent
+trials) with the corrected, gain-wired probe.
+`audible_gain_db=-0.94`/`audible_linear_gain=0.8974`/
+`reference_gain_applied=0.8974` confirmed the R0053 fix was genuinely
+active. **Result: 1/3 clean, 2/3 false confirmed barge-ins**
+(`self_echo_probe_20260912T224316Z.json`). The pre-fix MAX result
+(R0052/R0053, before this checkpoint) was 5/5 false.
+
+**Do not read this as PASS.** The coherent-gain fix reduced the
+observed MAX failure rate in this small sample (5/5 → 2/3) but did
+**not** eliminate false self-barge-in, and the same
+~1.08–1.11s content-relative onset timing recurred in both false
+trials this run. **Gain-ownership incoherence is a real, confirmed
+defect and a plausible contributor, but must not be documented as the
+sole confirmed root cause.** At least one additional mechanism remains
+unaddressed. Full forensic analysis, an additional confirmed
+diagnostic-probe bug (found while analyzing this data) and its fix, and
+the next evidence-gathering step are in
+`docs/reports/R0054_residual_self_echo_after_coherent_gain_fix_20260912.md`.
+**R0053's fix status: PARTIAL IMPROVEMENT / REAL HARDWARE FAIL. `M2.6B`
+remains IN PROGRESS.**

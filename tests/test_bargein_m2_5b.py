@@ -7,6 +7,7 @@ cases that need real Piper / a person (16-deep, 17-deep, 24/25 audible).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 import unittest
 from pathlib import Path
@@ -872,6 +873,46 @@ class TestAecReferenceFeederGain(_FpHarness):
         await asyncio.sleep(0.05)
         self.assertEqual(sinks[0].written, pcm)
         await f.end()
+
+    async def test_slow_gain_source_does_not_block_the_event_loop(self) -> None:
+        """R0054 CONFIRMED BUG FIX: a ``gain_source`` that blocks (a real
+        ``amixer`` subprocess call, occasionally) must run off the event
+        loop (``run_in_executor``), never inline -- otherwise it stalls
+        every other coroutine sharing this pipeline's loop (mic capture,
+        VAD, frame propagation) for its own duration. Proven here by a
+        concurrent counter task that must keep ticking WHILE a
+        deliberately slow ``gain_source`` (a real blocking ``time.sleep``)
+        is "read"."""
+        import time
+
+        def slow_gain() -> float:
+            time.sleep(0.1)  # a real, blocking call -- like a slow amixer
+            return 0.5
+
+        f, health, sinks = await self._feeder(gain_source=slow_gain)
+
+        ticks = 0
+
+        async def ticker() -> None:
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        ticker_task = asyncio.ensure_future(ticker())
+        try:
+            await f.process_frame(
+                TTSAudioRawFrame(b"\x01\x02" * 160, 16000, 1), FrameDirection.DOWNSTREAM
+            )
+            # If the gain read had blocked the loop inline, the ticker
+            # would have accumulated ~0 ticks during those 100ms; running
+            # it off-loop lets several ticks land in the meantime.
+            self.assertGreater(ticks, 2)
+        finally:
+            ticker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ticker_task
+            await f.end()
 
 
 async def _noop():

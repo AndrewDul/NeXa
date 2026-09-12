@@ -144,7 +144,47 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0053_self_echo_discrimination_root_cause_and_fix_20260912.md`
+- **Latest report:** `docs/reports/R0054_residual_self_echo_after_coherent_gain_fix_20260912.md`
+  (**M2.6B.4N follow-up — residual self-echo after coherent-gain fix,
+  2026-09-12.** R0053's real hardware re-validation came back:
+  `audible_gain_db=-0.94`/`reference_gain_applied=0.8974` confirmed the
+  fix was genuinely active, MAX volume 3 silent trials → **1 clean, 2
+  false confirmed barge-ins** (`self_echo_probe_20260912T224316Z.json`)
+  — an improvement over the pre-fix 5/5 MAX, but **NOT a PASS**; the
+  same ~1.08–1.11s content-relative onset recurred. **R0053 status
+  corrected: PARTIAL IMPROVEMENT / REAL HARDWARE FAIL, not PASS** — see
+  R0053's own erratum. Explicitly tested and confirmed gain alone
+  cannot explain the residual nondeterminism (all 3 trials used the
+  identical `reference_gain_applied=0.8974`; the clean trial's
+  `speaking_frame_frac` during playback was 0.11 vs the false trials'
+  0.33–0.34 — a real, uncontaminated distinguishing signal, not
+  amplitude). While analyzing the new capture, found and fixed TWO more
+  real bugs: (1) the self-echo probe's own `_play_assistant_phrase`
+  burst-injected an entire phrase's frames in one call — Pipecat's own
+  output-transport queue is confirmed UNBOUNDED, so nothing paced that
+  injection to real time, explaining why the capture's own
+  `ref_raw_rms_phase_playback` read 0 frames in every trial (a
+  diagnostic-fidelity gap in the probe, not evidence about real
+  hardware) — fixed by pacing per-chunk injection to match production's
+  own real per-`AssistantAudioEvent` cadence; (2) `AecReferenceFeeder`
+  called its `gain_source` (occasionally a real blocking `amixer`
+  subprocess call, measured ~3ms) inline on the shared asyncio event
+  loop — fixed with `run_in_executor`, the same pattern already used
+  elsewhere in that file. Source-audited both the reference and audible
+  timing paths end to end, documenting every known buffer/chunk size
+  (20ms mic input, 40ms audible re-chunking, 100ms reference chunking)
+  and being explicit about two stages NOT knowable from source alone
+  (PortAudio's own output buffer, `aplay`'s own ALSA buffer). No VAD/
+  Silero/BargeInController/preroll code touched; no speculative
+  production self-echo fix implemented. +3 new tests. **1058 tests
+  total, OK (skipped=7)**; `ruff`/`pip check`/`git diff --check` all
+  clean. R0051 preroll, R0045 provider isolation, R0046 canonical
+  history, zero local LID, connection-loss tests all re-verified green,
+  unmodified. No Gemini call. Not pushed. `M2.6B` remains IN PROGRESS —
+  requests one more small real-hardware capture
+  (`--capture-pcm --max-lag-ms 500`, 3 MAX trials) before any
+  correlation analysis or production fix is attempted.)
+- **Prior report:** `docs/reports/R0053_self_echo_discrimination_root_cause_and_fix_20260912.md`
   (**M2.6B.4N — self-echo discrimination root cause and production fix,
   2026-09-12.** R0052's real hardware evidence came back: **0/5** false
   confirmed barge-ins at LOW, **1/5** at NORMAL, **5/5** at MAX, with a
@@ -204,13 +244,15 @@ Runtime / test evidence outranks anything else in this repo.
   **1055 tests, OK (skipped=7)**; `ruff`/`pip check`/`git diff --check`
   all clean. R0051 preroll, R0045 provider isolation, R0046 canonical
   history, zero local LID, connection-loss tests all re-verified green,
-  unmodified. No Gemini call. Not pushed. **Leading evidence-backed
-  root-cause hypothesis / implemented fix, pending real hardware
-  validation — real hardware re-validation of THIS fix is still
-  required from the operator, not yet performed, not claimed PASS.**
-  `M2.6B` remains IN PROGRESS: this fix's own real-hardware acceptance,
-  the still-pending minimal live Gemini conversational validation, and
-  the proactive-reconnect-caller gap all remain open completion items.)
+  unmodified. No Gemini call. Not pushed. **UPDATE (R0054, same day):
+  real hardware re-validation returned — PARTIAL IMPROVEMENT / FAIL, not
+  PASS.** MAX volume 3 trials → 1 clean, 2 false confirmed barge-ins (was
+  5/5 false pre-fix). Gain-ownership incoherence is a real, confirmed,
+  contributing defect, but is NOT the sole cause — see R0054's own
+  report for the corrected status and next evidence-gathering step.
+  `M2.6B` remains IN PROGRESS: the self-echo fix itself, the still-pending
+  minimal live Gemini conversational validation, and the
+  proactive-reconnect-caller gap all remain open completion items.)
 - **Prior report:** `docs/reports/R0052_m2_6b_4m_self_echo_diagnostic_20260912.md`
   (**M2.6B.4M — false self-barge-in / speaker-echo root cause diagnostic,
   2026-09-12.** A NEW failure class, distinct from the just-closed

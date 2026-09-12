@@ -219,6 +219,34 @@ class TestSummarizeTrial(unittest.TestCase):
         result = probe.summarize_trial(**self._base_kwargs())
         self.assertEqual(result["mic_raw_rms_phase_playback"]["n_frames"], 0)
 
+    def test_ref_raw_rms_quiet_before_and_after_phases_are_reported(self) -> None:
+        # R0054: mirrors mic's own 3-phase reporting so a run reveals
+        # WHERE reference frames actually land relative to the real
+        # playback window, without needing a full --capture-pcm run.
+        result = probe.summarize_trial(
+            **self._base_kwargs(
+                ref_rms_frames=[
+                    {"t": 0.2, "rms": 500.0, "peak": 1000},  # before playback
+                    {"t": 2.5, "rms": 700.0, "peak": 1200},  # after playback
+                ]
+            )
+        )
+        self.assertEqual(result["ref_raw_rms_phase_quiet_before"]["n_frames"], 1)
+        self.assertAlmostEqual(
+            result["ref_raw_rms_phase_quiet_before"]["rms_mean"], 500.0
+        )
+        self.assertEqual(result["ref_raw_rms_phase_after"]["n_frames"], 1)
+        self.assertAlmostEqual(result["ref_raw_rms_phase_after"]["rms_mean"], 700.0)
+        # and none of it counted as "during playback"
+        self.assertEqual(result["ref_raw_rms_phase_playback"]["n_frames"], 0)
+
+    def test_ref_raw_rms_phases_default_to_empty_without_playback_bounds(self) -> None:
+        result = probe.summarize_trial(
+            **self._base_kwargs(playback_start=None, playback_end=None)
+        )
+        self.assertEqual(result["ref_raw_rms_phase_quiet_before"], {"n_frames": 0})
+        self.assertEqual(result["ref_raw_rms_phase_after"], {"n_frames": 0})
+
 
 def _sine_pcm(n: int, *, freq_cycles_total: float = 40.0, amplitude: int = 8000):
     import numpy as np

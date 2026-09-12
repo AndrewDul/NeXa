@@ -355,6 +355,23 @@ def summarize_trial(
             if (playback_start is not None and playback_end is not None)
             else {"n_frames": 0}
         ),
+        # R0054: mirrors mic's own quiet_before/after phases so a run
+        # immediately reveals WHERE reference-frame timestamps actually
+        # land relative to the real playback window, without needing a
+        # full --capture-pcm run just to notice a timing mismatch (see
+        # R0054's own confirmed finding: an unpaced burst injection put
+        # every reference frame here, in "before", rather than in
+        # "playback" at all).
+        "ref_raw_rms_phase_quiet_before": (
+            raw_rms_windows_from_events(ref_rms_frames, lo=0.0, hi=playback_start)
+            if playback_start is not None
+            else {"n_frames": 0}
+        ),
+        "ref_raw_rms_phase_after": (
+            raw_rms_windows_from_events(ref_rms_frames, lo=playback_end, hi=trial_end)
+            if playback_end is not None
+            else {"n_frames": 0}
+        ),
     }
 
 
@@ -716,22 +733,53 @@ async def _play_assistant_phrase(
     """Simulates exactly what ``_consume_provider_events`` does for a
     real Gemini response: marks the response dispatched (barge-in
     admission requires ``response_in_flight``), streams the assistant
-    PCM as chunked ``TTSAudioRawFrame`` s (a realistic ~100ms cadence,
-    matching real streamed-TTS chunk sizes -- never all-at-once), then a
-    ``TTSStoppedFrame`` + ``mark_generation_done()`` so the REAL
-    ``_ResponseLifecycle`` combinator fires ``on_finished`` off genuine
-    ``BotStoppedSpeakingFrame`` truth, never a timer."""
+    PCM as chunked ``TTSAudioRawFrame``s, one at a time, each followed
+    by ``lifecycle.mark_audio_produced()`` -- production's own exact
+    per-chunk ordering (``self.lifecycle.mark_audio_produced()`` then
+    ``await self.hw_worker.queue_frames([frame])`` for every
+    ``AssistantAudioEvent``, confirmed in
+    ``nexa.realtime.gemini.runtime``) -- then a ``TTSStoppedFrame`` +
+    ``mark_generation_done()`` so the REAL ``_ResponseLifecycle``
+    combinator fires ``on_finished`` off genuine
+    ``BotStoppedSpeakingFrame`` truth, never a timer.
+
+    R0054 CONFIRMED BUG FIX: this function's own docstring already
+    claimed "a realistic ~100ms cadence... never all-at-once", but the
+    implementation built the ENTIRE frame list and pushed it through
+    ``worker.queue_frames(frames)`` in ONE call -- Pipecat's own
+    ``BaseOutputTransport._audio_queue`` is an UNBOUNDED
+    ``FrameQueue()`` (confirmed in its installed source: no ``maxsize``
+    passed), so nothing anywhere in the pipeline throttled that burst
+    to real time. Every chunk of an entire ~3.5s phrase landed at
+    ``_RefRmsTap`` within milliseconds of each other, all clustered near
+    ``trial_start`` -- entirely BEFORE the real, wall-clock-paced
+    ``playback_start_t``/``playback_end_t`` window
+    (``BotStartedSpeakingFrame``/``BotStoppedSpeakingFrame``, which only
+    fire once the real PortAudio device has actually begun/finished
+    producing sound). This explains R0054's real-hardware capture
+    showing ``ref_raw_rms_phase_playback: {"n_frames": 0}`` in every
+    trial: the reference frames were real and correctly tapped, just
+    all timestamped well outside the window this probe reports them
+    against -- a diagnostic-fidelity defect in THIS probe's own
+    simulation of assistant speech, not evidence about the real
+    hardware/AEC path. Real production never does this: it queues
+    exactly one frame per ``AssistantAudioEvent``, as they arrive from
+    Gemini's own event stream (paced by the network/model, not a
+    Python list built and drained in one call). Pacing each chunk with
+    a real ``asyncio.sleep`` at the SAME ``ASSISTANT_CHUNK_MS`` this
+    probe already uses to SIZE its chunks (not a new, invented number)
+    makes the simulation match that real per-event cadence."""
     bargein.notify_response_dispatched()
     lifecycle.mark_dispatched()
     chunk_bytes = int(sample_rate * (ASSISTANT_CHUNK_MS / 1000.0) * 2)
-    frames = [
-        P["TTSAudioRawFrame"](
+    chunk_secs = ASSISTANT_CHUNK_MS / 1000.0
+    for i in range(0, len(pcm), chunk_bytes):
+        frame = P["TTSAudioRawFrame"](
             audio=pcm[i : i + chunk_bytes], sample_rate=sample_rate, num_channels=1
         )
-        for i in range(0, len(pcm), chunk_bytes)
-    ]
-    await worker.queue_frames(frames)
-    lifecycle.mark_audio_produced()
+        lifecycle.mark_audio_produced()
+        await worker.queue_frames([frame])
+        await asyncio.sleep(chunk_secs)
     await worker.queue_frames([P["TTSStoppedFrame"]()])
     lifecycle.mark_generation_done()
 

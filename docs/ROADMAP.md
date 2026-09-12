@@ -1127,14 +1127,51 @@ unpaid-quota data is used to improve Google products.
     update. **1055 tests total, OK (skipped=7)**; `ruff`/`pip check`/
     `git diff --check` all clean. R0051 preroll, R0045 provider
     isolation, R0046 canonical history, zero local LID, connection-loss
-    tests all re-verified green, unmodified. No Gemini call. **Leading
-    evidence-backed root-cause hypothesis / implemented fix, pending
-    real hardware validation -- real hardware re-validation of THIS fix
-    is still required from the operator, not yet performed, not
-    claimed PASS.** `M2.6B` remains IN PROGRESS: this fix's own
-    real-hardware acceptance, the
-    still-pending minimal live Gemini conversational validation, and the
-    proactive-reconnect-caller gap all remain open.
+    tests all re-verified green, unmodified. No Gemini call. **UPDATE
+    (R0054, same day): real hardware re-validation returned PARTIAL
+    IMPROVEMENT / FAIL, not PASS** -- see below.
+  - **M2.6B.4N follow-up -- residual self-echo after coherent-gain fix**
+    (`R0054`, 2026-09-12). MAX volume, 3 silent trials, gain fix
+    confirmed active (`reference_gain_applied=0.8974` throughout) -> 1
+    clean, 2 false confirmed barge-ins (was 5/5 pre-fix) -- an
+    improvement, but NOT a pass; the same ~1.08-1.11s content-relative
+    onset recurred. Explicitly tested and confirmed gain alone cannot
+    explain the residual nondeterminism: all 3 trials used the
+    identical gain; the real distinguishing signal was
+    `speaking_frame_frac` during playback (0.11 clean vs 0.33-0.34
+    false) -- duration/sustain, not amplitude. While analyzing the new
+    capture (now usable -- R0053 fixed R0052's telemetry bugs), found
+    and fixed two MORE real bugs: (1) the probe's own
+    `_play_assistant_phrase` burst-injected an entire phrase in one
+    `queue_frames()` call; Pipecat's own output-transport queue is
+    confirmed UNBOUNDED (no backpressure), so nothing paced that
+    injection to real time -- this explained why
+    `ref_raw_rms_phase_playback` read 0 frames in every trial (a
+    diagnostic-fidelity gap in the probe, not evidence about real
+    hardware); fixed by pacing per-chunk injection to match
+    production's own real per-`AssistantAudioEvent` cadence
+    (production already queues one frame per event, confirmed in its
+    own source); (2) `AecReferenceFeeder` called its `gain_source`
+    (occasionally a real blocking `amixer` call, measured ~3ms) inline
+    on the shared asyncio event loop -- fixed with `run_in_executor`,
+    the same pattern already used elsewhere in that file. Source-audited
+    both reference and audible timing paths end to end: documented
+    every known buffer/chunk size (20ms mic input, 40ms audible
+    re-chunking, 100ms reference chunking) and was explicit about two
+    stages NOT knowable from source alone (PortAudio's own output
+    buffer, `aplay`'s own ALSA buffer) -- no arbitrary timing
+    assumptions. No VAD/Silero/BargeInController/preroll code touched;
+    no speculative production self-echo fix implemented. +3 new tests.
+    **1058 tests total, OK (skipped=7)**; `ruff`/`pip check`/
+    `git diff --check` all clean. R0051 preroll, R0045 provider
+    isolation, R0046 canonical history, zero local LID, connection-loss
+    tests all re-verified green, unmodified. No Gemini call. `M2.6B`
+    remains IN PROGRESS: requests one more small real-hardware capture
+    (`--capture-pcm --max-lag-ms 500`, 3 MAX trials) before any
+    correlation analysis or production fix is attempted; this fix's own
+    real-hardware acceptance, the still-pending minimal live Gemini
+    conversational validation, and the proactive-reconnect-caller gap
+    all remain open.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

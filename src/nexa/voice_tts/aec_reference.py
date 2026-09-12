@@ -191,7 +191,22 @@ class AecReferenceFeeder(FrameProcessor):
             pcm = frame.audio
             if self._gain_source is not None:
                 try:
-                    pcm = apply_gain(pcm, self._gain_source())
+                    # R0054 CONFIRMED BUG FIX: ``gain_source`` (e.g.
+                    # ``CoherentReferenceGain.current_gain``) occasionally
+                    # shells out to a real subprocess (``amixer``) when its
+                    # cache is stale. Calling it inline here, on the single
+                    # asyncio event loop every frame in this pipeline shares
+                    # (mic capture, VAD, frame propagation), would block
+                    # ALL of them for that subprocess's duration. Measured
+                    # on this Pi: ~3ms per real `amixer` call, at most once
+                    # per `refresh_secs` (2s default) — small, but a
+                    # blocking call on a hot async path is a real defect
+                    # regardless of measured magnitude, and the SAME
+                    # ``run_in_executor`` pattern already used for
+                    # ``self._sink.write`` below is the correct fix.
+                    loop = asyncio.get_running_loop()
+                    gain = await loop.run_in_executor(None, self._gain_source)
+                    pcm = apply_gain(pcm, gain)
                 except Exception:
                     # A gain read must never break the reference tee — feed
                     # the original, unscaled PCM rather than drop it.
