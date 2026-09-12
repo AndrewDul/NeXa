@@ -611,6 +611,8 @@ the new, additive path). `src/nexa/stt` was not touched at all.
 
 - `009a0e7` — fix: coherent AEC reference/audible gain -- self-echo
   root cause fix (M2.6B.4N / R0053).
+- `7a67a89` — fix: wire R0053 gain fix into the self-echo probe itself
+  (validation-contract gap).
 
 ## GIT STATUS
 
