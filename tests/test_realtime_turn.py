@@ -126,6 +126,55 @@ class TestAtMostOneCommit(unittest.TestCase):
         self.assertEqual([t1.generation, t2.generation, t3.generation], [1, 2, 3])
 
 
+class TestForeignTranscriptCannotOverwriteFinalizedUserText(unittest.TestCase):
+    """M2.6B.4H (R0046) — the second half of the interruption-candidate
+    overlap-hazard fix (the first half is
+    ``ConversationRouter.has_turn_awaiting_assistant()``, which stops a
+    candidate's VAD start from ever calling ``begin_cloud_turn()`` in the
+    first place — see ``nexa.realtime.gemini.runtime``'s module
+    docstring). Even so, this guard is independently necessary: an
+    interruption candidate's audio is still sent LIVE to the not-yet-
+    quarantined provider before confirmation (R0045), so its own
+    transcript can physically arrive on ``ConversationRouter.on_user_
+    transcription`` while the STILL-OPEN, already-finalized turn N is
+    ``self._current`` — this is the one call site that must never let it
+    through."""
+
+    def test_second_final_transcript_for_same_turn_is_ignored(self) -> None:
+        acc = CloudTurnAccumulator()
+        acc.start_turn()
+        acc.on_user_transcription("tell me about black holes", final=True)
+        # a later, foreign transcript for an overlapping interruption
+        # candidate — must NOT overwrite the already-finalized user text.
+        acc.on_user_transcription("what about the second case", final=True)
+        acc.on_assistant_transcription("Black holes are...", final=True)
+        committed = acc.on_turn_complete()
+        self.assertEqual(committed.user_text, "tell me about black holes")
+
+    def test_interim_candidate_transcript_after_final_is_also_ignored(self) -> None:
+        """Not just a second FINAL — an INTERIM candidate transcript must
+        be blocked too (Gemini's own interim/final message ordering is not
+        something NeXa controls or should rely on for this guarantee)."""
+        acc = CloudTurnAccumulator()
+        acc.start_turn()
+        acc.on_user_transcription("hello there", final=True)
+        acc.on_user_transcription("uh", final=False)  # candidate's interim
+        committed = acc.on_turn_complete()
+        self.assertEqual(committed.user_text, "hello there")
+
+    def test_before_its_own_final_a_turns_own_transcript_still_updates_live(self) -> None:
+        """The guard must not block a turn's OWN legitimate interim ->
+        final progression — only a SECOND write after user_final is
+        already True."""
+        acc = CloudTurnAccumulator()
+        acc.start_turn()
+        acc.on_user_transcription("tell", final=False)
+        acc.on_user_transcription("tell me", final=False)
+        acc.on_user_transcription("tell me a story", final=True)
+        committed = acc.on_turn_complete()
+        self.assertEqual(committed.user_text, "tell me a story")
+
+
 class TestEmptyOrNoTurn(unittest.TestCase):
     def test_events_before_any_start_turn_are_ignored(self) -> None:
         acc = CloudTurnAccumulator()

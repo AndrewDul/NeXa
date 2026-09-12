@@ -245,6 +245,51 @@ class TestCanonicalCloudTurnWritePath(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(session.history), len(session._response_languages))  # noqa: SLF001
 
 
+class TestHasTurnAwaitingAssistant(unittest.IsolatedAsyncioTestCase):
+    """M2.6B.4H (R0046) — the ONE local-authority signal
+    ``_VadToProviderBridge`` consults before calling ``begin_cloud_turn()``
+    on a local VAD start, so an interruption candidate's own VAD start
+    (an assistant reply is in flight, not yet confirmed as an
+    interruption) never abandons the turn that reply belongs to."""
+
+    async def test_false_before_any_turn(self) -> None:
+        router = ConversationRouter(_session(), policy=ConversationPolicy.CLOUD_PREFERRED)
+        self.assertFalse(router.has_turn_awaiting_assistant())
+
+    async def test_false_while_turn_is_open_with_no_final_transcript_yet(self) -> None:
+        router = ConversationRouter(_session(), policy=ConversationPolicy.CLOUD_PREFERRED)
+        router.begin_cloud_turn()
+        self.assertFalse(router.has_turn_awaiting_assistant())
+        router.on_user_transcription("tell", final=False)
+        self.assertFalse(router.has_turn_awaiting_assistant())
+
+    async def test_true_once_final_user_transcript_received(self) -> None:
+        router = ConversationRouter(_session(), policy=ConversationPolicy.CLOUD_PREFERRED)
+        router.begin_cloud_turn()
+        router.on_user_transcription("tell me about black holes", final=True)
+        self.assertTrue(router.has_turn_awaiting_assistant())
+
+    async def test_false_again_once_committed(self) -> None:
+        router = ConversationRouter(_session(), policy=ConversationPolicy.CLOUD_PREFERRED)
+        router.begin_cloud_turn()
+        router.on_user_transcription("hej", final=True)
+        self.assertTrue(router.has_turn_awaiting_assistant())
+        router.commit_cloud_turn()
+        self.assertFalse(router.has_turn_awaiting_assistant())
+
+    async def test_false_after_a_never_transcribed_turn_is_superseded(self) -> None:
+        """A confirmed but non-lexical interruption's own canonical turn
+        (opened, never gets a transcript) must not block the NEXT real
+        turn from opening — ``begin_cloud_turn()``'s own supersede/
+        abandon logic (not this method) is what makes that safe; this
+        method must never itself report True for a turn stuck OPEN."""
+        router = ConversationRouter(_session(), policy=ConversationPolicy.CLOUD_PREFERRED)
+        router.begin_cloud_turn()  # e.g. a throat-clear's own promoted turn
+        self.assertFalse(router.has_turn_awaiting_assistant())
+        router.begin_cloud_turn()  # the next real turn may open freely
+        self.assertFalse(router.has_turn_awaiting_assistant())
+
+
 class TestFreshSnapshotAfterResumptionFailure(unittest.IsolatedAsyncioTestCase):
     async def test_fresh_snapshot_reflects_current_canonical_state(self) -> None:
         session = _session()

@@ -82,8 +82,21 @@ class CloudTurnAccumulator:
 
     def on_user_transcription(self, text: str, *, final: bool) -> None:
         cur = self._current
-        if cur is None or cur.is_terminal:
-            return  # late frame after commit/abandonment — never re-opens it
+        # M2.6B.4H (R0046) -- ``cur.user_final`` is checked in addition to
+        # ``is_terminal``: once THIS turn's own user side is finalized, it
+        # can never be re-opened or overwritten, even though the turn
+        # itself is still non-terminal (AWAITING_ASSISTANT, not yet
+        # committed) -- this is precisely the window an interruption
+        # CANDIDATE's own (eventually discarded or re-transcribed-by-a-
+        # replacement-provider) transcript could otherwise arrive in and
+        # silently corrupt this turn's already-finalized ``user_text``.
+        # Provider transcription is attributed by NeXa-owned local turn
+        # state, never by arrival order/content alone (see
+        # ``ConversationRouter.has_turn_awaiting_assistant`` and the
+        # ``nexa.realtime.gemini.runtime`` module docstring's M2.6B.4H
+        # section for the other half of this guarantee).
+        if cur is None or cur.is_terminal or cur.user_final:
+            return  # late/foreign frame -- never re-opens or overwrites it
         cur.user_text = text
         cur.user_final = final
         if final:

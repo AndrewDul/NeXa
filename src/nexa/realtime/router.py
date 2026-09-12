@@ -30,7 +30,7 @@ from .provider import (
     UserTranscriptionEvent,
 )
 from .snapshot import CloudContextSnapshot, build_cloud_context_snapshot
-from .turn import CloudTurnAccumulator
+from .turn import CloudTurnAccumulator, CloudTurnState
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +250,29 @@ class ConversationRouter:
     # -- canonical cloud-turn write path (ADR-0004 Decision A) --------------
     def begin_cloud_turn(self) -> None:
         self._turn.start_turn()
+
+    def has_turn_awaiting_assistant(self) -> bool:
+        """M2.6B.4H (R0046) -- True iff the current cloud turn already has
+        a final user transcript but has not yet been committed (an
+        assistant response is presumably being generated for it right
+        now). This is the ONE local-authority signal ``begin_cloud_turn()``
+        callers must consult before opening a new turn: calling it while
+        this is True would let ``CloudTurnAccumulator.start_turn()``'s own
+        "abandon the still-open current turn" rule discard a turn that is
+        still legitimately awaiting its own assistant reply -- exactly the
+        overlap hazard a local interruption CANDIDATE (VAD start while an
+        assistant reply is in flight, not yet confirmed as an
+        interruption) creates. Deliberately narrower than "any non-
+        terminal current turn": a turn that opened but never received its
+        OWN final user transcript (state ``OPEN``) is not "awaiting
+        assistant" and must NOT block a fresh ``begin_cloud_turn()`` --
+        this is what lets a NEXT real turn recover normally after a
+        confirmed but non-lexical interruption (one that opened its own
+        canonical turn via ``begin_cloud_turn()`` but never received a
+        transcript for it, so it is never committed and would otherwise be
+        stuck non-terminal forever)."""
+        cur = self._turn.current
+        return cur is not None and cur.state is CloudTurnState.AWAITING_ASSISTANT
 
     def on_user_transcription(self, text: str, *, final: bool) -> None:
         self._turn.on_user_transcription(text, final=final)

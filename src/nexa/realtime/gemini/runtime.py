@@ -239,6 +239,40 @@ research models, the benchmark scripts/results) is **preserved
 untouched** as fallback research only — nothing deleted from
 ``docs/research/``, only the now-dead production wiring in this module.
 
+M2.6B.4H (R0046) — **``router.begin_cloud_turn()`` had NO production
+caller at all until this checkpoint** (discovered during M2.6B.4G/R0045's
+own audit: exhaustive ``grep`` found it only in test files). Every prior
+M2.6A/M2.6B hardware run therefore never wrote a single cloud
+conversation turn to canonical ``ConversationSession.history`` — audio
+worked; canonical history did not. Fixed with the smallest state model
+that avoids the overlap hazard R0045 identified (an interruption
+CANDIDATE's own VAD start, before it is confirmed, must never abandon or
+corrupt the still-open turn whose assistant reply it may be interrupting):
+``_VadToProviderBridge`` now calls ``router.begin_cloud_turn()`` on every
+``VADUserStartedSpeakingFrame`` **unless**
+``router.has_turn_awaiting_assistant()`` is True (a NEW, minimal
+``ConversationRouter`` method — True iff the current turn already has a
+final user transcript but has not yet been committed, i.e. an assistant
+reply is presumably in flight for it); ``_on_confirmed`` calls it
+unconditionally, right after committing the just-interrupted turn, since
+a confirmed interruption's own utterance is a continuation of an
+ALREADY-open local VAD turn (no future ``VADUserStartedSpeakingFrame``
+will ever arrive for it). ``CloudTurnAccumulator.on_user_transcription``
+gained one companion guard (``cur.user_final`` in addition to
+``cur.is_terminal``): once a turn's own user side is finalized it can
+never be re-opened or overwritten — the second half of the same
+protection, closing the window between a candidate's VAD start and a
+confirmed/rejected outcome, during which the OLD (not-yet-quarantined)
+provider could otherwise still deliver a stray transcript for the
+candidate that would corrupt the currently open turn. After a confirmed
+interruption, R0045's existing provider-instance isolation (the OLD
+provider's ``events()`` queue is never read again) is what makes the
+NEW provider the sole subsequent authority for the newly-opened turn's
+transcription — R0046 adds no new mechanism for that half at all.
+Audio ownership (R0045's active-utterance PCM buffer) and canonical
+conversation-turn ownership (this section) are, and remain, distinct
+mechanisms.
+
 Construction only (``dry=True``): builds every object EXCEPT the audio
 device / network — no ``pyaudio.PyAudio()``, no device index lookup, no
 Gemini connection. This module has NOT been validated against real
@@ -568,9 +602,11 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
             provider_handle: _ProviderHandle,
             metrics: RuntimeMetrics,
             lifecycle: _ResponseLifecycle,
+            router: ConversationRouter,
         ) -> None:
             super().__init__()
             self._handle = provider_handle
+            self._router = router
             # M2.6B.4 (R0038 FAILURE 1) -- ``FrameProcessor.__init__`` itself
             # already sets ``self._metrics = metrics or FrameProcessorMetrics()``
             # (installed source, frame_processor.py:256) and its own
@@ -607,6 +643,24 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
                 self._turn_open = True
                 self._utterance_buffer = bytearray()
                 self._nexa_metrics.local_vad_start()
+                # M2.6B.4H (R0046) -- open exactly one canonical cloud turn
+                # for a GENUINE new local user turn. ``has_turn_awaiting_
+                # assistant()`` is the ONE local-authority signal that
+                # blocks this: a local interruption CANDIDATE's own VAD
+                # start (the user speaking while an assistant reply is
+                # still in flight, not yet confirmed as an interruption)
+                # must NOT call ``begin_cloud_turn()`` here -- doing so
+                # would let ``CloudTurnAccumulator.start_turn()``'s own
+                # "abandon the still-open current turn" rule discard the
+                # turn that reply belongs to, even though it may yet
+                # finish normally (candidate rejected) or be safely
+                # committed first (candidate confirmed -- see
+                # ``_on_confirmed``, which opens the NEW canonical turn for
+                # the promoted interrupting utterance itself, since no
+                # further ``VADUserStartedSpeakingFrame`` will ever arrive
+                # for it). See the module docstring's M2.6B.4H section.
+                if not self._router.has_turn_awaiting_assistant():
+                    self._router.begin_cloud_turn()
                 if not self._handle.quarantined:
                     await self._handle.current.user_turn_start()
             elif isinstance(frame, P["InputAudioRawFrame"]) and self._turn_open:
@@ -1384,6 +1438,29 @@ def build_gemini_voice_runtime(
                 assistant_transcript=turn.assistant_text if turn else None,
                 provider_instance_id=str(id(provider_handle.old_provider)),
             )
+        # M2.6B.4H (R0046) -- promote the interrupting/candidate utterance
+        # to its own canonical turn NOW. No future
+        # ``VADUserStartedSpeakingFrame`` will ever arrive for it (it is a
+        # continuation of the SAME already-open local utterance the
+        # bridge saw earlier, while ``has_turn_awaiting_assistant()`` was
+        # True for turn N and therefore deliberately did NOT open a
+        # canonical turn for it then) -- this is the ONE other call site.
+        # Ordered strictly AFTER committing turn N above:
+        # ``CloudTurnAccumulator.start_turn()``'s own "abandon the
+        # still-open current turn" branch safely no-ops for an
+        # already-terminal (just-committed) turn. The NEW provider
+        # R0045's atomic replacement creates is the sole subsequent
+        # authority for this turn's transcription (its own
+        # ``UserTranscriptionEvent``s reach `router.on_user_transcription`
+        # normally, exactly like any other turn -- see the module
+        # docstring's M2.6B.4H section for why the OLD provider's own
+        # trailing candidate transcript, if any, can never reach it
+        # either). Closes a real, separately-discovered gap:
+        # `router.begin_cloud_turn()` previously had NO production caller
+        # at all (see M2.6B.4G/R0045's own audit) -- normal turns and
+        # confirmed interruptions now share one explicit, deterministic
+        # canonical ownership lifecycle.
+        router.begin_cloud_turn()
         lifecycle.mark_interrupted()
         # provider_handle.old_provider (the SAME snapshot the replacement
         # flow will read) -- cancel() is async; this hook is sync
@@ -1445,6 +1522,7 @@ def build_gemini_voice_runtime(
         provider_handle=provider_handle,
         metrics=metrics,
         lifecycle=lifecycle,
+        router=router,
     )
     aec_feeder = AecReferenceFeeder(
         aec_health=aec_health, sample_rate=OUTPUT_SAMPLE_RATE_HZ, channels=1

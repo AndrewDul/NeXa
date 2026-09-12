@@ -831,6 +831,46 @@ unpaid-quota data is used to improve Google products.
     launch command) remains the next evidence, now expected to also
     surface the first real measurement of atomic replacement's
     reconnect/fresh-context latency cost.
+  - **M2.6B.4H — production canonical cloud turn lifecycle** (`R0046`,
+    2026-09-12). R0045's own audit discovered a SEPARATE, pre-existing
+    production defect: `router.begin_cloud_turn()` had NO production
+    caller at all (confirmed by exhaustive grep — only test files called
+    it), so `CloudTurnAccumulator._current` stayed `None` for the life of
+    every M2.6A/M2.6B hardware run — audio worked correctly, but canonical
+    `ConversationSession.history` never received a single cloud
+    conversation turn. Fixed with the smallest state model that avoids the
+    overlap hazard R0045 identified (an interruption candidate's own VAD
+    start, before confirmation, must never abandon or corrupt the
+    still-open turn whose assistant reply it may be interrupting): a new,
+    minimal `ConversationRouter.has_turn_awaiting_assistant()` method
+    (True iff the current turn already has a final user transcript but is
+    not yet committed) gates `_VadToProviderBridge`'s new
+    `router.begin_cloud_turn()` call on every local VAD start;
+    `_on_confirmed` calls it unconditionally right after committing the
+    just-interrupted turn. `CloudTurnAccumulator.on_user_transcription`
+    gained one companion guard (`cur.user_final`) closing the
+    pre-confirmation window where a candidate's own transcript could
+    otherwise overwrite the still-open, already-finalized turn N.
+    Post-confirmation, R0045's existing provider-instance isolation
+    (unmodified) remains the sole mechanism — no new code was needed for
+    that half. Proven via the REAL, unmirrored `_VadToProviderBridge` (a
+    real Pipeline/PipelineWorker/WorkerRunner) for the normal-turn-opening
+    half, and the REAL `build_gemini_voice_runtime` `_on_confirmed`
+    closure (not a mirror) for the confirmed-interruption half — the exact
+    "production wiring proof" the charter demanded. A non-lexical
+    interruption's own promoted turn (never transcribed) correctly never
+    commits and never blocks the next real turn from recovering. A
+    `CloudContextSnapshot` built right after a confirmed interruption
+    contains every prior committed turn plus the just-interrupted one, and
+    structurally can never contain the new not-yet-committed turn. +13 net
+    new tests (5 production-wiring-proof, 5 `has_turn_awaiting_assistant()`
+    unit tests, 3 `on_user_transcription` guard unit tests) — **959 tests
+    total, OK (skipped=7)**, 0 regressions; `ruff`/`pip check`/
+    `git diff --check` all clean; local voice completely untouched (empty
+    diff). **Hardware acceptance remains FAIL; `M2.6B` remains IN
+    PROGRESS** — Attempt #3 (unchanged launch command) remains the next
+    evidence, now able to directly confirm `ConversationSession.history`
+    actually grows on real hardware for the first time.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

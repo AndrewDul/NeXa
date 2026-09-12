@@ -78,6 +78,16 @@ async def _wait_until(predicate, *, timeout: float = 2.0, step: float = 0.01) ->
     raise AssertionError(f"condition not met within {timeout}s")
 
 
+def _fresh_router() -> ConversationRouter:
+    """M2.6B.4H (R0046) -- a minimal, real ``ConversationRouter`` (no cloud
+    provider factory -- these callers never start a cloud provider through
+    it) for tests that only need the bridge's OWN canonical-turn-opening
+    call site (``router.begin_cloud_turn()`` /
+    ``router.has_turn_awaiting_assistant()``), not the full commit path."""
+    session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+    return ConversationRouter(session, policy=ConversationPolicy.CLOUD_PREFERRED)
+
+
 class _StubHardwareWorker:
     """Stands in for the ``PipelineWorker`` driving the reSpeaker/speaker
     hardware — records injected frames instead of touching any device."""
@@ -765,7 +775,9 @@ class TestVadBridgeProcessorLifecycle(unittest.IsolatedAsyncioTestCase):
         metrics = RuntimeMetrics()
         lifecycle = _ResponseLifecycle(on_finished=lambda: None)
         bridge_cls = _make_vad_bridge_class(P)
-        bridge = bridge_cls(provider_handle=handle, metrics=metrics, lifecycle=lifecycle)
+        bridge = bridge_cls(
+            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router()
+        )
 
         pipeline = P["Pipeline"]([bridge])
         worker = P["PipelineWorker"](
@@ -846,7 +858,9 @@ class TestVadBridgeProcessorLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(hasattr(metrics, "cleanup"))
         lifecycle = _ResponseLifecycle(on_finished=lambda: None)
         bridge_cls = _make_vad_bridge_class(P)
-        bridge = bridge_cls(provider_handle=handle, metrics=metrics, lifecycle=lifecycle)
+        bridge = bridge_cls(
+            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router()
+        )
 
         # The bridge must never have stored RuntimeMetrics under the same
         # attribute name Pipecat's own FrameProcessor uses internally --
@@ -1290,7 +1304,9 @@ class TestVadBridgeQuarantine(unittest.IsolatedAsyncioTestCase):
         metrics = RuntimeMetrics()
         lifecycle = _ResponseLifecycle(on_finished=lambda: None)
         bridge_cls = _make_vad_bridge_class(P)
-        bridge = bridge_cls(provider_handle=handle, metrics=metrics, lifecycle=lifecycle)
+        bridge = bridge_cls(
+            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router()
+        )
 
         pipeline = P["Pipeline"]([bridge])
         worker = P["PipelineWorker"](
@@ -1367,7 +1383,9 @@ class TestVadBridgeQuarantine(unittest.IsolatedAsyncioTestCase):
         metrics = RuntimeMetrics()
         lifecycle = _ResponseLifecycle(on_finished=lambda: None)
         bridge_cls = _make_vad_bridge_class(P)
-        bridge = bridge_cls(provider_handle=handle, metrics=metrics, lifecycle=lifecycle)
+        bridge = bridge_cls(
+            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=_fresh_router()
+        )
         pipeline = P["Pipeline"]([bridge])
         worker = P["PipelineWorker"](
             pipeline,
@@ -1448,8 +1466,9 @@ class TestAtomicProviderReplacement(_FakeGeminiLiveServiceTestCase):
 
         def _on_confirmed(ctx: InterruptContext) -> None:
             # Faithful reproduction of `build_gemini_voice_runtime`'s OWN
-            # `_on_confirmed` (M2.6B.4G/R0045) -- see that function's own
-            # docstring/comments for the full rationale of each line.
+            # `_on_confirmed` (M2.6B.4G/R0045, M2.6B.4H/R0046) -- see that
+            # function's own docstring/comments for the full rationale of
+            # each line.
             generation_guard.interrupt()
             provider_handle.old_provider = provider_handle.current
             provider_handle.quarantined = True
@@ -1457,6 +1476,7 @@ class TestAtomicProviderReplacement(_FakeGeminiLiveServiceTestCase):
             router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
             router.on_interruption()
             router.commit_cloud_turn()
+            router.begin_cloud_turn()
             lifecycle.mark_interrupted()
             asyncio.create_task(provider_handle.old_provider.cancel())
             bargein.notify_interruption_complete()
@@ -2226,6 +2246,337 @@ class TestCanonicalTurnDiagnostics(unittest.TestCase):
                 assistant_transcript=None,
                 provider_instance_id=None,
             )
+
+
+@unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+class TestProductionCanonicalTurnLifecycle(unittest.IsolatedAsyncioTestCase):
+    """M2.6B.4H (R0046) -- PRODUCTION WIRING PROOF. R0045's own audit found
+    ``router.begin_cloud_turn()`` had NO production caller at all --
+    every prior hardware run generated correct live audio but wrote NOTHING
+    to canonical ``ConversationSession.history``. These tests exercise the
+    REAL ``_VadToProviderBridge`` (not a hand-rolled simulation of it) for
+    the normal-turn-opening half, and the REAL ``build_gemini_voice_runtime``
+    ``_on_confirmed`` closure (not a mirror) for the confirmed-interruption
+    half -- proving the PRODUCTION code itself, not merely a test's own
+    reproduction of it, causes canonical turn creation."""
+
+    async def test_real_bridge_opens_normal_turns_and_never_abandons_one_awaiting_assistant(
+        self,
+    ) -> None:
+        """The REAL bridge (unmirrored) proves: (1) a genuine new local
+        VAD turn opens exactly one canonical turn; (2) once that turn has
+        a final user transcript (assistant presumably in flight), a
+        SEPARATE VAD start/stop (an interruption candidate, real or a
+        rejected false one -- from the bridge's own perspective they are
+        identical until/unless ``_on_confirmed`` later promotes one) never
+        abandons or corrupts it -- invariants 1, 4, 6, 7, 10."""
+        P = _pipecat_hw_imports()
+
+        class _StubProvider:
+            async def user_turn_start(self) -> None:
+                pass
+
+            async def send_user_audio(self, pcm: bytes) -> None:
+                pass
+
+            async def user_turn_end(self) -> None:
+                pass
+
+        handle = _ProviderHandle(_StubProvider())
+        metrics = RuntimeMetrics()
+        lifecycle = _ResponseLifecycle(on_finished=lambda: None)
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        router = ConversationRouter(session, policy=ConversationPolicy.CLOUD_PREFERRED)
+        bridge_cls = _make_vad_bridge_class(P)
+        bridge = bridge_cls(
+            provider_handle=handle, metrics=metrics, lifecycle=lifecycle, router=router
+        )
+        pipeline = P["Pipeline"]([bridge])
+        worker = P["PipelineWorker"](
+            pipeline,
+            params=P["PipelineParams"](audio_in_sample_rate=16000, audio_out_sample_rate=24000),
+            enable_rtvi=False,
+            idle_timeout_secs=None,
+        )
+        runner = P["WorkerRunner"]()
+        await runner.add_workers(worker)
+        run_task = asyncio.create_task(runner.run())
+        await asyncio.sleep(0.1)
+
+        self.assertIsNone(router._turn.current)  # noqa: SLF001
+
+        # turn 1 -- a genuine new local user turn opens exactly one
+        # canonical turn (invariant 1).
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](audio=b"hihi", sample_rate=16000, num_channels=1),
+                P["VADUserStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.1)
+        turn1 = router._turn.current  # noqa: SLF001
+        self.assertIsNotNone(turn1)
+        self.assertEqual(turn1.generation, 1)
+
+        # the provider transcribing + committing turn 1 -- the provider-
+        # event -> router wiring is R0045's own, already-proven concern;
+        # simulated here via the router's public API, matching
+        # TestCanonicalCloudTurnWritePath's own established convention.
+        router.on_user_transcription("hi", final=True)
+        router.on_assistant_transcription("hello", final=True)
+        router.commit_cloud_turn()
+        self.assertEqual(len(session.history), 2)
+
+        # turn 2 opens normally (invariant 4 -- next normal turn opens a
+        # fresh canonical turn).
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](
+                    audio=b"black-holes", sample_rate=16000, num_channels=1
+                ),
+                P["VADUserStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.1)
+        turn2 = router._turn.current  # noqa: SLF001
+        self.assertEqual(turn2.generation, 2)
+        router.on_user_transcription("tell me about black holes", final=True)
+        self.assertTrue(router.has_turn_awaiting_assistant())
+
+        # a SEPARATE VAD start/stop while turn 2 awaits its assistant
+        # reply (an interruption candidate, or a false one that never
+        # confirms -- from the bridge's own perspective these are
+        # identical) must NOT abandon or overwrite turn 2 (invariants 6,
+        # 7, 10).
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](audio=b"cough", sample_rate=16000, num_channels=1),
+                P["VADUserStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.1)
+        self.assertIs(router._turn.current, turn2)
+        self.assertEqual(turn2.user_text, "tell me about black holes")
+        self.assertEqual(turn2.generation, 2)
+
+        # a stray transcript for that candidate must not overwrite turn
+        # 2's already-finalized user text either (the accumulator-level
+        # half of the same guarantee -- see test_realtime_turn.py for the
+        # unit-level proof; this is the end-to-end proof through the
+        # real bridge + real router together).
+        router.on_user_transcription("uh", final=True)
+        self.assertEqual(turn2.user_text, "tell me about black holes")
+
+        await runner.end(reason="test done")
+        await asyncio.wait_for(run_task, timeout=5.0)
+
+    async def test_confirmed_interruption_commits_n_and_opens_n_plus_1_via_real_on_confirmed(
+        self,
+    ) -> None:
+        """The REAL ``_on_confirmed`` closure (``build_gemini_voice_runtime``,
+        ``dry=True`` -- not a hand-rolled mirror) commits the interrupted
+        turn and opens exactly one new canonical turn for the promoted
+        interrupting utterance, in one atomic (synchronous) step --
+        invariant 8's canonical-history half."""
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        runtime = build_gemini_voice_runtime(session=session, api_key="FAKE-TEST-KEY", dry=True)
+        router = runtime.router
+
+        async def _fake_cancel() -> None:
+            return None
+
+        runtime.provider.cancel = _fake_cancel  # type: ignore[method-assign]
+
+        # turn 1: a real, transcribed question -- assistant dispatched
+        # (simulated directly; the provider-event path is R0045's own
+        # already-proven concern).
+        router.begin_cloud_turn()
+        router.on_user_transcription("tell me about black holes", final=True)
+        router.on_assistant_transcription("Black holes are", final=False)
+        self.assertTrue(router.has_turn_awaiting_assistant())
+
+        turn1 = router._turn.current  # noqa: SLF001
+        runtime.bargein._on_confirmed(  # noqa: SLF001
+            InterruptContext(invalidated_response_id=1, reason="test")
+        )
+        await asyncio.sleep(0.01)  # let the fire-and-forget cancel() task run
+
+        # turn 1 was committed, interrupted, with the conservative (empty)
+        # spoken prefix -- never the raw running transcription.
+        self.assertTrue(turn1.is_terminal)
+        self.assertTrue(turn1.interrupted)
+        self.assertEqual(len(session.history), 1)  # user-only (empty assistant text)
+        self.assertEqual(session.history[0].content, "tell me about black holes")
+
+        # exactly ONE new canonical turn was opened for the promoted
+        # interrupting utterance -- fresh, open, ready for the NEW
+        # provider's own transcript.
+        turn2 = router._turn.current  # noqa: SLF001
+        self.assertIsNot(turn2, turn1)
+        self.assertEqual(turn2.generation, turn1.generation + 1)
+        self.assertFalse(turn2.is_terminal)
+        self.assertIsNone(turn2.user_text)
+        self.assertFalse(router.has_turn_awaiting_assistant())
+
+        # the NEW provider's own transcript owns it, exactly once
+        # (invariant 12).
+        router.on_user_transcription("what about the second case", final=True)
+        router.on_assistant_transcription("The second case involves", final=True)
+        router.commit_cloud_turn()
+        self.assertEqual(len(session.history), 3)
+        self.assertEqual(session.history[1].content, "what about the second case")
+        self.assertEqual(session.history[2].content, "The second case involves")
+
+    async def test_non_lexical_interruption_invents_no_text_and_next_turn_recovers(
+        self,
+    ) -> None:
+        """Invariant 9 + 11: a confirmed non-lexical interruption (a
+        cough/throat-clear the provider never transcribes) opens its own
+        canonical turn but never invents fake lexical history for it; the
+        NEXT real turn recovers and commits normally."""
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        runtime = build_gemini_voice_runtime(session=session, api_key="FAKE-TEST-KEY", dry=True)
+        router = runtime.router
+
+        async def _fake_cancel() -> None:
+            return None
+
+        runtime.provider.cancel = _fake_cancel  # type: ignore[method-assign]
+
+        router.begin_cloud_turn()
+        router.on_user_transcription("first question", final=True)
+        router.on_assistant_transcription("first reply", final=False)
+
+        runtime.bargein._on_confirmed(  # noqa: SLF001
+            InterruptContext(invalidated_response_id=1, reason="throat_clear")
+        )
+        await asyncio.sleep(0.01)
+        self.assertEqual(len(session.history), 1)  # turn 1, user-only
+
+        # the promoted turn NEVER receives a transcript (non-lexical noise)
+        # -- must never be committed with invented text.
+        noise_turn = router._turn.current  # noqa: SLF001
+        self.assertIsNone(noise_turn.user_text)
+        self.assertIsNone(router.commit_cloud_turn())
+        self.assertEqual(len(session.history), 1)  # unchanged -- nothing invented
+
+        # the next real, lexical turn opens and commits normally --
+        # superseding (never corrupting) the never-transcribed noise turn.
+        router.begin_cloud_turn()
+        self.assertTrue(noise_turn.is_terminal)  # abandoned by start_turn() itself
+        router.on_user_transcription("second question", final=True)
+        router.on_assistant_transcription("second reply", final=True)
+        outcome = router.commit_cloud_turn()
+        self.assertIsNotNone(outcome)
+        self.assertEqual(len(session.history), 3)
+        self.assertEqual(session.history[1].content, "second question")
+        self.assertEqual(session.history[2].content, "second reply")
+
+    async def test_two_consecutive_interruptions_preserve_history_ordering(self) -> None:
+        """Invariant 17: two confirmed interruptions in a row still
+        produce a clean, correctly-ordered canonical history -- one entry
+        per turn, oldest first, never duplicated or reordered."""
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        runtime = build_gemini_voice_runtime(session=session, api_key="FAKE-TEST-KEY", dry=True)
+        router = runtime.router
+
+        async def _fake_cancel() -> None:
+            return None
+
+        runtime.provider.cancel = _fake_cancel  # type: ignore[method-assign]
+
+        router.begin_cloud_turn()
+        router.on_user_transcription("question one", final=True)
+        runtime.bargein._on_confirmed(  # noqa: SLF001
+            InterruptContext(invalidated_response_id=1, reason="test")
+        )
+        await asyncio.sleep(0.01)
+
+        router.on_user_transcription("question two", final=True)
+        runtime.bargein._on_confirmed(  # noqa: SLF001
+            InterruptContext(invalidated_response_id=2, reason="test")
+        )
+        await asyncio.sleep(0.01)
+
+        router.on_user_transcription("question three", final=True)
+        router.on_assistant_transcription("final reply", final=True)
+        router.commit_cloud_turn()
+
+        self.assertEqual(len(session.history), 4)
+        self.assertEqual(
+            [t.content for t in session.history],
+            ["question one", "question two", "question three", "final reply"],
+        )
+
+    async def test_snapshot_after_interruption_contains_prior_turns_not_the_new_one(
+        self,
+    ) -> None:
+        """CLOUDCONTEXTSNAPSHOT PROOF: after two completed cloud turns and
+        a confirmed interruption, the fresh snapshot ``start_fresh_cloud_
+        provider``/``recover_from_mid_turn_loss`` would build contains
+        every prior COMMITTED turn (including the just-interrupted one,
+        per the existing conservative interruption rule) and NEVER the
+        not-yet-committed new canonical turn opened for the interrupting
+        utterance -- no missing prior turns, no duplicate interrupting
+        user turn, no unspoken assistant text, no OLD provider state."""
+        from nexa.realtime.snapshot import build_cloud_context_snapshot
+
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        runtime = build_gemini_voice_runtime(session=session, api_key="FAKE-TEST-KEY", dry=True)
+        router = runtime.router
+
+        async def _fake_cancel() -> None:
+            return None
+
+        runtime.provider.cancel = _fake_cancel  # type: ignore[method-assign]
+
+        # two ordinary, completed turns.
+        for i in range(2):
+            router.begin_cloud_turn()
+            router.on_user_transcription(f"user {i}", final=True)
+            router.on_assistant_transcription(f"assistant {i}", final=True)
+            router.commit_cloud_turn()
+        self.assertEqual(len(session.history), 4)
+
+        # snapshot BEFORE any interruption -- sanity baseline.
+        baseline = build_cloud_context_snapshot(session)
+        self.assertEqual(len(baseline.recent_turns), 4)
+
+        # turn N begins, then is confirmed-interrupted.
+        router.begin_cloud_turn()
+        router.on_user_transcription("tell me about black holes", final=True)
+        router.on_assistant_transcription("Black holes are", final=False)
+        runtime.bargein._on_confirmed(  # noqa: SLF001
+            InterruptContext(invalidated_response_id=3, reason="test")
+        )
+        await asyncio.sleep(0.01)
+
+        # the fresh snapshot a real atomic replacement would build from
+        # canonical NeXa state RIGHT NOW (before the interrupting
+        # utterance's own PCM is ever replayed to any provider).
+        snapshot = await router.request_fresh_snapshot_after_resumption_failure()
+
+        rendered = [t.content for t in snapshot.recent_turns]
+        # every prior completed turn is present, in order --
+        self.assertEqual(
+            rendered[:4], ["user 0", "assistant 0", "user 1", "assistant 1"]
+        )
+        # the just-interrupted turn N is present (conservative rule: user
+        # text kept, empty assistant text -- no unspoken words credited).
+        self.assertEqual(rendered[4], "tell me about black holes")
+        self.assertEqual(len(rendered), 5)
+        # the NEW canonical turn opened for the interrupting utterance is
+        # NOT in the snapshot at all -- it is only in-memory
+        # (``router._turn.current``), never yet written to
+        # ``session.history``, so it can never be duplicated between the
+        # snapshot and the later PCM replay.
+        new_turn = router._turn.current  # noqa: SLF001
+        self.assertFalse(new_turn.is_terminal)
+        self.assertIsNone(new_turn.user_text)
+        self.assertNotIn("what about", " ".join(rendered))
 
 
 if __name__ == "__main__":

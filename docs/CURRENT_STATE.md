@@ -75,11 +75,18 @@ Runtime / test evidence outranks anything else in this repo.
   to require a genuinely separate subsequent turn, and proved by source
   audit that ONE remaining gap (CASE 2) could not be closed without
   provider/session replacement — reported, not implemented then.
-  **M2.6B.4G (below) implements that replacement**: every confirmed
+  **M2.6B.4G implements that replacement**: every confirmed
   local barge-in now atomically swaps the Gemini provider/session
   (provider-instance isolation, never turn-closure counting) — CASE 2 is
   now provably closed; the R0043/R0044 fallback mechanism is REMOVED as
-  superseded, not merely narrowed further)]**.
+  superseded, not merely narrowed further. **M2.6B.4H (below) closes a
+  SEPARATE, pre-existing production gap R0045 discovered while auditing
+  that replacement: `router.begin_cloud_turn()` had NO production caller
+  at all, so no cloud conversation turn was ever written to canonical
+  history in any hardware run to date — fixed with a minimal
+  `has_turn_awaiting_assistant()` gate + a `CloudTurnAccumulator` guard,
+  proven via the REAL bridge/`_on_confirmed` production code, not a test
+  mirror)]**.
   Original Accepted content:
   **Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
   Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
@@ -137,7 +144,56 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0045_m2_6b_4g_atomic_provider_replacement_20260912.md`
+- **Latest report:** `docs/reports/R0046_m2_6b_4h_production_canonical_cloud_turn_lifecycle_20260912.md`
+  (**M2.6B.4H — production canonical cloud turn lifecycle, 2026-09-12.**
+  R0045's own audit found `router.begin_cloud_turn()` had NO production
+  caller at all — confirmed by exhaustive grep, only test files called it.
+  Consequence: `CloudTurnAccumulator._current` stayed `None` for the life
+  of every M2.6A/M2.6B hardware run; audio worked correctly, but
+  **canonical `ConversationSession.history` never received a single cloud
+  conversation turn.** Fixed with the smallest state model that avoids the
+  overlap hazard R0045 identified (an interruption candidate's own VAD
+  start, before confirmation, must never abandon or corrupt the still-open
+  turn whose assistant reply it may be interrupting): a new, minimal
+  `ConversationRouter.has_turn_awaiting_assistant()` method (True iff the
+  current turn already has a final user transcript but is not yet
+  committed) gates `_VadToProviderBridge`'s new
+  `router.begin_cloud_turn()` call on every local VAD start; `_on_confirmed`
+  calls it unconditionally right after committing the just-interrupted
+  turn (a confirmed interruption's utterance is a continuation of an
+  ALREADY-open local turn — no future VAD start ever arrives for it).
+  `CloudTurnAccumulator.on_user_transcription` gained one companion guard
+  (`cur.user_final`, alongside `cur.is_terminal`) closing the
+  pre-confirmation window where a candidate's own transcript could
+  otherwise reach the still-open, already-finalized turn N and overwrite
+  it. Post-confirmation, R0045's existing provider-instance isolation
+  (unmodified) is what makes the NEW provider the sole authority — no new
+  mechanism was needed for that half. Proven via the REAL, unmirrored
+  `_VadToProviderBridge` (a real `Pipeline`/`PipelineWorker`/`WorkerRunner`,
+  not a hand-rolled simulation) for the normal-turn-opening half, and the
+  REAL `build_gemini_voice_runtime` `_on_confirmed` closure (not a mirror)
+  for the confirmed-interruption half — the exact "production wiring
+  proof" the charter demanded, since R0045's own tests had only ever
+  proven a test's own reproduction of the logic. A non-lexical
+  interruption's own promoted turn (never transcribed) correctly never
+  commits and never blocks the next real turn from recovering (its own
+  `CloudTurnAccumulator.start_turn()` "abandon" logic supersedes it
+  cleanly). A `CloudContextSnapshot` built right after a confirmed
+  interruption (the exact primitive R0045's atomic replacement uses)
+  contains every prior committed turn plus the just-interrupted one, and
+  structurally can never contain the new not-yet-committed turn (the
+  snapshot only ever reads `session.history`). +13 net new tests (5
+  production-wiring-proof tests, 5 `has_turn_awaiting_assistant()` unit
+  tests, 3 `on_user_transcription` guard unit tests) — **959 tests total,
+  OK (skipped=7)**, 0 regressions (all R0045 atomic-replacement tests
+  still pass, their hand-rolled `_on_confirmed` mirror updated to stay
+  faithful); `ruff`/`pip check`/`git diff --check` all clean; local voice
+  completely untouched (empty diff). **Hardware acceptance remains FAIL;
+  `M2.6B` remains IN PROGRESS** — Attempt #3 (unchanged launch command)
+  remains the next evidence, now able to directly confirm
+  `ConversationSession.history` actually grows on real hardware for the
+  first time. Not pushed.)
+- **Prior report:** `docs/reports/R0045_m2_6b_4g_atomic_provider_replacement_20260912.md`
   (**M2.6B.4G — atomic provider replacement on confirmed barge-in,
   2026-09-12.** R0044 exhaustively proved no airtight same-session
   response-ownership boundary exists (Gemini's Live API exposes no
