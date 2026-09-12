@@ -895,6 +895,40 @@ unpaid-quota data is used to improve Google products.
     all clean; local voice untouched. **Hardware acceptance remains FAIL;
     `M2.6B` remains IN PROGRESS** — the operator can now safely re-attempt
     Attempt #3 with the corrected, test-verified command.
+  - **M2.6B.4I — accepted M2.6A vs production real audio ingress parity
+    audit** (`R0048`, 2026-09-12, DIAGNOSTIC ONLY). Real Attempt #3: the
+    operator's first utterance ("czarna dziura") was misheard as "Czorna
+    Jura"; later in the same session Gemini understood correctly and
+    answered normally — the R0043/R0045 post-interruption audio-loss
+    failure did not recur. Investigated whether utterance ONSET is
+    clipped before reaching Gemini. **Hypothesis CONFIRMED**: source-read
+    of installed `pipecat==1.8.1` shows `VADProcessor` forwards every
+    frame downstream unconditionally (drops nothing itself);
+    `VAD_START_SECS = 0.2` (unmodified default in both M2.6A and
+    production) means `VADUserStartedSpeakingFrame` fires only after
+    0.2s of already-elapsed voice activity; `GeminiLiveLLMService` has a
+    real built-in pre-roll buffer that M2.6A's topology (same Silero VAD
+    instance, same pipeline, directly upstream of the LLM service) keeps
+    fed and working — but production's `_VadToProviderBridge` (a
+    separate processor in a separate hardware pipeline) never calls
+    `send_user_audio()` for audio before its own `_turn_open` flag flips
+    true, so the provider's own preroll buffer exists in the running
+    code but is permanently starved. Proven EMPIRICALLY too: a new
+    diagnostic tool (no Gemini, no credential, no playback) drives
+    synthetic pre-onset + spoken PCM through the REAL, unmirrored
+    `_VadToProviderBridge` in a real Pipecat pipeline — the
+    production-forwarded capture is missing exactly the pre-VAD-start
+    window the raw capture retains, byte for byte. Onset: CLIPPED.
+    Offset: NOT clipped (asymmetric mechanism). Root cause confidence
+    HIGH for the mechanism, MEDIUM for fully explaining the one observed
+    mishearing. Evaluated 3 fix options — none chosen, none implemented
+    (R0048 = evidence, R0049 = fix, per the charter). +10 new
+    deterministic tests — **974 tests total, OK (skipped=7)**, 0
+    regressions; `ruff`/`pip check`/`git diff --check` all clean; **zero
+    `src/nexa/**` changes**; local voice untouched. **Hardware acceptance
+    remains FAIL; `M2.6B` remains IN PROGRESS** — the operator can now
+    run the real 10-take capture command and listen to the WAV pairs
+    before R0049 picks a fix.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

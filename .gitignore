@@ -38,6 +38,10 @@ logs/
 models/
 voices/
 
+# --- R0048 real audio ingress parity probe (real operator voice
+# recordings -- WAV + JSON, never committed) ---
+docs/research/m2_6_cloud_realtime_voice/ingress_captures/
+
 # --- Local tooling caches ---
 .cache/
 node_modules/

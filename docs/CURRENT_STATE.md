@@ -144,7 +144,67 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0047_pre_attempt3_launch_contract_audit_20260912.md`
+- **Latest report:** `docs/reports/R0048_m2_6b_4i_real_audio_ingress_parity_audit_20260912.md`
+  (**M2.6B.4I — accepted M2.6A vs production real audio ingress parity
+  audit, 2026-09-12, DIAGNOSTIC ONLY.** Real Attempt #3 hardware run: the
+  operator's first utterance, "czarna dziura", was misheard as "Czorna
+  Jura" (then Gemini stayed confused for a follow-up), but later in the
+  SAME session correctly understood "Ah, a black hole!" and answered
+  normal PL/EN questions sensibly — the R0043/R0045 permanent
+  post-interruption audio-loss failure did NOT recur. Investigated
+  whether the FIRST utterance's onset was clipped before reaching
+  Gemini. **Hypothesis CONFIRMED**, on two independent lines of evidence.
+  (1) Exhaustive read of the installed `pipecat==1.8.1` source both the
+  accepted M2.6A spike and current production depend on:
+  `VADProcessor.process_frame` forwards every frame downstream
+  UNCONDITIONALLY before running VAD detection (own comment: "Audio
+  flows through immediately while VAD detection happens after") — so
+  `VADProcessor` itself drops nothing; `VAD_START_SECS = 0.2` (Pipecat's
+  own default, unmodified by either architecture) means
+  `VADUserStartedSpeakingFrame` fires only after 0.2s of ALREADY-ELAPSED
+  confirmed voice activity; `GeminiLiveLLMService` has a REAL, built-in
+  pre-roll buffer (`_user_audio_preroll_buffer`, auto-sized to
+  `start_secs + 0.1s` via a `SpeechControlParamsFrame`, falling back to
+  a 0.5s default "when no VAD is present") that M2.6A's topology (the
+  SAME Silero VAD instance lives in the SAME pipeline, directly upstream
+  of the LLM service) keeps continuously fed and therefore functional —
+  but current production's `_VadToProviderBridge` (a SEPARATE processor
+  in a SEPARATE hardware pipeline) never calls `send_user_audio()` for
+  ANY audio before its own `_turn_open` flag flips true, so the
+  provider's own preroll buffer is present in the running code but
+  PERMANENTLY STARVED of anything to buffer. (2) A new diagnostic tool
+  (`docs/research/m2_6_cloud_realtime_voice/
+  m2_6b4i_audio_ingress_parity_probe.py` — no Gemini, no credential, no
+  assistant playback, reuses the REAL `_VadToProviderBridge`/
+  `BargeInController`/`SileroVADAnalyzer` construction verbatim, never a
+  reimplementation) proves this EMPIRICALLY: driving synthetic pre-onset
+  + spoken PCM through the REAL, unmirrored bridge in a real Pipecat
+  pipeline shows the production-forwarded capture is missing EXACTLY the
+  pre-VAD-start window the raw capture retains, byte for byte. Beginning
+  of utterance: CLIPPED (by construction). End of utterance: NOT
+  clipped (the mechanism is asymmetric — stop-detection delay keeps
+  forwarding through the trailing window; start-detection delay forwards
+  nothing during the leading one). Root cause confidence: HIGH for the
+  clipping mechanism itself; MEDIUM for it being the full explanation of
+  the one observed mishearing (a single real-world anecdote; the
+  operator's own real hardware run with this tool, listening to the
+  resulting WAV pairs, is the next evidence). Evaluated 3 minimum parity
+  fix options (bounded rolling pre-buffer in the bridge; continuous
+  ingress into the provider's own pipeline with VAD as semantic markers
+  only; drive the provider's pipeline with a real VADController so
+  `GeminiLiveLLMService`'s existing preroll self-flushes) — **none
+  chosen, none implemented this checkpoint**, per the charter's own
+  "R0048 = evidence, R0049 = fix" structure. +10 new deterministic
+  tests (pure `IngressCapture` windowing/finalize/WAV-writing logic, the
+  real-bridge clipping proof, structural no-Gemini-import checks) —
+  **974 tests total, OK (skipped=7)**, 0 regressions; `ruff`/`pip check`/
+  `git diff --check` all clean; **zero `src/nexa/**` changes** (diagnostic
+  only); local voice completely untouched (empty diff). **Hardware
+  acceptance remains FAIL; `M2.6B` remains IN PROGRESS** — the operator
+  can now run the real 10-take capture command (no Gemini, no
+  credential) and listen to the resulting WAV pairs before R0049 picks a
+  fix. Not pushed.)
+- **Prior report:** `docs/reports/R0047_pre_attempt3_launch_contract_audit_20260912.md`
   (**Pre-Attempt #3 launch contract audit, 2026-09-12.** The operator ran
   R0045/R0046's own documented "EXACT ... COMMAND"
   (`apps/nexa_cloud_voice_app.py --bargein`) twice; both times argparse
