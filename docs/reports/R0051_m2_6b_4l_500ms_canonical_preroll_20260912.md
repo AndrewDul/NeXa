@@ -4,10 +4,68 @@
 **Milestone:** M2.6B.4L (final capacity correction, following R0050's
 forensic audit)
 **Status:** Architecture and capacity correction implemented, proven
-deterministically. **REAL HARDWARE POST-FIX RESULT: PENDING** — the
-operator has not yet re-run the real capture with this checkpoint's
-500ms preroll; no PASS is fabricated here. No Gemini call, not pushed.
-**Hardware acceptance remains FAIL. `M2.6B` remains IN PROGRESS.**
+deterministically, AND now confirmed on real hardware.
+**REAL HARDWARE POST-FIX RESULT: PASS** (operator follow-up below,
+same day). No Gemini call, not pushed. **`M2.6B` remains IN PROGRESS —
+this is not "all of M2.6B COMPLETE."** A minimal live Gemini
+conversational validation is still required after this local PCM fix,
+and the previously-known proactive-reconnect-caller gap remains a
+separate, not-yet-addressed completion item.
+
+## OPERATOR REAL HARDWARE FOLLOW-UP — PASS
+
+The operator re-ran the exact, unchanged capture command
+(`.venv/bin/python docs/research/m2_6_cloud_realtime_voice/
+m2_6b4i_audio_ingress_parity_probe.py`) on the real reSpeaker, no Gemini
+involved. New session (the diagnostic-only timestamped-subdirectory
+feature added this checkpoint, exercised for the first time):
+`docs/research/m2_6_cloud_realtime_voice/ingress_captures/
+session_20260912T200941Z/ingress_capture_20260912T201010Z.json`
+(git-ignored, not committed). Production configuration printed by the
+real probe, confirmed from the JSON itself:
+`sample_rate=16000`, `vad_start_secs=0.2`, `vad_stop_secs=0.5`,
+**`preroll_ms=500`** — this checkpoint's fix is what the operator's
+real hardware actually ran. **10 utterances captured successfully.**
+
+**Byte-exact alignment re-run against this exact session**
+(`wav_alignment.find_alignment`, the same tool R0050 built): every one
+of the 10 real `production_forwarded.wav` files is confirmed to start
+at **byte offset 0** of its own `raw_with_context.wav` —
+`prefix_ms = 0.0` for all 10 takes, `suffix_ms = 500.0` for all 10
+(unchanged, expected, the diagnostic's own post-VAD-stop context
+window, unrelated to onset). This is the mechanically-expected result
+of `preroll_ms(500) == pre_context_secs(500ms)`: **zero** bytes of the
+diagnostic's own pre-VAD-start capture window are now omitted from what
+production forwards — a complete, quantified confirmation, not merely
+consistent with the operator's subjective listening result but
+byte-for-byte proof of it. (Cross-checked against the JSON's own
+recorded `raw_minus_forwarded_ms`, which is exactly `500.0` for every
+take — matching `postroll_never_forwarded_s` alone, with zero
+contribution from a prefix omission, exactly as expected.)
+
+The operator directly listened to RAW vs PRODUCTION_FORWARDED for this
+new session. **Real result: PASS.** The previously observed onset
+clipping is gone. "Czarna dziura" is now audibly complete in
+`production_forwarded.wav` — no more "arna dziura," "carna dziura," or
+"dziura." English onset is also now complete. No audible
+duplication/corruption was reported. The operator's own words: "SUPER
+JEST JUZ DOBRZE" ("great, it's good now").
+
+**Local hardware post-fix acceptance: PASS.** Recorded exactly per the
+required checklist: real reSpeaker ✓; 10 utterances ✓; `preroll_ms=500`
+✓; RAW complete ✓; PRODUCTION_FORWARDED complete ✓; Polish onset
+complete ✓; English onset complete ✓; no audible clipping ✓; no
+audible duplicate/corruption ✓.
+
+**This does NOT mean all of `M2.6B` is complete.** Two items remain
+before hardware acceptance overall can be marked PASS: (1) a minimal
+live Gemini conversational validation of this exact fix (this
+checkpoint's evidence is entirely local — no Gemini call has been made
+since R0048 first discovered the clipping symptom); (2) the previously
+identified proactive-reconnect-caller gap (`ReconnectController`'s own
+proactive age-timer reconnect path has no production caller yet,
+tracked separately, unrelated to audio ingress) remains open. `M2.6B`
+stays IN PROGRESS.
 
 ## R0050 EVIDENCE
 

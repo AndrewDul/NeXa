@@ -173,11 +173,25 @@ Runtime / test evidence outranks anything else in this repo.
   All offline validation green, including the R0048 probe (`--dry` now
   live-confirms `preroll_ms 500`) and R0050's `wav_alignment.py` tests —
   **991 tests total, OK (skipped=7)**, 0 regressions; `ruff`/`pip check`/
-  `git diff --check` all clean. **Real hardware post-fix result:
-  PENDING** — the operator must re-run the exact, unchanged capture
-  command and confirm by listening before this can move to PASS or FAIL;
-  no hardware PASS is fabricated. **Hardware acceptance remains FAIL;
-  `M2.6B` remains IN PROGRESS.** No Gemini call. Not pushed.)
+  `git diff --check` all clean. **Real hardware post-fix result: PASS**
+  (same-day operator follow-up) — the operator re-ran the exact,
+  unchanged capture command on the real reSpeaker: 10 utterances,
+  `preroll_ms=500` confirmed from the real probe's own printed config,
+  byte-exact re-alignment (`wav_alignment.find_alignment`) confirms
+  **zero** bytes of the diagnostic's own 500ms pre-VAD-start window are
+  now omitted from any of the 10 real `production_forwarded.wav` files
+  (`prefix_ms=0.0` for every take — the mechanically-expected result of
+  `preroll_ms == pre_context_secs`). The operator directly listened and
+  confirmed: "Czarna dziura" now arrives complete (no more "arna
+  dziura"/"carna dziura"/"dziura"), English onset also complete, no
+  audible duplication/corruption. **Local hardware post-fix acceptance:
+  PASS.** `M2.6B` remains IN PROGRESS regardless — a minimal live
+  Gemini conversational validation of this exact fix is still required
+  (all evidence so far is local-only, no Gemini call since R0048 first
+  found the clipping), and the previously-documented proactive-reconnect-
+  caller gap (`ReconnectController` still has no production driver)
+  remains a separate, unresolved completion item. No Gemini call this
+  checkpoint either. Not pushed.)
 - **Prior report:** `docs/reports/R0050_m2_6b_4k_residual_onset_clipping_after_r0049_20260912.md`
   (**M2.6B.4K — residual onset clipping after R0049, forensic audit,
   2026-09-12.** The operator re-ran the R0048/R0049 real-hardware

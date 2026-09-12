@@ -1018,10 +1018,21 @@ unpaid-quota data is used to improve Google products.
     tests total, OK (skipped=7)**, 0 regressions; `ruff`/`pip check`/
     `git diff --check` all clean; the R0048 probe's `--dry` now
     live-confirms `preroll_ms 500`. **Real hardware post-fix result:
-    PENDING** — the operator must re-run the exact, unchanged capture
-    command and confirm by listening; no hardware PASS is fabricated.
-    Hardware acceptance remains FAIL; `M2.6B` remains IN PROGRESS. No
-    Gemini call.
+    PASS** (same-day operator follow-up) — real reSpeaker, 10
+    utterances, `preroll_ms=500` confirmed from the probe's own printed
+    config, byte-exact re-alignment confirms ZERO bytes of the
+    diagnostic's own 500ms pre-VAD-start window omitted from any of the
+    10 real forwarded captures (`prefix_ms=0.0` every take). Operator
+    listened and confirmed: "Czarna dziura" now arrives complete (no
+    more "arna dziura"/"carna dziura"/"dziura"), English onset also
+    complete, no audible duplication/corruption. **Local hardware
+    post-fix acceptance: PASS.** `M2.6B` remains IN PROGRESS regardless
+    — a minimal live Gemini conversational validation of this exact fix
+    is still required (all evidence so far is local-only), and the
+    previously-documented proactive-reconnect-caller gap
+    (`ReconnectController` still has no production driver) remains a
+    separate, unresolved completion item. No Gemini call this
+    checkpoint either.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the
