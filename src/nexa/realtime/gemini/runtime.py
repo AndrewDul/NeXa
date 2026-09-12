@@ -251,6 +251,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -333,10 +334,50 @@ class _ProviderHandle:
     reference, so a mid-turn fresh-session swap
     (``GeminiVoiceRuntime._consume_provider_events``) reaches it the
     instant ``self.current`` is reassigned — the bridge can never keep
-    sending audio to a dead, already-``stop()``'d provider instance."""
+    sending audio to a dead, already-``stop()``'d provider instance.
+
+    M2.6B.4G (R0045) — extended with the coordination fields the atomic
+    provider-replacement flow needs, shared between the SYNCHRONOUS
+    ``BargeInController`` confirm hook (``_on_confirmed``, in
+    ``build_gemini_voice_runtime``) and the ASYNC ``_VadToProviderBridge``
+    (which reads ``quarantined`` on every frame) and
+    ``GeminiVoiceRuntime._consume_provider_events`` (which reads/clears
+    ``replacement_requested``/``old_provider`` and awaits
+    ``sealed_utterance_ready``). At most ONE atomic replacement is ever in
+    flight at a time — ``BargeInController``'s own single-candidate
+    invariant already guarantees no second interruption is admitted while
+    one is being processed."""
 
     def __init__(self, provider: GeminiLiveProvider) -> None:
         self.current = provider
+        #: True from the instant a confirmed local barge-in requests
+        #: atomic replacement until the replacement completes (new
+        #: provider active, replay done). While True,
+        #: ``_VadToProviderBridge`` must NOT send ANY turn-I/O call to
+        #: ``self.current`` for the open (interrupting) utterance — it
+        #: accumulates into its own local buffer instead, so the
+        #: interrupting utterance is delivered exactly once, later, as a
+        #: single controlled replay — never partially live-streamed to
+        #: the doomed OLD provider or a not-yet-ready NEW one.
+        self.quarantined = False
+        #: Set synchronously by ``_on_confirmed``; consumed (and cleared)
+        #: by ``_consume_provider_events``, which performs the actual
+        #: replacement. ``old_provider`` is a snapshot of ``current`` at
+        #: THE INSTANT confirm fired (never read from ``current`` again by
+        #: the replacement logic, which could otherwise race a later
+        #: reassignment).
+        self.replacement_requested = False
+        self.old_provider: GeminiLiveProvider | None = None
+        #: The interrupting utterance's sealed PCM, handed off by the
+        #: bridge the instant its ``VADUserStoppedSpeakingFrame`` arrives
+        #: while quarantined. A FIFO list (not a scalar) so a second local
+        #: utterance beginning and sealing before the runtime has drained
+        #: the first can never overwrite it — see the module docstring's
+        #: M2.6B.4G section. ``sealed_utterance_ready`` is the companion
+        #: ``asyncio.Event`` the runtime awaits (level-triggered: safe
+        #: even if the seal happens before the runtime starts waiting).
+        self.sealed_utterances: list[bytes] = []
+        self.sealed_utterance_ready = asyncio.Event()
 
 
 class _ResponseLifecycle:
@@ -422,14 +463,6 @@ class _ResponseLifecycle:
 #: Under-crediting is acceptable; crediting unspoken words is not.
 CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX = ""
 
-#: M2.6B.4F (R0044) — see ``_ResponseGenerationGuard``'s own docstring.
-#: "1" (R0043's original, too-eager fallback design) is satisfied merely
-#: by the INTERRUPTING utterance's own local turn closing; "2" also
-#: requires a genuinely SEPARATE, subsequent local turn to close before
-#: the fallback re-arm trusts the next assistant event.
-MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM = 2
-
-
 class _ResponseGenerationGuard:
     """M2.6B.4 (R0038 FAILURE 2) — the single source of truth for which
     local response generation may still produce audible output.
@@ -444,9 +477,13 @@ class _ResponseGenerationGuard:
     the first real operator run: an interrupted reply's audio kept
     playing to completion while the NEW reply was already being
     generated. This guard is what stops those late frames from ever
-    reaching ``hw_worker.queue_frames()`` in the first place — "hard local
-    output clear (``broadcast_interruption``) + generation invalidation
-    (this guard)", never either alone, per the charter.
+    reaching ``hw_worker.queue_frames()`` in the first place, and (M2.6B.4G
+    /R0045) it is what stops any trailing OLD-provider frame that squeezes
+    through in the brief window between a confirmed barge-in and
+    ``_consume_provider_events`` noticing the atomic-replacement request —
+    "hard local output clear (``broadcast_interruption``) + generation
+    invalidation (this guard) + provider-instance isolation (R0045)",
+    never any one alone.
 
     Deliberately does NOT decide *when* a new generation is dispatched —
     an earlier draft tried to fold "the next assistant output needs a
@@ -454,47 +491,49 @@ class _ResponseGenerationGuard:
     interrupt-vs-valid state, and that conflated two different signals:
     "may this chunk play" (this class) and "has a genuinely NEW local
     user turn started". Kept deliberately dumb: only
-    ``is_valid``/``start_new_generation``/``interrupt``/``valid_id``/
-    ``invalidated_at_turn_seq`` — the caller (``_consume_provider_events``)
-    decides the dispatch boundary. Originally (R0038) that boundary was a
-    fresh, final ``UserTranscriptionEvent`` (the interrupting utterance's
-    own — R0034's proven message-ordering guarantee). M2.6B.4E (R0043)
-    added a second, NeXa/Gemini-independent fallback boundary
-    (``provider.local_turn_closed_seq`` advancing) for the case a
-    non-lexical interrupting sound produces no transcript at all.
+    ``is_valid``/``start_new_generation``/``interrupt``/``valid_id`` — the
+    caller (``_consume_provider_events``) decides the dispatch boundary
+    (a fresh, final ``UserTranscriptionEvent`` for an ordinary turn —
+    R0034's proven message-ordering guarantee — or, after a confirmed
+    barge-in, the NEW provider instance's own first assistant event, per
+    M2.6B.4G/R0045 below).
 
-    M2.6B.4F (R0044) — R0043's own fallback, AS FIRST WRITTEN, required
-    only that the counter advance PAST its value at DISPATCH time — which
-    a NEW deterministic adversarial test proved is satisfied merely by
-    the INTERRUPTING utterance's OWN local turn closing (CASE 1 in
-    ``docs/reports/R0044_...``), wrongly promoting trailing OLD-generation
-    audio that arrives right after that single closure but before any
-    REAL subsequent turn. ``interrupt()`` now records the counter's value
-    AT INTERRUPT TIME (``invalidated_at_turn_seq``), and the fallback
-    re-arm (in ``_consume_provider_events``) requires it to advance by
-    ``MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM`` (2) — one for the
-    interrupting utterance's own closure, one for a genuinely SEPARATE,
-    subsequent local turn — closing that specific gap. This narrows, but
-    (proven in the same report, CASE 2) cannot fully eliminate, the
-    residual risk: no local, non-timer signal can identify WHICH assistant
-    event, among those arriving after the threshold, is truly new versus
-    still-draining old content, because Gemini's Live API exposes no
-    response/turn/generation identifier on any server message (verified
-    from ``google.genai.types.LiveServerContent``/``LiveServerMessage`` —
-    see the report). Full airtightness would require provider/session
-    replacement per confirmed interruption, deliberately NOT implemented
-    here (unsized, costly, a separate decision).
+    M2.6B.4E/F (R0043/R0044) added, then hardened, a second,
+    NeXa/Gemini-independent fallback re-arm signal
+    (``provider.local_turn_closed_seq`` advancing by 2) for the case a
+    non-lexical interrupting sound produces no transcript at all —
+    proven, by adversarial test, to still leave ONE residual gap (old
+    audio arriving after a genuinely new turn's own closure,
+    indistinguishable from real content by any LOCAL signal, since
+    Gemini's Live API exposes no response/turn/generation identifier on
+    any server message — verified from ``google.genai.types``).
+
+    M2.6B.4G (R0045) — **that whole fallback mechanism is REMOVED here,
+    superseded, not merely narrowed.** Its ONLY use case was "recover
+    dispatch after a confirmed barge-in whose own turn produced no
+    transcript" — R0045 now handles EVERY confirmed barge-in via ATOMIC
+    PROVIDER REPLACEMENT: the OLD provider's ``events()`` queue is
+    STOPPED being read entirely (never merely "trusted again after N
+    closures"), and the interrupting utterance is replayed, exactly once,
+    to a BRAND NEW provider instance whose first assistant event
+    dispatches normally via the ORIGINAL (unmodified) mechanism below —
+    no transcript, and no turn-closure counting, ever required. This is
+    strictly stronger than the removed fallback (see
+    ``docs/reports/R0045_...`` CASE 2 — the ONE scenario R0044 could not
+    close is now provably closed, since there is no "old provider" left
+    to produce ambiguous audio from at all). Connection-loss recovery
+    (``needs_fresh_session``/``RealtimeProviderFailedError``) never used
+    this fallback either (both already force ``dispatched_for_turn``
+    False directly) and is completely unaffected by its removal.
     """
 
     def __init__(self) -> None:
         self._current_id = 0
         self._valid_id = 0
-        self._invalidated_at_turn_seq: int | None = None
 
     def start_new_generation(self) -> int:
         self._current_id += 1
         self._valid_id = self._current_id
-        self._invalidated_at_turn_seq = None
         return self._current_id
 
     def is_valid(self, generation_id: int) -> bool:
@@ -504,35 +543,17 @@ class _ResponseGenerationGuard:
     def valid_id(self) -> int | None:
         """The currently-valid generation id, or ``None`` if none is
         (``0`` is never a real id — the counter starts at 1). Read-only
-        observability accessor (M2.6B.4E / R0043 diagnostics) — never
-        used to decide dispatch; ``is_valid`` remains the sole gate."""
+        observability accessor — never used to decide dispatch;
+        ``is_valid`` remains the sole gate."""
         return self._valid_id or None
 
-    @property
-    def invalidated_at_turn_seq(self) -> int | None:
-        """M2.6B.4F (R0044) — the ``provider.local_turn_closed_seq`` value
-        recorded when ``interrupt()`` was last called, or ``None`` if
-        ``interrupt()`` was called without one (e.g. a provider swap or
-        fatal-error path, where ``dispatched_for_turn`` is already forced
-        False directly and this gate is never consulted). Read-only."""
-        return self._invalidated_at_turn_seq
-
-    def interrupt(self, *, local_turn_seq_at_interrupt: int | None = None) -> None:
+    def interrupt(self) -> None:
         """The CURRENT generation can never produce audible output again.
         Called synchronously from ``_on_confirmed`` (no ``await`` before
         it in that function), so this always completes before any other
         coroutine gets a chance to run on this single-threaded event
-        loop — no race with ``_consume_provider_events``'s own check.
-
-        ``local_turn_seq_at_interrupt`` (M2.6B.4F/R0044) — the CALLER's
-        ``provider.local_turn_closed_seq`` value at this exact moment
-        (read synchronously, same as everything else in this method);
-        ``None`` when the caller has no meaningful baseline to record
-        (provider swap / fatal error — ``dispatched_for_turn`` is forced
-        False directly at those call sites, so this value is never
-        consulted for them)."""
+        loop — no race with ``_consume_provider_events``'s own check."""
         self._valid_id = 0  # 0 is never a real id (the counter starts at 1)
-        self._invalidated_at_turn_seq = local_turn_seq_at_interrupt
 
 
 def _make_vad_bridge_class(P: dict[str, Any]) -> type:
@@ -569,19 +590,48 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
             self._nexa_metrics = metrics
             self._lifecycle = lifecycle
             self._turn_open = False
+            # M2.6B.4G (R0045) -- the ACTIVE utterance buffer: a parallel,
+            # in-memory copy of the CURRENTLY open local utterance's PCM,
+            # maintained UNCONDITIONALLY (cheap `bytearray.extend()`, no
+            # I/O -- never delays or alters the live send below, so a
+            # normal, non-interrupted turn incurs zero added latency).
+            # Exists SOLELY to support exact-once replay to a freshly
+            # started provider after a confirmed barge-in -- this is NOT
+            # local language-ID (R0042's zero-LID decision is unchanged;
+            # nothing here ever runs an inference).
+            self._utterance_buffer = bytearray()
 
         async def process_frame(self, frame: Any, direction: Any) -> None:
             await super().process_frame(frame, direction)
             if isinstance(frame, P["VADUserStartedSpeakingFrame"]):
                 self._turn_open = True
+                self._utterance_buffer = bytearray()
                 self._nexa_metrics.local_vad_start()
-                await self._handle.current.user_turn_start()
+                if not self._handle.quarantined:
+                    await self._handle.current.user_turn_start()
             elif isinstance(frame, P["InputAudioRawFrame"]) and self._turn_open:
-                await self._handle.current.send_user_audio(frame.audio)
+                self._utterance_buffer.extend(frame.audio)
+                if not self._handle.quarantined:
+                    await self._handle.current.send_user_audio(frame.audio)
             elif isinstance(frame, P["VADUserStoppedSpeakingFrame"]):
                 self._turn_open = False
                 self._nexa_metrics.local_vad_eot()
-                await self._handle.current.user_turn_end()
+                if self._handle.quarantined:
+                    # M2.6B.4G (R0045) -- this utterance was never sent
+                    # live past the point quarantine began (it may have
+                    # begun BEFORE quarantine started -- the prefix
+                    # already reached the OLD, doomed provider live and
+                    # is harmless there, since its output is never read
+                    # again). Hand the COMPLETE sealed copy to the
+                    # replacement flow instead of closing a turn on
+                    # `current` (which, while quarantined, may still be
+                    # the doomed OLD provider, or a not-yet-ready NEW one
+                    # that must receive this as ONE coherent replay, never
+                    # a live partial send).
+                    self._handle.sealed_utterances.append(bytes(self._utterance_buffer))
+                    self._handle.sealed_utterance_ready.set()
+                else:
+                    await self._handle.current.user_turn_end()
             elif isinstance(frame, P["BotStartedSpeakingFrame"]):
                 self._lifecycle.observe_bot_started()
                 self._nexa_metrics.first_assistant_audio_played()
@@ -779,6 +829,45 @@ class RuntimeMetrics:
             reason, generation_id, valid_generation_id,
         )
 
+    # -- M2.6B.4G (R0045) atomic-provider-replacement timing instrumentation --
+    # Deterministic monotonic timestamps only (never wall-clock/PII, never raw
+    # audio) -- for the LATER live acceptance run to measure: barge-in ->
+    # old-playback-stop latency, barge-in -> new-provider-ready latency, and
+    # whether the new connection's handshake is hidden under the time the
+    # user keeps speaking (EOT -> first new audio).
+    def bargein_confirmed_t(self, *, monotonic_s: float) -> None:
+        logger.info("nexa.realtime.metrics: BARGEIN_CONFIRMED_T %.6f", monotonic_s)
+
+    def old_audio_stop_t(self, *, monotonic_s: float) -> None:
+        logger.info("nexa.realtime.metrics: OLD_AUDIO_STOP_T %.6f", monotonic_s)
+
+    def replacement_start_t(self, *, monotonic_s: float) -> None:
+        logger.info("nexa.realtime.metrics: REPLACEMENT_START_T %.6f", monotonic_s)
+
+    def new_provider_ready_t(self, *, monotonic_s: float) -> None:
+        logger.info("nexa.realtime.metrics: NEW_PROVIDER_READY_T %.6f", monotonic_s)
+
+    def interrupting_utterance_end_t(self, *, monotonic_s: float) -> None:
+        logger.info("nexa.realtime.metrics: INTERRUPTING_UTTERANCE_END_T %.6f", monotonic_s)
+
+    def replay_start_t(self, *, monotonic_s: float, byte_count: int) -> None:
+        logger.info(
+            "nexa.realtime.metrics: REPLAY_START_T %.6f bytes=%d", monotonic_s, byte_count
+        )
+
+    def replay_end_t(self, *, monotonic_s: float) -> None:
+        logger.info("nexa.realtime.metrics: REPLAY_END_T %.6f", monotonic_s)
+
+    def first_new_assistant_audio_t(self, *, monotonic_s: float) -> None:
+        logger.info("nexa.realtime.metrics: FIRST_NEW_ASSISTANT_AUDIO_T %.6f", monotonic_s)
+
+    def bargein_replacement_failed(self, *, reason: str) -> None:
+        logger.warning(
+            "nexa.realtime.metrics: atomic provider replacement FAILED (%s) "
+            "-- falling back to LOCAL",
+            reason,
+        )
+
 
 @dataclass
 class GeminiVoiceRuntime:
@@ -836,60 +925,46 @@ class GeminiVoiceRuntime:
         is the sole language mechanism, per the operator's explicit
         product decision (see the module docstring).
 
-        M2.6B.4E (R0043) -- dispatch re-arm no longer depends SOLELY on a
-        fresh final ``UserTranscriptionEvent``. Real Attempt #2 hardware
-        evidence: a non-lexical interrupting sound (throat-clear) can
-        confirm a local barge-in and close a real local VAD turn with NO
-        transcript ever produced for it -- the OLD (final-transcription-
-        only) design left ``dispatched_for_turn`` stuck True forever in
-        that case, so no future ``AssistantAudioEvent`` for ANY later
-        turn ever got a fresh valid generation id, and all of it was
-        silently dropped, while assistant TEXT kept flowing (text commit
-        does not depend on the generation guard at all) -- exactly the
-        live symptom (text visible, audio permanently gone). Fixed (R0043)
-        with a second, NeXa/Gemini-independent fallback re-arm signal:
-        ``provider.local_turn_closed_seq`` (incremented once per
-        ``user_turn_end()`` call, regardless of transcription outcome).
+        M2.6B.4E/F (R0043/R0044) added, then hardened, a second,
+        NeXa/Gemini-independent fallback re-arm signal
+        (``provider.local_turn_closed_seq`` advancing by 2 past its value
+        at interrupt time) for the case a non-lexical interrupting sound
+        produces no transcript at all -- proven, by adversarial test, to
+        still leave one residual gap.
 
-        M2.6B.4F (R0044) -- R0043's own fallback, as first written, only
-        required this counter to advance by 1 past its DISPATCH-time
-        value -- satisfied merely by the INTERRUPTING utterance's OWN
-        local turn closing, which a new adversarial test proved wrongly
-        promotes trailing OLD-generation audio arriving right after that
-        single closure but before any REAL subsequent turn. Fixed:
-        ``_ResponseGenerationGuard`` now records the counter's value AT
-        INTERRUPT TIME (``invalidated_at_turn_seq``, set inside
-        ``interrupt()``), and the fallback re-arm below requires it to
-        advance by ``MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM``
-        (2) -- one for the interrupting utterance's own closure, one for
-        a genuinely SEPARATE, subsequent local turn. This narrows, but
-        (per source audit -- no response/turn/generation identifier
-        exists anywhere in Gemini's Live API message types, confirmed
-        from ``google.genai.types``) cannot fully eliminate, the residual
-        risk of a still-later stale chunk being misclassified; achieving
-        that with certainty would require provider/session replacement
-        per confirmed interruption, deliberately NOT implemented here
-        (unsized, costly, a separate decision -- see
-        ``docs/reports/R0044_...``)."""
+        M2.6B.4G (R0045) -- **that whole fallback is REMOVED, superseded,
+        not merely narrowed.** Every confirmed local barge-in is now
+        handled by ATOMIC PROVIDER REPLACEMENT (see
+        ``provider_handle.replacement_requested`` below and
+        ``_replace_provider_after_bargein``): the OLD (interrupted)
+        provider's queue is stopped being read entirely, exactly like the
+        EXISTING mid-turn-connection-loss recovery below (never merely
+        "trusted again after N local turn closures") -- so dispatch
+        re-arm again depends on ONLY the original, simple mechanism: a
+        fresh, final ``UserTranscriptionEvent`` (R0034's proven ordering)
+        OR, after a replacement, the BRAND NEW provider's own first
+        assistant event, whose ``dispatched_for_turn=False`` reset is set
+        directly by the replacement itself (identical to how
+        ``needs_fresh_session`` recovery already resets it) -- never
+        turn-closure counting on the SAME, still-being-read provider."""
         P = _pipecat_hw_imports()
         first_audio_seen = False
+        # M2.6B.4G (R0045) -- set True the instant a barge-in replacement
+        # hands control to a brand new provider; cleared (and logged) on
+        # that provider's own first AssistantAudioEvent, for the
+        # FIRST_NEW_ASSISTANT_AUDIO_T performance instrumentation point.
+        awaiting_first_new_audio = False
         current_gid = 0
         # True once the CURRENT open user turn's assistant output has
         # already been dispatched -- reset on a fresh, FINAL
         # UserTranscriptionEvent (a genuinely NEW local user turn was just
         # heard -- R0034's proven message-ordering guarantee: for a
         # NORMAL, transcribed turn this always arrives before that turn's
-        # own assistant content) OR, as of R0043/R0044, once
-        # ``provider.local_turn_closed_seq`` has advanced by at least
-        # ``MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM`` past the value
-        # recorded when the CURRENT (now-invalidated) generation was
-        # INTERRUPTED (``generation_guard.invalidated_at_turn_seq``) --
-        # proof, from local VAD alone, that the interrupting utterance's
-        # own turn AND a genuinely separate subsequent turn have both
-        # closed, even if Gemini never transcribed either. This never
-        # fires while the current generation is still VALID (an ordinary
-        # in-progress reply), only once a confirmed interruption has
-        # invalidated it.
+        # own assistant content) or directly by a provider swap (mid-turn
+        # loss recovery, or M2.6B.4G/R0045's atomic barge-in replacement)
+        # -- never by counting local turn closures on the SAME provider
+        # (R0043/R0044's now-removed fallback; see this method's own
+        # docstring for why R0045 supersedes it entirely).
         dispatched_for_turn = False
         provider_interruption_ack_count = 0
         audio_chunk_count = 0
@@ -921,15 +996,41 @@ class GeminiVoiceRuntime:
                         count=provider_interruption_ack_count
                     )
 
-                if (
-                    dispatched_for_turn
-                    and not self.generation_guard.is_valid(current_gid)
-                    and self.generation_guard.invalidated_at_turn_seq is not None
-                    and provider.local_turn_closed_seq
-                    >= self.generation_guard.invalidated_at_turn_seq
-                    + MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM
-                ):
+                # M2.6B.4G (R0045) -- checked FIRST, ahead of EVERY other
+                # handler below (including `router.handle_provider_event`):
+                # a confirmed local barge-in already quarantined this
+                # provider (synchronously, in `_on_confirmed`) -- the
+                # CURRENT event (whatever just woke this loop up -- most
+                # often the `cancel()`-triggered `CancellationCompleteEvent`
+                # or `ProviderInterruptionEvent`, occasionally a trailing
+                # `AssistantAudioEvent`/`UserTranscriptionEvent` already in
+                # flight) is deliberately NEVER processed by any handler
+                # below once this fires -- not merely audio-dropped-and-
+                # logged, but never reaching the router/canonical history,
+                # never re-arming dispatch, never touched at all. This is
+                # the "stop consuming the old provider entirely" isolation
+                # boundary (never merely "trusted again after enough local
+                # turn closures"); no FURTHER old-provider event is ever
+                # read after this `break`, and this one is not read either
+                # in the sense of being acted on.
+                if self.provider_handle.replacement_requested:
+                    self.provider_handle.replacement_requested = False
+                    old_provider = self.provider_handle.old_provider
+                    self.provider_handle.old_provider = None
+                    new_provider = await self._replace_provider_after_bargein(
+                        old_provider=old_provider or provider
+                    )
+                    if new_provider is None:
+                        # _replace_provider_after_bargein already logged
+                        # the specific failure reason; the router has
+                        # already fallen back to LOCAL (Decision J) --
+                        # nothing more to consume on the cloud side.
+                        return
+                    self.provider = new_provider
                     dispatched_for_turn = False
+                    awaiting_first_new_audio = True
+                    recovered = True
+                    break  # stop reading the OLD provider's queue
 
                 if isinstance(
                     event, (AssistantAudioEvent, AssistantTranscriptionEvent)
@@ -983,6 +1084,11 @@ class GeminiVoiceRuntime:
                     if not first_audio_seen:
                         first_audio_seen = True
                         self.metrics.first_assistant_audio_received()
+                    if awaiting_first_new_audio:
+                        awaiting_first_new_audio = False
+                        self.metrics.first_new_assistant_audio_t(
+                            monotonic_s=time.monotonic()
+                        )
                     self.lifecycle.mark_audio_produced()
                     audio_chunk_count += 1
                     valid = self.generation_guard.is_valid(current_gid)
@@ -1036,6 +1142,87 @@ class GeminiVoiceRuntime:
 
             if not recovered:
                 return  # the provider's own events() ended (stop()/cancel)
+
+    async def _replace_provider_after_bargein(
+        self, *, old_provider: GeminiLiveProvider
+    ) -> GeminiLiveProvider | None:
+        """M2.6B.4G (R0045) — ATOMIC PROVIDER REPLACEMENT after a
+        confirmed local barge-in. Reuses
+        ``ConversationRouter.start_fresh_cloud_provider`` — the SAME
+        destroy-and-recreate primitive ``recover_from_mid_turn_loss``
+        already uses for connection loss — but drives replay from the
+        LOCAL ``_ProviderHandle.sealed_utterances`` FIFO: the
+        interrupting utterance's own complete PCM, captured by the bridge
+        in parallel with (never delaying) whatever it managed to stream
+        live before quarantine began — never ``take_pending_audio()``
+        (that is the OLD provider's own not-yet-delivered-while-not-ready
+        buffer, an unrelated mechanism for a different failure mode).
+
+        Starts the new provider AND waits for the interrupting utterance
+        to SEAL (VAD end) CONCURRENTLY — this is what "start creating a
+        fresh provider/session immediately, in parallel with the user
+        continuing to speak" (the charter's own words) actually means:
+        the connection handshake is never serialised behind waiting for
+        the user to finish talking, and vice versa. Handles BOTH
+        orderings (new provider READY before VAD END, or VAD END before
+        READY) identically, since ``asyncio.gather`` simply waits for
+        whichever finishes last. Drains EVERY sealed utterance currently
+        queued (not just the first) before clearing quarantine, so a
+        second local utterance that seals during the replacement window
+        is never orphaned.
+        """
+        self.metrics.replacement_start_t(monotonic_s=time.monotonic())
+
+        async def _start_new() -> GeminiLiveProvider | None:
+            new_provider = await self.router.start_fresh_cloud_provider(
+                language_preference=self._recovery_language_preference,
+                failure_reason_prefix="confirmed barge-in, ",
+            )
+            if new_provider is not None:
+                self.metrics.new_provider_ready_t(monotonic_s=time.monotonic())
+            return new_provider
+
+        async def _wait_first_seal() -> None:
+            await self.provider_handle.sealed_utterance_ready.wait()
+            self.metrics.interrupting_utterance_end_t(monotonic_s=time.monotonic())
+
+        # Tear down the OLD (already-quarantined) provider concurrently
+        # too -- its own connection teardown is on neither the new
+        # provider's readiness nor the interrupting utterance's own seal.
+        stop_old_task = asyncio.create_task(
+            old_provider.stop(
+                reason="confirmed local barge-in — atomic provider replacement"
+            )
+        )
+        new_provider, _ = await asyncio.gather(_start_new(), _wait_first_seal())
+        await stop_old_task
+
+        if new_provider is None:
+            self.metrics.bargein_replacement_failed(reason="new provider failed to start")
+            self.provider_handle.sealed_utterances.clear()
+            self.provider_handle.sealed_utterance_ready.clear()
+            self.provider_handle.quarantined = False
+            return None
+
+        self.provider_handle.current = new_provider
+        # Drain EVERY sealed utterance currently queued, in order --
+        # normally exactly one (the interrupting utterance itself), but
+        # never fewer, and never more than once each, even if a second
+        # local utterance sealed during the replacement window above.
+        while self.provider_handle.sealed_utterances:
+            pcm = self.provider_handle.sealed_utterances.pop(0)
+            if not self.provider_handle.sealed_utterances:
+                self.provider_handle.sealed_utterance_ready.clear()
+            if pcm:
+                self.metrics.replay_start_t(
+                    monotonic_s=time.monotonic(), byte_count=len(pcm)
+                )
+                await new_provider.user_turn_start()
+                await new_provider.send_user_audio(pcm)
+                await new_provider.user_turn_end()
+                self.metrics.replay_end_t(monotonic_s=time.monotonic())
+        self.provider_handle.quarantined = False
+        return new_provider
 
     async def stop(self, *, reason: str) -> None:
         if self._events_task is not None:
@@ -1107,6 +1294,8 @@ def build_gemini_voice_runtime(
     _confirm_counts = {"local_bargein_confirmed": 0, "output_interruption_broadcast": 0}
 
     def _on_confirmed(ctx: InterruptContext) -> None:
+        t_confirm = time.monotonic()
+        metrics.bargein_confirmed_t(monotonic_s=t_confirm)
         _confirm_counts["local_bargein_confirmed"] += 1
         metrics.local_interruption_confirmed(
             confirm_count=_confirm_counts["local_bargein_confirmed"],
@@ -1122,14 +1311,29 @@ def build_gemini_voice_runtime(
         # instant -- this guard is what stops any MORE audio for this
         # same generation, already in flight on provider.events()'s own
         # queue, from ever reaching hw_worker.queue_frames() afterward.
-        # M2.6B.4F (R0044) -- record provider_handle.current's
-        # local_turn_closed_seq AT THIS EXACT MOMENT as the fallback
-        # re-arm's baseline (see _ResponseGenerationGuard's own docstring).
-        generation_guard.interrupt(
-            local_turn_seq_at_interrupt=provider_handle.current.local_turn_closed_seq
-        )
+        generation_guard.interrupt()
         if ctx.invalidated_response_id is not None:
             metrics.generation_invalidated(generation_id=ctx.invalidated_response_id)
+        # M2.6B.4G (R0045) -- QUARANTINE the OLD provider's epoch
+        # SYNCHRONOUSLY, in the same breath as the generation-guard
+        # invalidation above: the bridge must never send another
+        # turn-I/O call to it for the rest of the interrupting
+        # utterance, and `_consume_provider_events` must stop reading
+        # its `events()` queue at the very next opportunity (see that
+        # method's own docstring). `old_provider` is snapshotted HERE,
+        # not read from `provider_handle.current` again later, so the
+        # replacement logic can never race a later reassignment.
+        provider_handle.old_provider = provider_handle.current
+        provider_handle.quarantined = True
+        provider_handle.replacement_requested = True
+        # Local speaker-stop authority already happened: BargeInController
+        # calls Pipecat's own broadcast_interruption() (which tears down
+        # queued/playing output audio) BEFORE this hook runs, and that call
+        # never waits on anything below -- the R0034 late-server-event
+        # protections stay in force regardless of what the cloud side does.
+        # Logged at this same synchronous instant -- there is no later,
+        # more precise hook to observe the stop from.
+        metrics.old_audio_stop_t(monotonic_s=t_confirm)
         # M2.6B.4E (R0043) -- ``BargeInController._do_confirm`` calls this
         # hook, then unconditionally awaits its OWN `broadcast_interruption()`
         # once (bargein.py) -- so this count tracks 1:1 with confirmed
@@ -1140,11 +1344,6 @@ def build_gemini_voice_runtime(
         metrics.output_interruption_broadcast(
             count=_confirm_counts["output_interruption_broadcast"]
         )
-        # Local speaker-stop authority already happened: BargeInController
-        # calls Pipecat's own broadcast_interruption() (which tears down
-        # queued/playing output audio) BEFORE this hook runs, and that call
-        # never waits on anything below -- the R0034 late-server-event
-        # protections stay in force regardless of what the cloud side does.
         #
         # M2.6B.3B -- the interrupted spoken prefix is UNCONDITIONALLY
         # empty, never the raw running CloudTurnAccumulator.assistant_text
@@ -1164,18 +1363,41 @@ def build_gemini_voice_runtime(
         # already run).
         router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
         router.on_interruption()
+        # M2.6B.4G (R0045) -- commit the interrupted turn NOW,
+        # synchronously, matching the exact pattern every existing
+        # accepted test already uses (set_spoken_prefix ->
+        # on_interruption -> commit_cloud_turn). Closes a real,
+        # separately-discovered gap: nothing in the PRODUCTION path
+        # previously committed an interrupted turn at all (see the
+        # module docstring's own M2.6B.4G section for the full audit --
+        # `router.begin_cloud_turn()` itself is STILL never called in
+        # production either, a distinct, pre-existing, NOT-yet-fixed
+        # gap this checkpoint does not attempt to close). This call is
+        # a safe no-op if no turn is currently open.
+        outcome = router.commit_cloud_turn()
+        if outcome is not None:
+            turn = router._turn.current  # noqa: SLF001 - metrics only, already terminal
+            metrics.canonical_turn_committed(
+                outcome,
+                turn.generation if turn else None,
+                user_transcript=turn.user_text if turn else None,
+                assistant_transcript=turn.assistant_text if turn else None,
+                provider_instance_id=str(id(provider_handle.old_provider)),
+            )
         lifecycle.mark_interrupted()
-        # provider_handle.current (never the construction-time `provider`
-        # local, which could be a stale, already-swapped-out instance
-        # after a mid-turn fresh-session recovery) -- cancel() is async;
-        # this hook is sync (BargeInController's contract) -- fire-and-
-        # forget is correct: cancellation reaching the cloud side is not
-        # on the critical path for local speaker-stop.
-        asyncio.create_task(provider_handle.current.cancel())
+        # provider_handle.old_provider (the SAME snapshot the replacement
+        # flow will read) -- cancel() is async; this hook is sync
+        # (BargeInController's contract) -- fire-and-forget is correct:
+        # cancellation reaching the cloud side is not on the critical
+        # path for local speaker-stop.
+        asyncio.create_task(provider_handle.old_provider.cancel())
         # Cloud turns need no segment-coalescing capture phase (unlike the
         # local path): the interrupting utterance is simply the next local
         # VAD turn the bridge opens. Exit INTERRUPTING immediately so
-        # BargeInController is ready to admit a future interruption again.
+        # BargeInController is ready to admit a future interruption again
+        # -- unrelated to, and independent of, `quarantined`/
+        # `replacement_requested` above, which stay set until the atomic
+        # replacement itself completes.
         bargein.notify_interruption_complete()
 
     bargein = BargeInController(aec_health=aec_health, on_confirmed=_on_confirmed)

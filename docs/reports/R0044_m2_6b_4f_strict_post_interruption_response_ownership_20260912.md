@@ -136,6 +136,24 @@ FOUR-ACK BARRIER ANALYSIS above; nothing branches on it.
 
 ## WHY OLD AUDIO CAN NEVER RETURN
 
+> **Erratum (added by R0045, 2026-09-12):** this heading is not an
+> unconditional guarantee as written below — CASE 2 (documented open
+> below, under ADVERSARIAL CASE 2 RESULT) is a live counter-example
+> under the mechanism this checkpoint (R0044) shipped. **R0044 proved no
+> airtight same-session response-ownership boundary exists** while
+> continuing to consume events from the same Gemini provider/session —
+> Gemini's Live API exposes no response/turn/generation identifier on
+> any server message, so no local signal (transcript, turn-closure
+> count, or any "+N" heuristic) can distinguish CASE-2's old, delayed
+> audio from genuinely new content. **R0045 changes the architecture to
+> provider-instance isolation** (atomic provider/session replacement on
+> every confirmed local barge-in, never merely re-trusting the same
+> provider after enough local turn closures) — under R0045, CASE 2 is
+> closed: see `docs/reports/R0045_m2_6b_4g_atomic_provider_replacement_20260912.md`,
+> "R0044 CASE-2 RESULT UNDER R0045". The mechanism described below
+> (`_ResponseGenerationGuard` + the "+2" fallback) was superseded and
+> removed by R0045, not merely narrowed further.
+
 Two independent, unchanged mechanisms combine:
 
 1. **While a generation is invalid** (`generation_guard.is_valid(current_gid)`

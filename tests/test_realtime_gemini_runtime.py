@@ -53,7 +53,11 @@ from fakes import FakeModelProvider  # noqa: E402
 
 try:
     from nexa.realtime.gemini.service import GeminiLiveProvider
-    from nexa.realtime.provider import GenerationCompleteEvent, ReadinessChangedEvent
+    from nexa.realtime.provider import (
+        AssistantAudioEvent,
+        GenerationCompleteEvent,
+        ReadinessChangedEvent,
+    )
     from test_realtime_gemini_service import _FakeGeminiLiveServiceTestCase
 
     _PIPECAT_AVAILABLE = True
@@ -269,34 +273,6 @@ class TestResponseGenerationGuard(unittest.TestCase):
         seen = {guard.start_new_generation() for _ in range(5)}
         self.assertEqual(len(seen), 5)  # five distinct ids, never repeated
 
-    def test_invalidated_at_turn_seq_is_none_before_any_interrupt(self) -> None:
-        """M2.6B.4F (R0044)."""
-        guard = _ResponseGenerationGuard()
-        self.assertIsNone(guard.invalidated_at_turn_seq)
-
-    def test_interrupt_records_the_turn_seq_baseline(self) -> None:
-        guard = _ResponseGenerationGuard()
-        guard.start_new_generation()
-        guard.interrupt(local_turn_seq_at_interrupt=7)
-        self.assertEqual(guard.invalidated_at_turn_seq, 7)
-
-    def test_interrupt_without_a_baseline_records_none(self) -> None:
-        """The provider-swap / fatal-error call sites pass no baseline --
-        must not crash, must record ``None`` (the fallback re-arm gate is
-        simply never consulted then, since those paths force
-        ``dispatched_for_turn`` False directly)."""
-        guard = _ResponseGenerationGuard()
-        guard.start_new_generation()
-        guard.interrupt()
-        self.assertIsNone(guard.invalidated_at_turn_seq)
-
-    def test_starting_a_new_generation_clears_the_turn_seq_baseline(self) -> None:
-        guard = _ResponseGenerationGuard()
-        guard.start_new_generation()
-        guard.interrupt(local_turn_seq_at_interrupt=3)
-        guard.start_new_generation()
-        self.assertIsNone(guard.invalidated_at_turn_seq)
-
 
 class TestInterruptedHistorySafety(unittest.TestCase):
     """M2.6B.3B -- no deterministic assistant-text/audio alignment is
@@ -435,9 +411,7 @@ class TestBargeInWiring(_FakeGeminiLiveServiceTestCase):
 
         def _on_confirmed(ctx: InterruptContext) -> None:
             metrics.local_interruption_confirmed()
-            generation_guard.interrupt(
-                local_turn_seq_at_interrupt=provider_handle.current.local_turn_closed_seq
-            )
+            generation_guard.interrupt()
             router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
             router.on_interruption()
             lifecycle.mark_interrupted()
@@ -931,9 +905,7 @@ class TestGenerationGuardWiredIntoConsumer(_FakeGeminiLiveServiceTestCase):
         provider.cancel = _fake_cancel  # type: ignore[method-assign]
 
         def _on_confirmed(ctx: InterruptContext) -> None:
-            generation_guard.interrupt(
-                local_turn_seq_at_interrupt=provider_handle.current.local_turn_closed_seq
-            )
+            generation_guard.interrupt()
             router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
             router.on_interruption()
             lifecycle.mark_interrupted()
@@ -1023,18 +995,18 @@ class TestGenerationGuardWiredIntoConsumer(_FakeGeminiLiveServiceTestCase):
 class TestPostInterruptionAudioRecovery(_FakeGeminiLiveServiceTestCase):
     """M2.6B.4E (R0043) -- real Attempt #2 hardware evidence: a throat-
     clear confirmed a local barge-in and closed a real local VAD turn
-    with NO ``UserTranscriptionEvent`` ever produced for it. The OLD
-    (R0038) design reset ``dispatched_for_turn`` ONLY on a fresh final
-    transcription event -- with none ever arriving, it stayed stuck True
-    forever, so every later ``AssistantAudioEvent`` (for every future
-    turn, regardless of language) was treated as belonging to the
-    already-invalidated generation and silently dropped, while assistant
-    TEXT kept flowing normally (text commit does not depend on the
-    generation guard at all) -- exactly the live symptom: text visible,
-    audio permanently gone. These tests reproduce that exact scenario and
-    prove the R0043 fix (``provider.local_turn_closed_seq`` fallback
-    re-arm) recovers it, plus the ancillary idempotency/ordering
-    guarantees from the same charter."""
+    with NO ``UserTranscriptionEvent`` ever produced for it. R0043's OWN
+    fix for this (a ``provider.local_turn_closed_seq`` fallback re-arm on
+    the SAME, still-being-read provider) was superseded and REMOVED in
+    M2.6B.4G (R0045) -- every confirmed interruption is now handled by
+    ATOMIC PROVIDER REPLACEMENT instead (see
+    ``TestAtomicProviderReplacement``, below, for the no-transcript
+    recovery proof under the NEW mechanism). The tests that REMAIN in
+    THIS class test properties that are INDEPENDENT of which re-arm
+    mechanism is active -- ack idempotency, cancel/confirm counts,
+    old-generation-audio-never-reaches-hardware, and the three event-
+    ordering variants -- and stay valid and necessary under R0045
+    unchanged."""
 
     def _wire(self, provider) -> GeminiVoiceRuntime:
         session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
@@ -1054,9 +1026,7 @@ class TestPostInterruptionAudioRecovery(_FakeGeminiLiveServiceTestCase):
         provider.cancel = _fake_cancel  # type: ignore[method-assign]
 
         def _on_confirmed(ctx: InterruptContext) -> None:
-            generation_guard.interrupt(
-                local_turn_seq_at_interrupt=provider_handle.current.local_turn_closed_seq
-            )
+            generation_guard.interrupt()
             router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
             router.on_interruption()
             lifecycle.mark_interrupted()
@@ -1081,76 +1051,6 @@ class TestPostInterruptionAudioRecovery(_FakeGeminiLiveServiceTestCase):
 
     def _queued_audio(self, runtime) -> list[bytes]:
         return [f.audio for f in runtime.hw_worker.queued_frames if hasattr(f, "audio")]
-
-    async def test_1_interruption_with_no_final_transcript_recovers_future_audio(
-        self,
-    ) -> None:
-        """The CORE R0043 reproduction + fix proof (charter items 1 + 6)."""
-        provider, _ = await self._started_provider()
-        runtime = self._wire(provider)
-        await self._drain_one(provider, ReadinessChangedEvent)
-        fake = provider._llm  # noqa: SLF001
-
-        # Turn 1: a real, transcribed question -- dispatches normally.
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"question one")
-        await provider.user_turn_end()
-
-        consume_task = asyncio.create_task(runtime._consume_provider_events())
-        await fake.emit_user_transcription("question one", final=True)
-        await fake.emit_assistant_audio(b"gen-1-chunk-1")
-        await _wait_until(lambda: len(runtime.hw_worker.queued_frames) >= 1)
-
-        # A NON-LEXICAL sound (throat-clear) confirms a local barge-in.
-        # NO UserTranscriptionEvent is EVER emitted for it -- Gemini
-        # simply never transcribes it, exactly the real Attempt #2 case.
-        runtime.bargein._on_confirmed(  # noqa: SLF001
-            InterruptContext(invalidated_response_id=1, reason="throat_clear")
-        )
-
-        # trailing gen-1 audio, arriving before the noise's own local
-        # turn has even closed -- MUST still be dropped (unchanged
-        # R0038 guarantee).
-        await fake.emit_assistant_audio(b"gen-1-trailing")
-        await asyncio.sleep(0.02)
-        self.assertEqual(self._queued_audio(runtime), [b"gen-1-chunk-1"])
-
-        # The noise's own local VAD turn closes -- still NO transcript.
-        await provider.user_turn_end()
-
-        # A REAL subsequent user turn happens and gets a REAL reply --
-        # but, matching the exact live gap this fix closes, Gemini's own
-        # UserTranscriptionEvent(final=True) for THIS turn either never
-        # arrives either, or arrives too late relative to its own audio
-        # (both observed as real possibilities: the operator's own report
-        # shows text and audio arriving independently). The ONLY thing
-        # proven to have happened locally, regardless of what Gemini
-        # transcribes, is that the local VAD turn closes -- which is
-        # exactly the R0043 fallback signal under test here. (The case
-        # where the NEXT turn's own final transcript DOES arrive promptly
-        # is already covered by the untouched, pre-existing mechanism --
-        # see test_7/test_8/test_9 for those orderings.)
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"question two")
-        await provider.user_turn_end()
-        await fake.emit_assistant_audio(b"gen-2-chunk-1")
-
-        # Without the R0043 fix this next line times out: the chunk is
-        # silently dropped forever (dispatched_for_turn stuck True, since
-        # nothing -- ever -- produces a final UserTranscriptionEvent to
-        # reset it the old way).
-        await _wait_until(
-            lambda: b"gen-2-chunk-1" in self._queued_audio(runtime), timeout=2.0
-        )
-        self.assertEqual(self._queued_audio(runtime), [b"gen-1-chunk-1", b"gen-2-chunk-1"])
-
-        consume_task.cancel()
-        try:
-            await consume_task
-        except asyncio.CancelledError:
-            pass
 
     async def test_2_repeated_provider_interruption_events_are_idempotent(self) -> None:
         """Charter item 2 -- FOUR ``ProviderInterruptionEvent``s from one
@@ -1360,311 +1260,573 @@ class TestPostInterruptionAudioRecovery(_FakeGeminiLiveServiceTestCase):
 
 
 @unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
-class TestStrictPostInterruptionOwnership(TestPostInterruptionAudioRecovery):
-    """M2.6B.4F (R0044) -- the five adversarial event-order cases the
-    charter required, proving the "+2 local turn closures"
-    (``MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM``) fallback re-arm
-    design closes the CONCRETE gap R0043's original "+1" fallback left
-    open (CASE 1), while honestly demonstrating the ONE gap (CASE 2) that
-    remains open BY CONSTRUCTION -- no local, non-timer, non-provider-
-    replacement signal can close it, because Gemini's Live API exposes no
-    response/turn/generation identifier on any server message (see
-    ``docs/reports/R0044_...`` for the full source audit). Inherits
-    ``_wire``/``_queued_audio`` from ``TestPostInterruptionAudioRecovery``
-    -- same object graph, now exercising the R0044 fix specifically."""
+class TestVadBridgeQuarantine(unittest.IsolatedAsyncioTestCase):
+    """M2.6B.4G (R0045) -- the ACTIVE UTTERANCE BUFFER + quarantine gate,
+    exercised through a REAL Pipecat ``Pipeline``/``PipelineWorker`` (the
+    same pattern ``TestVadBridgeProcessorLifecycle`` already established),
+    not a hand-rolled stand-in -- proves the BRIDGE ITSELF, not just a
+    test's own simulation of it, never sends a turn-I/O call to
+    ``provider_handle.current`` while quarantined, and hands off the
+    COMPLETE sealed utterance instead."""
 
-    async def test_case_1_old_audio_before_new_turn_is_dropped_new_audio_plays(
+    async def test_quarantined_utterance_is_buffered_not_sent_live(self) -> None:
+        P = _pipecat_hw_imports()
+
+        class _StubProvider:
+            def __init__(self) -> None:
+                self.calls: list = []
+
+            async def user_turn_start(self) -> None:
+                self.calls.append("start")
+
+            async def send_user_audio(self, pcm: bytes) -> None:
+                self.calls.append(("audio", pcm))
+
+            async def user_turn_end(self) -> None:
+                self.calls.append("end")
+
+        stub = _StubProvider()
+        handle = _ProviderHandle(stub)
+        metrics = RuntimeMetrics()
+        lifecycle = _ResponseLifecycle(on_finished=lambda: None)
+        bridge_cls = _make_vad_bridge_class(P)
+        bridge = bridge_cls(provider_handle=handle, metrics=metrics, lifecycle=lifecycle)
+
+        pipeline = P["Pipeline"]([bridge])
+        worker = P["PipelineWorker"](
+            pipeline,
+            params=P["PipelineParams"](audio_in_sample_rate=16000, audio_out_sample_rate=24000),
+            enable_rtvi=False,
+            idle_timeout_secs=None,
+        )
+        runner = P["WorkerRunner"]()
+        await runner.add_workers(worker)
+        run_task = asyncio.create_task(runner.run())
+        await asyncio.sleep(0.1)
+
+        # normal (non-quarantined) turn -- unchanged live-send behaviour.
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](audio=b"AAAA", sample_rate=16000, num_channels=1),
+                P["VADUserStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.2)
+        self.assertEqual(stub.calls, ["start", ("audio", b"AAAA"), "end"])
+        self.assertEqual(handle.sealed_utterances, [])
+
+        # NOW quarantine -- exactly what `_on_confirmed` does synchronously.
+        handle.quarantined = True
+        stub.calls.clear()
+
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](audio=b"BBBB", sample_rate=16000, num_channels=1),
+                P["InputAudioRawFrame"](audio=b"CCCC", sample_rate=16000, num_channels=1),
+                P["VADUserStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.2)
+
+        # NOT ONE turn-I/O call reached the (doomed/not-yet-ready) provider.
+        self.assertEqual(stub.calls, [])
+        # the COMPLETE utterance was captured and sealed instead.
+        self.assertEqual(handle.sealed_utterances, [b"BBBBCCCC"])
+        self.assertTrue(handle.sealed_utterance_ready.is_set())
+
+        await runner.end(reason="test done")
+        await asyncio.wait_for(run_task, timeout=5.0)
+
+    async def test_prefix_already_live_before_quarantine_is_not_lost(self) -> None:
+        """Charter timing case 2 ("confirms mid-utterance"): audio sent
+        LIVE before quarantine began is NOT part of the sealed buffer
+        (it already reached the old provider, harmlessly, since its
+        output is never read again) -- but the buffer STILL captures the
+        WHOLE utterance (pre- and post-quarantine) for the runtime's own
+        bookkeeping, matching what the bridge actually does: it never
+        stops accumulating, it only stops the LIVE send."""
+        P = _pipecat_hw_imports()
+
+        class _StubProvider:
+            def __init__(self) -> None:
+                self.calls: list = []
+
+            async def user_turn_start(self) -> None:
+                self.calls.append("start")
+
+            async def send_user_audio(self, pcm: bytes) -> None:
+                self.calls.append(("audio", pcm))
+
+            async def user_turn_end(self) -> None:
+                self.calls.append("end")
+
+        stub = _StubProvider()
+        handle = _ProviderHandle(stub)
+        metrics = RuntimeMetrics()
+        lifecycle = _ResponseLifecycle(on_finished=lambda: None)
+        bridge_cls = _make_vad_bridge_class(P)
+        bridge = bridge_cls(provider_handle=handle, metrics=metrics, lifecycle=lifecycle)
+        pipeline = P["Pipeline"]([bridge])
+        worker = P["PipelineWorker"](
+            pipeline,
+            params=P["PipelineParams"](audio_in_sample_rate=16000, audio_out_sample_rate=24000),
+            enable_rtvi=False,
+            idle_timeout_secs=None,
+        )
+        runner = P["WorkerRunner"]()
+        await runner.add_workers(worker)
+        run_task = asyncio.create_task(runner.run())
+        await asyncio.sleep(0.1)
+
+        # utterance starts, some audio streams live (pre-confirm)...
+        await worker.queue_frames(
+            [
+                P["VADUserStartedSpeakingFrame"](),
+                P["InputAudioRawFrame"](audio=b"PRE1", sample_rate=16000, num_channels=1),
+            ]
+        )
+        await asyncio.sleep(0.1)
+        self.assertEqual(stub.calls, ["start", ("audio", b"PRE1")])
+
+        # ...THEN quarantine begins mid-utterance (confirm fired)...
+        handle.quarantined = True
+        stub.calls.clear()
+
+        # ...the REST of the SAME utterance is buffered only.
+        await worker.queue_frames(
+            [
+                P["InputAudioRawFrame"](audio=b"POST1", sample_rate=16000, num_channels=1),
+                P["VADUserStoppedSpeakingFrame"](),
+            ]
+        )
+        await asyncio.sleep(0.1)
+
+        self.assertEqual(stub.calls, [])  # no MORE live sends to the old provider
+        # the sealed copy has the WHOLE utterance, pre- and post-quarantine.
+        self.assertEqual(handle.sealed_utterances, [b"PRE1POST1"])
+
+        await runner.end(reason="test done")
+        await asyncio.wait_for(run_task, timeout=5.0)
+
+
+@unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+class TestAtomicProviderReplacement(_FakeGeminiLiveServiceTestCase):
+    """M2.6B.4G (R0045) -- end-to-end proof of atomic provider replacement
+    after a confirmed local barge-in, using a REAL second
+    ``GeminiLiveProvider`` (backed by its own fake terminal service, via
+    ``_fresh_provider_factory`` -- the SAME pattern
+    ``TestMidTurnRuntimeRecovery`` already established for connection-loss
+    recovery) as the replacement target. The bridge's own role (buffering
+    vs. live-sending per ``provider_handle.quarantined``) is SIMULATED
+    directly via ``provider_handle``/``provider`` calls here (the
+    established convention every existing async-level test in this file
+    already uses instead of driving real VAD frames through a live
+    Pipecat pipeline) -- ``TestVadBridgeQuarantine`` above already proves
+    the REAL bridge implements this exact contract."""
+
+    def _fresh_provider_factory(self) -> tuple[Callable[[], GeminiLiveProvider], dict]:
+        constructed: dict = {"calls_by_instance": []}
+
+        def factory() -> GeminiLiveProvider:
+            fake_cls, calls = self._make_fake_service_class()
+            constructed["calls_by_instance"].append(calls)
+            return GeminiLiveProvider(
+                api_key="FAKE-TEST-KEY", service_class=fake_cls, ready_timeout_s=5.0
+            )
+
+        return factory, constructed
+
+    def _wire(self, provider, router) -> GeminiVoiceRuntime:
+        aec_health = AecReferenceHealth()
+        aec_health.mark_started()
+        metrics = RuntimeMetrics()
+        provider_handle = _ProviderHandle(provider)
+        lifecycle = _ResponseLifecycle(on_finished=lambda: bargein.notify_response_finished())
+        generation_guard = _ResponseGenerationGuard()
+
+        def _on_confirmed(ctx: InterruptContext) -> None:
+            # Faithful reproduction of `build_gemini_voice_runtime`'s OWN
+            # `_on_confirmed` (M2.6B.4G/R0045) -- see that function's own
+            # docstring/comments for the full rationale of each line.
+            generation_guard.interrupt()
+            provider_handle.old_provider = provider_handle.current
+            provider_handle.quarantined = True
+            provider_handle.replacement_requested = True
+            router.set_spoken_prefix(CONSERVATIVE_INTERRUPTED_ASSISTANT_PREFIX)
+            router.on_interruption()
+            router.commit_cloud_turn()
+            lifecycle.mark_interrupted()
+            asyncio.create_task(provider_handle.old_provider.cancel())
+            bargein.notify_interruption_complete()
+
+        bargein = BargeInController(aec_health=aec_health, on_confirmed=_on_confirmed)
+        runtime = GeminiVoiceRuntime(
+            provider=provider,
+            provider_handle=provider_handle,
+            router=router,
+            hw_worker=_StubHardwareWorker(),
+            hw_runner=None,
+            aec_health=aec_health,
+            bargein=bargein,
+            metrics=metrics,
+            lifecycle=lifecycle,
+            generation_guard=generation_guard,
+        )
+        return runtime
+
+    def _queued_audio(self, runtime) -> list[bytes]:
+        return [f.audio for f in runtime.hw_worker.queued_frames if hasattr(f, "audio")]
+
+    async def _simulate_bridge_send(self, provider_handle, pcm: bytes) -> None:
+        """Mirrors ``_VadToProviderBridge.process_frame``'s own
+        ``InputAudioRawFrame`` handling exactly: live-send while not
+        quarantined, buffer-only while quarantined."""
+        if not provider_handle.quarantined:
+            await provider_handle.current.send_user_audio(pcm)
+
+    async def test_recovery_after_no_transcript_interruption_via_replacement(
         self,
     ) -> None:
-        """interrupt -> local turn closes -> OLD audio -> OLD audio ->
-        NEW user turn -> fresh response boundary -> NEW audio. Expected:
-        all OLD audio dropped, NEW audio plays. This is EXACTLY the
-        ordering R0043's original "+1" fallback got WRONG (the OLD audio
-        was wrongly promoted the instant the interrupting utterance's own
-        turn closed) -- confirmed by disabling the R0044 fix and
-        re-running this test during development; kept as a standing
-        regression guard."""
-        provider, _ = await self._started_provider()
-        runtime = self._wire(provider)
-        await self._drain_one(provider, ReadinessChangedEvent)
-        fake = provider._llm  # noqa: SLF001
+        """The R0045 replacement for R0043's own core proof: recovery
+        after a non-transcribed interruption now happens via atomic
+        provider replacement, not turn-closure counting. Also proves
+        exact-once delivery: the interrupting utterance's PRE-confirm
+        prefix (sent live to the OLD provider) plus its POST-confirm
+        remainder (buffered) are replayed to the NEW provider as ONE
+        coherent utterance."""
+        old_provider, _ = await self._started_provider()
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        factory, constructed = self._fresh_provider_factory()
+        router = ConversationRouter(
+            session, policy=ConversationPolicy.CLOUD_PREFERRED, cloud_provider_factory=factory
+        )
+        router._active_provider = ActiveProvider.CLOUD  # noqa: SLF001
 
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"q1")
-        await provider.user_turn_end()
+        runtime = self._wire(old_provider, router)
+        provider_handle = runtime.provider_handle
+        await self._drain_one(old_provider, ReadinessChangedEvent)
+        old_fake = old_provider._llm  # noqa: SLF001
+
+        # Turn 1: real, transcribed question -- dispatches normally.
+        router.begin_cloud_turn()
+        await old_provider.user_turn_start()
+        await old_provider.send_user_audio(b"question one")
+        await old_provider.user_turn_end()
 
         consume_task = asyncio.create_task(runtime._consume_provider_events())
-        await fake.emit_user_transcription("q1", final=True)
-        await fake.emit_assistant_audio(b"gen-1-chunk")
+        await old_fake.emit_user_transcription("question one", final=True)
+        await old_fake.emit_assistant_audio(b"gen-1-chunk")
         await _wait_until(lambda: len(runtime.hw_worker.queued_frames) >= 1)
 
-        # interrupt -> local turn closes (the interrupting sound's own,
-        # no transcript ever emitted for it)
-        runtime.bargein._on_confirmed(  # noqa: SLF001
-            InterruptContext(invalidated_response_id=1, reason="noise")
-        )
-        await provider.user_turn_end()
+        # Interrupting utterance begins -- NOT yet quarantined; some
+        # audio streams live to the OLD provider (matching real VAD
+        # timing: confirm fires only after confirm_hold_secs of
+        # sustained candidate speech, well after this turn already
+        # opened).
+        await old_provider.user_turn_start()
+        await self._simulate_bridge_send(provider_handle, b"PREE")
 
-        # OLD audio, OLD audio -- arriving AFTER that single closure but
-        # BEFORE any real new turn.
-        await fake.emit_assistant_audio(b"OLD-1")
-        await fake.emit_assistant_audio(b"OLD-2")
+        # CONFIRM the interruption -- quarantines the OLD provider.
+        runtime.bargein._on_confirmed(  # noqa: SLF001
+            InterruptContext(invalidated_response_id=1, reason="throat_clear")
+        )
+        self.assertTrue(provider_handle.quarantined)
+        self.assertIs(provider_handle.old_provider, old_provider)
+        self.assertTrue(provider_handle.replacement_requested)
+
+        # trailing gen-1 audio -- MUST still be dropped (unchanged R0038
+        # guarantee, now backed by provider-instance isolation too).
+        await old_fake.emit_assistant_audio(b"gen-1-trailing")
         await asyncio.sleep(0.02)
         self.assertEqual(self._queued_audio(runtime), [b"gen-1-chunk"])
 
-        # NEW user turn -> fresh response boundary -> NEW audio.
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"q2")
-        await provider.user_turn_end()
-        await fake.emit_user_transcription("q2", final=True)
-        await fake.emit_assistant_audio(b"NEW-1")
-        await _wait_until(lambda: b"NEW-1" in self._queued_audio(runtime))
+        # rest of the SAME interrupting utterance -- buffered only, NO
+        # transcript is ever emitted for it (non-lexical noise).
+        await self._simulate_bridge_send(provider_handle, b"POST")
+        # seal it (VAD end) -- hand off to the replacement flow.
+        provider_handle.sealed_utterances.append(b"PREEPOST")
+        provider_handle.sealed_utterance_ready.set()
 
-        self.assertEqual(self._queued_audio(runtime), [b"gen-1-chunk", b"NEW-1"])
+        # The replacement + replay is driven by _consume_provider_events
+        # itself, once it notices `replacement_requested` on the very
+        # next event -- which `_on_confirmed`'s own cancel() call (fired
+        # above) guarantees will arrive promptly.
+        await _wait_until(lambda: runtime.provider is not old_provider, timeout=3.0)
+        new_provider = runtime.provider
+        self.assertIsNot(new_provider, old_provider)
+        self.assertIs(provider_handle.current, new_provider)
+        self.assertFalse(provider_handle.quarantined)
+
+        # exact-once replay: the WHOLE utterance (pre+post confirm),
+        # never zero times, never twice, never partially.
+        new_fake = new_provider._llm  # noqa: SLF001
+        await _wait_until(lambda: new_fake.turn_ends >= 1, timeout=3.0)
+        self.assertEqual(new_fake.received_audio, [b"PREEPOST"])
+
+        # the NEW provider's own reply becomes audible normally -- no
+        # transcript was ever required to recover.
+        await new_fake.emit_assistant_audio(b"gen-2-chunk")
+        await _wait_until(lambda: b"gen-2-chunk" in self._queued_audio(runtime))
+        self.assertEqual(self._queued_audio(runtime), [b"gen-1-chunk", b"gen-2-chunk"])
+
+        # `_on_confirmed` already committed turn 1 as an interrupted
+        # canonical turn (it had a final transcript before the barge-in
+        # fired) -- exactly one entry, never a second one. The OLD
+        # provider's queue is never read again: fabricate a further event
+        # directly on its (abandoned) queue and prove it does not produce
+        # a SECOND, spurious commit.
+        self.assertEqual(len(session.history), 1)
+        self.assertEqual(session.history[0].content, "question one")
+        old_provider._events.put_nowait(GenerationCompleteEvent())  # noqa: SLF001
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(session.history), 1)  # nothing spurious committed
 
         consume_task.cancel()
         try:
             await consume_task
         except asyncio.CancelledError:
             pass
+        await new_provider.stop(reason="test cleanup")
 
-    async def test_case_2_old_delayed_audio_after_new_turn_closes_is_an_open_gap(
+    async def test_case2_old_delayed_audio_after_new_turn_closes_is_now_dropped(
         self,
     ) -> None:
-        """interrupt -> local turn closes -> NEW user turn -> OLD delayed
-        audio -> fresh response boundary -> NEW audio.
+        """THE critical proof R0044 could not provide: old delayed audio
+        arriving AFTER the new local turn closes is now dropped, because
+        it originates from the OLD PROVIDER EPOCH, which is never read
+        again after the swap -- not because of any turn-closure count."""
+        old_provider, _ = await self._started_provider()
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        factory, constructed = self._fresh_provider_factory()
+        router = ConversationRouter(
+            session, policy=ConversationPolicy.CLOUD_PREFERRED, cloud_provider_factory=factory
+        )
+        router._active_provider = ActiveProvider.CLOUD  # noqa: SLF001
 
-        HONEST RESULT, not a pass/fail on the charter's stated
-        "expected" outcome: this ordering is PROVEN (see
-        ``docs/reports/R0044_...``) to be unresolvable by any local,
-        non-timer signal, because assistant-audio events carry no
-        server-side identifier correlating them to a specific local
-        turn -- by the time "OLD delayed audio" arrives, the local
-        turn-closure count has ALREADY reached the fallback's re-arm
-        threshold (satisfied by the genuinely-new turn that just closed),
-        so this chunk IS promoted, indistinguishably from genuine new
-        content. This test exists to make that gap VISIBLE and pinned to
-        a specific, reproducible scenario -- not to hide it behind a
-        false "PASS" -- and to prove the SUBSEQUENT, truly-new chunk
-        still plays afterward (recovery is not permanently broken by
-        this same-generation-boundary ambiguity)."""
-        provider, _ = await self._started_provider()
-        runtime = self._wire(provider)
-        await self._drain_one(provider, ReadinessChangedEvent)
-        fake = provider._llm  # noqa: SLF001
+        runtime = self._wire(old_provider, router)
+        provider_handle = runtime.provider_handle
+        await self._drain_one(old_provider, ReadinessChangedEvent)
+        old_fake = old_provider._llm  # noqa: SLF001
 
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"q1")
-        await provider.user_turn_end()
+        router.begin_cloud_turn()
+        await old_provider.user_turn_start()
+        await old_provider.send_user_audio(b"q1")
+        await old_provider.user_turn_end()
 
         consume_task = asyncio.create_task(runtime._consume_provider_events())
-        await fake.emit_user_transcription("q1", final=True)
-        await fake.emit_assistant_audio(b"gen-1-chunk")
+        await old_fake.emit_user_transcription("q1", final=True)
+        await old_fake.emit_assistant_audio(b"gen-1-chunk")
         await _wait_until(lambda: len(runtime.hw_worker.queued_frames) >= 1)
 
         runtime.bargein._on_confirmed(  # noqa: SLF001
             InterruptContext(invalidated_response_id=1, reason="noise")
         )
-        await provider.user_turn_end()  # interrupting sound's own closure
+        provider_handle.sealed_utterances.append(b"noise-utterance_")
+        provider_handle.sealed_utterance_ready.set()
 
-        # NEW user turn closes BEFORE the old delayed audio arrives.
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"q2")
-        await provider.user_turn_end()
+        await _wait_until(lambda: runtime.provider is not old_provider, timeout=3.0)
+        new_provider = runtime.provider
 
-        # OLD delayed audio, arriving only now (after the re-arm
-        # threshold is already satisfied by q2's own closure).
-        await fake.emit_assistant_audio(b"OLD-delayed")
-        await asyncio.sleep(0.02)
-        # DOCUMENTED, ACKNOWLEDGED GAP: this assertion records what
-        # ACTUALLY happens (promoted), not what the ideal invariant
-        # would require -- seeing this list ever start with anything
-        # other than exactly this is the signal that either the
-        # architecture changed or this documented gap was (re)closed.
-        self.assertEqual(self._queued_audio(runtime), [b"gen-1-chunk", b"OLD-delayed"])
+        # a "new user turn" happens (against the NEW provider, correctly).
+        await new_provider.user_turn_start()
+        await new_provider.send_user_audio(b"q2")
+        await new_provider.user_turn_end()
 
-        # Recovery is NOT permanently broken by this ambiguity: a truly
-        # new, later chunk for q2's own real response still plays.
-        await fake.emit_assistant_audio(b"NEW-1")
-        await _wait_until(lambda: b"NEW-1" in self._queued_audio(runtime))
+        # OLD delayed audio arrives on the OLD (abandoned) provider's own
+        # queue AFTER all of this -- exactly R0044's CASE 2 shape.
+        old_provider._events.put_nowait(  # noqa: SLF001
+            AssistantAudioEvent(pcm=b"OLD-delayed-case2")
+        )
+        await asyncio.sleep(0.05)
+
+        # never reaches hardware -- the old provider's queue was never
+        # read again after the swap.
+        self.assertNotIn(b"OLD-delayed-case2", self._queued_audio(runtime))
+
+        # the NEW provider's own real response still plays correctly.
+        new_fake = new_provider._llm  # noqa: SLF001
+        await new_fake.emit_assistant_audio(b"gen-2-chunk")
+        await _wait_until(lambda: b"gen-2-chunk" in self._queued_audio(runtime))
+        self.assertNotIn(b"OLD-delayed-case2", self._queued_audio(runtime))
 
         consume_task.cancel()
         try:
             await consume_task
         except asyncio.CancelledError:
             pass
+        await new_provider.stop(reason="test cleanup")
 
-    async def test_case_3_no_transcript_noise_then_lexical_turn_audio_before_transcript(
-        self,
-    ) -> None:
-        """interrupt -> no transcript for noise -> new LEXICAL user turn
-        -> assistant audio arrives BEFORE that turn's own final
-        transcript. Expected: no permanent silence, correct ownership
-        (the fallback re-arm -- driven by local turn closure, which
-        happens before Gemini's asynchronous transcription -- is what
-        recovers dispatch here, not the final-transcript fast path,
-        which hasn't fired yet at the moment this audio arrives)."""
-        provider, _ = await self._started_provider()
-        runtime = self._wire(provider)
-        await self._drain_one(provider, ReadinessChangedEvent)
-        fake = provider._llm  # noqa: SLF001
+    async def test_provider_ready_before_vad_end(self) -> None:
+        """Charter timing case 4: the new provider becomes READY before
+        the interrupting utterance itself seals (VAD end)."""
+        old_provider, _ = await self._started_provider()
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        factory, constructed = self._fresh_provider_factory()
+        router = ConversationRouter(
+            session, policy=ConversationPolicy.CLOUD_PREFERRED, cloud_provider_factory=factory
+        )
+        router._active_provider = ActiveProvider.CLOUD  # noqa: SLF001
+        runtime = self._wire(old_provider, router)
+        provider_handle = runtime.provider_handle
+        await self._drain_one(old_provider, ReadinessChangedEvent)
+        old_fake = old_provider._llm  # noqa: SLF001
 
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"q1")
-        await provider.user_turn_end()
-
+        router.begin_cloud_turn()
+        await old_provider.user_turn_start()
+        await old_provider.send_user_audio(b"q1")
+        await old_provider.user_turn_end()
         consume_task = asyncio.create_task(runtime._consume_provider_events())
-        await fake.emit_user_transcription("q1", final=True)
-        await fake.emit_assistant_audio(b"gen-1-chunk")
+        await old_fake.emit_user_transcription("q1", final=True)
+        await old_fake.emit_assistant_audio(b"gen-1-chunk")
         await _wait_until(lambda: len(runtime.hw_worker.queued_frames) >= 1)
 
+        await old_provider.user_turn_start()
         runtime.bargein._on_confirmed(  # noqa: SLF001
             InterruptContext(invalidated_response_id=1, reason="noise")
         )
-        await provider.user_turn_end()  # noise's own closure, no transcript
 
-        # a new LEXICAL turn -- but its OWN final transcript has not
-        # arrived yet when the assistant audio shows up.
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"what is the speed of light")
-        await provider.user_turn_end()
-        await fake.emit_assistant_audio(b"NEW-1")  # audio BEFORE transcript
-        await _wait_until(lambda: b"NEW-1" in self._queued_audio(runtime), timeout=2.0)
+        # give the replacement provider time to become READY BEFORE the
+        # utterance seals -- the fake service becomes ready almost
+        # immediately once started, so a short sleep here reliably lands
+        # in the "ready before seal" ordering.
+        await asyncio.sleep(0.1)
 
-        self.assertEqual(self._queued_audio(runtime), [b"gen-1-chunk", b"NEW-1"])
+        # NOW the utterance seals.
+        provider_handle.sealed_utterances.append(b"utterance-after-ready_")
+        provider_handle.sealed_utterance_ready.set()
 
-        # the late transcript, when it does arrive, changes nothing.
-        await fake.emit_user_transcription("what is the speed of light", final=True)
-        await asyncio.sleep(0.02)
-        self.assertEqual(self._queued_audio(runtime), [b"gen-1-chunk", b"NEW-1"])
+        await _wait_until(lambda: runtime.provider is not old_provider, timeout=3.0)
+        new_provider = runtime.provider
+        new_fake = new_provider._llm  # noqa: SLF001
+        await _wait_until(lambda: new_fake.turn_ends >= 1, timeout=3.0)
+        self.assertEqual(new_fake.received_audio, [b"utterance-after-ready_"])
 
         consume_task.cancel()
         try:
             await consume_task
         except asyncio.CancelledError:
             pass
+        await new_provider.stop(reason="test cleanup")
 
-    async def test_case_4_ack_multiplicity_between_old_audio_is_idempotent(self) -> None:
-        """four ProviderInterruptionEvents -> delayed old audio between
-        ACKs -> new user turn -> new response. Expected: same safe
-        result as CASE 1; ack multiplicity remains purely
-        diagnostic/idempotent and never influences the ownership
-        decision."""
-        provider, _ = await self._started_provider()
-        runtime = self._wire(provider)
-        await self._drain_one(provider, ReadinessChangedEvent)
-        fake = provider._llm  # noqa: SLF001
+    async def test_vad_end_before_provider_ready(self) -> None:
+        """Charter timing case 5: the interrupting utterance seals (VAD
+        end) before the new provider becomes ready -- the seal must be
+        durably queued (the ``asyncio.Event`` is level-triggered) and
+        picked up the moment readiness completes."""
+        old_provider, _ = await self._started_provider()
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        factory, constructed = self._fresh_provider_factory()
+        router = ConversationRouter(
+            session, policy=ConversationPolicy.CLOUD_PREFERRED, cloud_provider_factory=factory
+        )
+        router._active_provider = ActiveProvider.CLOUD  # noqa: SLF001
+        runtime = self._wire(old_provider, router)
+        provider_handle = runtime.provider_handle
+        await self._drain_one(old_provider, ReadinessChangedEvent)
+        old_fake = old_provider._llm  # noqa: SLF001
 
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"q1")
-        await provider.user_turn_end()
-
+        router.begin_cloud_turn()
+        await old_provider.user_turn_start()
+        await old_provider.send_user_audio(b"q1")
+        await old_provider.user_turn_end()
         consume_task = asyncio.create_task(runtime._consume_provider_events())
-        await fake.emit_user_transcription("q1", final=True)
-        await fake.emit_assistant_audio(b"gen-1-chunk")
+        await old_fake.emit_user_transcription("q1", final=True)
+        await old_fake.emit_assistant_audio(b"gen-1-chunk")
         await _wait_until(lambda: len(runtime.hw_worker.queued_frames) >= 1)
 
+        await old_provider.user_turn_start()
         runtime.bargein._on_confirmed(  # noqa: SLF001
             InterruptContext(invalidated_response_id=1, reason="noise")
         )
-        await provider.user_turn_end()  # noise's own closure
+        # seal IMMEDIATELY -- before the new provider has had any chance
+        # to become ready.
+        provider_handle.sealed_utterances.append(b"utterance-before-ready")
+        provider_handle.sealed_utterance_ready.set()
 
-        # four acks, with delayed OLD audio interleaved between them --
-        # none of this affects dispatch state at all.
-        await fake.emit_interruption()
-        await fake.emit_assistant_audio(b"OLD-between-1")
-        await fake.emit_interruption()
-        await fake.emit_assistant_audio(b"OLD-between-2")
-        await fake.emit_interruption()
-        await fake.emit_interruption()
-        await asyncio.sleep(0.02)
-        self.assertEqual(self._queued_audio(runtime), [b"gen-1-chunk"])
-
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"q2")
-        await provider.user_turn_end()
-        await fake.emit_user_transcription("q2", final=True)
-        await fake.emit_assistant_audio(b"NEW-1")
-        await _wait_until(lambda: b"NEW-1" in self._queued_audio(runtime))
-
-        self.assertEqual(self._queued_audio(runtime), [b"gen-1-chunk", b"NEW-1"])
+        await _wait_until(lambda: runtime.provider is not old_provider, timeout=3.0)
+        new_provider = runtime.provider
+        new_fake = new_provider._llm  # noqa: SLF001
+        await _wait_until(lambda: new_fake.turn_ends >= 1, timeout=3.0)
+        self.assertEqual(new_fake.received_audio, [b"utterance-before-ready"])
 
         consume_task.cancel()
         try:
             await consume_task
         except asyncio.CancelledError:
             pass
+        await new_provider.stop(reason="test cleanup")
 
-    async def test_case_5_two_consecutive_interruptions_each_invalidated_independently(
+    async def test_two_consecutive_barge_ins_each_create_independent_clean_epochs(
         self,
     ) -> None:
-        """two interruptions in consecutive assistant responses. Expected:
-        generation N and N+1 both invalidated independently; N+2 still
-        plays; no audio from N or N+1 ever returns."""
-        provider, _ = await self._started_provider()
-        runtime = self._wire(provider)
-        await self._drain_one(provider, ReadinessChangedEvent)
-        fake = provider._llm  # noqa: SLF001
+        """Charter test 20: two consecutive barge-ins each create
+        independent clean epochs -- generation N's old provider AND
+        generation N+1's old provider are BOTH abandoned independently;
+        only generation N+2's provider is ever read from again."""
+        provider_1, _ = await self._started_provider()
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        factory, constructed = self._fresh_provider_factory()
+        router = ConversationRouter(
+            session, policy=ConversationPolicy.CLOUD_PREFERRED, cloud_provider_factory=factory
+        )
+        router._active_provider = ActiveProvider.CLOUD  # noqa: SLF001
+        runtime = self._wire(provider_1, router)
+        provider_handle = runtime.provider_handle
+        await self._drain_one(provider_1, ReadinessChangedEvent)
+        fake_1 = provider_1._llm  # noqa: SLF001
 
-        # Turn 1 -> gen N.
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"q1")
-        await provider.user_turn_end()
-
+        router.begin_cloud_turn()
+        await provider_1.user_turn_start()
+        await provider_1.send_user_audio(b"q1")
+        await provider_1.user_turn_end()
         consume_task = asyncio.create_task(runtime._consume_provider_events())
-        await fake.emit_user_transcription("q1", final=True)
-        await fake.emit_assistant_audio(b"gen-N-chunk")
+        await fake_1.emit_user_transcription("q1", final=True)
+        await fake_1.emit_assistant_audio(b"gen-N-chunk")
         await _wait_until(lambda: len(runtime.hw_worker.queued_frames) >= 1)
 
-        # First interruption -- invalidates gen N.
+        # First barge-in -- provider_1 abandoned, provider_2 takes over.
         runtime.bargein._on_confirmed(  # noqa: SLF001
             InterruptContext(invalidated_response_id=1, reason="noise1")
         )
-        await provider.user_turn_end()  # noise1's own closure
+        provider_handle.sealed_utterances.append(b"noise1-utterance")
+        provider_handle.sealed_utterance_ready.set()
+        await _wait_until(lambda: runtime.provider is not provider_1, timeout=3.0)
+        provider_2 = runtime.provider
+        fake_2 = provider_2._llm  # noqa: SLF001
+        await _wait_until(lambda: fake_2.turn_ends >= 1, timeout=3.0)
 
-        # Turn 2 -> gen N+1 (re-arm satisfied: noise1's closure + turn2's
-        # own closure = 2).
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"q2")
-        await provider.user_turn_end()
-        await fake.emit_assistant_audio(b"gen-N+1-chunk")
+        await provider_2.user_turn_start()
+        await provider_2.send_user_audio(b"q2")
+        await provider_2.user_turn_end()
+        await fake_2.emit_assistant_audio(b"gen-N+1-chunk")
         await _wait_until(lambda: b"gen-N+1-chunk" in self._queued_audio(runtime))
 
-        # Second interruption -- invalidates gen N+1.
+        # Second barge-in -- provider_2 ALSO abandoned, provider_3 takes over.
         runtime.bargein._on_confirmed(  # noqa: SLF001
             InterruptContext(invalidated_response_id=2, reason="noise2")
         )
-        await provider.user_turn_end()  # noise2's own closure
+        provider_handle.sealed_utterances.append(b"noise2-utterance")
+        provider_handle.sealed_utterance_ready.set()
+        await _wait_until(lambda: runtime.provider is not provider_2, timeout=3.0)
+        provider_3 = runtime.provider
+        self.assertIsNot(provider_3, provider_1)
+        self.assertIsNot(provider_3, provider_2)
+        fake_3 = provider_3._llm  # noqa: SLF001
+        await _wait_until(lambda: fake_3.turn_ends >= 1, timeout=3.0)
+        self.assertEqual(fake_3.received_audio, [b"noise2-utterance"])
 
-        # OLD gen-N+1 trailing audio, arriving right after noise2's own
-        # closure but before any real turn 3 -- must be dropped (CASE 1
-        # shape, now for the SECOND interruption).
-        await fake.emit_assistant_audio(b"OLD-N+1-trailing")
-        await asyncio.sleep(0.02)
-        self.assertEqual(
-            self._queued_audio(runtime), [b"gen-N-chunk", b"gen-N+1-chunk"]
-        )
+        # BOTH old providers' queues are fed a further event each -- NEITHER
+        # ever reaches hardware/canonical history.
+        provider_1._events.put_nowait(AssistantAudioEvent(pcm=b"OLD-N")) # noqa: SLF001
+        provider_2._events.put_nowait(AssistantAudioEvent(pcm=b"OLD-N+1")) # noqa: SLF001
+        await asyncio.sleep(0.05)
+        self.assertNotIn(b"OLD-N", self._queued_audio(runtime))
+        self.assertNotIn(b"OLD-N+1", self._queued_audio(runtime))
 
-        # Turn 3 -> gen N+2 plays correctly.
-        runtime.router.begin_cloud_turn()
-        await provider.user_turn_start()
-        await provider.send_user_audio(b"q3")
-        await provider.user_turn_end()
-        await fake.emit_user_transcription("q3", final=True)
-        await fake.emit_assistant_audio(b"gen-N+2-chunk")
+        await fake_3.emit_assistant_audio(b"gen-N+2-chunk")
         await _wait_until(lambda: b"gen-N+2-chunk" in self._queued_audio(runtime))
-
-        # No audio from N or N+1 ever returns.
         self.assertEqual(
             self._queued_audio(runtime),
             [b"gen-N-chunk", b"gen-N+1-chunk", b"gen-N+2-chunk"],
@@ -1675,6 +1837,7 @@ class TestStrictPostInterruptionOwnership(TestPostInterruptionAudioRecovery):
             await consume_task
         except asyncio.CancelledError:
             pass
+        await provider_3.stop(reason="test cleanup")
 
 
 @unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")

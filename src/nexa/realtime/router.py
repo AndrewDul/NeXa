@@ -172,6 +172,46 @@ class ConversationRouter:
             active_provider_name=ActiveProvider.CLOUD.value,
         )
 
+    async def start_fresh_cloud_provider(
+        self, *, language_preference: str | None = None, failure_reason_prefix: str = ""
+    ) -> RealtimeVoiceProvider | None:
+        """M2.6B.4G (R0045) — the shared "destroy-and-recreate" primitive:
+        build a fresh ``CloudContextSnapshot`` from canonical NeXa state
+        and construct+start a BRAND NEW provider instance from it. Pure
+        construction — never touches an old instance (the caller decides
+        whether/when to stop one; the two existing callers,
+        ``recover_from_mid_turn_loss`` and the barge-in atomic-replacement
+        path in ``GeminiVoiceRuntime``, have DIFFERENT pending-audio
+        sources and different timing constraints, so replay is each
+        caller's own responsibility, never this method's).
+
+        Returns the new provider (already the router's own
+        ``_cloud_provider``/``_active_provider``) on success, or ``None``
+        if no cloud provider factory is configured or ``start()`` raised
+        (either case already routed through the Decision J failure path —
+        the caller falls back to LOCAL)."""
+        if self._cloud_provider_factory is None:
+            self._handle_cloud_failure(
+                reason=f"{failure_reason_prefix}no cloud provider factory"
+            )
+            return None
+
+        snapshot = await self.request_fresh_snapshot_after_resumption_failure(
+            language_preference=language_preference
+        )
+        new_provider = self._cloud_provider_factory()
+        try:
+            await new_provider.start(snapshot)
+        except Exception as exc:  # noqa: BLE001 — a second failure is still a fallback trigger
+            self._handle_cloud_failure(
+                reason=f"{failure_reason_prefix}fresh session start failed: {exc}"
+            )
+            return None
+
+        self._cloud_provider = new_provider
+        self._active_provider = ActiveProvider.CLOUD
+        return new_provider
+
     async def recover_from_mid_turn_loss(
         self, old_provider: RealtimeVoiceProvider, *, language_preference: str | None = None
     ) -> RealtimeVoiceProvider | None:
@@ -195,22 +235,11 @@ class ConversationRouter:
         pending: list[bytes] = take_pending() if callable(take_pending) else []
         await old_provider.stop(reason="mid-turn connection loss — fresh session required")
 
-        if self._cloud_provider_factory is None:
-            self._handle_cloud_failure(reason="mid-turn loss, no cloud provider factory")
-            return None
-
-        snapshot = await self.request_fresh_snapshot_after_resumption_failure(
-            language_preference=language_preference
+        new_provider = await self.start_fresh_cloud_provider(
+            language_preference=language_preference, failure_reason_prefix="mid-turn loss, "
         )
-        new_provider = self._cloud_provider_factory()
-        try:
-            await new_provider.start(snapshot)
-        except Exception as exc:  # noqa: BLE001 — a second failure is still a fallback trigger
-            self._handle_cloud_failure(reason=f"fresh session start failed: {exc}")
+        if new_provider is None:
             return None
-
-        self._cloud_provider = new_provider
-        self._active_provider = ActiveProvider.CLOUD
         if pending:
             await new_provider.user_turn_start()
             for chunk in pending:

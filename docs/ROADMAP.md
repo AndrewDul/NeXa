@@ -778,6 +778,59 @@ unpaid-quota data is used to improve Google products.
     evidence; a brief stale-audio artifact at an interruption boundary,
     if ever observed live, is expected/documented residual behaviour
     (CASE 2), not a fix failure.
+  - **M2.6B.4G — atomic provider replacement on confirmed barge-in**
+    (`R0045`, 2026-09-12). R0044 proved no airtight same-session
+    response-ownership boundary exists and left CASE 2 (old delayed
+    audio after a genuinely new turn's own closure) open. This
+    checkpoint changes the architecture instead of refining the
+    heuristic: every confirmed local barge-in now atomically replaces
+    the Gemini provider/session. The OLD provider's `events()` queue is
+    quarantined synchronously in `_on_confirmed` (before any `await` —
+    local playback stop is never delayed) and never read again (Option
+    A — the same "stop consuming the old provider entirely" isolation
+    `recover_from_mid_turn_loss` already used for connection-loss
+    recovery, now shared via a new factored-out primitive
+    `ConversationRouter.start_fresh_cloud_provider`). A new NeXa-owned
+    active-utterance buffer (`_VadToProviderBridge`'s always-on
+    per-utterance `bytearray`, sealed on VAD-END into a FIFO) guarantees
+    the interrupting utterance — including audio already sent live to
+    the OLD provider before confirmation — is replayed exactly once to
+    the replacement provider; the new provider is started concurrently
+    (`asyncio.gather`) with waiting for the utterance to seal, so both
+    provider-ready-first and seal-first timing orderings are handled
+    identically. R0044's CASE 2 was reproduced verbatim and is now
+    CLOSED: the trailing old-generation audio is dropped because it
+    originates from a provider instance whose queue is structurally
+    never read again, not because of any turn-closure count — the
+    critical proof R0044 could not provide. `_on_confirmed` now also
+    commits the interrupted turn (`router.commit_cloud_turn()`); a
+    SEPARATE, pre-existing gap was discovered and explicitly deferred:
+    `router.begin_cloud_turn()` is never called anywhere in production
+    code, so no cloud conversation turn has ever actually been written
+    to canonical history in any M2.6A/M2.6B hardware run to date —
+    fixing it safely requires resolving a separate risk (an
+    interrupting candidate's interim transcript could overwrite a
+    still-open turn's `user_text` before it commits), proposed as a
+    future **R0046**. R0043/R0044's `local_turn_closed_seq`-based
+    fallback re-arm mechanism (`_ResponseGenerationGuard`'s `+2`
+    threshold) is REMOVED as superseded (its only use case is now
+    handled unconditionally by atomic replacement), reverting that class
+    to its simple R0038 form; verified connection-loss recovery never
+    depended on it. Added the charter's exact 8 performance
+    instrumentation points (`BARGEIN_CONFIRMED_T` …
+    `FIRST_NEW_ASSISTANT_AUDIO_T`) — no Gemini call made this
+    checkpoint. R0044's own "WHY OLD AUDIO CAN NEVER RETURN" heading
+    corrected with an erratum. Net -3 tests (removed 5 R0044 adversarial
+    CASE tests + 4 `_ResponseGenerationGuard` unit tests + 1 superseded
+    recovery test; added 5 `TestAtomicProviderReplacement` + 2
+    `TestVadBridgeQuarantine` tests, using a real second
+    `GeminiLiveProvider`/real Pipecat pipeline) — **946 tests total, OK
+    (skipped=7)**; `ruff`/`pip check`/`git diff --check` all clean;
+    local voice completely untouched (empty diff). **Hardware acceptance
+    remains FAIL; `M2.6B` remains IN PROGRESS** — Attempt #3 (unchanged
+    launch command) remains the next evidence, now expected to also
+    surface the first real measurement of atomic replacement's
+    reconnect/fresh-context latency cost.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

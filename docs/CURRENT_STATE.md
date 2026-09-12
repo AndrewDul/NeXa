@@ -5,7 +5,7 @@ Runtime / test evidence outranks anything else in this repo.
 
 ---
 
-- **Last verified:** 2026-09-11
+- **Last verified:** 2026-09-12
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
@@ -68,13 +68,18 @@ Runtime / test evidence outranks anything else in this repo.
   interrupting sound produced no transcript at all; fixed with a local-
   turn-closure fallback re-arm, but that fix's own residual risk (one
   stray old-generation chunk possibly misclassified at an interruption
-  boundary) was correctly flagged as not yet closed. **M2.6B.4F (below)
+  boundary) was correctly flagged as not yet closed. M2.6B.4F
   quantified that risk precisely — found and fixed a CONCRETE,
   deterministically-reproducible regression in R0043's fallback
   (satisfied by the interrupting sound's OWN closure alone), narrowed it
   to require a genuinely separate subsequent turn, and proved by source
-  audit that ONE remaining gap cannot be closed without provider/session
-  replacement — reported, not implemented)]**.
+  audit that ONE remaining gap (CASE 2) could not be closed without
+  provider/session replacement — reported, not implemented then.
+  **M2.6B.4G (below) implements that replacement**: every confirmed
+  local barge-in now atomically swaps the Gemini provider/session
+  (provider-instance isolation, never turn-closure counting) — CASE 2 is
+  now provably closed; the R0043/R0044 fallback mechanism is REMOVED as
+  superseded, not merely narrowed further)]**.
   Original Accepted content:
   **Cloud Realtime Voice provider boundary (M2.6) — Accepted 2026-09-10.**
   Encodes the canonical rule: NeXa is the persistent system; Gemini Live is
@@ -132,7 +137,70 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0044_m2_6b_4f_strict_post_interruption_response_ownership_20260912.md`
+- **Latest report:** `docs/reports/R0045_m2_6b_4g_atomic_provider_replacement_20260912.md`
+  (**M2.6B.4G — atomic provider replacement on confirmed barge-in,
+  2026-09-12.** R0044 exhaustively proved no airtight same-session
+  response-ownership boundary exists (Gemini's Live API exposes no
+  response/turn/generation identifier on any server message) and left
+  ONE documented open gap (CASE 2: old delayed audio arriving after a
+  genuinely new turn's own closure). This checkpoint changes the
+  architecture instead of refining the heuristic: **every confirmed
+  local barge-in now atomically replaces the Gemini provider/session** —
+  the OLD provider's `events()` queue is quarantined synchronously (in
+  `_on_confirmed`, before any `await`, so local playback stop is never
+  delayed) and never read again (Option A from the charter — the same
+  "stop consuming the old provider entirely" isolation
+  `recover_from_mid_turn_loss` already used for connection-loss
+  recovery, now shared via a new factored-out primitive
+  `ConversationRouter.start_fresh_cloud_provider`). A new NeXa-owned
+  active-utterance buffer (`_VadToProviderBridge`'s `bytearray`, reset
+  per VAD-START, always appended while a turn is open, sealed on
+  VAD-END into a FIFO) guarantees the interrupting utterance — including
+  audio already sent live to the OLD provider before confirmation — is
+  replayed **exactly once** to the replacement provider, concurrently
+  started via `asyncio.gather` so both provider-ready-first and
+  seal-first timing orderings are handled identically; proven directly:
+  a pre-confirm live-sent prefix + a post-confirm buffered remainder
+  are replayed as one coherent utterance, never zero/twice/partial.
+  R0044's CASE 2 was reproduced verbatim and is now **CLOSED**: the
+  trailing old-generation audio is dropped because it originates from a
+  provider instance whose queue is structurally never read again, not
+  because of any turn-closure count — the critical proof R0044 could not
+  provide. `_on_confirmed` now also commits the interrupted turn
+  (`router.commit_cloud_turn()`) — a new, minimal, safe addition; a
+  SEPARATE, pre-existing, deeper gap was discovered and explicitly
+  deferred (not fixed this checkpoint): `router.begin_cloud_turn()` is
+  never called anywhere in production code, so no cloud conversation
+  turn has ever actually been written to canonical history in any
+  M2.6A/M2.6B hardware run to date — fixing it safely requires resolving
+  a separate risk (an interrupting candidate's interim transcript could
+  overwrite a still-open turn's `user_text` before it commits), proposed
+  as a future **R0046**, not rushed into this already-large checkpoint.
+  R0044/R0043's `local_turn_closed_seq`-based fallback re-arm mechanism
+  (`_ResponseGenerationGuard`'s `+2` threshold,
+  `MIN_LOCAL_TURN_CLOSURES_BEFORE_FALLBACK_REARM`) is REMOVED as
+  superseded (its only use case is now handled unconditionally by
+  atomic replacement), reverting that class to its simple R0038 form;
+  verified, by source reading, that connection-loss recovery never
+  depended on it either. Added the charter's exact 8 performance
+  instrumentation points (`BARGEIN_CONFIRMED_T` … `FIRST_NEW_ASSISTANT_AUDIO_T`)
+  — no Gemini call made this checkpoint, no live numbers fabricated.
+  R0044's own "WHY OLD AUDIO CAN NEVER RETURN" heading corrected with an
+  erratum recording that R0044 proved no airtight boundary exists and
+  R0045 supersedes the mechanism. Net **-3 tests** (removed R0044's 5
+  adversarial CASE tests + 4 `_ResponseGenerationGuard` unit tests + 1
+  superseded recovery test tied to the removed fallback; added 5
+  `TestAtomicProviderReplacement` + 2 `TestVadBridgeQuarantine` tests, all
+  using a real second `GeminiLiveProvider`/real Pipecat pipeline, not
+  simulated) — **946 tests total, OK (skipped=7)**; `ruff`/`pip check`/
+  `git diff --check` all clean; local voice completely untouched (empty
+  diff). **Hardware acceptance remains FAIL; `M2.6B` remains IN
+  PROGRESS** — Attempt #3 (unchanged launch command,
+  `apps/nexa_cloud_voice_app.py --bargein`) remains the next evidence,
+  now expected to also surface the first real measurement of atomic
+  replacement's reconnect/fresh-context latency cost via the new
+  instrumentation. Not pushed.)
+- **Prior report:** `docs/reports/R0044_m2_6b_4f_strict_post_interruption_response_ownership_20260912.md`
   (**M2.6B.4F — strict post-interruption response ownership, 2026-09-12.**
   R0043's `local_turn_closed_seq` fallback fix was VALID (recovering
   audio after a non-transcribed interruption is real and necessary) but
