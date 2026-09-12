@@ -358,11 +358,16 @@ Not pushed.
 
 ## EXACT NEXT LIVE COMMAND
 
-Unchanged launch command — this checkpoint is entirely internal to
-`nexa.realtime` wiring; no new CLI flags were added:
+**Erratum (added post-checkpoint, PRE-ATTEMPT #3 LAUNCH CONTRACT AUDIT):**
+the command below was wrong, inherited unverified from R0045's own
+mistake — `apps/nexa_cloud_voice_app.py` has never defined a `--bargein`
+flag; that flag belongs only to the unrelated LOCAL voice probe
+(`apps/nexa_bilingual_voice_probe.py`). Cloud barge-in is unconditional
+here — no flag exists or is needed to gate it. Corrected command, now
+covered by `tests/test_cloud_voice_app_entrypoint.py`:
 
 ```
-.venv/bin/python apps/nexa_cloud_voice_app.py --bargein
+.venv/bin/python apps/nexa_cloud_voice_app.py
 ```
 
 ## EXACT ATTEMPT #3 SCRIPT

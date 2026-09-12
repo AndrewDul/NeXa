@@ -871,6 +871,30 @@ unpaid-quota data is used to improve Google products.
     PROGRESS** — Attempt #3 (unchanged launch command) remains the next
     evidence, now able to directly confirm `ConversationSession.history`
     actually grows on real hardware for the first time.
+  - **Pre-Attempt #3 launch contract audit** (`R0047`, 2026-09-12,
+    docs/test-only). The operator ran R0045/R0046's own documented launch
+    command (`apps/nexa_cloud_voice_app.py --bargein`) twice; argparse
+    rejected it both times — Attempt #3 never started. Root cause:
+    documentation drift, not a code defect — `apps/nexa_cloud_voice_app.py`
+    has never defined a `--bargein` flag (confirmed via source + full git
+    history); that flag belongs only to the unrelated LOCAL voice probe
+    (`apps/nexa_bilingual_voice_probe.py`) and its own opt-in
+    `HalfDuplexGate` mechanism. Cloud barge-in
+    (`BargeInController`/R0045's replacement/R0046's turn lifecycle) is
+    constructed unconditionally by `build_gemini_voice_runtime` — no flag
+    exists or is needed, so **no runtime/architecture change was made**.
+    Corrected both reports' launch commands to
+    `.venv/bin/python apps/nexa_cloud_voice_app.py` (no flags), with an
+    erratum explaining the mistake. Added
+    `tests/test_cloud_voice_app_entrypoint.py` (5 tests, new) — imports
+    the app module directly and runs its REAL `parse_args()`/`main()`,
+    proving the documented commands parse, `--bargein` is rejected (a
+    canary against recurrence), and the REAL `--dry` entrypoint
+    constructs `BargeInController` unconditionally. **964 tests total, OK
+    (skipped=7)**, 0 regressions; `ruff`/`pip check`/`git diff --check`
+    all clean; local voice untouched. **Hardware acceptance remains FAIL;
+    `M2.6B` remains IN PROGRESS** — the operator can now safely re-attempt
+    Attempt #3 with the corrected, test-verified command.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

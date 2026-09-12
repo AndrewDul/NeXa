@@ -144,7 +144,42 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0046_m2_6b_4h_production_canonical_cloud_turn_lifecycle_20260912.md`
+- **Latest report:** `docs/reports/R0047_pre_attempt3_launch_contract_audit_20260912.md`
+  (**Pre-Attempt #3 launch contract audit, 2026-09-12.** The operator ran
+  R0045/R0046's own documented "EXACT ... COMMAND"
+  (`apps/nexa_cloud_voice_app.py --bargein`) twice; both times argparse
+  rejected it (`unrecognized arguments: --bargein`) — Attempt #3 never
+  started, no Gemini evidence produced. **Root cause: documentation
+  drift, not a code defect.** `apps/nexa_cloud_voice_app.py` has never
+  defined a `--bargein` flag (confirmed via direct source read and
+  `git log --all -p` — the string never appears in this file's own
+  history); every prior report R0035-R0044 correctly documented the bare
+  command. `--bargein` belongs exclusively to the unrelated LOCAL voice
+  probe (`apps/nexa_bilingual_voice_probe.py`) and its own opt-in
+  `HalfDuplexGate`/`bargein_enabled` mechanism — R0045 (written in the
+  same session) pattern-matched that convention onto the cloud app's
+  launch command without checking its actual `argparse`, and R0046 copied
+  the error forward. **Cloud barge-in
+  (`BargeInController`/R0045's atomic provider replacement/R0046's
+  canonical turn lifecycle) is constructed unconditionally by
+  `build_gemini_voice_runtime` — no flag exists or is needed to gate it,
+  so no runtime/architecture change was made.** Corrected both reports'
+  launch commands (with an erratum explaining the mistake) to
+  `.venv/bin/python apps/nexa_cloud_voice_app.py` (no flags). Added
+  `tests/test_cloud_voice_app_entrypoint.py` (5 tests, new) — imports the
+  app module directly and runs its REAL `parse_args()`/`main()`, proving
+  (1) the bare and `--dry` commands parse, (2) `--bargein` is rejected
+  (a canary against this exact drift recurring), (3) the REAL `--dry`
+  entrypoint constructs `BargeInController` unconditionally (spying on
+  `build_gemini_voice_runtime`'s return value, not a reimplementation of
+  its wiring), (4) the bare live command parses and proceeds to the
+  credential-load boundary before any Gemini/hardware call. **964 tests
+  total, OK (skipped=7)**, 0 regressions; `ruff`/`pip check`/
+  `git diff --check` all clean; local voice completely untouched (empty
+  diff). **Hardware acceptance remains FAIL; `M2.6B` remains IN
+  PROGRESS** — the operator can now safely re-attempt Attempt #3 with the
+  corrected, test-verified command. Not pushed.)
+- **Prior report:** `docs/reports/R0046_m2_6b_4h_production_canonical_cloud_turn_lifecycle_20260912.md`
   (**M2.6B.4H — production canonical cloud turn lifecycle, 2026-09-12.**
   R0045's own audit found `router.begin_cloud_turn()` had NO production
   caller at all — confirmed by exhaustive grep, only test files called it.
@@ -252,7 +287,9 @@ Runtime / test evidence outranks anything else in this repo.
   `git diff --check` all clean; local voice completely untouched (empty
   diff). **Hardware acceptance remains FAIL; `M2.6B` remains IN
   PROGRESS** — Attempt #3 (unchanged launch command,
-  `apps/nexa_cloud_voice_app.py --bargein`) remains the next evidence,
+  `apps/nexa_cloud_voice_app.py` — corrected post-checkpoint; see the
+  PRE-ATTEMPT #3 LAUNCH CONTRACT AUDIT entry above, this report never
+  actually had a `--bargein` flag) remains the next evidence,
   now expected to also surface the first real measurement of atomic
   replacement's reconnect/fresh-context latency cost via the new
   instrumentation. Not pushed.)

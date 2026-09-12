@@ -396,12 +396,22 @@ Not pushed.
 
 ## EXACT ATTEMPT #3 COMMAND
 
-Unchanged launch command from prior checkpoints — the atomic-replacement
-change is entirely internal to `nexa.realtime.gemini.runtime`; no new
-CLI flags were added:
+**Erratum (added post-checkpoint, PRE-ATTEMPT #3 LAUNCH CONTRACT AUDIT):**
+the command below was wrong — `apps/nexa_cloud_voice_app.py` has never
+defined a `--bargein` flag (confirmed via `git log --all -p`; `--bargein`
+belongs exclusively to the unrelated LOCAL voice probe,
+`apps/nexa_bilingual_voice_probe.py`, and its own opt-in
+`HalfDuplexGate`/`bargein_enabled` mechanism — a copy-paste error from
+that convention). Cloud barge-in (`BargeInController`, this checkpoint's
+atomic provider replacement) is constructed **unconditionally** by
+`build_gemini_voice_runtime` — there is no flag to gate it, so none was
+ever needed. The correct command, unchanged from every prior checkpoint
+(R0035 onward) and now covered by a deterministic entrypoint test
+(`tests/test_cloud_voice_app_entrypoint.py`) so this drift cannot recur
+silently:
 
 ```
-.venv/bin/python apps/nexa_cloud_voice_app.py --bargein
+.venv/bin/python apps/nexa_cloud_voice_app.py
 ```
 
 ## EXACT LIVE ACCEPTANCE SCRIPT
