@@ -332,16 +332,8 @@ Zero diff — local voice completely untouched.
 
 ## GIT STATUS
 
-At time of writing:
-
-```
- M .gitignore
-?? docs/reports/R0048_m2_6b_4i_real_audio_ingress_parity_audit_20260912.md
-?? docs/research/m2_6_cloud_realtime_voice/m2_6b4i_audio_ingress_parity_probe.py
-?? tests/test_m2_6b4i_audio_ingress_parity_probe.py
-```
-
-Not pushed.
+Commit `7c4772a` made this checkpoint's changes. Working tree clean as of
+writing (hash-record follow-up commit pending). Not pushed.
 
 ## EXACT LOCAL CAPTURE COMMAND
 
