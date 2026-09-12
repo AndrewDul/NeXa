@@ -42,6 +42,10 @@ voices/
 # recordings -- WAV + JSON, never committed) ---
 docs/research/m2_6_cloud_realtime_voice/ingress_captures/
 
+# --- R0052 self-echo / false-barge-in probe (real hardware telemetry
+# JSON -- never committed) ---
+docs/research/m2_6_cloud_realtime_voice/self_echo_captures/
+
 # --- Local tooling caches ---
 .cache/
 node_modules/

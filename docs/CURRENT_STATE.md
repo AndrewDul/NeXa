@@ -144,7 +144,58 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0051_m2_6b_4l_500ms_canonical_preroll_20260912.md`
+- **Latest report:** `docs/reports/R0052_m2_6b_4m_self_echo_diagnostic_20260912.md`
+  (**M2.6B.4M — false self-barge-in / speaker-echo root cause diagnostic,
+  2026-09-12.** A NEW failure class, distinct from the just-closed
+  preroll issue: a live Gemini run showed NeXa sometimes triggering her
+  own local barge-in while her own speaker audio was playing (repeated
+  `✂ cloud interruption acknowledged by provider` while the operator
+  said nothing), especially at high/max speaker volume, with
+  `AEC_REF_ACTIVE` present throughout. SOURCE AUDIT (real installed
+  Pipecat + NeXa source, not guessed): `AecReferenceHealth.barge_in_safe`
+  is a PURE liveness check (is the `aplay -D plug:respeaker` reference
+  feed alive) — it measures zero echo-cancellation quality, confirming
+  the charter's own caution. `AecReferenceFeeder` forwards the assistant
+  PCM byte-identical and ungained to both the reference (`plug:respeaker`
+  via `aplay`) and audible (`plug:usb_speaker` via PyAudio/PortAudio)
+  paths — software-level parity is exact; no `amixer`/software-volume
+  code exists anywhere in `src/nexa/voice*`. Real, source-grounded
+  candidate root causes identified but NOT yet ranked or confirmed: (A)
+  a hardware/OS-level volume mechanism affecting only the physically
+  separate USB speaker, uniquely explaining the volume-dependence; (B/C)
+  the two paths are driven by two independent OS audio stacks
+  (`aplay` vs PortAudio) through two independently-resampling ALSA
+  `plug:` devices, a plausible timing-divergence source; (F) `BargeInController`
+  has zero echo-discrimination beyond generic Silero VAD + AEC liveness.
+  Built a REAL local-only self-echo probe
+  (`docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py`)
+  reusing the actual production `AecReferenceFeeder`/`BargeInController`/
+  `AecReferenceHealth`/`_ResponseLifecycle`/`SileroVADAnalyzer`
+  (`VADParams(stop_secs=0.5)`, matching cloud production exactly) —
+  NO Gemini, NO cloud, NO STT/LLM — instrumented with every required
+  log point (playback/VAD/barge-in timestamps, real Silero
+  confidence/volume, raw mic + far-end-reference RMS/peak), supporting
+  `--level {low,normal,max}` silent-operator trials plus a `--control`
+  real "przerwij" human trial. 23 new deterministic offline tests for
+  the probe's pure logic (interval collapsing, windowed RMS aggregation,
+  trial summarization) — all pass; `--dry` and a full pipeline
+  construction smoke test both pass on this dev machine (structural
+  validation only, not a real-hardware self-echo measurement). **Root
+  cause NOT determined — this checkpoint explicitly STOPS at the
+  diagnostic result**, per its own gate: no production fix may be
+  implemented before the operator's real reSpeaker + real USB speaker +
+  silent-operator data comes back. No `src/nexa/realtime`,
+  `src/nexa/voice`, `src/nexa/voice_tts`, or `src/nexa/stt` file was
+  touched (`git diff --stat` empty for all four). Full suite green:
+  **1014 tests, OK (skipped=7)**; `ruff`/`pip check`/`git diff --check`
+  all clean. R0051's own 500ms preroll, R0045 provider isolation, R0046
+  canonical history, zero local LID, and local-voice freeze all remain
+  exactly as accepted — unmodified and re-verified, not reopened. No
+  Gemini call. Not pushed. **`M2.6B` remains IN PROGRESS** — the
+  self-echo root cause/fix, the still-pending minimal live Gemini
+  conversational validation, and the proactive-reconnect-caller gap all
+  remain open completion items.)
+- **Prior report:** `docs/reports/R0051_m2_6b_4l_500ms_canonical_preroll_20260912.md`
   (**M2.6B.4L — use empirically validated 500ms user-audio preroll,
   2026-09-12.** R0050's forensic evidence (byte-exact alignment + PCM
   RMS energy analysis of real captures, plus a deeper VAD-latency source

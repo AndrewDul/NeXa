@@ -1033,6 +1033,52 @@ unpaid-quota data is used to improve Google products.
     (`ReconnectController` still has no production driver) remains a
     separate, unresolved completion item. No Gemini call this
     checkpoint either.
+  - **M2.6B.4M — false self-barge-in / speaker-echo root cause
+    diagnostic** (`R0052`, 2026-09-12). A NEW, distinct failure class
+    from a live Gemini run: NeXa sometimes triggered her own local
+    barge-in while her own speaker audio was playing (repeated `✂ cloud
+    interruption acknowledged by provider` with no real interruption),
+    especially at high/max volume, `AEC_REF_ACTIVE` present throughout.
+    SOURCE AUDIT of real installed source: `AecReferenceHealth.
+    barge_in_safe` is a PURE liveness check (reference feed alive),
+    never a cancellation-quality measure; `AecReferenceFeeder` forwards
+    byte-identical, ungained PCM to both the reference
+    (`plug:respeaker` via `aplay`) and audible (`plug:usb_speaker` via
+    PortAudio) paths — software-level parity proven exact; no
+    `amixer`/software-volume code exists anywhere in
+    `src/nexa/voice*`. Real candidate root causes identified but NOT
+    ranked/confirmed: (A) a hardware/OS-level volume mechanism on the
+    physically separate speaker only (uniquely explains
+    volume-dependence); (B/C) two independent OS audio stacks (`aplay`
+    vs PortAudio) through two independently-resampling ALSA `plug:`
+    devices — a plausible timing-divergence source; (F)
+    `BargeInController` has zero echo-discrimination beyond generic
+    Silero VAD + AEC liveness. Built a REAL local-only self-echo probe
+    (`docs/research/m2_6_cloud_realtime_voice/
+    m2_6b4m_self_echo_probe.py`) reusing the actual production
+    `AecReferenceFeeder`/`BargeInController`/`AecReferenceHealth`/
+    `_ResponseLifecycle`/`SileroVADAnalyzer`
+    (`VADParams(stop_secs=0.5)`, matching cloud production) — NO
+    Gemini, NO cloud, NO STT/LLM — instrumented with every required
+    telemetry point (playback/VAD/barge-in timestamps, real Silero
+    confidence/volume, raw mic + far-end-reference RMS/peak);
+    supports `--level {low,normal,max}` silent-operator trials and a
+    `--control` real "przerwij" human trial. 23 new deterministic
+    offline tests for the probe's own pure logic, all passing;
+    `--dry` and a full pipeline-construction smoke test both pass on
+    this dev machine (structural validation only, not a real-hardware
+    measurement). **Root cause NOT determined — explicitly STOPS at
+    the diagnostic result**, per its own gate: no fix implemented
+    before real reSpeaker + real USB speaker + silent-operator data
+    returns. Zero `src/nexa/realtime`, `src/nexa/voice`,
+    `src/nexa/voice_tts`, `src/nexa/stt` changes (`git diff --stat`
+    empty for all four) — R0051's 500ms preroll, R0045 provider
+    isolation, R0046 canonical history, zero local LID, local-voice
+    freeze all re-verified, not reopened. **1014 tests total, OK
+    (skipped=7)**; `ruff`/`pip check`/`git diff --check` all clean. No
+    Gemini call. `M2.6B` remains IN PROGRESS — self-echo root
+    cause/fix, the still-pending minimal live Gemini conversational
+    validation, and the proactive-reconnect-caller gap all remain open.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the
