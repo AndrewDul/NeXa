@@ -230,12 +230,23 @@ Runtime / test evidence outranks anything else in this repo.
   `mic_ref_correlate` measurement are not the same observation point;
   no `AUDIO_MGR_SYS_DELAY` value is derived from R0055's figure
   anywhere). The full, exact, reversible R0057 experiment procedure
-  (two device reboots to avoid `AEC_AECCONVERGED`'s documented latching
-  behavior, an immediate `AEC_FAR_EXTGAIN`-tracking abort gate, a
-  10-repeat local-fixture warm-up per condition, and a mandatory
-  rollback+dual verification) is now written into the R0056 report
-  itself — still NOT executed. No XVF3800 parameter or ALSA mixer was
-  changed by this correction pass either.)
+  (originally: two device reboots to avoid `AEC_AECCONVERGED`'s
+  documented latching behavior, an immediate `AEC_FAR_EXTGAIN`-tracking
+  abort gate, a 10-repeat local-fixture warm-up per condition, and a
+  mandatory rollback+dual verification) was written into the R0056
+  report — still NOT executed. **Same-day Correction 3, before any
+  hardware command was ever issued**: a pre-execution review correctly
+  rejected the `REBOOT`-based design — `REBOOT` resets EVERY writable
+  parameter to firmware default, and this device is confirmed
+  `BLD_MODIFIED=TRUE` (a customized build), so there is no guarantee
+  "default" matches this thread's own already-recorded baseline for
+  anything other than the one parameter under test. **Revision 2**
+  removes `REBOOT` entirely: `Array PCM,1` is changed live with no
+  reboot, and both measured trials (baseline and test) are gated by an
+  identical, fixed 60-second local-fixture warm-up (never the latched
+  `AEC_AECCONVERGED` flag, which is read and recorded for the record
+  only). Still not executed; no XVF3800 parameter or ALSA mixer changed
+  by either correction pass.)
 - **Prior report:** `docs/reports/R0055_pcm_correlation_analysis_of_residual_self_echo_20260913.md`
   (**M2.6B.4N follow-up — PCM correlation analysis of residual self-echo,
   2026-09-13.** The R0054-requested capture came back: MAX volume, 3

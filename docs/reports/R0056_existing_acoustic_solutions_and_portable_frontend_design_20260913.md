@@ -156,6 +156,24 @@ of this unresolved gap.
 - The correct `AUDIO_MGR_SYS_DELAY` value for this hardware (not
   derivable from R0055's own external measurement, per Correction 2).
 
+### Correction 3 (pre-execution review, before Phase 1 was ever run) — `REBOOT` removed from the R0057 procedure
+
+The R0057 experiment design originally written alongside this erratum
+used `REBOOT` before each condition, reasoning only about
+`AEC_AECCONVERGED`'s own latch. A pre-execution review correctly
+rejected this: `REBOOT` resets **every** writable parameter to
+firmware default, not just the one being tested, and this device is
+confirmed `BLD_MODIFIED=TRUE` — there is no source-backed guarantee
+"default" reproduces `AUDIO_MGR_SYS_DELAY`, every `PP_*` value, or
+anything else this whole report thread has held constant. A fresh
+fetch of the same official guide this pass confirms it does **not**
+require a reboot for a live gain-only change (its one restart
+recommendation is written for an iterative multi-parameter tuning
+workflow, not a minimal A/B). **The R0057 EXPERIMENT DESIGN section
+below is Revision 2: no `REBOOT`, `Array PCM,1` changed live, and a
+fixed 60-second warm-up (never `AEC_AECCONVERGED`) gates both measured
+trials.** See that section's own revision note for the full reasoning.
+
 **Nothing in this erratum changes the recommendation to try native
 tuning (starting with the reversible `Array PCM,1` mixer experiment)
 before a discriminator or a WebRTC layer** — it only sharpens *why*:
@@ -816,35 +834,74 @@ never blocking them.
 
 ## R0057 EXPERIMENT DESIGN (NOT EXECUTED THIS CHECKPOINT)
 
-Designed, per the ERRATUM above, as a genuine one-variable controlled
-test — not a confirmatory formality. **Nothing below was run this
-checkpoint.** No ALSA mixer, XVF3800 parameter, or firmware was
-changed. This is the exact procedure for the operator/next checkpoint
-to execute.
+**REVISION 2 (this pass) — REBOOT REMOVED.** Revision 1 (same day,
+immediately above in git history) used `REBOOT` before each condition
+to un-latch `AEC_AECCONVERGED`. A pre-execution review correctly
+rejected that design: `REBOOT`'s own documented effect is "reset all
+parameters to default," not "reset only `AEC_AECCONVERGED`" — on a
+device this checkpoint has already confirmed is `BLD_MODIFIED=TRUE`
+(a customized, non-pristine firmware build), there is no source-backed
+guarantee that "default" reproduces every OTHER already-recorded
+parameter (`AUDIO_MGR_SYS_DELAY`, every `PP_*` value, `AUDIO_MGR_REF_GAIN`,
+etc.) at the exact values this whole report thread has been holding
+constant. Using `REBOOT` would have required re-verifying (and
+potentially re-writing) every one of those parameters before each
+measured trial just to keep the experiment single-variable — a much
+larger, fragile burden for no real benefit, since (per a fresh fetch of
+the same official guide, this pass) **the guide does not, in fact,
+specify that a reboot is required after a live gain-only change**: its
+one explicit restart recommendation ("restart the device at the start
+of each tuning step") is written in the context of an iterative,
+multi-parameter TUNING workflow, not a minimal single-variable A/B
+comparison, and the guide explicitly does **not** distinguish "minor"
+(gain) from "major" (physical/delay) changes in this respect — that
+distinction is not sourced from the document. **Revision 2 uses no
+reboot at all**, changes `Array PCM,1` live, and never relies on
+`AEC_AECCONVERGED` for anything (it is latched either way, reboot or
+not — the fix is to stop depending on it, not to work around its
+latch).
 
 **Single variable under test:** `Array` `PCM,1` at -20dB (current) vs.
 ≈0dB/unity (test), while `UACDemoV10`'s own audible-speaker volume,
 `AUDIO_MGR_SYS_DELAY`, every `PP_*` parameter, and NeXa's own production
-code are all held exactly constant. No Gemini at any point.
+code are all held exactly constant, with **no other command that could
+touch any other parameter** issued anywhere in the procedure. No Gemini
+at any point. No `REBOOT`. No `SAVE_CONFIGURATION`.
 
-### Why a REBOOT is part of this design
+### Why a fixed warm-up duration, not `AEC_AECCONVERGED`, is the gate
 
-`AEC_AECCONVERGED` is documented as latched (quoted above): once it
-reads 1, it never returns to 0 on its own, even after "a significant
-path change or other circumstance forces a significant change in the
-AEC." Since the whole point of the mixer change is exactly such a
-circumstance, a stale `AEC_AECCONVERGED=1` left over from BEFORE the
-change would be read as "converged" while telling us nothing about
-convergence under the NEW gain — a real, specifically-warned-against
-false-confidence trap. The only documented way found this checkpoint to
-un-latch it is the official `REBOOT` command ("reboot the chip and
-reset all parameters to default"). Consequence: `Array PCM,1` must be
-re-applied fresh after EACH reboot (reboot resets it to factory
-default), and each of the two conditions below gets its OWN reboot +
-warm-up, so neither condition's convergence reading is contaminated by
-the other's.
+`AEC_AECCONVERGED` is documented as latched ("Once this value is set to
+1 internally, it is never reset, even if a significant path change or
+other circumstance forces a significant change in the AEC") — reading
+it after the `PCM,1` change would very likely still show `1` from
+BEFORE the change, proving nothing about adaptation to the NEW gain,
+reboot or not. Instead this design uses a **fixed, documented time
+budget**, applied identically before both measured trials, and never
+treats any diagnostic flag as proof of readiness. The official guide's
+only concrete number is "AEC convergence is expected to take less than
+30 seconds" (fetched, quoted, R0056 original) — stated for the
+adaptive filter's own COLD-START convergence (learning an entirely new
+echo path from nothing). A live gain-only change (this experiment) does
+not alter the echo path's delay or impulse-response shape at all, only
+its reference amplitude — well-established, general adaptive-filter
+(NLMS/RLS-family) behavior is that pure gain/scale re-adaptation is at
+least as fast as full cold-start convergence, typically faster, since
+the filter's own coefficients (which encode the path SHAPE) do not need
+to be relearned, only rescaled (general DSP/adaptive-filtering
+knowledge, not a vendor-specific claim — flagged as such, not
+independently confirmed for the XVF3800's own exact algorithm). The
+vendor's own 30-second figure is therefore used as a **conservative
+upper bound**, applied with a 2× margin: **fixed warm-up = 60 seconds**,
+identically before EVERY measured trial (baseline and test alike), so
+neither condition gets more settling time than the other.
 
-### PHASE 0 — Record current state (read-only)
+`AEC_RT60`, `AEC_AECPATHCHANGE`, and `AEC_CURRENT_IDLE_TIME` are read
+and recorded at each step **for the record only** — their own reset/
+latch behavior was not confirmed from source this checkpoint (unlike
+`AEC_AECCONVERGED`'s own explicitly-quoted latch), so none of them
+gates any step below; the fixed 60-second time budget is the only gate.
+
+### PHASE 0 — Record current state (read-only, unchanged from Revision 1)
 
 ```bash
 amixer -c Array sget 'PCM',1
@@ -852,6 +909,7 @@ amixer -c UACDemoV10 sget PCM
 cd /home/devdul/Tools/reSpeaker_XVF3800_USB_4MIC_ARRAY/host_control/rpi_64bit
 sudo ./xvf_host AEC_FAR_EXTGAIN
 sudo ./xvf_host AUDIO_MGR_SYS_DELAY
+sudo ./xvf_host PP_DTSENSITIVE
 sudo ./xvf_host AEC_AECCONVERGED
 sudo ./xvf_host AEC_RT60
 sudo ./xvf_host AEC_AECPATHCHANGE
@@ -860,46 +918,26 @@ sudo ./xvf_host AEC_AECPATHCHANGE
 Expected (this checkpoint's own already-recorded values, for
 comparison): `PCM,1` = 40 [67%] [-20.00dB]; `UACDemoV10 PCM` ≈ -0.94dB
 (R0053/R0054/R0055's own established figure); `AEC_FAR_EXTGAIN` = -20;
-`AUDIO_MGR_SYS_DELAY` = 12; `AEC_AECCONVERGED` = 0 or 1 (irrelevant,
-about to be superseded by a reboot either way).
+`AUDIO_MGR_SYS_DELAY` = 12; `PP_DTSENSITIVE` = 0; `AEC_AECCONVERGED` =
+whatever it currently is (not meaningful either way, per above — record
+it, do not act on it).
 
-### PHASE 1 — BASELINE condition (Array PCM,1 = -20dB, freshly converged)
+### PHASE 1 — BASELINE measured trial (Array PCM,1 = -20dB, unchanged)
 
-```bash
-sudo ./xvf_host REBOOT 1
-sleep 8   # allow USB re-enumeration
-aplay -l | grep Array   # confirm the card reappears
-amixer -c Array sget 'PCM',1        # expect -20.00dB again (factory default) -- if NOT, STOP and report before continuing
-amixer -c UACDemoV10 sget PCM       # confirm unchanged
-sudo ./xvf_host AEC_AECCONVERGED    # expect 0 (fresh)
-```
+No parameter is changed in this phase — it establishes a controlled,
+identically-warmed-up baseline before the ONE change in Phase 2.
 
-**Contingency:** if post-reboot `Array PCM,1` is NOT -20dB, this itself
-is a real, reportable finding (it would mean -20dB was never the
-factory default, but some earlier leftover value) — stop and report
-before proceeding with the rest of the procedure.
-
-**Warm-up** (reuses the existing probe exactly as-is — no new script,
-no Gemini):
+**Fixed 60-second warm-up** (reuses the existing probe exactly as-is —
+no new script, no Gemini; `--repeats 17` is `17×3.5s≈59.5s`, the
+smallest whole repeat count reaching the 60s budget):
 
 ```bash
 .venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
-  --level max --repeats 10
+  --level max --repeats 17
 ```
 
-~10×3.5s ≈ 35s of real, coherent-gain-matched assistant playback through
-the production-faithful path — comfortably past the vendor's own
-"expected to take less than 30 seconds" convergence figure, with
-margin. Discard this run's own JSON/printed result (it is warm-up only,
-not measured evidence).
-
-```bash
-sudo ./xvf_host AEC_AECCONVERGED    # expect 1
-```
-
-If still 0, repeat the `--repeats 10` warm-up once or twice more (cap:
-3 attempts / ~2 minutes total) before treating non-convergence itself
-as a reportable anomaly rather than proceeding blind.
+Discard this run's own JSON/printed result — warm-up only, not measured
+evidence.
 
 **Measured baseline trial** (the exact, unmodified R0055 command):
 
@@ -908,27 +946,21 @@ as a reportable anomaly rather than proceeding blind.
   --level max --repeats 3 --capture-pcm --max-lag-ms 500
 ```
 
-Record the printed result and JSON path. This is a fresh,
-known-reconverged re-measurement of the EXACT R0055 baseline condition
-— expected (not guaranteed) to reproduce R0055's own 3/3 false confirms,
-which also serves as an independent re-validation of R0055 itself.
+Record the printed result and JSON path. Expected (not guaranteed) to
+reproduce R0055's own 3/3 false confirms, which also serves as an
+independent re-validation of R0055 itself under this checkpoint's own
+now-more-rigorous warm-up discipline.
 
-### PHASE 2 — TEST condition (Array PCM,1 ≈ 0dB / unity)
+### PHASE 2 — TEST measured trial (Array PCM,1 changed to ≈0dB / unity)
 
-```bash
-sudo ./xvf_host REBOOT 1
-sleep 8
-aplay -l | grep Array
-amixer -c Array sget 'PCM',1        # expect -20.00dB again (post-reboot factory default, before our change)
-```
-
-**Now make the one experimental change:**
+**Make the one experimental change:**
 
 ```bash
 amixer -c Array sset 'PCM',1 100%   # raw index 60 -> 0.00dB, per the sibling PCM,0 control's own confirmed 0-60/0dB-at-60 mapping
 ```
 
-**Immediately verify tracking (mandatory abort gate):**
+**Immediately verify tracking (mandatory abort gate — unchanged from
+Revision 1):**
 
 ```bash
 sudo ./xvf_host AEC_FAR_EXTGAIN     # expect ~0
@@ -949,15 +981,14 @@ this session.
 
 ```bash
 amixer -c UACDemoV10 sget PCM       # confirm STILL unchanged
-sudo ./xvf_host AEC_AECCONVERGED    # expect 0 (fresh, post-reboot, pre-warm-up under the NEW gain)
 ```
 
-**Warm-up under the NEW gain** (identical recipe to Phase 1):
+**Fixed 60-second warm-up under the NEW gain** (identical recipe to
+Phase 1 — same repeat count, same fixture, same command):
 
 ```bash
 .venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
-  --level max --repeats 10
-sudo ./xvf_host AEC_AECCONVERGED    # expect 1
+  --level max --repeats 17
 ```
 
 **Measured test trial** (identical command to the baseline trial — the
@@ -976,30 +1007,53 @@ Record the printed result and JSON path.
 amixer -c Array sset 'PCM',1 40     # restore the ORIGINAL -20dB value
 amixer -c Array sget 'PCM',1        # verify: -20.00dB
 sudo ./xvf_host AEC_FAR_EXTGAIN     # verify: -20
-sudo ./xvf_host AUDIO_MGR_SYS_DELAY # sanity check: still 12 (never touched)
-sudo ./xvf_host PP_DTSENSITIVE      # sanity check: still 0 (never touched)
 ```
 
-**No `SAVE_CONFIGURATION` at any point in this entire procedure** — every
-`REBOOT` returns to the chip's own factory defaults, never to a
-persisted custom state, so nothing here can leave a permanent change
-even if a step is skipped or interrupted.
+**Fixed 60-second warm-up back at the original gain** (returns the
+live adaptive filter to its normal operating condition for ongoing use
+— good hygiene, not part of the measurement):
+
+```bash
+.venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
+  --level max --repeats 17
+```
+
+**Verify complete state** (every PHASE 0 reading, re-checked — since no
+`REBOOT` occurred, every one of these is expected to be byte-identical
+to PHASE 0, which is itself part of the proof that only one variable
+ever changed):
+
+```bash
+amixer -c Array sget 'PCM',1
+amixer -c UACDemoV10 sget PCM
+sudo ./xvf_host AEC_FAR_EXTGAIN
+sudo ./xvf_host AUDIO_MGR_SYS_DELAY
+sudo ./xvf_host PP_DTSENSITIVE
+```
+
+**No `SAVE_CONFIGURATION` and no `REBOOT` anywhere in this procedure** —
+the only write command issued at any point is the two `amixer -c Array
+sset 'PCM',1 ...` calls (test change + rollback), both to the ONE
+control under test, nothing else.
 
 ### Evidence to return after running this
 
-1. All PHASE 0 baseline readings.
-2. Confirmation `Array PCM,1` read -20dB immediately after each of the
-   two reboots (or a report if it did not).
-3. The `AEC_FAR_EXTGAIN` reading immediately after the Phase 2 mixer
+1. All PHASE 0 baseline readings, including `PP_DTSENSITIVE` (new this
+   revision, for extra rollback-verification confidence).
+2. The `AEC_FAR_EXTGAIN` reading immediately after the Phase 2 mixer
    change (the abort-gate check) — pass or fail, and what was read if
    it failed.
-4. `AEC_AECCONVERGED` readings at each checkpoint (post-reboot,
-   post-warm-up) for both conditions.
-5. The full printed output + JSON file path for BOTH measured trials
+3. `AEC_RT60`/`AEC_AECPATHCHANGE`/`AEC_AECCONVERGED` readings at PHASE 0
+   and after each warm-up, recorded for the record only (not used to
+   gate any step) — report them plainly, including if
+   `AEC_AECCONVERGED` never changes at all across the whole procedure
+   (expected, given the latch, and not itself a problem).
+4. The full printed output + JSON file path for BOTH measured trials
    (baseline and test) — not just the summary counts.
-6. The PHASE 3 rollback verification readings (`Array PCM,1`,
-   `AEC_FAR_EXTGAIN`, `AUDIO_MGR_SYS_DELAY`, `PP_DTSENSITIVE`).
-7. Any deviation from this exact procedure, however small (a skipped
+5. The PHASE 3 "verify complete state" readings, confirming every
+   PHASE 0 value except `Array PCM,1` (which should be back at its
+   original value too) never moved.
+6. Any deviation from this exact procedure, however small (a skipped
    wait, a different repeat count, anything) — this thread's own
    established convention (R0052-R0056) is to report deviations
    honestly rather than silently normalize them.
@@ -1014,11 +1068,18 @@ even if a step is skipped or interrupted.
   properly-bucketed CONFIRMED/HYPOTHESIS/UNKNOWN ledger, and withdrawing
   the "35-50× the XMOS ideal" timing comparison as not methodologically
   supportable) plus a full R0057 EXPERIMENT DESIGN (NOT EXECUTED)
-  section — the exact, reversible, two-reboot, tracking-verified
-  procedure for the next checkpoint to run. Original findings left
-  intact with inline pointers to the correction, per this report
-  thread's own established erratum convention (never silently
-  rewritten).
+  section for the next checkpoint to run. **Same-day Correction 3
+  (before any hardware command was ever issued)**: removed `REBOOT`
+  from the experiment design entirely — a `REBOOT` resets EVERY
+  writable parameter to firmware default on a device confirmed
+  `BLD_MODIFIED=TRUE`, with no source-backed guarantee "default"
+  matches this thread's own already-recorded baseline for anything
+  other than the one parameter under test; Revision 2 changes `Array
+  PCM,1` live with no reboot, and gates both measured trials with a
+  fixed 60-second warm-up (never the latched `AEC_AECCONVERGED`
+  flag) instead. Original findings left intact with inline pointers to
+  each correction, per this report thread's own established erratum
+  convention (never silently rewritten).
 - `docs/CURRENT_STATE.md`, `docs/ROADMAP.md` — updated with
   RESEARCH/DESIGN status only.
 

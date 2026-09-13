@@ -1309,11 +1309,18 @@ unpaid-quota data is used to improve Google products.
     only by experiment; withdrew the "35-50x the XMOS ideal" timing
     comparison (not the same observation point as R0055's own external
     measurement; no `AUDIO_MGR_SYS_DELAY` value derived from it). Wrote
-    the exact, reversible R0057 procedure into the report (two reboots
-    to avoid `AEC_AECCONVERGED`'s documented latch, an
-    `AEC_FAR_EXTGAIN`-tracking abort gate, per-condition warm-up,
-    mandatory rollback+verification) -- still not executed; no
-    parameter/mixer changed by this correction pass.
+    a reversible R0057 procedure into the report (originally:
+    two reboots to avoid `AEC_AECCONVERGED`'s documented latch). **Same-day
+    Correction 3, before any hardware command was issued**: a
+    pre-execution review rejected the `REBOOT`-based design (`REBOOT`
+    resets EVERY writable parameter to firmware default on a device
+    confirmed `BLD_MODIFIED=TRUE`, with no guarantee "default" matches
+    this thread's own already-recorded baseline for anything but the
+    one parameter under test). **Revision 2**: no reboot -- `Array
+    PCM,1` changed live, both measured trials gated by an identical
+    fixed 60-second local-fixture warm-up instead of the latched
+    `AEC_AECCONVERGED` flag. Still not executed; no parameter/mixer
+    changed by either correction pass.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the
