@@ -1337,11 +1337,34 @@ unpaid-quota data is used to improve Google products.
     until they PROVE at least the requested duration; measured-trial
     behavior is completely unchanged. +4 tests (`TestRunWarmup`);
     **1065 tests, OK (skipped=7)**; `ruff`/`pip check`/`git diff
-    --check` all clean. R0057 now uses one probe invocation per
-    condition (`--warmup-seconds 60 --level max --repeats 3
-    --capture-pcm --max-lag-ms 500`) whose own output proves delivered
-    warm-up duration. Still not executed; no parameter/mixer changed by
-    any correction pass.
+    --check` all clean. **Same-day Correction 5, before any hardware
+    command was issued**: source-audited and CONFIRMED Correction 4's
+    own claim ("`AecReferenceFeeder` never reacts to `InterruptionFrame`")
+    was WRONG -- it inherits that reaction from the base `FrameProcessor`
+    class (confirmed by reading installed Pipecat source), so a real
+    confirmed self-barge-in could still occur during Correction 4's own
+    warm-up (`BargeInController` stayed fully armed) and discard
+    already-queued reference PCM before it reached `AecReferenceFeeder`
+    -- "queued" was never proof of "accepted." Fixed in the diagnostic
+    probe only (`git diff --stat -- src/nexa` confirmed empty):
+    `arm_bargein=False` (proven from `BargeInController
+    ._handle_speech_started`'s own `response_in_flight` guard) makes
+    confirmation structurally unreachable during warmup; `_run_warmup`
+    verifies three ways from real production telemetry --
+    `bargein.telemetry.interrupt_confirmed` stays zero, a new
+    `Recorder.ref_accepted_bytes` counter (tapped at the existing
+    `_PlaybackWatcher` position, unchanged, after `aec_feeder`) proves
+    real acceptance, and new playback start/stop counters prove every
+    repeat completed cleanly. +2 net probe tests + 1 new test on the
+    REAL `BargeInController` (`tests/test_bargein_m2_5b.py`, pure
+    coverage, zero `nexa/voice/bargein.py` lines changed). **1068 tests,
+    OK (skipped=7)**; `ruff`/`pip check`/`git diff --check` all clean.
+    R0057 now uses one probe invocation per condition (`--warmup-seconds
+    60 --level max --repeats 3 --capture-pcm --max-lag-ms 500`) whose
+    own output proves ACCEPTED (not merely queued) warm-up duration,
+    zero interruptions during warmup, and clean playback completion.
+    Still not executed; no parameter/mixer changed by any correction
+    pass.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

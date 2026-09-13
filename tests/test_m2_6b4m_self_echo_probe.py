@@ -417,9 +417,17 @@ class TestPlayAssistantPhraseStopsOnConfirmedInterrupt(unittest.IsolatedAsyncioT
         def mark_interrupted(self) -> None:
             self.interrupted = True
 
+    class _FakeTelemetry:
+        """Mirrors the one field ``_run_warmup`` actually reads from the
+        REAL ``nexa.voice.bargein.BargeInTelemetry``."""
+
+        def __init__(self) -> None:
+            self.interrupt_confirmed = 0
+
     class _FakeBargein:
         def __init__(self) -> None:
             self.dispatched = False
+            self.telemetry = TestPlayAssistantPhraseStopsOnConfirmedInterrupt._FakeTelemetry()
 
         def notify_response_dispatched(self) -> None:
             self.dispatched = True
@@ -511,30 +519,96 @@ class TestPlayAssistantPhraseStopsOnConfirmedInterrupt(unittest.IsolatedAsyncioT
 
 
 class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
-    """R0057 CONFIRMED BUG FIX: a naive AEC warm-up built on
-    ``--repeats N`` silently assumes each repeat delivers the FULL
-    fixture (~3.5s). Source-audited (this checkpoint) and confirmed:
-    that assumption is exactly what R0055's own confirmed-interruption
-    truncation in ``_play_assistant_phrase`` can invalidate -- at MAX
-    volume a real confirmed self-barge-in fires ~1.1-1.5s into playback
-    (R0055's own measured figures), cutting a repeat short. Worse, the
-    false-confirm RATE is precisely what an R0057-style gain experiment
-    changes between its baseline and test conditions, so a
-    ``--repeats N`` warm-up would silently deliver a DIFFERENT amount
-    of real reference PCM to each condition -- contaminating the
-    one-variable comparison. ``_run_warmup`` fixes this by looping
-    ``_play_assistant_phrase`` with ``confirmed_event=None`` (never
-    truncates, structurally) and counting the ACTUAL bytes each call
-    returns, rather than assuming ``len(pcm)`` was reached. These tests
-    are pure/offline, reusing the same fake ``P``/``worker``/
-    ``lifecycle``/``bargein`` doubles this file's own
+    """R0057 CORRECTION 4 (confirmed bug, fixed): a naive AEC warm-up
+    built on ``--repeats N`` silently assumes each repeat delivers the
+    FULL fixture (~3.5s). Source-audited and confirmed: that assumption
+    is exactly what R0055's own confirmed-interruption truncation in
+    ``_play_assistant_phrase`` can invalidate -- at MAX volume a real
+    confirmed self-barge-in fires ~1.1-1.5s into playback (R0055's own
+    measured figures), cutting a repeat short, and the false-confirm
+    RATE is precisely what an R0057-style gain experiment changes
+    between conditions. Fixed by looping ``_play_assistant_phrase`` with
+    ``confirmed_event=None`` and counting the ACTUAL bytes each call
+    returns.
+
+    R0057 CORRECTION 5 (a second, deeper confirmed bug, fixed here):
+    ``confirmed_event=None`` alone does NOT stop the REAL
+    ``BargeInController`` from still confirming and broadcasting a
+    genuine interruption during warm-up (it stays armed via
+    ``notify_response_dispatched()``), and installed Pipecat source
+    confirms every ``FrameProcessor`` -- ``AecReferenceFeeder`` included
+    -- discards its own not-yet-processed frames when that happens, so a
+    byte already counted as "queued" (``worker.queue_frames()``
+    returning) could still be lost before ever reaching
+    ``AecReferenceFeeder``. Fixed with ``arm_bargein=False``
+    (structurally, proven from ``BargeInController._handle_speech_started``'s
+    own ``response_in_flight`` guard), verified three ways:
+    ``bargein.telemetry.interrupt_confirmed`` stays unchanged,
+    ``recorder.ref_accepted_bytes`` (tapped AFTER ``aec_feeder``, its
+    real position, unchanged) proves real acceptance not mere
+    submission, and ``recorder.playback_start_count``/
+    ``playback_stop_count`` prove every repeat reached a clean,
+    uninterrupted completion.
+
+    These tests are pure/offline, reusing the fake ``P``/``lifecycle``/
+    ``bargein`` doubles this file's own
     ``TestPlayAssistantPhraseStopsOnConfirmedInterrupt`` already
-    established."""
+    established, plus a REAL ``probe.Recorder()`` (a plain dataclass,
+    "no Pipecat dependency, testable in isolation" per its own
+    docstring) and a fake worker that simulates the downstream
+    pipeline stages a real ``_PlaybackWatcher`` would observe (the
+    exact tap position this checkpoint added ``ref_accepted``/
+    playback-count telemetry to) -- never re-testing Pipecat itself,
+    only this probe's own orchestration and assertion logic."""
 
     _FakeFrame = TestPlayAssistantPhraseStopsOnConfirmedInterrupt._FakeFrame
     _FakeWorker = TestPlayAssistantPhraseStopsOnConfirmedInterrupt._FakeWorker
     _FakeLifecycle = TestPlayAssistantPhraseStopsOnConfirmedInterrupt._FakeLifecycle
     _FakeBargein = TestPlayAssistantPhraseStopsOnConfirmedInterrupt._FakeBargein
+
+    class _FakeWorkerSimulatingDownstreamPipeline:
+        """Simulates everything between ``worker.queue_frames()``
+        returning and the real ``_PlaybackWatcher`` tap (positioned,
+        unchanged, immediately after ``aec_feeder``): each
+        ``TTSAudioRawFrame`` is immediately marked ``ref_accepted`` on
+        the given recorder (as the real post-aec_feeder tap would,
+        absent any interruption -- this fake represents the WORKING,
+        uncontaminated case unless ``drop_after_n_chunks`` says
+        otherwise) and a ``TTSStoppedFrame``/first-chunk-of-a-new-phrase
+        drives ``mark_playback_start``/``mark_playback_end`` the same
+        way a real ``BotStartedSpeakingFrame``/``BotStoppedSpeakingFrame``
+        pair would."""
+
+        def __init__(
+            self, recorder: probe.Recorder, *, drop_after_n_chunks: int | None = None
+        ) -> None:
+            self.queued: list[Any] = []
+            self._recorder = recorder
+            self._playback_open = False
+            self._chunks_seen = 0
+            self._drop_after_n_chunks = drop_after_n_chunks
+
+        async def queue_frames(self, frames) -> None:
+            for frame in frames:
+                self.queued.append(frame)
+                if "audio" in frame.kwargs:
+                    self._chunks_seen += 1
+                    if not self._playback_open:
+                        self._recorder.mark_playback_start()
+                        self._playback_open = True
+                    if (
+                        self._drop_after_n_chunks is None
+                        or self._chunks_seen <= self._drop_after_n_chunks
+                    ):
+                        self._recorder.mark_ref_accepted(frame.kwargs["audio"])
+                    # else: simulates a chunk lost to an interruption
+                    # broadcast between submission and acceptance --
+                    # queued (worker.queue_frames saw it) but never
+                    # reached the post-aec_feeder tap.
+                else:
+                    if self._playback_open:
+                        self._recorder.mark_playback_end()
+                        self._playback_open = False
 
     @staticmethod
     def _P() -> dict:
@@ -548,12 +622,15 @@ class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
         return None
 
     async def test_warmup_delivers_at_least_the_requested_seconds(self) -> None:
-        """Direct proof of the >= guarantee: a fixture much shorter than
-        the requested warm-up must be looped enough times that the
-        RETURNED byte count, converted back to seconds, is >= requested
-        -- not merely close, not assumed from a repeat count."""
+        """Direct proof of the >= guarantee, at the AUTHORITATIVE
+        post-aec_feeder acceptance point (not mere queue submission): a
+        fixture much shorter than the requested warm-up must be looped
+        enough times that ``ref_accepted_bytes``, converted back to
+        seconds, is >= requested -- not merely close, not assumed from
+        a repeat count."""
         P = self._P()
-        worker = self._FakeWorker()
+        recorder = probe.Recorder()
+        worker = self._FakeWorkerSimulatingDownstreamPipeline(recorder)
         lifecycle = self._FakeLifecycle()
         bargein = self._FakeBargein()
         sample_rate = 16000
@@ -563,35 +640,39 @@ class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
         requested_seconds = 2.0
 
         with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
-            delivered_bytes = await probe._run_warmup(
-                P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+            result = await probe._run_warmup(
+                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
                 sample_rate=sample_rate, warmup_seconds=requested_seconds,
             )
 
-        delivered_seconds = delivered_bytes / 2 / sample_rate
-        self.assertGreaterEqual(delivered_seconds, requested_seconds)
+        accepted_seconds = result["ref_accepted_bytes"] / 2 / sample_rate
+        self.assertGreaterEqual(accepted_seconds, requested_seconds)
         # proves the count is REAL, not a repeat-count assumption: the
         # fixture is shorter than one second, so reaching >=2.0s required
         # multiple whole-fixture repeats, each one fully accounted for.
-        self.assertGreater(delivered_bytes, len(pcm))
+        self.assertGreater(result["ref_accepted_bytes"], len(pcm))
+        self.assertGreater(result["repeats_run"], 1)
+        self.assertEqual(result["interrupt_confirmed_delta"], 0)
+        self.assertEqual(result["playback_start_count"], result["repeats_run"])
+        self.assertEqual(result["playback_stop_count"], result["repeats_run"])
 
     async def test_false_confirmed_barge_in_during_warmup_does_not_truncate(self) -> None:
         """The exact scenario this checkpoint's own bug report describes:
         a real confirmed self-barge-in occurring PARTWAY through warm-up
-        must not reduce the total delivered PCM below the requested
-        amount. Simulated by a bargein double whose own confirm hook
-        sets a "the real world just confirmed a barge-in" event that
-        ``_run_warmup`` structurally never wires into
-        ``_play_assistant_phrase`` (it always passes
-        ``confirmed_event=None``) -- so this event firing must have
-        zero effect on the delivered byte count."""
+        must not reduce the total accepted PCM below the requested
+        amount. Simulated by a bargein double whose own dispatch hook
+        sets a "the real world just confirmed a barge-in" event -- since
+        ``arm_bargein=False`` means ``_run_warmup`` never even calls
+        ``notify_response_dispatched`` (the real armer), this double's
+        own hook firing would prove a REGRESSION if it were reached; the
+        assertions below confirm it is not."""
         P = self._P()
-        worker = self._FakeWorker()
+        recorder = probe.Recorder()
         lifecycle = self._FakeLifecycle()
 
         real_world_confirmed_event = asyncio.Event()
 
-        class _BargeinThatConfirmsPartway(self._FakeBargein):
+        class _BargeinThatWouldConfirmIfArmed(self._FakeBargein):
             def __init__(self) -> None:
                 super().__init__()
                 self.dispatch_count = 0
@@ -599,54 +680,60 @@ class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
             def notify_response_dispatched(self) -> None:
                 super().notify_response_dispatched()
                 self.dispatch_count += 1
-                if self.dispatch_count == 2:
-                    # Simulate: partway through warm-up, a real confirmed
-                    # self-barge-in happens in the outside world (e.g. a
-                    # real BargeInController._do_confirm firing). This
-                    # must NOT reach _play_assistant_phrase's own
-                    # confirmed_event -- _run_warmup never wires it.
-                    real_world_confirmed_event.set()
+                real_world_confirmed_event.set()
 
-        bargein = _BargeinThatConfirmsPartway()
+        bargein = _BargeinThatWouldConfirmIfArmed()
+        worker = self._FakeWorkerSimulatingDownstreamPipeline(recorder)
         sample_rate = 16000
         chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
         pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
         requested_seconds = 3.0
 
         with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
-            delivered_bytes = await probe._run_warmup(
-                P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+            result = await probe._run_warmup(
+                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
                 sample_rate=sample_rate, warmup_seconds=requested_seconds,
             )
 
-        self.assertTrue(real_world_confirmed_event.is_set())  # the scenario really happened
-        delivered_seconds = delivered_bytes / 2 / sample_rate
-        self.assertGreaterEqual(delivered_seconds, requested_seconds)
+        # notify_response_dispatched() must NEVER be called from warmup
+        # (arm_bargein=False) -- proving the armer itself is unreached,
+        # not merely that a downstream confirm didn't happen to fire.
+        self.assertFalse(real_world_confirmed_event.is_set())
+        self.assertEqual(bargein.dispatch_count, 0)
+        accepted_seconds = result["ref_accepted_bytes"] / 2 / sample_rate
+        self.assertGreaterEqual(accepted_seconds, requested_seconds)
+        self.assertEqual(result["interrupt_confirmed_delta"], 0)
         # lifecycle.mark_interrupted() must never be reached from warmup
         # -- confirmed_event is structurally None, so no early return.
         self.assertFalse(lifecycle.interrupted)
-        self.assertTrue(bargein.dispatch_count >= 2)
 
-    async def test_run_warmup_always_passes_confirmed_event_none(self) -> None:
+    async def test_run_warmup_always_passes_confirmed_event_none_and_arm_bargein_false(
+        self,
+    ) -> None:
         """Structural guarantee, not a fallible flag: ``_run_warmup``
         must call ``_play_assistant_phrase`` with ``confirmed_event=None``
-        on every single call, so a measured trial's own truncation
-        behavior (R0055's fix, preserved unchanged) can never accidentally
-        be disabled for a REAL trial, nor accidentally enabled for
-        warmup."""
+        AND ``arm_bargein=False`` on every single call, so a measured
+        trial's own truncation/admission behavior (R0055's fix,
+        R0057 Correction 5's own fix, both preserved unchanged) can
+        never accidentally be disabled for a REAL trial, nor
+        accidentally enabled for warmup."""
         P = self._P()
-        worker = self._FakeWorker()
+        recorder = probe.Recorder()
+        worker = self._FakeWorkerSimulatingDownstreamPipeline(recorder)
         lifecycle = self._FakeLifecycle()
         bargein = self._FakeBargein()
         sample_rate = 16000
         chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
         pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
 
-        seen_confirmed_events: list[Any] = []
+        seen_kwargs: list[dict] = []
         real_play = probe._play_assistant_phrase
 
         async def _spy(*args, **kwargs):
-            seen_confirmed_events.append(kwargs.get("confirmed_event", "MISSING"))
+            seen_kwargs.append(
+                {"confirmed_event": kwargs.get("confirmed_event", "MISSING"),
+                 "arm_bargein": kwargs.get("arm_bargein", "MISSING")}
+            )
             return await real_play(*args, **kwargs)
 
         with (
@@ -654,12 +741,78 @@ class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(probe, "_play_assistant_phrase", new=_spy),
         ):
             await probe._run_warmup(
-                P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
                 sample_rate=sample_rate, warmup_seconds=1.5,
             )
 
-        self.assertGreater(len(seen_confirmed_events), 0)
-        self.assertTrue(all(ev is None for ev in seen_confirmed_events))
+        self.assertGreater(len(seen_kwargs), 0)
+        self.assertTrue(all(k["confirmed_event"] is None for k in seen_kwargs))
+        self.assertTrue(all(k["arm_bargein"] is False for k in seen_kwargs))
+
+    async def test_every_warmup_repeat_reaches_normal_playback_completion(self) -> None:
+        """STEP 3/4 requirement: every warm-up fixture repeat must reach
+        a clean start-then-stop completion, proven by
+        ``playback_start_count``/``playback_stop_count`` exactly
+        matching ``repeats_run`` -- a hidden mid-fixture restart
+        (R0055's own "Bot started speaking again" symptom) would show up
+        as MORE starts than repeats."""
+        P = self._P()
+        recorder = probe.Recorder()
+        worker = self._FakeWorkerSimulatingDownstreamPipeline(recorder)
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
+
+        with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
+            result = await probe._run_warmup(
+                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                sample_rate=sample_rate, warmup_seconds=4.0,
+            )
+
+        self.assertGreater(result["repeats_run"], 1)
+        self.assertEqual(result["playback_start_count"], result["repeats_run"])
+        self.assertEqual(result["playback_stop_count"], result["repeats_run"])
+
+    async def test_artificially_dropped_reference_pcm_makes_the_proof_fail(self) -> None:
+        """STEP 4 test #6: if an interruption (or anything else) causes
+        submitted PCM to never reach the post-aec_feeder acceptance tap,
+        ``_run_warmup``'s own returned evidence must reflect the
+        shortfall -- never silently report success on queue submission
+        alone. Uses the fake worker's own ``drop_after_n_chunks`` to
+        simulate exactly the contamination this checkpoint's bug report
+        describes (a chunk counted as "queued" that never actually
+        arrived), and a short poll timeout so the test stays fast."""
+        P = self._P()
+        recorder = probe.Recorder()
+        # drop every chunk after the first 2 -- simulates an interruption
+        # wiping out everything accepted after some point mid-warmup.
+        worker = self._FakeWorkerSimulatingDownstreamPipeline(
+            recorder, drop_after_n_chunks=2
+        )
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
+        requested_seconds = 3.0
+
+        with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
+            result = await probe._run_warmup(
+                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                sample_rate=sample_rate, warmup_seconds=requested_seconds,
+                poll_timeout_s=0.05,
+            )
+
+        accepted_seconds = result["ref_accepted_bytes"] / 2 / sample_rate
+        queued_seconds = result["delivered_bytes"] / 2 / sample_rate
+        # queue submission alone reached the target ...
+        self.assertGreaterEqual(queued_seconds, requested_seconds)
+        # ... but the AUTHORITATIVE acceptance count did NOT -- this is
+        # exactly what must make the caller's own assertion in `_run()`
+        # fail rather than falsely report >= requested_seconds.
+        self.assertLess(accepted_seconds, requested_seconds)
 
     async def test_measured_trial_path_still_truncates_on_confirmed_interruption(self) -> None:
         """Preserves R0055's own diagnostic fix: this is the SAME

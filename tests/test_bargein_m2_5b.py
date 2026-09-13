@@ -624,6 +624,35 @@ class TestBargeInController(_FpHarness):
         self.assertEqual(confirmed, [])
         self.assertEqual(broadcasts, [])
 
+    async def test_no_response_dispatched_means_real_vad_never_confirms_or_broadcasts(
+        self,
+    ) -> None:
+        """R0057 (M2.6B.4N follow-up) -- proves, against this REAL,
+        unmodified production class (not a probe reimplementation), the
+        exact invariant a probe-only AEC warm-up facility relies on:
+        without ``notify_response_dispatched()`` ever being called,
+        ``_handle_speech_started``'s own first line
+        (``if not self._sm.response_in_flight: return``) makes
+        ``_do_confirm``/``broadcast_interruption`` structurally
+        unreachable, even when real, sustained VAD start/hold-expiry
+        activity arrives -- exactly the scenario a warm-up utility that
+        skips arming ``BargeInController`` depends on to guarantee no
+        genuine interruption can occur mid-warmup. This is a pure
+        coverage addition (no `nexa.voice.bargein` source line changed)
+        for behavior that was already true but untested."""
+        c, aec, confirmed, candidates, rejects, broadcasts, _ = self._controller()
+        await self._f(c, StartFrame())
+        # Deliberately never call c.notify_response_dispatched() here.
+        await self._f(c, VADUserStartedSpeakingFrame())
+        self.clock["t"] += 1.0  # well past confirm_hold_secs
+        await self._f(c, LLMTextFrame("tick"))  # any frame drives poll()
+        await self._f(c, VADUserStoppedSpeakingFrame())
+        self.assertEqual(c.telemetry.candidate_started, 0)
+        self.assertEqual(c.telemetry.interrupt_confirmed, 0)
+        self.assertEqual(candidates, [])
+        self.assertEqual(confirmed, [])
+        self.assertEqual(broadcasts, [])
+
     async def test_case4_sustained_vad_confirms_and_broadcasts_once(self) -> None:
         c, aec, confirmed, candidates, rejects, broadcasts, _ = self._controller()
         await self._f(c, StartFrame())

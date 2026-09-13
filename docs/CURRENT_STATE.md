@@ -265,11 +265,39 @@ Runtime / test evidence outranks anything else in this repo.
   unchanged (still truncates on a real confirmed interruption, exactly
   as R0055 fixed it). +4 new tests (`TestRunWarmup`); **1065 tests, OK
   (skipped=7)** (1061 + 4); `ruff`/`pip check`/`git diff --check` all
+  clean. **Same-day Correction 5, before any hardware command was
+  issued**: source-audited and CONFIRMED that Correction 4's own claim
+  ("`AecReferenceFeeder` never reacts to `InterruptionFrame`") was
+  WRONG — it inherits that reaction from the base `FrameProcessor`
+  class (confirmed by reading installed Pipecat source), so a real
+  confirmed self-barge-in could still occur during Correction 4's own
+  warm-up (`BargeInController` stayed fully armed) and discard
+  already-queued reference PCM before it ever reached
+  `AecReferenceFeeder` — "queued" (via `worker.queue_frames()`
+  returning) was never proof of "accepted." **Fixed in the diagnostic
+  probe only** (confirmed empty `git diff --stat -- src/nexa`):
+  `_play_assistant_phrase` gained `arm_bargein=False` (skips
+  `notify_response_dispatched()`, proven from `BargeInController
+  ._handle_speech_started`'s own `response_in_flight` guard to make
+  confirmation structurally unreachable); `_run_warmup` now verifies
+  three ways from real production telemetry — `bargein.telemetry
+  .interrupt_confirmed` stays zero, a new `Recorder.ref_accepted_bytes`
+  counter (tapped at the existing `_PlaybackWatcher` position,
+  unchanged, immediately after `aec_feeder`) proves real acceptance
+  past its own per-processor queue, and new `playback_start_count`/
+  `playback_stop_count` counters prove every repeat completed cleanly
+  with no hidden restart. +2 net probe tests (`TestRunWarmup` now 6) + 1
+  new test on the REAL, unmodified `BargeInController`
+  (`tests/test_bargein_m2_5b.py`, proving sustained VAD activity without
+  `notify_response_dispatched()` produces zero candidates/confirms —
+  pure coverage, zero `nexa/voice/bargein.py` lines changed). **1068
+  tests, OK (skipped=7)**; `ruff`/`pip check`/`git diff --check` all
   clean. The R0057 procedure now uses ONE probe invocation per condition
   (`--warmup-seconds 60 --level max --repeats 3 --capture-pcm
-  --max-lag-ms 500`) whose own printed/JSON output proves the delivered
-  warm-up duration. Still not executed; no XVF3800 parameter or ALSA
-  mixer changed by any correction pass.)
+  --max-lag-ms 500`) whose own printed/JSON output proves ACCEPTED (not
+  merely queued) warm-up duration, zero interruptions during warmup, and
+  clean playback completion. Still not executed; no XVF3800 parameter
+  or ALSA mixer changed by any correction pass.)
 - **Prior report:** `docs/reports/R0055_pcm_correlation_analysis_of_residual_self_echo_20260913.md`
   (**M2.6B.4N follow-up — PCM correlation analysis of residual self-echo,
   2026-09-13.** The R0054-requested capture came back: MAX volume, 3

@@ -962,14 +962,100 @@ tests pass (41 + 4 new); full suite 1065 tests, OK (skipped=7);
 `ruff`/`pip check` clean; `git diff --stat -- src/nexa` confirmed empty
 — no production code touched.**
 
+### Correction 5 (pre-execution review, before Phase 1 was ever run) — Correction 4's own "AecReferenceFeeder never reacts to InterruptionFrame" claim was WRONG; queue submission ≠ acceptance
+
+Correction 4 fixed the injection-loop truncation, but its own reasoning
+contained a second, deeper error, found by a further pre-execution
+review and **confirmed this pass by reading the installed
+`pipecat.processors.frame_processor` source directly, not by
+re-asserting the earlier claim**: `confirmed_event=None` only stops
+`_play_assistant_phrase`'s OWN loop from giving up early — it does
+nothing about the REAL `BargeInController`, which stayed fully armed
+throughout Correction 4's own design (`bargein.notify_response_dispatched()`
+was still called every repeat), so a genuine confirmed self-barge-in
+could still occur during warm-up and call the REAL
+`await self.broadcast_interruption()`.
+
+**What that broadcast actually does, confirmed from source (not
+inferred):** every `FrameProcessor.process_frame` handles
+`InterruptionFrame` by calling `_start_interruption()` →
+`__reset_process_queue()`, discarding any frame still sitting in that
+processor's OWN internal queue, not yet dequeued for processing.
+`AecReferenceFeeder`'s own overridden `process_frame` calls
+`await super().process_frame(frame, direction)` FIRST (confirmed by
+reading `src/nexa/voice_tts/aec_reference.py` directly) — so it
+inherits this exact base-class behavior. **Correction 4's own claim
+that "`AecReferenceFeeder` itself never reacts to `InterruptionFrame`
+at all" is retracted as wrong** — it never reacts via its OWN
+overridden application logic, but it DOES react via the inherited base
+class, which is what actually matters here. Separately,
+`PipelineWorker.queue_frame`'s own source (`await
+self._push_queue.put(frame)`, returning immediately) confirms
+`worker.queue_frames()` returning proves ONLY that a frame reached the
+worker's own push queue — nothing about whether it has yet reached, let
+alone been accepted by, `AecReferenceFeeder`. **Together: a byte already
+counted by Correction 4's own "queued" counter could still be discarded,
+mid-flight, by a genuine confirmed interruption during warm-up** — the
+exact gap this correction closes.
+
+**Fix — probe-only, no production code touched (confirmed:
+`git diff --stat -- src/nexa` empty)**: `_play_assistant_phrase` gains
+`arm_bargein: bool = True` (default preserves EXACT prior behavior for
+every existing call site); `arm_bargein=False` skips
+`bargein.notify_response_dispatched()` entirely, which — proven
+directly from `nexa.voice.bargein.BargeInController
+._handle_speech_started`'s own first line,
+`if not self._sm.response_in_flight: return` — makes
+`_do_confirm`/`broadcast_interruption` structurally unreachable for as
+long as it stays unset, regardless of any real VAD activity during
+warm-up. `_run_warmup` now calls `_play_assistant_phrase` with BOTH
+`confirmed_event=None` AND `arm_bargein=False`, and verifies the fix
+three ways, all from REAL production telemetry/positions, none
+invented: (1) `bargein.telemetry.interrupt_confirmed` (the REAL
+counter) is read before/after — any nonzero delta means a confirmation
+slipped through and the whole warm-up result is untrustworthy; (2)
+`_PlaybackWatcher` (already positioned, unchanged, immediately AFTER
+`aec_feeder`) now also taps `TTSAudioRawFrame` bytes into a new
+`Recorder.ref_accepted_bytes` counter — proof of ACCEPTANCE past
+`aec_feeder`'s own per-processor queue, not mere submission to the
+worker's push queue; (3) `Recorder.playback_start_count`/
+`playback_stop_count` (new, counting rather than overwriting, unlike
+the existing `playback_start_t`/`playback_end_t` fields) must equal the
+number of whole-fixture repeats actually run, proving every repeat
+reached a clean start-then-stop completion with no hidden mid-fixture
+restart. `_run_warmup` now returns a structured result dict (not a bare
+byte count) so `_run()` can assert on all three, print rich diagnostics,
+and record them in the JSON payload's new `warmup_result` field. **+2
+net new probe tests (`TestRunWarmup` grew from 4 to 6: two rewritten to
+assert against the acceptance-point/telemetry evidence instead of the
+queue-submission count, plus two genuinely new —
+`test_every_warmup_repeat_reaches_normal_playback_completion` and
+`test_artificially_dropped_reference_pcm_makes_the_proof_fail`, the
+latter proving the detection mechanism itself: fed a fake worker that
+simulates dropped acceptance, `_run_warmup`'s own returned evidence
+correctly shows a shortfall rather than silently reporting success) +
+1 new production-class test** (`tests/test_bargein_m2_5b.py`,
+`TestBargeInController.test_no_response_dispatched_means_real_vad_never_confirms_or_broadcasts`
+— proves, against the REAL unmodified `BargeInController`, that
+sustained real VAD activity without `notify_response_dispatched()`
+ever being called produces zero candidates/confirms/broadcasts; pure
+coverage of already-true, previously-untested behavior, zero
+`nexa/voice/bargein.py` lines changed). **47/47 probe tests pass (45 +
+2 net); 44/44 bargein tests pass (43 + 1 new); full suite 1068 tests,
+OK (skipped=7); `ruff`/`pip check`/`git diff --check` all clean;
+`git diff --stat -- src/nexa` confirmed empty.**
+
 **Revision 3 of the procedure below** replaces the separate
 "`--repeats 17` warm-up, then measured trial" two-command sequence with
 a SINGLE probe invocation per condition:
 `--warmup-seconds 60 --level max --repeats 3 --capture-pcm --max-lag-ms
-500` — the warm-up runs first (proven ≥60s), inside the SAME process,
-against the SAME already-built pipeline, immediately before the
-measured trials, with no gap for the adaptive filter's state to drift
-between warm-up and measurement.
+500` — the warm-up runs first (proven ≥60s of ACCEPTED, not merely
+queued, reference PCM), inside the SAME process, against the SAME
+already-built pipeline, immediately before the measured trials, with no
+gap for the adaptive filter's state to drift between warm-up and
+measurement, and with `BargeInController` provably disarmed
+(`arm_bargein=False`) for the whole warm-up so a real confirmed
+interruption during it is structurally impossible, not merely ignored.
 
 ### PHASE 0 — Record current state (read-only, unchanged from Revision 1)
 
@@ -1006,15 +1092,22 @@ trial flags in the SAME invocation):
   --warmup-seconds 60 --level max --repeats 3 --capture-pcm --max-lag-ms 500
 ```
 
-The probe prints `warmup delivered <X>s of reference PCM (requested >=
-60.0s)` before the trials begin — record this line; `<X>` must be
-`>= 60.0` (the probe itself asserts this internally and would abort
-with an `AssertionError` if it were ever violated, which the new
-`TestRunWarmup` tests prove cannot happen by construction). Then record
-the printed result and JSON path for the 3 measured trials that follow
-in the same run. Expected (not guaranteed) to reproduce R0055's own 3/3
-false confirms, which also serves as an independent re-validation of
-R0055 itself under this checkpoint's own now-proven warm-up discipline.
+The probe prints one line before the trials begin:
+`warmup: repeats_run=<N> queued_s=<Q> accepted_s=<A> (requested >=
+60.0s) playback_start_count=<S> playback_stop_count=<E>
+interrupt_confirmed_delta=<D>` — record it in full. `accepted_s` (not
+`queued_s`) must be `>= 60.0`; `interrupt_confirmed_delta` must be `0`;
+`playback_start_count`/`playback_stop_count` must both equal
+`repeats_run`. The probe itself asserts all three internally and would
+abort with an `AssertionError` if any were ever violated (the
+`TestRunWarmup` tests prove this detection mechanism actually works,
+not just that it looks like it should). Then record the printed result
+and JSON path for the 3 measured trials that follow in the same run —
+each trial's own JSON now also carries a `warmup_result` object with
+every one of these fields. Expected (not guaranteed) to reproduce
+R0055's own 3/3 false confirms, which also serves as an independent
+re-validation of R0055 itself under this checkpoint's own now-proven
+warm-up discipline.
 
 ### PHASE 2 — TEST measured trial (Array PCM,1 changed to ≈0dB / unity)
 
@@ -1058,8 +1151,9 @@ mixer level already set above, not the command line):
   --warmup-seconds 60 --level max --repeats 3 --capture-pcm --max-lag-ms 500
 ```
 
-Record the printed `warmup delivered <X>s` line (again `>= 60.0`) and
-the measured-trial printed result + JSON path.
+Record the printed `warmup: repeats_run=... accepted_s=...` line again
+(same required conditions as Phase 1) and the measured-trial printed
+result + JSON path.
 
 ### PHASE 3 — Rollback (mandatory, regardless of result)
 
@@ -1107,11 +1201,14 @@ control under test, nothing else.
 2. The `AEC_FAR_EXTGAIN` reading immediately after the Phase 2 mixer
    change (the abort-gate check) — pass or fail, and what was read if
    it failed.
-3. The printed `warmup delivered <X>s of reference PCM (requested >=
-   60.0s)` line from EACH of the three probe invocations (Phase 1,
-   Phase 2, Phase 3 rollback) — `<X>` must be `>= 60.0` every time (the
-   probe itself asserts this; report the exact value printed, not just
-   pass/fail).
+3. The full printed `warmup: repeats_run=... queued_s=... accepted_s=...
+   (requested >= 60.0s) playback_start_count=... playback_stop_count=...
+   interrupt_confirmed_delta=...` line from EACH of the three probe
+   invocations (Phase 1, Phase 2, Phase 3 rollback) — `accepted_s` must
+   be `>= 60.0`, `interrupt_confirmed_delta` must be `0`, and
+   `playback_start_count`/`playback_stop_count` must both equal
+   `repeats_run`, every time (the probe itself asserts all three;
+   report the exact values printed, not just pass/fail).
 4. `AEC_RT60`/`AEC_AECPATHCHANGE`/`AEC_AECCONVERGED` readings at PHASE 0
    and wherever else the probe prints them, recorded for the record only
    (not used to gate any step) — report them plainly, including if
@@ -1119,7 +1216,9 @@ control under test, nothing else.
    (expected, given the latch, and not itself a problem).
 5. The full printed output + JSON file path for BOTH measured trials
    (baseline and test) — not just the summary counts, and including
-   each JSON's own new `warmup_requested_s`/`warmup_delivered_s` fields.
+   each JSON's own new `warmup_result` object in full (it now carries
+   `delivered_bytes`, `ref_accepted_bytes`, `playback_start_count`,
+   `playback_stop_count`, `repeats_run`, `interrupt_confirmed_delta`).
 6. The PHASE 3 "verify complete state" readings, confirming every
    PHASE 0 value except `Array PCM,1` (which should be back at its
    original value too) never moved.
@@ -1167,26 +1266,65 @@ control under test, nothing else.
   assumes) the delivered warm-up duration. Original findings left
   intact with inline pointers to each correction, per this report
   thread's own established erratum convention (never silently
-  rewritten).
+  rewritten). **Same-day Correction 5 (before any hardware command was
+  ever issued)**: source-audited and CONFIRMED Correction 4's own claim
+  that "`AecReferenceFeeder` never reacts to `InterruptionFrame`" was
+  WRONG (it inherits that reaction from the base `FrameProcessor`
+  class, confirmed by reading installed Pipecat source) — a real
+  confirmed self-barge-in could still occur during Correction 4's own
+  warm-up (`BargeInController` stayed armed) and discard already-queued
+  reference PCM before it ever reached `AecReferenceFeeder`. Fixed with
+  `arm_bargein=False` (skips `notify_response_dispatched()`, proven
+  from `BargeInController._handle_speech_started`'s own
+  `response_in_flight` guard to make confirmation structurally
+  unreachable) plus three real-evidence checks: `bargein.telemetry
+  .interrupt_confirmed` stays zero, a new `Recorder.ref_accepted_bytes`
+  counter (tapped at the existing `_PlaybackWatcher` position,
+  immediately after `aec_feeder`) proves real acceptance, and new
+  `playback_start_count`/`playback_stop_count` counters prove every
+  repeat completed cleanly. +2 net probe tests, +1 new production-class
+  test proving the underlying `BargeInController` invariant. Original
+  findings left intact with inline pointers to each correction.
 - `docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py`
   — new `--warmup-seconds` mode: `_play_assistant_phrase` now returns
-  the PCM bytes it actually queued (accurate whether truncated or not);
-  new `_run_warmup()` loops it with `confirmed_event=None` (structural,
-  never truncates) and counts real delivered bytes until they prove at
-  least the requested duration; wired into `_run()` as an optional
-  pre-step that composes with the existing `--level`/`--repeats`/
-  `--capture-pcm` flags in the same invocation; new
-  `warmup_requested_s`/`warmup_delivered_s` JSON fields. Measured-trial
-  behavior (`_run_silent_trial`/`_run_control_trial`, still passing
-  their own `recorder.confirmed_event`) is completely unchanged —
-  R0055's own truncation fix is untouched and re-proven by a new test.
-- `tests/test_m2_6b4m_self_echo_probe.py` — +4 tests
-  (`TestRunWarmup`): warm-up proves `>=` the requested seconds from a
-  fixture requiring multiple whole-fixture loops; a simulated false
-  confirmed barge-in partway through warm-up does not reduce delivered
-  PCM; `_run_warmup` is structurally proven to always pass
-  `confirmed_event=None`; the measured-trial path is re-proven to still
+  the PCM bytes it actually queued and gained `arm_bargein: bool = True`
+  (default preserves exact prior behavior at every existing call site);
+  `_PlaybackWatcher` (unchanged position, immediately after
+  `aec_feeder`) now also taps `TTSAudioRawFrame` bytes into a new
+  `Recorder.ref_accepted_bytes` counter; new `Recorder
+  .playback_start_count`/`playback_stop_count` (counting, not
+  overwriting); new `_run_warmup()` loops with `confirmed_event=None`
+  AND `arm_bargein=False`, polls the acceptance counter (bounded,
+  configurable `poll_timeout_s`) until it proves at least the requested
+  duration was ACCEPTED (not merely queued), and returns a structured
+  result dict; wired into `_run()` as an optional pre-step composing
+  with the existing `--level`/`--repeats`/`--capture-pcm` flags, with
+  three assertions (`interrupt_confirmed_delta == 0`, accepted seconds
+  `>=` requested, start/stop counts match repeats) and a new
+  `warmup_result` JSON field. Measured-trial behavior
+  (`_run_silent_trial`/`_run_control_trial`, still passing their own
+  `recorder.confirmed_event` and the default `arm_bargein=True`) is
+  completely unchanged — R0055's own truncation fix is untouched and
+  re-proven by an existing test.
+- `tests/test_m2_6b4m_self_echo_probe.py` — `TestRunWarmup` grew from 4
+  to 6 tests: warm-up proves `>=` the requested seconds at the
+  post-aec_feeder ACCEPTANCE point (not queue submission) from a
+  fixture requiring multiple whole-fixture loops; a simulated real
+  confirmed barge-in during warm-up is proven never to even reach
+  `notify_response_dispatched()`; `_run_warmup` is structurally proven
+  to always pass `confirmed_event=None` AND `arm_bargein=False`; every
+  warm-up repeat is proven to reach a clean start/stop completion; an
+  artificially-simulated dropped-acceptance scenario is proven to make
+  the returned evidence correctly show a shortfall rather than falsely
+  reporting success; the measured-trial path is re-proven to still
   truncate on a real confirmed interruption.
+- `tests/test_bargein_m2_5b.py` — +1 test
+  (`TestBargeInController.test_no_response_dispatched_means_real_vad_never_confirms_or_broadcasts`):
+  proves, against the REAL unmodified `BargeInController`, that
+  sustained real VAD activity without `notify_response_dispatched()`
+  ever being called produces zero candidates/confirms/broadcasts — pure
+  coverage of already-true, previously-untested behavior; zero
+  `nexa/voice/bargein.py` lines changed.
 - `docs/CURRENT_STATE.md`, `docs/ROADMAP.md` — updated with
   RESEARCH/DESIGN status only.
 
@@ -1198,19 +1336,23 @@ passed; the R0057 procedure is designed, not run).
 
 ## TESTS / STATIC CHECKS
 
-New tests this checkpoint (the probe's own warm-up facility — a
-diagnostic tool, not `src/nexa/**`):
+New/updated tests this checkpoint (the probe's own warm-up facility — a
+diagnostic tool, not `src/nexa/**` — plus one pure-coverage addition to
+the existing, frozen `BargeInController` test suite; zero
+`nexa/voice/bargein.py` lines changed):
 
-- `tests/test_m2_6b4m_self_echo_probe.py` → **45/45 pass (41 + 4 new)**.
+- `tests/test_m2_6b4m_self_echo_probe.py` → **47/47 pass** (`TestRunWarmup`
+  grew from 4 to 6).
+- `tests/test_bargein_m2_5b.py` → **44/44 pass** (43 + 1 new).
 - Full project suite:
   `.venv/bin/python -m unittest discover -s tests -p "test_*.py"` →
-  **1065 tests, OK (skipped=7)** (1061 + 4 new).
-- `ruff check` on the two touched files (the probe and its test file):
+  **1068 tests, OK (skipped=7)**.
+- `ruff check` on every touched file (the probe, both test files):
   clean.
 - `pip check`: "No broken requirements found."
 - `git diff --check`: clean.
 - `git diff --stat -- src/nexa`: empty (confirmed — no production code
-  touched; only the diagnostic probe and its own test file changed).
+  touched; only the diagnostic probe and two test files changed).
 
 ## GIT STATUS
 

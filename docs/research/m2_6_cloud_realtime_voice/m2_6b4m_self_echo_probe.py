@@ -466,6 +466,35 @@ class Recorder:
     #: production), so this flag is the smallest equivalent: never queue
     #: another chunk of an already-interrupted response.
     confirmed_event: asyncio.Event = field(default_factory=asyncio.Event)
+    #: R0057 CONFIRMED BUG FIX -- a byte counted by ``worker.queue_frames()``
+    #: returning is only proof the chunk reached the WORKER's OWN push
+    #: queue (confirmed by reading ``PipelineWorker.queue_frame``'s source
+    #: this checkpoint: it does ``await self._push_queue.put(frame)`` and
+    #: returns immediately -- no wait for any downstream processor). Each
+    #: ``FrameProcessor`` (confirmed by reading the installed
+    #: ``pipecat.processors.frame_processor`` source) ALSO owns its own
+    #: internal input/process queues, and ``_start_interruption()``
+    #: (triggered by an ``InterruptionFrame``, which
+    #: ``BargeInController._do_confirm`` broadcasts) resets those queues --
+    #: discarding any not-yet-processed frame still waiting there. A chunk
+    #: already counted by the OLD (R0055-era) warm-up byte counter could
+    #: therefore still be lost before ever reaching ``AecReferenceFeeder``.
+    #: This counter is incremented by ``_PlaybackWatcher``, positioned
+    #: (already, unchanged) immediately AFTER ``aec_feeder`` in the
+    #: pipeline -- a frame counted here has, by construction, already run
+    #: all the way through ``aec_feeder.process_frame()`` (which enqueues
+    #: it to its own real writer queue before ever calling
+    #: ``push_frame()`` onward) -- proof of ACCEPTANCE, not mere
+    #: submission.
+    ref_accepted_bytes: int = 0
+    #: Counts (not overwrites, unlike ``playback_start_t``/``playback_end_t``
+    #: above) every real ``BotStartedSpeakingFrame``/``BotStoppedSpeakingFrame``
+    #: -- used by warm-up to prove every whole-fixture repeat reached a
+    #: clean start-then-stop completion, with no hidden mid-fixture
+    #: restart (R0055's own "Bot started speaking again" symptom would
+    #: show up here as more starts than repeats run).
+    playback_start_count: int = 0
+    playback_stop_count: int = 0
 
     def mark_vad(self, kind: str) -> None:
         self.vad_events.append({"t": time.monotonic(), "kind": kind})
@@ -505,9 +534,14 @@ class Recorder:
 
     def mark_playback_start(self) -> None:
         self.playback_start_t = time.monotonic()
+        self.playback_start_count += 1
 
     def mark_playback_end(self) -> None:
         self.playback_end_t = time.monotonic()
+        self.playback_stop_count += 1
+
+    def mark_ref_accepted(self, pcm: bytes) -> None:
+        self.ref_accepted_bytes += len(pcm)
 
     def reset_trial(self) -> None:
         self.vad_events = []
@@ -520,6 +554,9 @@ class Recorder:
         self.mic_pcm_chunks = []
         self.ref_pcm_chunks = []
         self.confirmed_event = asyncio.Event()
+        self.ref_accepted_bytes = 0
+        self.playback_start_count = 0
+        self.playback_stop_count = 0
 
 
 def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sample_rate: int):
@@ -664,7 +701,18 @@ def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sam
         (``BotStartedSpeakingFrame``/``BotStoppedSpeakingFrame``,
         travelling upstream from ``transport.output()``, exactly like
         production's own ``_VadToProviderBridge``) and drives the SAME
-        ``_ResponseLifecycle`` combinator production uses."""
+        ``_ResponseLifecycle`` combinator production uses.
+
+        R0057 EXTENSION -- this processor already sits (unchanged
+        position) immediately AFTER ``aec_feeder`` and BEFORE
+        ``transport.output()``, so it also taps ``TTSAudioRawFrame``
+        bytes here: a frame reaching THIS point has, by construction,
+        already been run through ``aec_feeder.process_frame()`` in full
+        (which enqueues it to its own real writer queue before ever
+        calling ``push_frame()``) -- proof the reference was ACCEPTED,
+        not merely that ``worker.queue_frames()`` returned (see
+        ``Recorder.ref_accepted_bytes``'s own docstring for the full
+        source-audited reasoning). Never drops or mutates a frame."""
 
         def __init__(self, *, lifecycle, **kwargs) -> None:
             super().__init__(**kwargs)
@@ -672,7 +720,9 @@ def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sam
 
         async def process_frame(self, frame: Any, direction: Any) -> None:
             await super().process_frame(frame, direction)
-            if isinstance(frame, P["BotStartedSpeakingFrame"]):
+            if isinstance(frame, P["TTSAudioRawFrame"]) and frame.audio:
+                recorder.mark_ref_accepted(frame.audio)
+            elif isinstance(frame, P["BotStartedSpeakingFrame"]):
                 recorder.mark_playback_start()
                 self._lifecycle.observe_bot_started()
             elif isinstance(frame, P["BotStoppedSpeakingFrame"]):
@@ -760,7 +810,7 @@ def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sam
 
 async def _play_assistant_phrase(
     P: dict[str, Any], worker, *, lifecycle, bargein, pcm: bytes, sample_rate: int,
-    confirmed_event: asyncio.Event | None = None,
+    confirmed_event: asyncio.Event | None = None, arm_bargein: bool = True,
 ) -> None:
     """Simulates exactly what ``_consume_provider_events`` does for a
     real Gemini response: marks the response dispatched (barge-in
@@ -841,8 +891,35 @@ async def _play_assistant_phrase(
     early return on ``confirmed_event``), so a caller can measure real
     delivered-audio duration instead of assuming ``len(pcm)`` was always
     reached (that assumption is exactly what a confirmed interruption
-    can invalidate -- see ``_run_warmup``'s own docstring)."""
-    bargein.notify_response_dispatched()
+    can invalidate -- see ``_run_warmup``'s own docstring).
+
+    R0057 CORRECTION 5 -- new ``arm_bargein`` (default ``True``,
+    preserves EXACT prior behavior for every existing call site):
+    source-audited this checkpoint that ``confirmed_event`` alone does
+    NOT prevent a REAL confirmed self-barge-in from occurring during
+    warm-up -- ``bargein.notify_response_dispatched()`` below is what
+    actually arms ``BargeInController``'s own admission gate
+    (``InterruptionStateMachine.response_in_flight``); with it armed,
+    real VAD activity can still reach ``BargeInController._do_confirm()``
+    and call the REAL, unmodified ``broadcast_interruption()`` --
+    installed Pipecat source confirms (``pipecat.processors
+    .frame_processor.FrameProcessor._start_interruption()``) this resets
+    EVERY downstream processor's own internal frame queue, discarding
+    any ``TTSAudioRawFrame`` still waiting there -- a frame this
+    function already counted as "queued" (via ``worker.queue_frames()``
+    returning) could still be lost before ever reaching
+    ``AecReferenceFeeder``. ``arm_bargein=False`` skips the
+    ``notify_response_dispatched()`` call below entirely, which --
+    proven directly from ``nexa.voice.bargein.BargeInController
+    ._handle_speech_started``'s own first line,
+    ``if not self._sm.response_in_flight: return`` -- makes
+    ``_do_confirm``/``broadcast_interruption`` structurally unreachable
+    for as long as it stays unset, regardless of any real VAD activity.
+    This does NOT touch ``BargeInController`` itself (its source is
+    unmodified) and does NOT change any existing call site (both
+    measured-trial functions keep the default, unchanged)."""
+    if arm_bargein:
+        bargein.notify_response_dispatched()
     lifecycle.mark_dispatched()
     chunk_bytes = int(sample_rate * (ASSISTANT_CHUNK_MS / 1000.0) * 2)
     chunk_secs = ASSISTANT_CHUNK_MS / 1000.0
@@ -865,60 +942,145 @@ async def _play_assistant_phrase(
 
 
 async def _run_warmup(
-    P: dict[str, Any], worker, *, lifecycle, bargein, pcm: bytes, sample_rate: int,
-    warmup_seconds: float,
-) -> int:
-    """R0057 -- deterministic, PCM-proven AEC warm-up, reusing the SAME
+    P: dict[str, Any], worker, recorder: Recorder, *, lifecycle, bargein, pcm: bytes,
+    sample_rate: int, warmup_seconds: float, poll_timeout_s: float = 5.0,
+) -> dict[str, Any]:
+    """R0057 -- deterministic, PCM-PROVEN AEC warm-up, reusing the SAME
     real hardware path every measured trial uses
     (``TTSAudioRawFrame`` -> ``AecReferenceFeeder`` -> ``plug:respeaker``
     reference -> ``transport.output()`` -> the real audible speaker) --
     never a sleep-only simulation, never a bypass of the real
     ``AecReferenceFeeder``/output transport.
 
-    CONFIRMED BUG this fixes (source-audited, not assumed): a naive
-    ``--repeats N`` warm-up assumes each repeat delivers the FULL
-    ``len(pcm)`` (~3.5s) of reference PCM. That assumption is exactly
-    what R0055's own confirmed-bug fix in ``_play_assistant_phrase``
-    (the ``confirmed_event`` check above) can invalidate: at MAX volume
-    a real confirmed self-barge-in fires ~1.1-1.5s into playback (R0055's
-    own measured figures), and ``_play_assistant_phrase`` correctly stops
-    injecting further chunks once that happens -- so a repeat can be cut
-    to a fraction of its nominal length. Worse, the false-confirm RATE is
-    exactly the thing an R0057-style gain experiment changes between its
-    baseline and test conditions, so ``--repeats N`` alone would silently
-    deliver a DIFFERENT amount of real warm-up PCM to each condition --
-    contaminating the one-variable comparison the experiment exists to
-    make.
+    CORRECTION 4 (confirmed bug, fixed): a naive ``--repeats N`` warm-up
+    assumes each repeat delivers the FULL ``len(pcm)`` (~3.5s) of
+    reference PCM. That assumption is exactly what R0055's own
+    confirmed-bug fix in ``_play_assistant_phrase`` (the
+    ``confirmed_event`` check) can invalidate: at MAX volume a real
+    confirmed self-barge-in fires ~1.1-1.5s into playback (R0055's own
+    measured figures), truncating a repeat to a fraction of its nominal
+    length -- and since the false-confirm RATE is exactly what an
+    R0057-style gain experiment changes between conditions,
+    ``--repeats N`` could deliver a DIFFERENT amount of real warm-up PCM
+    to each one. Fixed by passing ``confirmed_event=None``: every call
+    is then guaranteed (the same source-audited early-return conditions
+    in ``_play_assistant_phrase``) to deliver the full ``len(pcm)``
+    bytes, counted from what each call actually returns.
 
-    Fix: this function calls ``_play_assistant_phrase`` with
-    ``confirmed_event=None`` -- structurally, not by a fallible flag --
-    so a confirmed barge-in during warm-up can still be recorded by
-    ``bargein``'s own telemetry (Silero/VAD/BargeInController keep
-    running exactly as in normal operation; ``AecReferenceFeeder`` itself
-    never reacts to ``InterruptionFrame`` at all, confirmed by reading
-    its own ``process_frame`` -- so the FAR-END REFERENCE delivery this
-    warm-up cares about is unaffected by any interruption regardless),
-    but it can never truncate injection: with ``confirmed_event=None``
-    every call is guaranteed (by the same source-audited early-return
-    conditions above) to deliver the full ``len(pcm)`` bytes, checked by
-    counting the ACTUAL bytes each call returns, not by assuming it.
-    Loops whole fixture repeats until the cumulative byte count proves
-    at least ``warmup_seconds`` of reference PCM was delivered --
-    ``>=``, never an assumed ``repeats * fixture_duration``.
+    CORRECTION 5 (a second, deeper confirmed bug, fixed here):
+    Correction 4's own reasoning claimed "``AecReferenceFeeder`` itself
+    never reacts to ``InterruptionFrame`` at all... so the far-end
+    reference delivery this warm-up cares about is unaffected by any
+    interruption regardless." **That claim is WRONG, confirmed by
+    reading the installed ``pipecat.processors.frame_processor`` source
+    this checkpoint, not merely re-asserted.** ``confirmed_event=None``
+    only stops THIS function's OWN injection loop from giving up early
+    -- it does nothing about the REAL ``BargeInController``, which stays
+    fully armed (``bargein.notify_response_dispatched()`` was still
+    called every repeat) and can still genuinely confirm a false
+    self-barge-in and call the REAL, unmodified
+    ``await self.broadcast_interruption()``. Reading
+    ``FrameProcessor.process_frame``'s own base-class handling of
+    ``InterruptionFrame`` (``_start_interruption()`` ->
+    ``__reset_process_queue()``) shows EVERY processor in the pipeline
+    -- ``AecReferenceFeeder`` included, since its own overridden
+    ``process_frame`` calls ``await super().process_frame(...)`` FIRST,
+    confirmed by reading its source directly -- discards any
+    not-yet-processed frame still sitting in ITS OWN internal queue the
+    instant an interruption is broadcast. Separately, reading
+    ``PipelineWorker.queue_frame``'s own source shows
+    ``worker.queue_frames()`` returning means ONLY that a frame reached
+    the WORKER's own push queue (``await self._push_queue.put(frame)``)
+    -- nothing about whether it has yet reached, let alone been accepted
+    by, ``AecReferenceFeeder``. **Together this means a byte already
+    counted by Correction 4's own counter could still be discarded,
+    mid-flight, by a genuine confirmed interruption during warm-up --
+    the exact downstream-contamination gap this correction fixes.**
+
+    Fix: ``_play_assistant_phrase`` is now called with
+    ``arm_bargein=False`` in addition to ``confirmed_event=None`` --
+    this skips ``bargein.notify_response_dispatched()`` entirely, which
+    (proven directly from ``nexa.voice.bargein.BargeInController
+    ._handle_speech_started``'s own first line,
+    ``if not self._sm.response_in_flight: return``) makes
+    ``_do_confirm``/``broadcast_interruption`` structurally unreachable
+    for the whole warm-up -- VAD/Silero keep running and any VAD start/
+    stop is still recorded by this probe's own ``_VadWatcher`` telemetry
+    (satisfying "VAD may continue running for telemetry"), but
+    ``BargeInController`` itself never acts on it. Verified, not merely
+    argued, three ways per call:
+
+    1. ``bargein.telemetry.interrupt_confirmed`` (the REAL production
+       counter, incremented exactly once per real
+       ``BargeInController._do_confirm()`` call) is read before and
+       after the whole warm-up -- any non-zero delta means a
+       confirmation slipped through and the warm-up result is
+       untrustworthy.
+    2. ``recorder.ref_accepted_bytes`` -- incremented by
+       ``_PlaybackWatcher``, positioned (unchanged) immediately AFTER
+       ``aec_feeder`` -- proves each repeat's PCM was actually ACCEPTED
+       by ``AecReferenceFeeder`` (survived its own per-processor queue),
+       not merely submitted to the worker's push queue. This function
+       polls it (bounded, 5s) after the submission loop finishes, since
+       Pipecat's own per-processor queues mean acceptance can lag
+       submission by a small, non-zero amount.
+    3. ``recorder.playback_start_count``/``playback_stop_count`` --
+       incremented once per real ``BotStartedSpeakingFrame``/
+       ``BotStoppedSpeakingFrame`` -- must equal the number of whole
+       repeats actually run, proving every repeat reached a clean,
+       uninterrupted start-then-stop completion (a hidden mid-fixture
+       restart, R0055's own "Bot started speaking again" symptom, would
+       show up as MORE starts than repeats).
+
+    Returns a dict with all of the above so the caller
+    (``_run()``) can assert on them and print/record the real evidence
+    -- this function itself never silently swallows a contradiction.
 
     Measured trials (``_run_silent_trial``/``_run_control_trial``) are
     completely unchanged by this function's existence: they still pass
-    their own ``recorder.confirmed_event``, so a confirmed interruption
-    during an ACTUAL measured trial still truncates exactly as R0055
-    fixed it -- only this dedicated warm-up path ignores confirmation."""
+    their own ``recorder.confirmed_event`` and the default
+    ``arm_bargein=True``, so a confirmed interruption during an ACTUAL
+    measured trial still truncates and broadcasts exactly as R0055's
+    own fix intends -- only this dedicated warm-up path disarms
+    confirmation, and only here."""
     target_bytes = int(round(warmup_seconds * sample_rate)) * 2  # int16 mono
+    interrupt_confirmed_before = bargein.telemetry.interrupt_confirmed
+    ref_accepted_before = recorder.ref_accepted_bytes
+    playback_start_before = recorder.playback_start_count
+    playback_stop_before = recorder.playback_stop_count
+
     delivered_bytes = 0
+    repeats_run = 0
     while delivered_bytes < target_bytes:
         delivered_bytes += await _play_assistant_phrase(
             P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
-            sample_rate=sample_rate, confirmed_event=None,
+            sample_rate=sample_rate, confirmed_event=None, arm_bargein=False,
         )
-    return delivered_bytes
+        repeats_run += 1
+
+    # Bounded wait for the async pipeline to finish propagating the
+    # already-submitted frames through to the post-aec_feeder
+    # acceptance tap -- `queue_frames()` returning does not mean the
+    # frame has yet reached `aec_feeder` (see the docstring above).
+    # ``poll_timeout_s`` is injectable so a test can prove the give-up
+    # path itself without a real 5-second wait.
+    deadline = time.monotonic() + poll_timeout_s
+    while (recorder.ref_accepted_bytes - ref_accepted_before) < delivered_bytes:
+        if time.monotonic() > deadline:
+            break
+        await asyncio.sleep(0.02)
+
+    return {
+        "requested_seconds": warmup_seconds,
+        "delivered_bytes": delivered_bytes,
+        "ref_accepted_bytes": recorder.ref_accepted_bytes - ref_accepted_before,
+        "playback_start_count": recorder.playback_start_count - playback_start_before,
+        "playback_stop_count": recorder.playback_stop_count - playback_stop_before,
+        "repeats_run": repeats_run,
+        "interrupt_confirmed_delta": (
+            bargein.telemetry.interrupt_confirmed - interrupt_confirmed_before
+        ),
+    }
 
 
 async def _wait_for_finish(lifecycle, *, timeout: float) -> bool:
@@ -1164,20 +1326,46 @@ async def _run(args: argparse.Namespace) -> int:
     print(f"  audible_linear_gain      {startup_gain:.4f}")
     print(f"  reference_gain_applied   {startup_gain:.4f}  (fed to AecReferenceFeeder.gain_source)")
 
-    warmup_delivered_s: float | None = None
+    warmup_result: dict[str, Any] | None = None
     if args.warmup_seconds:
-        print(f"\n  warmup: requesting >= {args.warmup_seconds:.1f}s of real reference PCM "
-              "(confirmed interruptions during warmup do NOT truncate it) ...")
-        delivered_bytes = await _run_warmup(
-            P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+        print(f"\n  warmup: requesting >= {args.warmup_seconds:.1f}s of real, ACCEPTED "
+              "reference PCM (BargeInController disarmed -- confirmed interruptions "
+              "are structurally impossible during warmup, not merely ignored) ...")
+        warmup_result = await _run_warmup(
+            P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
             sample_rate=rate, warmup_seconds=args.warmup_seconds,
         )
-        warmup_delivered_s = delivered_bytes / 2 / rate
-        print(f"  warmup delivered {warmup_delivered_s:.2f}s of reference PCM "
-              f"(requested >= {args.warmup_seconds:.1f}s)")
-        assert warmup_delivered_s >= args.warmup_seconds, (
-            "warmup under-delivered -- this should be impossible given "
-            "_run_warmup's own accumulation loop; treat as a bug"
+        queued_s = warmup_result["delivered_bytes"] / 2 / rate
+        accepted_s = warmup_result["ref_accepted_bytes"] / 2 / rate
+        print(
+            f"  warmup: repeats_run={warmup_result['repeats_run']} "
+            f"queued_s={queued_s:.2f} accepted_s={accepted_s:.2f} "
+            f"(requested >= {args.warmup_seconds:.1f}s) "
+            f"playback_start_count={warmup_result['playback_start_count']} "
+            f"playback_stop_count={warmup_result['playback_stop_count']} "
+            f"interrupt_confirmed_delta={warmup_result['interrupt_confirmed_delta']}"
+        )
+        # R0057 CORRECTION 5 -- the authoritative proof, straight from the
+        # REAL BargeInController's own telemetry: if this is ever nonzero,
+        # a genuine confirmed interruption slipped through during warmup
+        # despite arm_bargein=False, and NOTHING below can be trusted.
+        assert warmup_result["interrupt_confirmed_delta"] == 0, (
+            "a real confirmed barge-in occurred during warmup -- this should "
+            "be structurally impossible with arm_bargein=False; treat as a "
+            "bug in BargeInController or in this probe's wiring, not a "
+            "passable warmup"
+        )
+        assert accepted_s >= args.warmup_seconds, (
+            "reference PCM ACCEPTED past AecReferenceFeeder under-delivered "
+            "-- some already-queued PCM was lost in transit; treat as a bug"
+        )
+        assert (
+            warmup_result["playback_start_count"]
+            == warmup_result["playback_stop_count"]
+            == warmup_result["repeats_run"]
+        ), (
+            "playback start/stop count does not match repeats run -- a "
+            "hidden mid-fixture restart occurred during warmup; treat as a bug"
         )
 
     trials: list[dict[str, Any]] = []
@@ -1235,8 +1423,7 @@ async def _run(args: argparse.Namespace) -> int:
         "audible_mixer_card": cfg.output_alsa_mixer_card,
         "audible_gain_db_at_startup": _gain_to_db_text(startup_gain),
         "audible_linear_gain_at_startup": startup_gain,
-        "warmup_requested_s": args.warmup_seconds,
-        "warmup_delivered_s": warmup_delivered_s,
+        "warmup_result": warmup_result,
         "trials": trials,
     }
     path = OUT_DIR / f"self_echo_probe_{ts}.json"
