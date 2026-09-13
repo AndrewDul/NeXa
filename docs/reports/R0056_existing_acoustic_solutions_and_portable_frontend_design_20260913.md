@@ -901,6 +901,76 @@ latch behavior was not confirmed from source this checkpoint (unlike
 `AEC_AECCONVERGED`'s own explicitly-quoted latch), so none of them
 gates any step below; the fixed 60-second time budget is the only gate.
 
+### Correction 4 (pre-execution review, before Phase 1 was ever run) — `--repeats 17` did not guarantee 60 seconds
+
+Revision 2's warm-up assumed `--repeats 17` delivers `17×3.5s≈59.5s`
+of real reference PCM. **Source-audited this pass and confirmed
+wrong**: R0055's own confirmed-bug fix in `_play_assistant_phrase`
+(`docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py`)
+makes it check `confirmed_event.is_set()` before every 100ms chunk and
+`return` immediately once a confirmed barge-in fires — exactly the
+correct, already-accepted diagnostic-fidelity fix R0055 made, but it
+means a repeat run under `--level max` (where R0055 itself measured
+3/3 real confirmed barge-ins at ~1.1-1.5s into playback) can be cut to
+a fraction of its nominal ~3.5s. Worse: **the false-confirm rate is
+exactly the variable this experiment changes between conditions** — if
+the -20dB→0dB hypothesis is correct, the TEST condition would confirm
+less often than the BASELINE condition, so `--repeats 17` would
+silently deliver MORE real warm-up seconds to the test condition than
+the baseline, biasing the very comparison the experiment exists to make.
+
+**Fix — probe-only, no production code touched**: a new,
+deterministically-provable warm-up facility,
+`_run_warmup()` + `--warmup-seconds`, added to the same diagnostic
+probe. It reuses the EXACT same real hardware path every measured trial
+already uses (`TTSAudioRawFrame` → `AecReferenceFeeder` →
+`plug:respeaker` → `transport.output()` → the real `UACDemoV10`
+speaker) — no sleep-only simulation, no bypass of `AecReferenceFeeder`
+or the output transport. It calls `_play_assistant_phrase` with
+`confirmed_event=None` — **structurally**, not via a fallible flag —
+so a confirmed barge-in during warm-up can still be recorded by
+`BargeInController`'s own telemetry (Silero/VAD keep running exactly as
+in normal operation) but can never truncate injection: with
+`confirmed_event=None`, the SAME source-audited early-return conditions
+in `_play_assistant_phrase` are unreachable, so every call is
+guaranteed to deliver the FULL fixture, and `_run_warmup` loops whole
+repeats while COUNTING the actual bytes each call returns (a real
+change: `_play_assistant_phrase` now returns the bytes it queued,
+instead of nothing) until the cumulative count *proves* at least the
+requested duration — `delivered_samples / sample_rate >=
+warmup_seconds`, never an assumed `repeats × fixture_duration`. Measured
+trials (`_run_silent_trial`/`_run_control_trial`) are completely
+unchanged: they still pass their own `recorder.confirmed_event`, so a
+confirmed interruption during an ACTUAL measured trial still truncates
+exactly as R0055 fixed it. `AecReferenceFeeder.process_frame` was
+re-confirmed (read directly, this pass) to have no `InterruptionFrame`
+handling at all — the far-end reference delivery this warm-up cares
+about was never actually at risk from an interruption broadcast either
+way; the risk was entirely in `_play_assistant_phrase`'s own injection
+loop, now fixed. **+4 new deterministic tests**
+(`TestRunWarmup`, `tests/test_m2_6b4m_self_echo_probe.py`): warm-up
+delivers >= the requested seconds (proven from a fixture much shorter
+than the request, requiring multiple whole-fixture loops — not close to
+1, a real multi-repeat proof); a simulated false confirmed barge-in
+partway through warm-up does not reduce delivered PCM below the
+request; `_run_warmup` is structurally proven to always pass
+`confirmed_event=None`; and the measured-trial code path is re-proven,
+alongside the new tests, to still truncate on a real confirmed
+interruption (guards against a future change accidentally weakening
+R0055's own fix while touching this same function). **45/45 probe
+tests pass (41 + 4 new); full suite 1065 tests, OK (skipped=7);
+`ruff`/`pip check` clean; `git diff --stat -- src/nexa` confirmed empty
+— no production code touched.**
+
+**Revision 3 of the procedure below** replaces the separate
+"`--repeats 17` warm-up, then measured trial" two-command sequence with
+a SINGLE probe invocation per condition:
+`--warmup-seconds 60 --level max --repeats 3 --capture-pcm --max-lag-ms
+500` — the warm-up runs first (proven ≥60s), inside the SAME process,
+against the SAME already-built pipeline, immediately before the
+measured trials, with no gap for the adaptive filter's state to drift
+between warm-up and measurement.
+
 ### PHASE 0 — Record current state (read-only, unchanged from Revision 1)
 
 ```bash
@@ -927,29 +997,24 @@ it, do not act on it).
 No parameter is changed in this phase — it establishes a controlled,
 identically-warmed-up baseline before the ONE change in Phase 2.
 
-**Fixed 60-second warm-up** (reuses the existing probe exactly as-is —
-no new script, no Gemini; `--repeats 17` is `17×3.5s≈59.5s`, the
-smallest whole repeat count reaching the 60s budget):
+**One command: proven 60s warm-up, then the measured baseline trial**
+(the warm-up prefix composes with the exact, otherwise-unmodified R0055
+trial flags in the SAME invocation):
 
 ```bash
 .venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
-  --level max --repeats 17
+  --warmup-seconds 60 --level max --repeats 3 --capture-pcm --max-lag-ms 500
 ```
 
-Discard this run's own JSON/printed result — warm-up only, not measured
-evidence.
-
-**Measured baseline trial** (the exact, unmodified R0055 command):
-
-```bash
-.venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
-  --level max --repeats 3 --capture-pcm --max-lag-ms 500
-```
-
-Record the printed result and JSON path. Expected (not guaranteed) to
-reproduce R0055's own 3/3 false confirms, which also serves as an
-independent re-validation of R0055 itself under this checkpoint's own
-now-more-rigorous warm-up discipline.
+The probe prints `warmup delivered <X>s of reference PCM (requested >=
+60.0s)` before the trials begin — record this line; `<X>` must be
+`>= 60.0` (the probe itself asserts this internally and would abort
+with an `AssertionError` if it were ever violated, which the new
+`TestRunWarmup` tests prove cannot happen by construction). Then record
+the printed result and JSON path for the 3 measured trials that follow
+in the same run. Expected (not guaranteed) to reproduce R0055's own 3/3
+false confirms, which also serves as an independent re-validation of
+R0055 itself under this checkpoint's own now-proven warm-up discipline.
 
 ### PHASE 2 — TEST measured trial (Array PCM,1 changed to ≈0dB / unity)
 
@@ -983,23 +1048,18 @@ this session.
 amixer -c UACDemoV10 sget PCM       # confirm STILL unchanged
 ```
 
-**Fixed 60-second warm-up under the NEW gain** (identical recipe to
-Phase 1 — same repeat count, same fixture, same command):
+**One command: proven 60s warm-up under the NEW gain, then the measured
+test trial** (byte-for-byte the SAME command as Phase 1 — the only
+thing that differs between the two conditions is the `Array PCM,1`
+mixer level already set above, not the command line):
 
 ```bash
 .venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
-  --level max --repeats 17
+  --warmup-seconds 60 --level max --repeats 3 --capture-pcm --max-lag-ms 500
 ```
 
-**Measured test trial** (identical command to the baseline trial — the
-only thing that has changed is the `Array PCM,1` mixer level):
-
-```bash
-.venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
-  --level max --repeats 3 --capture-pcm --max-lag-ms 500
-```
-
-Record the printed result and JSON path.
+Record the printed `warmup delivered <X>s` line (again `>= 60.0`) and
+the measured-trial printed result + JSON path.
 
 ### PHASE 3 — Rollback (mandatory, regardless of result)
 
@@ -1009,13 +1069,17 @@ amixer -c Array sget 'PCM',1        # verify: -20.00dB
 sudo ./xvf_host AEC_FAR_EXTGAIN     # verify: -20
 ```
 
-**Fixed 60-second warm-up back at the original gain** (returns the
+**Proven 60-second warm-up back at the original gain** (returns the
 live adaptive filter to its normal operating condition for ongoing use
-— good hygiene, not part of the measurement):
+— good hygiene, not part of the measurement; `--dry`-equivalent trial
+flags omitted since no measured evidence is needed here, just the
+warm-up itself — a bare `--warmup-seconds 60` with a required `--level`
+is fine, e.g. `--level max --repeats 0` would run zero trials after
+warming up):
 
 ```bash
 .venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
-  --level max --repeats 17
+  --warmup-seconds 60 --level max --repeats 0
 ```
 
 **Verify complete state** (every PHASE 0 reading, re-checked — since no
@@ -1043,17 +1107,23 @@ control under test, nothing else.
 2. The `AEC_FAR_EXTGAIN` reading immediately after the Phase 2 mixer
    change (the abort-gate check) — pass or fail, and what was read if
    it failed.
-3. `AEC_RT60`/`AEC_AECPATHCHANGE`/`AEC_AECCONVERGED` readings at PHASE 0
-   and after each warm-up, recorded for the record only (not used to
-   gate any step) — report them plainly, including if
+3. The printed `warmup delivered <X>s of reference PCM (requested >=
+   60.0s)` line from EACH of the three probe invocations (Phase 1,
+   Phase 2, Phase 3 rollback) — `<X>` must be `>= 60.0` every time (the
+   probe itself asserts this; report the exact value printed, not just
+   pass/fail).
+4. `AEC_RT60`/`AEC_AECPATHCHANGE`/`AEC_AECCONVERGED` readings at PHASE 0
+   and wherever else the probe prints them, recorded for the record only
+   (not used to gate any step) — report them plainly, including if
    `AEC_AECCONVERGED` never changes at all across the whole procedure
    (expected, given the latch, and not itself a problem).
-4. The full printed output + JSON file path for BOTH measured trials
-   (baseline and test) — not just the summary counts.
-5. The PHASE 3 "verify complete state" readings, confirming every
+5. The full printed output + JSON file path for BOTH measured trials
+   (baseline and test) — not just the summary counts, and including
+   each JSON's own new `warmup_requested_s`/`warmup_delivered_s` fields.
+6. The PHASE 3 "verify complete state" readings, confirming every
    PHASE 0 value except `Array PCM,1` (which should be back at its
    original value too) never moved.
-6. Any deviation from this exact procedure, however small (a skipped
+7. Any deviation from this exact procedure, however small (a skipped
    wait, a different repeat count, anything) — this thread's own
    established convention (R0052-R0056) is to report deviations
    honestly rather than silently normalize them.
@@ -1080,27 +1150,67 @@ control under test, nothing else.
   flag) instead. Original findings left intact with inline pointers to
   each correction, per this report thread's own established erratum
   convention (never silently rewritten).
+  **Same-day Correction 4 (before any hardware command was ever
+  issued)**: source-audited and CONFIRMED a real flaw in Revision 2's
+  own warm-up design — `--repeats 17` assumed each repeat delivers the
+  full ~3.5s fixture, but R0055's own confirmed-bug fix in
+  `_play_assistant_phrase` truncates injection on a real confirmed
+  barge-in (which R0055 itself measured firing 3/3 times at MAX,
+  ~1.1-1.5s in) — and since the false-confirm RATE is exactly the
+  variable this experiment changes between conditions, the two
+  conditions could have received different real warm-up durations,
+  biasing the comparison. **Revision 3** fixes this in the diagnostic
+  probe only (see the next bullet), never in production code, and
+  updates the procedure to a single per-condition probe invocation
+  (`--warmup-seconds 60 --level max --repeats 3 --capture-pcm
+  --max-lag-ms 500`) whose own printed/JSON output now proves (not
+  assumes) the delivered warm-up duration. Original findings left
+  intact with inline pointers to each correction, per this report
+  thread's own established erratum convention (never silently
+  rewritten).
+- `docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py`
+  — new `--warmup-seconds` mode: `_play_assistant_phrase` now returns
+  the PCM bytes it actually queued (accurate whether truncated or not);
+  new `_run_warmup()` loops it with `confirmed_event=None` (structural,
+  never truncates) and counts real delivered bytes until they prove at
+  least the requested duration; wired into `_run()` as an optional
+  pre-step that composes with the existing `--level`/`--repeats`/
+  `--capture-pcm` flags in the same invocation; new
+  `warmup_requested_s`/`warmup_delivered_s` JSON fields. Measured-trial
+  behavior (`_run_silent_trial`/`_run_control_trial`, still passing
+  their own `recorder.confirmed_event`) is completely unchanged —
+  R0055's own truncation fix is untouched and re-proven by a new test.
+- `tests/test_m2_6b4m_self_echo_probe.py` — +4 tests
+  (`TestRunWarmup`): warm-up proves `>=` the requested seconds from a
+  fixture requiring multiple whole-fixture loops; a simulated false
+  confirmed barge-in partway through warm-up does not reduce delivered
+  PCM; `_run_warmup` is structurally proven to always pass
+  `confirmed_event=None`; the measured-trial path is re-proven to still
+  truncate on a real confirmed interruption.
 - `docs/CURRENT_STATE.md`, `docs/ROADMAP.md` — updated with
   RESEARCH/DESIGN status only.
 
-**No `src/nexa/**` file touched. No test file touched. No XVF3800
-parameter written or hardware command executed this checkpoint** (every
-`xvf_host` invocation, in both the original checkpoint and this
-correction pass, was a bare read — no value argument was ever passed;
-the R0057 procedure above is designed, not run).
+**No `src/nexa/**` file touched this checkpoint** (confirmed:
+`git diff --stat -- src/nexa` empty). **No XVF3800 parameter written or
+hardware command executed** (every `xvf_host` invocation, across every
+pass in this whole report, was a bare read — no value argument was ever
+passed; the R0057 procedure is designed, not run).
 
 ## TESTS / STATIC CHECKS
 
-No new tests this checkpoint (research/design only). Full project
-suite re-run to confirm zero regressions from touching only
-documentation:
+New tests this checkpoint (the probe's own warm-up facility — a
+diagnostic tool, not `src/nexa/**`):
 
-- `.venv/bin/python -m unittest discover -s tests -p "test_*.py"` →
-  **1061 tests, OK (skipped=7)** (unchanged from R0055).
-- `ruff check` on every file this checkpoint touched: clean (no
-  `src/**`/`tests/**` file was touched).
+- `tests/test_m2_6b4m_self_echo_probe.py` → **45/45 pass (41 + 4 new)**.
+- Full project suite:
+  `.venv/bin/python -m unittest discover -s tests -p "test_*.py"` →
+  **1065 tests, OK (skipped=7)** (1061 + 4 new).
+- `ruff check` on the two touched files (the probe and its test file):
+  clean.
 - `pip check`: "No broken requirements found."
 - `git diff --check`: clean.
+- `git diff --stat -- src/nexa`: empty (confirmed — no production code
+  touched; only the diagnostic probe and its own test file changed).
 
 ## GIT STATUS
 

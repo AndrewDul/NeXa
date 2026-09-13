@@ -245,8 +245,31 @@ Runtime / test evidence outranks anything else in this repo.
   reboot, and both measured trials (baseline and test) are gated by an
   identical, fixed 60-second local-fixture warm-up (never the latched
   `AEC_AECCONVERGED` flag, which is read and recorded for the record
-  only). Still not executed; no XVF3800 parameter or ALSA mixer changed
-  by either correction pass.)
+  only). **Same-day Correction 4, before any hardware command was
+  issued**: source-audited and CONFIRMED that the 60-second warm-up
+  itself was unreliable as designed — it used `--repeats 17` against
+  the diagnostic probe, assuming each repeat delivers the full ~3.5s
+  fixture, but R0055's own confirmed-bug fix in `_play_assistant_phrase`
+  truncates injection the instant a real confirmed barge-in fires
+  (measured 3/3 at MAX by R0055 itself, ~1.1-1.5s in) — and since the
+  false-confirm RATE is exactly the variable this experiment changes
+  between its two conditions, `--repeats 17` could have delivered a
+  DIFFERENT real warm-up duration to each condition, biasing the
+  comparison. **Fixed in the diagnostic probe only** (confirmed empty
+  `git diff --stat -- src/nexa`): `_play_assistant_phrase` now returns
+  the bytes it actually queued; a new `_run_warmup()` +
+  `--warmup-seconds` CLI flag loops it with `confirmed_event=None`
+  (structurally never truncates) and counts real delivered bytes until
+  they PROVE at least the requested duration, rather than assuming
+  `repeats × fixture_duration`; measured-trial behavior is completely
+  unchanged (still truncates on a real confirmed interruption, exactly
+  as R0055 fixed it). +4 new tests (`TestRunWarmup`); **1065 tests, OK
+  (skipped=7)** (1061 + 4); `ruff`/`pip check`/`git diff --check` all
+  clean. The R0057 procedure now uses ONE probe invocation per condition
+  (`--warmup-seconds 60 --level max --repeats 3 --capture-pcm
+  --max-lag-ms 500`) whose own printed/JSON output proves the delivered
+  warm-up duration. Still not executed; no XVF3800 parameter or ALSA
+  mixer changed by any correction pass.)
 - **Prior report:** `docs/reports/R0055_pcm_correlation_analysis_of_residual_self_echo_20260913.md`
   (**M2.6B.4N follow-up — PCM correlation analysis of residual self-echo,
   2026-09-13.** The R0054-requested capture came back: MAX volume, 3

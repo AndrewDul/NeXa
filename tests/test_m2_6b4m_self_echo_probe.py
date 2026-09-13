@@ -510,5 +510,192 @@ class TestPlayAssistantPhraseStopsOnConfirmedInterrupt(unittest.IsolatedAsyncioT
         return None
 
 
+class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
+    """R0057 CONFIRMED BUG FIX: a naive AEC warm-up built on
+    ``--repeats N`` silently assumes each repeat delivers the FULL
+    fixture (~3.5s). Source-audited (this checkpoint) and confirmed:
+    that assumption is exactly what R0055's own confirmed-interruption
+    truncation in ``_play_assistant_phrase`` can invalidate -- at MAX
+    volume a real confirmed self-barge-in fires ~1.1-1.5s into playback
+    (R0055's own measured figures), cutting a repeat short. Worse, the
+    false-confirm RATE is precisely what an R0057-style gain experiment
+    changes between its baseline and test conditions, so a
+    ``--repeats N`` warm-up would silently deliver a DIFFERENT amount
+    of real reference PCM to each condition -- contaminating the
+    one-variable comparison. ``_run_warmup`` fixes this by looping
+    ``_play_assistant_phrase`` with ``confirmed_event=None`` (never
+    truncates, structurally) and counting the ACTUAL bytes each call
+    returns, rather than assuming ``len(pcm)`` was reached. These tests
+    are pure/offline, reusing the same fake ``P``/``worker``/
+    ``lifecycle``/``bargein`` doubles this file's own
+    ``TestPlayAssistantPhraseStopsOnConfirmedInterrupt`` already
+    established."""
+
+    _FakeFrame = TestPlayAssistantPhraseStopsOnConfirmedInterrupt._FakeFrame
+    _FakeWorker = TestPlayAssistantPhraseStopsOnConfirmedInterrupt._FakeWorker
+    _FakeLifecycle = TestPlayAssistantPhraseStopsOnConfirmedInterrupt._FakeLifecycle
+    _FakeBargein = TestPlayAssistantPhraseStopsOnConfirmedInterrupt._FakeBargein
+
+    @staticmethod
+    def _P() -> dict:
+        return {
+            "TTSAudioRawFrame": TestRunWarmup._FakeFrame,
+            "TTSStoppedFrame": TestRunWarmup._FakeFrame,
+        }
+
+    @staticmethod
+    async def _instant_sleep(_seconds: float) -> None:
+        return None
+
+    async def test_warmup_delivers_at_least_the_requested_seconds(self) -> None:
+        """Direct proof of the >= guarantee: a fixture much shorter than
+        the requested warm-up must be looped enough times that the
+        RETURNED byte count, converted back to seconds, is >= requested
+        -- not merely close, not assumed from a repeat count."""
+        P = self._P()
+        worker = self._FakeWorker()
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        # a short, 0.3s-ish fixture -- many loops needed to reach 2.0s
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
+        requested_seconds = 2.0
+
+        with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
+            delivered_bytes = await probe._run_warmup(
+                P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                sample_rate=sample_rate, warmup_seconds=requested_seconds,
+            )
+
+        delivered_seconds = delivered_bytes / 2 / sample_rate
+        self.assertGreaterEqual(delivered_seconds, requested_seconds)
+        # proves the count is REAL, not a repeat-count assumption: the
+        # fixture is shorter than one second, so reaching >=2.0s required
+        # multiple whole-fixture repeats, each one fully accounted for.
+        self.assertGreater(delivered_bytes, len(pcm))
+
+    async def test_false_confirmed_barge_in_during_warmup_does_not_truncate(self) -> None:
+        """The exact scenario this checkpoint's own bug report describes:
+        a real confirmed self-barge-in occurring PARTWAY through warm-up
+        must not reduce the total delivered PCM below the requested
+        amount. Simulated by a bargein double whose own confirm hook
+        sets a "the real world just confirmed a barge-in" event that
+        ``_run_warmup`` structurally never wires into
+        ``_play_assistant_phrase`` (it always passes
+        ``confirmed_event=None``) -- so this event firing must have
+        zero effect on the delivered byte count."""
+        P = self._P()
+        worker = self._FakeWorker()
+        lifecycle = self._FakeLifecycle()
+
+        real_world_confirmed_event = asyncio.Event()
+
+        class _BargeinThatConfirmsPartway(self._FakeBargein):
+            def __init__(self) -> None:
+                super().__init__()
+                self.dispatch_count = 0
+
+            def notify_response_dispatched(self) -> None:
+                super().notify_response_dispatched()
+                self.dispatch_count += 1
+                if self.dispatch_count == 2:
+                    # Simulate: partway through warm-up, a real confirmed
+                    # self-barge-in happens in the outside world (e.g. a
+                    # real BargeInController._do_confirm firing). This
+                    # must NOT reach _play_assistant_phrase's own
+                    # confirmed_event -- _run_warmup never wires it.
+                    real_world_confirmed_event.set()
+
+        bargein = _BargeinThatConfirmsPartway()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
+        requested_seconds = 3.0
+
+        with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
+            delivered_bytes = await probe._run_warmup(
+                P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                sample_rate=sample_rate, warmup_seconds=requested_seconds,
+            )
+
+        self.assertTrue(real_world_confirmed_event.is_set())  # the scenario really happened
+        delivered_seconds = delivered_bytes / 2 / sample_rate
+        self.assertGreaterEqual(delivered_seconds, requested_seconds)
+        # lifecycle.mark_interrupted() must never be reached from warmup
+        # -- confirmed_event is structurally None, so no early return.
+        self.assertFalse(lifecycle.interrupted)
+        self.assertTrue(bargein.dispatch_count >= 2)
+
+    async def test_run_warmup_always_passes_confirmed_event_none(self) -> None:
+        """Structural guarantee, not a fallible flag: ``_run_warmup``
+        must call ``_play_assistant_phrase`` with ``confirmed_event=None``
+        on every single call, so a measured trial's own truncation
+        behavior (R0055's fix, preserved unchanged) can never accidentally
+        be disabled for a REAL trial, nor accidentally enabled for
+        warmup."""
+        P = self._P()
+        worker = self._FakeWorker()
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
+
+        seen_confirmed_events: list[Any] = []
+        real_play = probe._play_assistant_phrase
+
+        async def _spy(*args, **kwargs):
+            seen_confirmed_events.append(kwargs.get("confirmed_event", "MISSING"))
+            return await real_play(*args, **kwargs)
+
+        with (
+            mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep),
+            mock.patch.object(probe, "_play_assistant_phrase", new=_spy),
+        ):
+            await probe._run_warmup(
+                P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                sample_rate=sample_rate, warmup_seconds=1.5,
+            )
+
+        self.assertGreater(len(seen_confirmed_events), 0)
+        self.assertTrue(all(ev is None for ev in seen_confirmed_events))
+
+    async def test_measured_trial_path_still_truncates_on_confirmed_interruption(self) -> None:
+        """Preserves R0055's own diagnostic fix: this is the SAME
+        assertion as ``TestPlayAssistantPhraseStopsOnConfirmedInterrupt
+        .test_confirmed_mid_phrase_stops_injecting_further_chunks``,
+        re-run here explicitly alongside the new warmup tests so a
+        future change cannot accidentally weaken R0055's fix while
+        "fixing" warmup -- the measured-trial code path
+        (``confirmed_event`` NOT ``None``) must still stop injecting and
+        call ``mark_interrupted()``, never ``_run_warmup``'s own
+        always-``None`` behavior."""
+        P = self._P()
+        worker = self._FakeWorker()
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 5) * 2
+
+        confirmed_event = asyncio.Event()
+
+        async def _sleep_and_confirm_after_second_chunk(_seconds: float) -> None:
+            if len(worker.queued) == 2:
+                confirmed_event.set()
+
+        with mock.patch.object(probe.asyncio, "sleep", new=_sleep_and_confirm_after_second_chunk):
+            delivered = await probe._play_assistant_phrase(
+                P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm, sample_rate=sample_rate,
+                confirmed_event=confirmed_event,
+            )
+
+        self.assertEqual(len(worker.queued), 2)
+        self.assertTrue(lifecycle.interrupted)
+        # truncated -- proves the byte-count return itself is accurate too
+        self.assertLess(delivered, len(pcm))
+
+
 if __name__ == "__main__":
     unittest.main()

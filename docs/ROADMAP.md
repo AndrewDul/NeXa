@@ -1319,8 +1319,29 @@ unpaid-quota data is used to improve Google products.
     one parameter under test). **Revision 2**: no reboot -- `Array
     PCM,1` changed live, both measured trials gated by an identical
     fixed 60-second local-fixture warm-up instead of the latched
-    `AEC_AECCONVERGED` flag. Still not executed; no parameter/mixer
-    changed by either correction pass.
+    `AEC_AECCONVERGED` flag. **Same-day Correction 4, before any
+    hardware command was issued**: source-audited and CONFIRMED the
+    60-second warm-up itself was unreliable -- it used `--repeats 17`
+    against the diagnostic probe assuming each repeat delivers the full
+    ~3.5s fixture, but R0055's own confirmed-bug fix in
+    `_play_assistant_phrase` truncates injection the instant a real
+    confirmed barge-in fires (measured 3/3 at MAX by R0055 itself), and
+    since the false-confirm RATE is exactly the variable this
+    experiment changes between conditions, `--repeats 17` could deliver
+    a different real warm-up duration to each condition, biasing the
+    comparison. Fixed in the diagnostic probe only (`git diff --stat --
+    src/nexa` confirmed empty): `_play_assistant_phrase` now returns
+    the bytes it actually queued; a new `_run_warmup()` +
+    `--warmup-seconds` flag loops it with `confirmed_event=None`
+    (structurally never truncates) and counts real delivered bytes
+    until they PROVE at least the requested duration; measured-trial
+    behavior is completely unchanged. +4 tests (`TestRunWarmup`);
+    **1065 tests, OK (skipped=7)**; `ruff`/`pip check`/`git diff
+    --check` all clean. R0057 now uses one probe invocation per
+    condition (`--warmup-seconds 60 --level max --repeats 3
+    --capture-pcm --max-lag-ms 500`) whose own output proves delivered
+    warm-up duration. Still not executed; no parameter/mixer changed by
+    any correction pass.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

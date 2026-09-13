@@ -834,7 +834,14 @@ async def _play_assistant_phrase(
     primitive production calls, rather than the normal
     ``TTSStoppedFrame``/``mark_generation_done()`` tail. This does NOT
     change ``BargeInController``/production playback semantics -- only
-    this diagnostic probe's own synthetic-phrase injection loop."""
+    this diagnostic probe's own synthetic-phrase injection loop.
+
+    R0057 EXTENSION -- this function now returns the number of PCM bytes
+    actually queued before it stopped (whether by full completion or an
+    early return on ``confirmed_event``), so a caller can measure real
+    delivered-audio duration instead of assuming ``len(pcm)`` was always
+    reached (that assumption is exactly what a confirmed interruption
+    can invalidate -- see ``_run_warmup``'s own docstring)."""
     bargein.notify_response_dispatched()
     lifecycle.mark_dispatched()
     chunk_bytes = int(sample_rate * (ASSISTANT_CHUNK_MS / 1000.0) * 2)
@@ -842,7 +849,7 @@ async def _play_assistant_phrase(
     for i in range(0, len(pcm), chunk_bytes):
         if confirmed_event is not None and confirmed_event.is_set():
             lifecycle.mark_interrupted()
-            return
+            return i
         frame = P["TTSAudioRawFrame"](
             audio=pcm[i : i + chunk_bytes], sample_rate=sample_rate, num_channels=1
         )
@@ -851,9 +858,67 @@ async def _play_assistant_phrase(
         await asyncio.sleep(chunk_secs)
     if confirmed_event is not None and confirmed_event.is_set():
         lifecycle.mark_interrupted()
-        return
+        return len(pcm)
     await worker.queue_frames([P["TTSStoppedFrame"]()])
     lifecycle.mark_generation_done()
+    return len(pcm)
+
+
+async def _run_warmup(
+    P: dict[str, Any], worker, *, lifecycle, bargein, pcm: bytes, sample_rate: int,
+    warmup_seconds: float,
+) -> int:
+    """R0057 -- deterministic, PCM-proven AEC warm-up, reusing the SAME
+    real hardware path every measured trial uses
+    (``TTSAudioRawFrame`` -> ``AecReferenceFeeder`` -> ``plug:respeaker``
+    reference -> ``transport.output()`` -> the real audible speaker) --
+    never a sleep-only simulation, never a bypass of the real
+    ``AecReferenceFeeder``/output transport.
+
+    CONFIRMED BUG this fixes (source-audited, not assumed): a naive
+    ``--repeats N`` warm-up assumes each repeat delivers the FULL
+    ``len(pcm)`` (~3.5s) of reference PCM. That assumption is exactly
+    what R0055's own confirmed-bug fix in ``_play_assistant_phrase``
+    (the ``confirmed_event`` check above) can invalidate: at MAX volume
+    a real confirmed self-barge-in fires ~1.1-1.5s into playback (R0055's
+    own measured figures), and ``_play_assistant_phrase`` correctly stops
+    injecting further chunks once that happens -- so a repeat can be cut
+    to a fraction of its nominal length. Worse, the false-confirm RATE is
+    exactly the thing an R0057-style gain experiment changes between its
+    baseline and test conditions, so ``--repeats N`` alone would silently
+    deliver a DIFFERENT amount of real warm-up PCM to each condition --
+    contaminating the one-variable comparison the experiment exists to
+    make.
+
+    Fix: this function calls ``_play_assistant_phrase`` with
+    ``confirmed_event=None`` -- structurally, not by a fallible flag --
+    so a confirmed barge-in during warm-up can still be recorded by
+    ``bargein``'s own telemetry (Silero/VAD/BargeInController keep
+    running exactly as in normal operation; ``AecReferenceFeeder`` itself
+    never reacts to ``InterruptionFrame`` at all, confirmed by reading
+    its own ``process_frame`` -- so the FAR-END REFERENCE delivery this
+    warm-up cares about is unaffected by any interruption regardless),
+    but it can never truncate injection: with ``confirmed_event=None``
+    every call is guaranteed (by the same source-audited early-return
+    conditions above) to deliver the full ``len(pcm)`` bytes, checked by
+    counting the ACTUAL bytes each call returns, not by assuming it.
+    Loops whole fixture repeats until the cumulative byte count proves
+    at least ``warmup_seconds`` of reference PCM was delivered --
+    ``>=``, never an assumed ``repeats * fixture_duration``.
+
+    Measured trials (``_run_silent_trial``/``_run_control_trial``) are
+    completely unchanged by this function's existence: they still pass
+    their own ``recorder.confirmed_event``, so a confirmed interruption
+    during an ACTUAL measured trial still truncates exactly as R0055
+    fixed it -- only this dedicated warm-up path ignores confirmation."""
+    target_bytes = int(round(warmup_seconds * sample_rate)) * 2  # int16 mono
+    delivered_bytes = 0
+    while delivered_bytes < target_bytes:
+        delivered_bytes += await _play_assistant_phrase(
+            P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+            sample_rate=sample_rate, confirmed_event=None,
+        )
+    return delivered_bytes
 
 
 async def _wait_for_finish(lifecycle, *, timeout: float) -> bool:
@@ -1036,6 +1101,16 @@ def parse_args() -> argparse.Namespace:
         "--max-lag-ms", type=float, default=200.0,
         help="max lag searched by --capture-pcm's cross-correlation (default 200ms)",
     )
+    p.add_argument(
+        "--warmup-seconds", type=float, default=None,
+        help=(
+            "R0057: run a deterministic, PCM-proven AEC warm-up (real hardware "
+            "path, confirmed interruptions never truncate it) for at least this "
+            "many seconds of reference PCM BEFORE the normal --level/--control "
+            "trial(s) below. Composes with --level/--repeats/--capture-pcm in "
+            "the SAME invocation -- does not replace them."
+        ),
+    )
     return p.parse_args()
 
 
@@ -1088,6 +1163,22 @@ async def _run(args: argparse.Namespace) -> int:
     print(f"  audible_gain_db          {_gain_to_db_text(startup_gain)}")
     print(f"  audible_linear_gain      {startup_gain:.4f}")
     print(f"  reference_gain_applied   {startup_gain:.4f}  (fed to AecReferenceFeeder.gain_source)")
+
+    warmup_delivered_s: float | None = None
+    if args.warmup_seconds:
+        print(f"\n  warmup: requesting >= {args.warmup_seconds:.1f}s of real reference PCM "
+              "(confirmed interruptions during warmup do NOT truncate it) ...")
+        delivered_bytes = await _run_warmup(
+            P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+            sample_rate=rate, warmup_seconds=args.warmup_seconds,
+        )
+        warmup_delivered_s = delivered_bytes / 2 / rate
+        print(f"  warmup delivered {warmup_delivered_s:.2f}s of reference PCM "
+              f"(requested >= {args.warmup_seconds:.1f}s)")
+        assert warmup_delivered_s >= args.warmup_seconds, (
+            "warmup under-delivered -- this should be impossible given "
+            "_run_warmup's own accumulation loop; treat as a bug"
+        )
 
     trials: list[dict[str, Any]] = []
     try:
@@ -1144,6 +1235,8 @@ async def _run(args: argparse.Namespace) -> int:
         "audible_mixer_card": cfg.output_alsa_mixer_card,
         "audible_gain_db_at_startup": _gain_to_db_text(startup_gain),
         "audible_linear_gain_at_startup": startup_gain,
+        "warmup_requested_s": args.warmup_seconds,
+        "warmup_delivered_s": warmup_delivered_s,
         "trials": trials,
     }
     path = OUT_DIR / f"self_echo_probe_{ts}.json"
