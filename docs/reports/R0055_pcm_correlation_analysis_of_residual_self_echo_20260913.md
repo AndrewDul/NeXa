@@ -398,10 +398,14 @@ No `src/nexa/**` file touched this checkpoint (confirmed:
 - `pip check`: "No broken requirements found."
 - `git diff --check`: clean.
 
+## COMMIT HASHES
+
+- `6239a9b` — research: PCM correlation analysis of residual self-echo
+  (M2.6B.4N follow-up / R0055).
+
 ## GIT STATUS
 
-Not yet committed at time of writing this report (see COMMIT HASHES,
-added after commit). Not pushed. No Gemini call.
+Clean working tree after commit. Not pushed. No Gemini call.
 
 ## EXACT NEXT STEP
 
