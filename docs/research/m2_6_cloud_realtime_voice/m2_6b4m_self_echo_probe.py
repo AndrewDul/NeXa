@@ -394,6 +394,98 @@ def summarize_trial(
     }
 
 
+def _aec_reference_snapshot(aec_feeder: Any | None, aec_health: Any | None) -> dict[str, Any]:
+    """R0060 -- pure, read-only snapshot of EXISTING
+    ``nexa.voice_tts.aec_reference.AecReferenceFeeder``/``nexa.voice.aec
+    .AecReferenceHealth`` counters -- reused verbatim, never recomputed
+    or duplicated, and this probe writes NONE of them (no new DSP, no
+    feeder-behavior change). Source-confirmed fields (read this
+    checkpoint): ``AecReferenceFeeder.chunks_dropped`` (incremented in
+    its own ``_enqueue()`` only when the bounded reference queue
+    overflows and the OLDEST already-queued chunk is evicted to make
+    room for the newest -- ``DEFAULT_MAX_QUEUED_CHUNKS=24``, a few
+    hundred ms of headroom) and ``.respawns`` (incremented in
+    ``_start_sink(initial=False)``, i.e. every time the ``aplay`` sink
+    is restarted after dying); ``AecReferenceHealth.failure_count``
+    (incremented in ``mark_failed()``, called both when the sink fails
+    to start AND when ``_run_writer()``'s own ``sink.write()`` raises
+    ``BrokenPipeError``/``OSError``/``ValueError`` -- the only
+    production writer-error evidence that exists; there is no separate
+    per-write error counter), ``.active`` and ``.ever_started`` (current
+    liveness state, not counters -- reported as-is, never diffed).
+
+    Returns ``None`` for any field whose underlying object is ``None``
+    or lacks that attribute -- e.g. ``aec_feeder``/``aec_health`` never
+    passed by an older call site, or a test double that does not model
+    that particular counter. This is deliberately distinguished from a
+    present, genuine ``0`` (the counter exists and is exactly zero) --
+    a caller/reader must never treat ``None`` here as "zero drops";
+    only an explicit ``0`` proves that."""
+    return {
+        "chunks_dropped": (
+            getattr(aec_feeder, "chunks_dropped", None) if aec_feeder is not None else None
+        ),
+        "respawns": (
+            getattr(aec_feeder, "respawns", None) if aec_feeder is not None else None
+        ),
+        "failure_count": (
+            getattr(aec_health, "failure_count", None) if aec_health is not None else None
+        ),
+        "active": (
+            getattr(aec_health, "active", None) if aec_health is not None else None
+        ),
+        "ever_started": (
+            getattr(aec_health, "ever_started", None) if aec_health is not None else None
+        ),
+    }
+
+
+def _aec_reference_telemetry_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    """R0060 -- baseline-relative deltas between two
+    ``_aec_reference_snapshot()`` results (the SAME ``_before``/delta
+    pattern ``_run_warmup`` already established for
+    ``ref_accepted_bytes``/``playback_start_count``/
+    ``playback_stop_count`` -- not a new mechanism). A delta field is
+    ``None`` (unavailable) if EITHER snapshot's corresponding counter
+    was ``None`` -- never silently treated as zero. ``active``/
+    ``ever_started`` are reported as the AFTER snapshot's own raw
+    value (a liveness STATE, not a monotonic counter -- a delta would
+    not be meaningful for either).
+
+    EVIDENCE LIMITS (explicit, not proof of hardware delivery): a
+    ``chunks_dropped_delta`` of exactly ``0`` proves no chunk was
+    evicted from ``AecReferenceFeeder``'s own in-process queue during
+    the measured window -- it does NOT prove every accepted chunk was
+    actually written to ``plug:respeaker``, nor that the XVF3800's own
+    reference input physically ingested it (a successful ``sink.write()``
+    is still just an OS-level write to a pipe/ALSA device, confirmed
+    from ``AecReferenceFeeder._run_writer()``'s own source; only
+    ``frames_mirrored``/``bytes_mirrored`` -- not surfaced by this
+    function, since neither is a drop/error signal -- prove a write
+    call returned without raising). A ``failure_count_delta`` of ``0``
+    proves the writer never hit a start/write failure in the measured
+    window; it says nothing about drops from ordinary queue overflow
+    (a separate, non-failure code path). Neither this function nor
+    ``ref_accepted_bytes`` (``Recorder``'s own, separate counter, tapped
+    downstream of ``aec_feeder`` -- see its own docstring) proves
+    physical hardware ingestion; both are software-level evidence
+    along the real production path, not acoustic proof."""
+
+    def _int_delta(key: str) -> int | None:
+        b, a = before.get(key), after.get(key)
+        if b is None or a is None:
+            return None
+        return a - b
+
+    return {
+        "chunks_dropped_delta": _int_delta("chunks_dropped"),
+        "respawns_delta": _int_delta("respawns"),
+        "failure_count_delta": _int_delta("failure_count"),
+        "aec_ref_active_at_end": after.get("active"),
+        "aec_ref_ever_started_at_end": after.get("ever_started"),
+    }
+
+
 # ---- pipecat wiring (deferred import; --dry works without pipecat) --- #
 def _pipecat_imports() -> dict[str, Any]:
     from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -481,11 +573,31 @@ class Recorder:
     #: therefore still be lost before ever reaching ``AecReferenceFeeder``.
     #: This counter is incremented by ``_PlaybackWatcher``, positioned
     #: (already, unchanged) immediately AFTER ``aec_feeder`` in the
-    #: pipeline -- a frame counted here has, by construction, already run
-    #: all the way through ``aec_feeder.process_frame()`` (which enqueues
-    #: it to its own real writer queue before ever calling
-    #: ``push_frame()`` onward) -- proof of ACCEPTANCE, not mere
-    #: submission.
+    #: pipeline -- a frame counted here has, by construction, already
+    #: run all the way through ``aec_feeder.process_frame()`` in full,
+    #: INCLUDING its own gain-scaling and its own synchronous
+    #: ``_enqueue()`` attempt against ``AecReferenceFeeder``'s bounded
+    #: internal queue (confirmed by reading its installed source this
+    #: checkpoint, R0060) -- BEFORE ``process_frame()`` ever calls
+    #: ``push_frame()`` onward to reach this tap. This is proof the
+    #: chunk survived that per-processor queue boundary far better than
+    #: mere ``worker.queue_frames()`` submission (the OLD R0055-era gap
+    #: this counter was built to close) -- it is NOT proof the chunk
+    #: was actually WRITTEN to ``plug:respeaker`` (that is
+    #: ``AecReferenceFeeder.frames_mirrored``/``.bytes_mirrored``,
+    #: incremented only after ``_run_writer()``'s own ``sink.write()``
+    #: call returns without raising -- a separate, stronger, but still
+    #: software-only signal, not surfaced by this ``Recorder`` field)
+    #: and CERTAINLY not proof the XVF3800's own reference input or the
+    #: physical speaker actually ingested/reproduced it -- no
+    #: software-only signal can prove that. R0060 adds the
+    #: complementary NEGATIVE evidence this field never carried on its
+    #: own: ``_aec_reference_snapshot``/``_aec_reference_telemetry_delta``
+    #: below report ``AecReferenceFeeder.chunks_dropped`` (queue-overflow
+    #: evictions) and ``AecReferenceHealth.failure_count`` (start/write
+    #: failures) as baseline-relative deltas, distinguishing an
+    #: unavailable counter from a genuine zero -- see their own
+    #: docstrings for the exact source-confirmed semantics of each.
     ref_accepted_bytes: int = 0
     #: Counts (not overwrites, unlike ``playback_start_t``/``playback_end_t``
     #: above) every real ``BotStartedSpeakingFrame``/``BotStoppedSpeakingFrame``
@@ -708,11 +820,18 @@ def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sam
         ``transport.output()``, so it also taps ``TTSAudioRawFrame``
         bytes here: a frame reaching THIS point has, by construction,
         already been run through ``aec_feeder.process_frame()`` in full
-        (which enqueues it to its own real writer queue before ever
-        calling ``push_frame()``) -- proof the reference was ACCEPTED,
-        not merely that ``worker.queue_frames()`` returned (see
-        ``Recorder.ref_accepted_bytes``'s own docstring for the full
-        source-audited reasoning). Never drops or mutates a frame."""
+        (its own gain-scaling and its own synchronous ``_enqueue()``
+        attempt against the feeder's bounded internal queue, before it
+        ever calls ``push_frame()`` onward) -- proof the reference
+        survived that per-processor queue boundary, not merely that
+        ``worker.queue_frames()`` returned. R0060 CORRECTED PRECISION:
+        this is proof of passage through the feeder's own acceptance
+        logic, NOT proof of a successful write to ``plug:respeaker``
+        (that is ``AecReferenceFeeder.frames_mirrored``/
+        ``.bytes_mirrored``) nor of physical hardware ingestion (see
+        ``Recorder.ref_accepted_bytes``'s own docstring for the full,
+        source-audited, exact-tap-location reasoning). Never drops or
+        mutates a frame."""
 
         def __init__(self, *, lifecycle, **kwargs) -> None:
             super().__init__(**kwargs)
@@ -805,7 +924,7 @@ def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sam
         enable_rtvi=False,
         idle_timeout_secs=None,
     )
-    return worker, P["WorkerRunner"], bargein, lifecycle, aec_health, reference_gain, cfg
+    return worker, P["WorkerRunner"], bargein, lifecycle, aec_health, reference_gain, cfg, aec_feeder
 
 
 async def _play_assistant_phrase(
@@ -962,6 +1081,7 @@ class WarmupIncompleteError(RuntimeError):
 async def _run_warmup(
     P: dict[str, Any], worker, recorder: Recorder, *, lifecycle, bargein, pcm: bytes,
     sample_rate: int, warmup_seconds: float, poll_timeout_s: float = 5.0,
+    aec_feeder: Any | None = None, aec_health: Any | None = None,
 ) -> dict[str, Any]:
     """R0057 -- deterministic, PCM-PROVEN AEC warm-up, reusing the SAME
     real hardware path every measured trial uses
@@ -1130,12 +1250,37 @@ async def _run_warmup(
     starts), this function raises ``WarmupIncompleteError`` with the
     full expected-vs-observed evidence attached (``.context``) -- it
     NEVER returns a dict describing an incomplete or contradictory
-    warm-up as if it were a passable one."""
+    warm-up as if it were a passable one.
+
+    R0060 -- optional ``aec_feeder``/``aec_health`` (default ``None``,
+    preserving every existing call site unchanged) close the
+    reference-observability gap this checkpoint's own review identified:
+    ``ref_accepted_bytes`` alone never surfaced the feeder's own
+    NEGATIVE evidence (queue-overflow drops, start/write failures) --
+    only whether accepted bytes kept pace. The returned dict's
+    ``aec_reference_telemetry`` key (see
+    ``_aec_reference_snapshot``/``_aec_reference_telemetry_delta`` for
+    the exact source-confirmed fields and evidence limits) is present
+    on EVERY return AND on every raised ``WarmupIncompleteError.context``
+    -- baseline-relative, ``None``-for-unavailable, never a new
+    invalidating condition added to this function's own pass/fail
+    logic (reused counters only; no feeder-behavior change; the
+    decision of whether a nonzero drop/failure delta invalidates a
+    given run is left to the caller/report, per this checkpoint's own
+    scope)."""
     target_bytes = int(round(warmup_seconds * sample_rate)) * 2  # int16 mono
     interrupt_confirmed_before = bargein.telemetry.interrupt_confirmed
     ref_accepted_before = recorder.ref_accepted_bytes
     playback_start_before = recorder.playback_start_count
     playback_stop_before = recorder.playback_stop_count
+    # R0060: baseline-relative AecReferenceFeeder/AecReferenceHealth
+    # evidence (chunks_dropped/respawns/failure_count deltas, plus
+    # end-of-window active/ever_started) -- see
+    # `_aec_reference_snapshot`/`_aec_reference_telemetry_delta`'s own
+    # docstrings for the exact source-confirmed semantics and evidence
+    # limits. `aec_feeder`/`aec_health` default to `None` (unavailable)
+    # so every existing call site keeps working unchanged.
+    aec_snapshot_before = _aec_reference_snapshot(aec_feeder, aec_health)
 
     delivered_bytes = 0
     repeats_run = 0
@@ -1183,6 +1328,9 @@ async def _run_warmup(
         await asyncio.sleep(0.02)
 
     interrupt_confirmed_delta = bargein.telemetry.interrupt_confirmed - interrupt_confirmed_before
+    aec_reference_telemetry = _aec_reference_telemetry_delta(
+        aec_snapshot_before, _aec_reference_snapshot(aec_feeder, aec_health)
+    )
     result = {
         "requested_seconds": warmup_seconds,
         "delivered_bytes": delivered_bytes,
@@ -1191,6 +1339,7 @@ async def _run_warmup(
         "playback_stop_count": playback_stop_delta,
         "repeats_run": repeats_run,
         "interrupt_confirmed_delta": interrupt_confirmed_delta,
+        "aec_reference_telemetry": aec_reference_telemetry,
     }
 
     if interrupt_confirmed_delta != 0:
@@ -1252,8 +1401,16 @@ async def _wait_for_finish(lifecycle, *, timeout: float) -> bool:
 async def _run_silent_trial(
     P: dict[str, Any], worker, recorder: Recorder, *, lifecycle, bargein, pcm: bytes,
     sample_rate: int, level: str, trial_index: int, max_lag_ms: float,
+    aec_feeder: Any | None = None, aec_health: Any | None = None,
 ) -> dict[str, Any]:
     recorder.reset_trial()
+    # R0060: baseline-relative AecReferenceFeeder/AecReferenceHealth
+    # evidence for THIS trial's own window -- see
+    # `_aec_reference_telemetry_delta`'s own docstring for exact
+    # semantics/evidence limits. Snapshot taken here, before this
+    # trial's own playback, so a nonzero delta can never be attributed
+    # to a PRIOR trial's activity.
+    aec_snapshot_before = _aec_reference_snapshot(aec_feeder, aec_health)
     trial_start = time.monotonic()
     await asyncio.sleep(QUIET_BEFORE_S)
     await _play_assistant_phrase(
@@ -1277,6 +1434,9 @@ async def _run_silent_trial(
         ref_rms_frames=recorder.ref_rms_frames,
     )
     result["trial_start_t"] = round(trial_start, 4)
+    result["aec_reference_telemetry"] = _aec_reference_telemetry_delta(
+        aec_snapshot_before, _aec_reference_snapshot(aec_feeder, aec_health)
+    )
     corr = _save_pcm_and_correlate(
         recorder, sample_rate=sample_rate, label=f"{level}_trial{trial_index}", max_lag_ms=max_lag_ms
     )
@@ -1289,11 +1449,13 @@ async def _run_silent_trial(
 async def _run_control_trial(
     P: dict[str, Any], worker, recorder: Recorder, *, lifecycle, bargein, pcm: bytes,
     sample_rate: int, control_index: int, max_lag_ms: float,
+    aec_feeder: Any | None = None, aec_health: Any | None = None,
 ) -> dict[str, Any]:
     """The human control: assistant plays, operator deliberately says
     "przerwij" -- proves whatever the eventual fix is does NOT also
     defeat real user-over-assistant barge-in."""
     recorder.reset_trial()
+    aec_snapshot_before = _aec_reference_snapshot(aec_feeder, aec_health)
     trial_start = time.monotonic()
     print("\n  >>> Assistant will now speak. Say \"przerwij\" clearly once it starts. <<<\n")
     await asyncio.sleep(1.0)
@@ -1316,6 +1478,9 @@ async def _run_control_trial(
         ref_rms_frames=recorder.ref_rms_frames,
     )
     result["trial_start_t"] = round(trial_start, 4)
+    result["aec_reference_telemetry"] = _aec_reference_telemetry_delta(
+        aec_snapshot_before, _aec_reference_snapshot(aec_feeder, aec_health)
+    )
     corr = _save_pcm_and_correlate(
         recorder, sample_rate=sample_rate, label=f"control{control_index}", max_lag_ms=max_lag_ms
     )
@@ -1728,7 +1893,7 @@ async def _run(args: argparse.Namespace) -> int:
     recorder = Recorder(capture_pcm=args.capture_pcm)
     if args.capture_pcm:
         print(f"  capture-pcm              ON (max_lag_ms={args.max_lag_ms})")
-    worker, runner_cls, bargein, lifecycle, aec_health, reference_gain, cfg = build_probe_pipeline(
+    worker, runner_cls, bargein, lifecycle, aec_health, reference_gain, cfg, aec_feeder = build_probe_pipeline(
         P, recorder=recorder, assistant_sample_rate=rate
     )
     runner = runner_cls()
@@ -1795,6 +1960,7 @@ async def _run(args: argparse.Namespace) -> int:
             warmup_result = await _run_warmup(
                 P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
                 sample_rate=rate, warmup_seconds=args.warmup_seconds,
+                aec_feeder=aec_feeder, aec_health=aec_health,
             )
             print(f"WARMUP_RETURNED {warmup_result}", flush=True)
             queued_s = warmup_result["delivered_bytes"] / 2 / rate
@@ -1808,12 +1974,19 @@ async def _run(args: argparse.Namespace) -> int:
                 f"interrupt_confirmed_delta={warmup_result['interrupt_confirmed_delta']}",
                 flush=True,
             )
+            # R0060: baseline-relative AecReferenceFeeder/AecReferenceHealth
+            # evidence for THIS warm-up window -- see
+            # `_aec_reference_telemetry_delta`'s own docstring for the
+            # exact source-confirmed meaning and evidence limits of each
+            # field. `None` means unavailable, never assumed zero.
+            print(f"  warmup: aec_reference_telemetry={warmup_result['aec_reference_telemetry']}", flush=True)
 
         print("ENTERING_TRIAL_LOOP", flush=True)
         if args.control:
             r = await _run_control_trial(
                 P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
                 sample_rate=rate, control_index=1, max_lag_ms=args.max_lag_ms,
+                aec_feeder=aec_feeder, aec_health=aec_health,
             )
             # R0053 CONTRACT FIX: re-read the SAME live gain per trial
             # (not just once at startup) -- proves the fix stays active,
@@ -1823,7 +1996,8 @@ async def _run(args: argparse.Namespace) -> int:
             trials.append(r)
             print(
                 f"  control: confirmed_barge_ins={r['bargein_confirmed_count']} "
-                f"(expect exactly 1) reference_gain_applied={r['reference_gain_applied']:.4f}"
+                f"(expect exactly 1) reference_gain_applied={r['reference_gain_applied']:.4f} "
+                f"aec_reference_telemetry={r['aec_reference_telemetry']}"
             )
         else:
             print(
@@ -1837,6 +2011,7 @@ async def _run(args: argparse.Namespace) -> int:
                     P, worker, recorder, lifecycle=lifecycle, bargein=bargein,
                     pcm=pcm, sample_rate=rate, level=args.level, trial_index=i,
                     max_lag_ms=args.max_lag_ms,
+                    aec_feeder=aec_feeder, aec_health=aec_health,
                 )
                 r["reference_gain_applied"] = reference_gain.current_gain()
                 trials.append(r)
@@ -1845,7 +2020,8 @@ async def _run(args: argparse.Namespace) -> int:
                     f"confirmed={r['bargein_confirmed_count']} "
                     f"candidates={r['bargein_candidate_count']} "
                     f"rejected={r['bargein_rejected_count']} "
-                    f"reference_gain_applied={r['reference_gain_applied']:.4f}"
+                    f"reference_gain_applied={r['reference_gain_applied']:.4f} "
+                    f"aec_reference_telemetry={r['aec_reference_telemetry']}"
                 )
 
     async def _cleanup() -> dict[str, Any]:

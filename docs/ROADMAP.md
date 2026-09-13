@@ -1525,6 +1525,48 @@ unpaid-quota data is used to improve Google products.
     still-pending R0057 gain A/B experiment itself, now with both the
     warm-up completion proof and the runner cleanup guarantee validated
     at the full 60-second scale the experiment requires.
+  - **M2.6B.4N follow-up -- reference-observability fix and gain A/B
+    experiment procedure preparation** (`R0060`, 2026-09-13; the
+    experiment itself remains NOT EXECUTED). Closed a
+    reference-observability gap: `ref_accepted_bytes` never surfaced
+    `AecReferenceFeeder`'s own NEGATIVE evidence (`chunks_dropped`
+    queue-overflow drops, `AecReferenceHealth.failure_count` start/write
+    failures) -- added two new pure, offline functions reusing ONLY
+    those existing counters (no new DSP, no feeder-behavior change),
+    `None` for unavailable vs. explicit `0` for a genuine zero.
+    `build_probe_pipeline` now also returns `aec_feeder` (previously
+    unreachable from `_run()`); `_run_warmup`/`_run_silent_trial`/
+    `_run_control_trial` gained optional `aec_feeder`/`aec_health`
+    kwargs (every existing call site backward compatible) and report
+    `aec_reference_telemetry` per warm-up and per measured trial.
+    Corrected `ref_accepted_bytes`'s own docstring for exact-tap-location
+    accuracy (field/behavior unchanged): proof of passage through the
+    feeder's own acceptance logic, not a successful write and not
+    physical hardware ingestion. +8 tests. Then prepared -- explicitly
+    did NOT execute -- the previously-accepted gain A/B experiment:
+    verified (read-only, not guessed) `Array 'PCM',1'` is linear
+    1dB/step over exactly [-60.00dB, 0.00dB] (raw 40 = -20dB current,
+    raw 60 = exactly 0.00dB) and `UACDemoV10` sits at its own verified
+    MAX (never written). New tracked procedure document
+    (`R0057_gain_ab_experiment_procedure.md`) and a real, non-executable,
+    approval-gated wrapper script (`run_r0057_gain_ab_condition.sh`,
+    requires `--i-have-explicit-operator-approval`) implementing: one
+    probe invocation per condition (fresh 60s warm-up + 3 trials +
+    capture-pcm, never reusing R0059's own warm-up-only run); a
+    trap-based rollback to -20dB on success/failure/interruption with
+    independent readback; a 240s/15s-grace external supervisor;
+    invalid-run criteria (explicitly excluding a confirmed barge-in
+    during a measured trial, which is the outcome being measured); and
+    a comparison methodology requiring every trial reported separately,
+    exposure-adjusted, with an explicit caution against overclaiming
+    from 3 trials/condition. Verified the script's own approval-gate
+    exits before any hardware write for every invalid invocation
+    tested. **68/68 probe tests (60+8), 112/112 combined with bargein
+    tests**; `ruff`/`git diff --check` clean; `git diff --stat --
+    src/nexa` empty. No Gemini call. No TV tests. No dependency change.
+    No audio hardware run. Not pushed. **`M2.6B` remains IN PROGRESS.
+    The R0057 gain A/B experiment remains NOT EXECUTED** -- awaiting
+    Andrzej's explicit approval to run either condition.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

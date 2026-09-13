@@ -262,6 +262,110 @@ class TestSummarizeTrial(unittest.TestCase):
         self.assertEqual(result["ref_raw_rms_phase_after"], {"n_frames": 0})
 
 
+class TestAecReferenceTelemetry(unittest.TestCase):
+    """R0060 -- pure, offline coverage for `_aec_reference_snapshot`/
+    `_aec_reference_telemetry_delta`: the smallest probe-only
+    observation closing the reference-observability gap identified in
+    review (`ref_accepted_bytes` alone never surfaced the feeder's own
+    NEGATIVE evidence -- queue-overflow drops, start/write failures).
+    Reuses ONLY the real `AecReferenceFeeder.chunks_dropped`/`.respawns`
+    and `AecReferenceHealth.failure_count`/`.active`/`.ever_started`
+    attribute NAMES (via simple fakes exposing the same attributes,
+    matching this file's own established no-Pipecat-in-unit-tests
+    convention) -- no new DSP, no feeder-behavior change. No asyncio
+    needed: both functions are pure and synchronous."""
+
+    class _FakeFeeder:
+        def __init__(self, *, chunks_dropped: int = 0, respawns: int = 0) -> None:
+            self.chunks_dropped = chunks_dropped
+            self.respawns = respawns
+
+    class _FakeHealth:
+        def __init__(
+            self, *, failure_count: int = 0, active: bool = True, ever_started: bool = True
+        ) -> None:
+            self.failure_count = failure_count
+            self.active = active
+            self.ever_started = ever_started
+
+    class _FeederMissingChunksDropped:
+        """Simulates an object that does not expose `chunks_dropped` at
+        all (e.g. an older/different double) -- `respawns` IS present
+        and genuinely zero, to prove the two are distinguished
+        independently, not both collapsed to the same "unavailable"
+        outcome."""
+
+        respawns = 0
+
+    def test_snapshot_reads_existing_counters(self) -> None:
+        feeder = self._FakeFeeder(chunks_dropped=3, respawns=1)
+        health = self._FakeHealth(failure_count=2, active=True, ever_started=True)
+        snap = probe._aec_reference_snapshot(feeder, health)
+        self.assertEqual(snap["chunks_dropped"], 3)
+        self.assertEqual(snap["respawns"], 1)
+        self.assertEqual(snap["failure_count"], 2)
+        self.assertTrue(snap["active"])
+        self.assertTrue(snap["ever_started"])
+
+    def test_snapshot_is_none_for_missing_feeder_and_health(self) -> None:
+        snap = probe._aec_reference_snapshot(None, None)
+        self.assertIsNone(snap["chunks_dropped"])
+        self.assertIsNone(snap["respawns"])
+        self.assertIsNone(snap["failure_count"])
+        self.assertIsNone(snap["active"])
+        self.assertIsNone(snap["ever_started"])
+
+    def test_snapshot_distinguishes_missing_attribute_from_genuine_zero(self) -> None:
+        feeder = self._FeederMissingChunksDropped()
+        snap = probe._aec_reference_snapshot(feeder, None)
+        self.assertIsNone(snap["chunks_dropped"])  # attribute does not exist -- unavailable
+        self.assertEqual(snap["respawns"], 0)  # attribute exists and is genuinely zero
+
+    def test_delta_computes_exact_difference(self) -> None:
+        before = probe._aec_reference_snapshot(
+            self._FakeFeeder(chunks_dropped=2, respawns=0),
+            self._FakeHealth(failure_count=0, active=True, ever_started=True),
+        )
+        after = probe._aec_reference_snapshot(
+            self._FakeFeeder(chunks_dropped=5, respawns=1),
+            self._FakeHealth(failure_count=1, active=False, ever_started=True),
+        )
+        delta = probe._aec_reference_telemetry_delta(before, after)
+        self.assertEqual(delta["chunks_dropped_delta"], 3)
+        self.assertEqual(delta["respawns_delta"], 1)
+        self.assertEqual(delta["failure_count_delta"], 1)
+        self.assertFalse(delta["aec_ref_active_at_end"])
+        self.assertTrue(delta["aec_ref_ever_started_at_end"])
+
+    def test_delta_reports_zero_when_nothing_changed(self) -> None:
+        """A genuine zero delta must be reported AS zero, not confused
+        with unavailable -- the exact distinction this checkpoint's own
+        review asked for."""
+        snap = probe._aec_reference_snapshot(
+            self._FakeFeeder(chunks_dropped=4, respawns=2),
+            self._FakeHealth(failure_count=1, active=True, ever_started=True),
+        )
+        delta = probe._aec_reference_telemetry_delta(snap, snap)
+        self.assertEqual(delta["chunks_dropped_delta"], 0)
+        self.assertEqual(delta["respawns_delta"], 0)
+        self.assertEqual(delta["failure_count_delta"], 0)
+
+    def test_delta_is_none_when_either_snapshot_unavailable(self) -> None:
+        before = probe._aec_reference_snapshot(None, None)
+        after = probe._aec_reference_snapshot(
+            self._FakeFeeder(chunks_dropped=5, respawns=0),
+            self._FakeHealth(failure_count=1, active=True, ever_started=True),
+        )
+        delta = probe._aec_reference_telemetry_delta(before, after)
+        self.assertIsNone(delta["chunks_dropped_delta"])
+        self.assertIsNone(delta["respawns_delta"])
+        self.assertIsNone(delta["failure_count_delta"])
+        # Liveness state is still reported from the AFTER snapshot even
+        # when the BEFORE snapshot was unavailable -- it is a state, not
+        # a delta, so there is nothing to diff.
+        self.assertTrue(delta["aec_ref_active_at_end"])
+
+
 def _sine_pcm(n: int, *, freq_cycles_total: float = 40.0, amplitude: int = 8000):
     import numpy as np
 
@@ -1105,6 +1209,81 @@ class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
         # counters themselves, is what protects this warm-up's evidence.
         self.assertEqual(recorder.playback_start_count, 3 + expected_repeats)
         self.assertEqual(recorder.ref_accepted_bytes, 999_999 + len(pcm) * expected_repeats)
+
+    async def test_warmup_reports_aec_reference_telemetry_delta(self) -> None:
+        """R0060: `_run_warmup` threads `aec_feeder`/`aec_health` through
+        to `_aec_reference_snapshot`/`_aec_reference_telemetry_delta`
+        end-to-end -- the returned `aec_reference_telemetry` key reports
+        a baseline-relative delta, not the fake's own absolute total,
+        and stays present (as an all-`None` sub-dict, never a KeyError
+        or omitted key) when neither is supplied, preserving every
+        existing call site."""
+        P = self._P()
+        recorder = probe.Recorder()
+        worker = self._FakeWorkerSimulatingDownstreamPipeline(recorder)
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
+        requested_seconds = 1.5
+
+        class _FakeFeeder:
+            chunks_dropped = 7  # nonzero baseline, already present before this call
+            respawns = 1
+
+        class _FakeHealth:
+            failure_count = 2
+            active = True
+            ever_started = True
+
+        aec_feeder = _FakeFeeder()
+        aec_health = _FakeHealth()
+
+        with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
+            result = await probe._run_warmup(
+                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                sample_rate=sample_rate, warmup_seconds=requested_seconds,
+                aec_feeder=aec_feeder, aec_health=aec_health,
+            )
+
+        # Nothing in this fake changes chunks_dropped/respawns/failure_count
+        # during the call, so every delta must be exactly zero -- NOT the
+        # fake's own absolute totals (7, 1, 2), and NOT None (both objects
+        # were supplied and expose every attribute).
+        telemetry = result["aec_reference_telemetry"]
+        self.assertEqual(telemetry["chunks_dropped_delta"], 0)
+        self.assertEqual(telemetry["respawns_delta"], 0)
+        self.assertEqual(telemetry["failure_count_delta"], 0)
+        self.assertTrue(telemetry["aec_ref_active_at_end"])
+        self.assertTrue(telemetry["aec_ref_ever_started_at_end"])
+
+    async def test_warmup_aec_reference_telemetry_is_none_when_unavailable(self) -> None:
+        """Every existing call site omits `aec_feeder`/`aec_health` --
+        the returned `aec_reference_telemetry` key must still be
+        present, with every field explicitly `None` (unavailable),
+        never silently defaulted to zero or omitted."""
+        P = self._P()
+        recorder = probe.Recorder()
+        worker = self._FakeWorkerSimulatingDownstreamPipeline(recorder)
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
+
+        with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
+            result = await probe._run_warmup(
+                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                sample_rate=sample_rate, warmup_seconds=1.0,
+            )
+
+        telemetry = result["aec_reference_telemetry"]
+        self.assertIsNone(telemetry["chunks_dropped_delta"])
+        self.assertIsNone(telemetry["respawns_delta"])
+        self.assertIsNone(telemetry["failure_count_delta"])
+        self.assertIsNone(telemetry["aec_ref_active_at_end"])
+        self.assertIsNone(telemetry["aec_ref_ever_started_at_end"])
 
 
 class TestShutdownRunner(unittest.IsolatedAsyncioTestCase):

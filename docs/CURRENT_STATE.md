@@ -144,7 +144,63 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0059_post_r0058_review_and_full_baseline_warmup_validation_20260913.md`
+- **Latest report:** `docs/reports/R0060_reference_observability_and_gain_ab_procedure_preparation_20260913.md`
+  (**M2.6B.4N follow-up — reference-observability fix + gain A/B
+  experiment procedure PREPARED (NOT EXECUTED), 2026-09-13.** Closed the
+  reference-observability gap identified in review: `ref_accepted_bytes`
+  alone never surfaced `AecReferenceFeeder`'s own NEGATIVE evidence
+  (queue-overflow drops via `chunks_dropped`, start/write failures via
+  `AecReferenceHealth.failure_count`) — added two new pure, offline
+  functions (`_aec_reference_snapshot`/`_aec_reference_telemetry_delta`)
+  reusing ONLY those existing production counters (no new DSP, no
+  feeder-behavior change), returning `None` for an unavailable counter
+  vs. an explicit `0` for a genuine zero. `build_probe_pipeline` now
+  also returns `aec_feeder` (previously unreachable from `_run()`);
+  `_run_warmup`/`_run_silent_trial`/`_run_control_trial` gained optional
+  `aec_feeder=None, aec_health=None` kwargs (every existing call site
+  backward compatible) and now report `aec_reference_telemetry`
+  baseline-relative, per warm-up AND per measured trial. Corrected
+  `ref_accepted_bytes`'s own docstring for exact-tap-location accuracy
+  (field/behavior unchanged): it proves passage through
+  `AecReferenceFeeder`'s own acceptance logic, not a successful write
+  (`frames_mirrored`/`bytes_mirrored`) and not physical hardware
+  ingestion. +8 tests (7 pure `TestAecReferenceTelemetry` + 2
+  `_run_warmup` integration). **Then prepared, but explicitly did NOT
+  execute**, the previously-accepted R0057 gain A/B experiment: verified
+  (read-only, not guessed) `Array 'PCM',1'` (numid=6) is linear 1dB/step
+  over exactly `[-60.00dB, 0.00dB]` (raw 40 = -20dB current baseline,
+  raw 60 = exactly 0.00dB, condition B's real target) and `UACDemoV10`
+  (numid=3) sits at its own verified MAX (147,147 = -0.94dB, never
+  written). Wrote a dedicated, tracked procedure document
+  (`docs/research/m2_6_cloud_realtime_voice/R0057_gain_ab_experiment_procedure.md`)
+  and a real, committed, non-executable, approval-gated wrapper script
+  (`run_r0057_gain_ab_condition.sh`, requires a literal
+  `--i-have-explicit-operator-approval` argument) implementing: one
+  probe invocation per condition (`--warmup-seconds 60 --level max
+  --repeats 3 --capture-pcm --max-lag-ms 500`, a FRESH warm-up per
+  condition, never reusing R0059's own separate warm-up-only run); a
+  bash `trap`-based rollback to -20dB on success/failure/interruption
+  with an independent readback; a 240s/15s-grace external supervisor
+  (~135s margin over the ~100-105s estimated real duration, arithmetic
+  shown); invalid-run criteria (incomplete warm-up, nonzero
+  drop/failure telemetry, unexpected mixer readings, failed cleanup,
+  missing artifacts -- explicitly EXCLUDING a confirmed barge-in during
+  a measured trial, which is the outcome being measured, not a
+  defect); and a comparison methodology requiring every trial reported
+  separately, exposure-adjusted via `playback_duration_ms`, with an
+  explicit caution against reading 3 trials/condition as proof of
+  universal reliability or concluding either setting is "faulty"/"the
+  fix." Verified this checkpoint (read-only) that the script's own
+  approval-gate and argument-validation exit before any hardware write
+  for every invalid invocation tested. **68/68 probe tests (60+8),
+  112/112 combined with bargein tests**; `ruff`/`git diff --check`
+  clean; `git diff --stat -- src/nexa` empty (full suite not re-run --
+  no gate required it for this probe-only change). No Gemini call. No
+  TV tests. No dependency change. No audio hardware run. Not pushed.
+  **`M2.6B` remains IN PROGRESS. The R0057 gain A/B experiment remains
+  NOT EXECUTED** -- awaiting Andrzej's explicit approval to run either
+  condition.)
+- **Prior report:** `docs/reports/R0059_post_r0058_review_and_full_baseline_warmup_validation_20260913.md`
   (**M2.6B.4N follow-up — post-R0058 review fixes + full 60-second
   baseline warm-up validation, 2026-09-13. NOT the R0057 gain A/B
   experiment** — remains NOT EXECUTED. Three review points against
