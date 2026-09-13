@@ -1525,12 +1525,48 @@ async def _shutdown_runner(
 
     print("RUNNER_END_BEGIN", flush=True)
     try:
-        # `runner.end(...)` is a bare coroutine here, not a pre-existing
-        # Task -- `wait_for` drives it INLINE within this coroutine's own
-        # frame, so a cancellation genuinely propagates out as
-        # CancelledError and IS correctly converted to TimeoutError (the
-        # pitfall documented above is specific to awaiting an
-        # ALREADY-SCHEDULED, independently-running Task like `run_task`).
+        # CORRECTED THIS CHECKPOINT: an earlier version of this comment
+        # claimed "a bare coroutine is reliably bounded by wait_for,
+        # unlike an existing Task" as a general architectural rule. That
+        # framing is WRONG -- verified against the installed CPython
+        # 3.13.5 source, not merely reasoned about. `wait_for`'s
+        # TimeoutError conversion depends on whether a CancelledError
+        # actually PROPAGATES OUT of whatever is awaited, which a bare
+        # coroutine can just as easily suppress (e.g. its own internal
+        # `except CancelledError: <keep awaiting something else>`) as an
+        # existing Task can -- the coroutine-vs-Task distinction itself
+        # proves nothing.
+        #
+        # What DOES justify this specific `wait_for` call, confirmed by
+        # reading the actual installed `WorkerRunner.end()` this
+        # checkpoint (`pipecat/workers/runner.py`): `end()` sets
+        # `_shutdown_event` (synchronous) then awaits
+        # `_finish_running_workers(...)`, which calls `await
+        # self._bus.send(message)` per still-running worker.
+        # `WorkerBus.send()` (`pipecat/bus/bus.py`) delivers a
+        # `BusEndWorkerMessage` (a `BusLocalMessage`) via a direct,
+        # synchronous `on_message_received(message)` call -- confirmed
+        # by reading `AsyncQueueBus.publish()` (`pipecat/bus/local/
+        # async_queue.py`) too, the bus type this probe's own
+        # `WorkerRunner()` constructs by default. There is NO actual
+        # suspension point anywhere in this call chain FOR THIS PROBE's
+        # single-in-process-worker, default-bus configuration -- `end()`
+        # runs to completion in one step, so there is nothing for a
+        # cancellation to interrupt mid-flight, and no cancellation-
+        # swallowing pattern exists in its own source to worry about
+        # either. A different `WorkerBus` implementation (e.g. a
+        # networked one) could introduce a real suspension point and
+        # would need this same scrutiny before trusting `wait_for`
+        # around it the same way.
+        #
+        # This bound, like every other one in this function, is still
+        # only a best-effort limit on THIS coroutine's own wait -- NOT a
+        # hard wall-clock or process-level deadline. `asyncio.wait`/
+        # `asyncio.wait_for` cannot force a stuck event loop or a truly
+        # wedged callback to stop running; only an external process
+        # supervisor (this checkpoint's own hardware-validation
+        # `timeout` wrapper) can. External supervision remains
+        # necessary regardless of anything in this function.
         await asyncio.wait_for(runner.end(reason="probe done"), timeout=end_timeout_s)
         outcome["runner_end"] = "clean"
     except TimeoutError:
@@ -1601,10 +1637,40 @@ async def _run_body_with_guaranteed_cleanup(body, *, cleanup):
     NEW exception raised inside ``finally`` silently replace whatever
     was propagating, which would violate exactly the guarantee this
     function exists to provide; the explicit try/except/else structure
-    below avoids that pitfall."""
+    below avoids that pitfall.
+
+    CONFIRMED AND FIXED THIS CHECKPOINT (a follow-up review of the
+    original R0058 draft, before hardware execution): a body failure's
+    exception used to be caught here with a BARE ``except BaseException:``
+    (no traceback printed) and only reported later, by the OUTER
+    ``_run_with_initiating_exception_report`` wrapper -- AFTER
+    ``await cleanup()`` below had already fully resolved. If ``cleanup()``
+    stalls (e.g. ``_shutdown_runner``'s own bounded escalation window,
+    up to ``run_task_timeout_s + run_task_cancel_grace_s`` seconds by
+    default, or longer if something unexpected happens), the ORIGINAL
+    failure's own evidence would not reach disk until AFTER that entire
+    stall -- reproducing, one layer higher, the exact visibility gap
+    R0057 exists to document (an exception whose traceback never gets a
+    chance to print before something else hangs). Fixed by printing and
+    flushing the original exception's type/repr/full traceback
+    IMMEDIATELY here, BEFORE ``cleanup()`` is even attempted -- so the
+    evidence is on disk regardless of whether cleanup then succeeds,
+    fails, or never returns. The outer wrapper's own print is
+    unchanged and still runs (a harmless, now-redundant-for-this-case
+    confirmation at the ``asyncio.run()`` boundary) -- it remains the
+    only reporter for a failure that occurs OUTSIDE this function's own
+    scope entirely (e.g. before ``run_task`` is even created in
+    ``_run()``, which is not wrapped by this function)."""
     try:
         result = await body()
-    except BaseException:
+    except BaseException as e:
+        print(
+            f"BODY_FAILURE_BEFORE_CLEANUP t_monotonic={time.monotonic():.6f} "
+            f"type={type(e).__name__} message={e!r}",
+            flush=True,
+        )
+        traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
         try:
             await cleanup()
         except BaseException as cleanup_exc:

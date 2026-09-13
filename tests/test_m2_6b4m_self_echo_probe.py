@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -1317,6 +1318,70 @@ class TestRunBodyWithGuaranteedCleanup(unittest.IsolatedAsyncioTestCase):
             await probe._run_body_with_guaranteed_cleanup(body, cleanup=cleanup)
         self.assertIn("cleanup_exception", cm.exception.outcome)
         self.assertIsInstance(cm.exception.__cause__, RuntimeError)
+
+    async def test_body_failure_traceback_is_printed_before_cleanup_completes(
+        self,
+    ) -> None:
+        """Follow-up review finding (post-R0058, before hardware
+        execution): a body failure used to be reported ONLY by the
+        OUTER ``_run_with_initiating_exception_report`` wrapper, AFTER
+        ``await cleanup()`` had already fully resolved -- so if cleanup
+        stalls, the original failure's own evidence would not reach disk
+        until the stall ends, reproducing R0057's own visibility gap one
+        layer higher. This test proves the fix directly: the original
+        exception's type/message/traceback are printed and flushed
+        while a controlled, still-pending cleanup (parked on an
+        ``asyncio.Event`` the test itself holds, never a sleep/timing
+        guess) has NOT yet returned -- observable DURING the stall, not
+        only after it -- and the SAME original exception is still what
+        ultimately propagates once cleanup is released."""
+        cleanup_release = asyncio.Event()
+        cleanup_calls = []
+
+        async def body():
+            raise ValueError("original failure -- visible before cleanup completes")
+
+        async def cleanup():
+            await cleanup_release.wait()
+            cleanup_calls.append(1)
+            return {"failed": False}
+
+        buf = io.StringIO()
+        result: dict[str, BaseException | None] = {"exc": None}
+
+        async def _drive() -> None:
+            with contextlib.redirect_stdout(buf):
+                try:
+                    await probe._run_body_with_guaranteed_cleanup(body, cleanup=cleanup)
+                except BaseException as e:  # noqa: BLE001
+                    result["exc"] = e
+
+        task = asyncio.ensure_future(_drive())
+        # Yield control repeatedly (real event-loop ticks) so `body()`
+        # gets to raise and this function's own print/flush executes,
+        # while `cleanup()` stays genuinely parked on `cleanup_release`
+        # (never set yet) -- no sleep/timing guess, no cleanup call
+        # counted yet.
+        for _ in range(50):
+            await asyncio.sleep(0)
+
+        self.assertFalse(task.done())
+        self.assertEqual(len(cleanup_calls), 0)
+        printed_before_cleanup = buf.getvalue()
+        self.assertIn("BODY_FAILURE_BEFORE_CLEANUP", printed_before_cleanup)
+        self.assertIn(
+            "original failure -- visible before cleanup completes", printed_before_cleanup
+        )
+        self.assertIn("Traceback (most recent call last)", printed_before_cleanup)
+        self.assertIn("ValueError", printed_before_cleanup)
+
+        cleanup_release.set()
+        await asyncio.wait_for(task, timeout=5)
+        self.assertEqual(len(cleanup_calls), 1)
+        self.assertIsInstance(result["exc"], ValueError)
+        self.assertEqual(
+            str(result["exc"]), "original failure -- visible before cleanup completes"
+        )
 
 
 if __name__ == "__main__":

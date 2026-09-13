@@ -1466,6 +1466,65 @@ unpaid-quota data is used to improve Google products.
     empty. No Gemini call. Not pushed. **`M2.6B` remains IN PROGRESS**
     -- next step is executing the still-pending R0057 gain A/B
     experiment itself.
+  - **M2.6B.4N follow-up -- post-R0058 review fixes and full 60-second
+    baseline warm-up validation** (`R0059`, 2026-09-13; **not** the
+    R0057 gain A/B experiment, still NOT EXECUTED). Resolved three
+    review points against R0058's own implementation: (1) a comment
+    claiming `asyncio.wait_for` is generically "reliably bounded" for a
+    bare coroutine vs. an existing Task was wrong (verified against
+    installed CPython 3.13.5 source: the determining factor is whether
+    `CancelledError` actually propagates out, not coroutine-vs-Task) --
+    corrected to state the VERIFIED reason `wait_for(runner.end(...))`
+    is safe here: `WorkerRunner.end()` -> `_finish_running_workers` ->
+    `WorkerBus.send()` -> `AsyncQueueBus.publish()` has NO suspension
+    point anywhere in this probe's single-worker/default-bus config,
+    confirmed by reading all four; no hard wall-clock/process deadline
+    claimed, external supervision remains necessary. (2) confirmed a
+    real gap: `_run_body_with_guaranteed_cleanup` reported a body
+    failure's traceback only AFTER cleanup fully resolved -- if cleanup
+    stalls, the original failure's evidence would not reach disk until
+    the stall ends, reproducing R0057's own visibility gap one layer
+    higher. Fixed (smallest probe-only change): print+flush the
+    exception immediately, before cleanup is attempted; propagation
+    unchanged. New test proves the traceback is observable via captured
+    stdout while a controlled, event-gated cleanup is still genuinely
+    pending. (3) investigated whether `_ResponseLifecycle`'s own state
+    (real source read, plus Pipecat's actual
+    BotStartedSpeakingFrame/BotStoppedSpeakingFrame generation in
+    `base_output.py`) could let a delayed prior-repeat stop corrupt
+    lifecycle state after the next repeat's `mark_dispatched()` --
+    confirmed the race EXISTS but is INERT: never produces an incorrect
+    `on_finished()`, and has zero effect on
+    `Recorder.playback_start_count`/`playback_stop_count` (the counters
+    `_run_warmup`'s own completion proof actually uses), which are
+    driven by a structurally-ordered, single-consumer FIFO in Pipecat's
+    own output transport -- cumulative equality follows from a
+    source-confirmed structural guarantee here, not a potentially-fooled
+    heuristic. No functional defect found; no code change, no arbitrary
+    sleep, no repeat-pacing change. Then validated exactly one full
+    60-second baseline warm-up on real hardware
+    (`--warmup-seconds 60 --level max --repeats 0`, external
+    150s/10s-grace supervisor, a fresh bound not a reuse of the prior
+    60s one): 18 repeats (matching the 3.504s fixture's own derived
+    expectation exactly), `playback_start_count == playback_stop_count
+    == repeats_run == 18`, `accepted_s=63.07 >= 60.0`, zero confirmed
+    interruptions, zero measured trials, clean non-escalated shutdown,
+    exit code 0, mixer values unchanged before/after, no leftover
+    processes. Also recorded (evidence-limit, not a defect) that
+    `BotStoppedSpeakingFrame` is a logical frame-level signal, not
+    physical-speaker-finished proof -- alongside the existing
+    `ref_accepted_bytes` evidence-limit note, for the eventual gain A/B
+    readiness assessment. **60/60 probe tests (59+1), 104/104 combined
+    with bargein tests**; `ruff`/`git diff --check` clean; `git diff
+    --stat -- src/nexa` empty (full project suite not re-run -- its one
+    known, already-confirmed pre-existing failure is unrelated and
+    unchanged). No Gemini call. No TV tests. No dependency change. Not
+    pushed. New tracked evidence manifest
+    (`docs/research/m2_6_cloud_realtime_voice/R0059_evidence_manifest.md`).
+    **`M2.6B` remains IN PROGRESS** -- next step is executing the
+    still-pending R0057 gain A/B experiment itself, now with both the
+    warm-up completion proof and the runner cleanup guarantee validated
+    at the full 60-second scale the experiment requires.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

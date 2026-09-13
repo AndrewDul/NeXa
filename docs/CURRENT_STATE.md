@@ -144,7 +144,71 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0058_warmup_lifecycle_fix_and_verification_20260913.md`
+- **Latest report:** `docs/reports/R0059_post_r0058_review_and_full_baseline_warmup_validation_20260913.md`
+  (**M2.6B.4N follow-up — post-R0058 review fixes + full 60-second
+  baseline warm-up validation, 2026-09-13. NOT the R0057 gain A/B
+  experiment** — remains NOT EXECUTED. Three review points against
+  R0058's own implementation resolved: (1) a comment claiming
+  `asyncio.wait_for` is generically "reliably bounded" for a bare
+  coroutine vs. a Task was WRONG (verified against installed CPython
+  3.13.5 source: it depends on whether `CancelledError` actually
+  propagates out, not on coroutine-vs-Task) — corrected to state the
+  VERIFIED reason `wait_for(runner.end(...))` is safe here: reading the
+  actual installed `WorkerRunner.end()` -> `_finish_running_workers` ->
+  `WorkerBus.send()` -> `AsyncQueueBus.publish()` shows NO suspension
+  point anywhere in that chain for this probe's single-worker/
+  default-bus config -- `end()` runs synchronously to completion, so
+  there's nothing for a cancellation to interrupt. No hard wall-clock/
+  process deadline is claimed anywhere; external supervision remains
+  necessary. (2) CONFIRMED real gap: `_run_body_with_guaranteed_cleanup`
+  reported a body failure's traceback only AFTER `cleanup()` fully
+  resolved -- if cleanup stalls, the ORIGINAL failure's evidence would
+  not reach disk until the stall ends, reproducing R0057's own
+  visibility gap one layer higher. Fixed (smallest probe-only change,
+  no shutdown redesign): print+flush the exception immediately in the
+  `except` branch, before `cleanup()` is attempted; propagation
+  unchanged. New test proves the traceback is observable via captured
+  stdout while a controlled cleanup (parked on an `asyncio.Event`) is
+  still genuinely pending. (3) Investigated whether
+  `_ResponseLifecycle`'s own state (real source read, plus
+  `pipecat/transports/base_output.py`'s actual
+  `BotStartedSpeakingFrame`/`BotStoppedSpeakingFrame` generation) could
+  let a delayed prior-repeat stop corrupt lifecycle state after the
+  next repeat's `mark_dispatched()` -- confirmed the race EXISTS but is
+  INERT: it never produces an incorrect `on_finished()` (blocked by
+  `_generating=True` for the new repeat) and has ZERO effect on
+  `Recorder.playback_start_count`/`playback_stop_count` (the counters
+  `_run_warmup`'s own completion proof actually uses), which are driven
+  by a structurally-ordered, single-consumer FIFO in Pipecat's own
+  output transport -- cumulative equality is therefore not a
+  potentially-fooled heuristic here, it follows from a source-confirmed
+  structural guarantee. No functional defect found; no code change, no
+  arbitrary sleep, no repeat-pacing change. Also noted (evidence-limit,
+  not a defect): `BotStoppedSpeakingFrame` is a LOGICAL frame-level
+  signal (driven by `TTSStoppedFrame` passing the output queue), not
+  physical-speaker-finished proof -- recorded for the eventual gain A/B
+  readiness assessment alongside the existing `ref_accepted_bytes`
+  evidence-limit note. **Then validated exactly one full 60-second
+  baseline warm-up on real hardware** (`--warmup-seconds 60 --level max
+  --repeats 0`, external 150s/10s-grace supervisor, NOT a reuse of the
+  prior 60s bound): 18 repeats (matching the 3.504s fixture's own
+  derived expectation exactly), `playback_start_count ==
+  playback_stop_count == repeats_run == 18`, `accepted_s=63.07 >=
+  60.0`, zero confirmed interruptions, zero measured trials, clean
+  non-escalated shutdown, exit code 0, mixer values (`Array PCM,1`
+  -20.00dB, `UACDemoV10` -0.94dB) unchanged before/after, no leftover
+  processes. **60/60 probe tests (59+1), 104/104 combined with bargein
+  tests**; `ruff`/`git diff --check` clean; `git diff --stat -- src/nexa`
+  empty (full project suite not re-run -- its one known,
+  already-confirmed pre-existing failure is unrelated and unchanged).
+  No Gemini call. No TV tests. No dependency change. Not pushed. New
+  tracked evidence manifest
+  (`docs/research/m2_6_cloud_realtime_voice/R0059_evidence_manifest.md`).
+  **`M2.6B` remains IN PROGRESS** -- next step is executing the
+  still-pending R0057 gain A/B experiment itself, now with both the
+  warm-up completion proof and the runner cleanup guarantee validated
+  at the FULL 60-second scale the experiment requires.)
+- **Prior report:** `docs/reports/R0058_warmup_lifecycle_fix_and_verification_20260913.md`
   (**M2.6B.4N follow-up — implements and verifies R0057's own proposed
   fix, 2026-09-13. NOT the R0057 gain A/B experiment** — that experiment
   remains NOT EXECUTED, deferred again now that its blocking
