@@ -5,7 +5,7 @@ Runtime / test evidence outranks anything else in this repo.
 
 ---
 
-- **Last verified:** 2026-09-12
+- **Last verified:** 2026-09-13
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
@@ -144,7 +144,80 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0054_residual_self_echo_after_coherent_gain_fix_20260912.md`
+- **Latest report:** `docs/reports/R0055_pcm_correlation_analysis_of_residual_self_echo_20260913.md`
+  (**M2.6B.4N follow-up — PCM correlation analysis of residual self-echo,
+  2026-09-13.** The R0054-requested capture came back: MAX volume, 3
+  silent trials, `--capture-pcm --max-lag-ms 500` →
+  **3/3 false confirmed barge-ins**
+  (`self_echo_probe_20260913T090714Z.json`), gain fix confirmed still
+  active (`reference_gain_applied=0.8974`, unchanged). **STEP 0 (probe
+  source audit, before touching any PCM) found and fixed TWO real
+  diagnostic-fidelity bugs**: (1) `Recorder.mark_playback_start()`/
+  `mark_playback_end()` unconditionally overwrite on every
+  `BotStartedSpeakingFrame`/`BotStoppedSpeakingFrame`, so every prior
+  report's `mic_phase_playback`/`ref_raw_rms_phase_playback` windows
+  (built from the JSON's own `playback_start_t`/`playback_end_t`) were
+  actually measuring a POST-interruption RESTART segment, not the true
+  pre-confirmation playback window — proven both by the operator's own
+  observed "Bot started speaking again" ~60ms after every confirmed
+  interruption, and independently by JSON self-consistency (every
+  trial's own `playback_start_t` lands tens of ms AFTER
+  `bargein_confirmed_t`, mechanically impossible for a genuine
+  pre-confirm start). Root cause: `_play_assistant_phrase`'s per-chunk
+  injection loop had zero awareness of `BargeInController`'s own real,
+  unmodified `broadcast_interruption()` and kept injecting the REST of
+  the ~3.5s fixture regardless — fixed with `Recorder.confirmed_event`
+  + calling the SAME `lifecycle.mark_interrupted()` primitive production's
+  own `_on_confirmed` calls, stopping further injection at the next
+  chunk boundary (probe-only; `BargeInController`/VAD/production
+  playback semantics untouched); +3 tests. Confirmed the already-captured
+  PCM is NOT contaminated by this bug (the reference WAV is always the
+  full, uncut 3.504s fixture; the false VAD trigger fires BEFORE
+  confirmation) — **no new hardware capture was needed**. Also
+  documented (not fixed) a related whole-trial `cross_correlate_pcm`
+  limitation: it has no knowledge that mic recording starts 2.0s before
+  reference recording, so every trial's own whole-trial
+  `best_lag_ms`/`normalized_correlation` in the JSON saturates at the
+  ±500ms search boundary with near-zero correlation — a methodology
+  artifact, not evidence of low real echo correlation. **STEP 1-5**:
+  re-derived the TRUE playback timeline externally (cross-validated
+  within 7-8ms against this checkpoint's own reported wall-clock times,
+  and within 28-63ms via an offline re-derivation of the REAL installed
+  Silero VAD model — exact same class/params production uses — that
+  independently reproduces the real pipeline's own VAD-start decision
+  from the raw mic WAV alone); found and fixed a bug in that
+  re-derivation itself before trusting it (`_prev_volume` must be
+  persisted after `_get_smoothed_volume`, per `VADAnalyzer._run_analyzer`'s
+  own source — omitting it silently suppressed all volume smoothing).
+  Raw PCM: zero clipping / zero near-saturation anywhere, any trial, any
+  window (Class D nonlinearity: tested, not supported). Bounded
+  sliding-window cross-correlation (±500ms search, 200ms window / 50ms
+  hop, ref-offset now correctly applied) across all 3 trials: lag is
+  **stable at ~85-130ms for the whole trial** (not spiking specifically
+  in the failure region — a genuine, newly-quantified system latency
+  beyond R0054's own documented 60ms of known buffer stages, attributed
+  to the two stages R0054 flagged as unmeasured from source, but NOT the
+  driver of which window false-triggers); normalized correlation is
+  **4-9× the measured noise floor (0.07-0.08) in the failure region
+  (0.31-0.59 named windows, up to 0.64-0.70 in the fine sweep), peaking
+  at almost the same relative offset in all 3 trials, right at the
+  VAD-start/confirm boundary**. **Classification: leading mechanism is
+  C (hardware AEC leaves a real, correlated residual of the assistant's
+  own audio) with A (the newly-quantified stable latency) as a
+  confirmed but non-differentiating secondary finding — honestly E, a
+  documented combination, with C dominant.** Confidence MEDIUM-HIGH
+  (n=3, reproducible in direction/magnitude, cross-validated against
+  the real pipeline's own VAD decision, but not yet MAX). **Per this
+  checkpoint's own gate, a NeXa-owned echo/double-talk discriminator
+  ahead of `BargeInController` confirmation is recommended for the NEXT
+  checkpoint as its own design proposal — NOT implemented this
+  checkpoint.** Zero `src/nexa/**` file touched (confirmed by empty
+  `git diff --stat -- src/nexa`); only the diagnostic probe + its test
+  file changed. **1061 tests, OK (skipped=7)**; `ruff`/`pip check`/
+  `git diff --check` all clean. No Gemini call. Not pushed. `M2.6B`
+  remains IN PROGRESS — next step is a discriminator DESIGN proposal,
+  not another hardware capture.)
+- **Prior report:** `docs/reports/R0054_residual_self_echo_after_coherent_gain_fix_20260912.md`
   (**M2.6B.4N follow-up — residual self-echo after coherent-gain fix,
   2026-09-12.** R0053's real hardware re-validation came back:
   `audible_gain_db=-0.94`/`reference_gain_applied=0.8974` confirmed the

@@ -218,7 +218,26 @@ def cross_correlate_pcm(
     Bounded lag search (never a full O(n^2) correlation) keeps this
     Raspberry-Pi-appropriate even for multi-second windows: cost is
     O(n * max_lag_samples), each term a vectorized numpy dot product.
-    """
+
+    KNOWN LIMITATION (documented, not fixed, by R0055): ``mic_pcm`` spans
+    the WHOLE trial continuously from ``reset_trial()`` (silence + playback
+    + tail), but ``ref_pcm`` only ever contains the assistant fixture's own
+    samples, which start ``QUIET_BEFORE_S`` (2.0s) LATER in the same
+    timeline -- this function has no knowledge of that fixed offset and
+    searches lag around a "both start at t=0" assumption. With
+    ``max_lag_ms`` bounded well under 2000ms (500ms in practice), the
+    search can never actually find the true alignment; R0055 found this
+    produces a `best_lag_ms` saturated at (or very near) `-max_lag_ms` and
+    a near-zero `normalized_correlation` for every real trial captured so
+    far -- a saturated-at-the-search-boundary result is itself the
+    diagnostic signature of this mismatch, not evidence of low real
+    echo correlation. R0055's own report
+    (`docs/reports/R0055_..._20260913.md`) computed the CORRECT,
+    ref-offset-aware bounded sliding-window correlation externally,
+    working from this same PCM. A future checkpoint could fix this
+    function to accept and apply that known offset directly; not done
+    here to keep this diagnostic-fidelity fix minimal and separate from
+    R0055's own read-only analysis."""
     ref = np.frombuffer(reference_pcm, dtype="<i2").astype(np.float64)
     mic = np.frombuffer(mic_pcm, dtype="<i2").astype(np.float64)
     result: dict[str, Any] = {
@@ -438,6 +457,15 @@ class Recorder:
     capture_pcm: bool = False
     mic_pcm_chunks: list[bytes] = field(default_factory=list)
     ref_pcm_chunks: list[bytes] = field(default_factory=list)
+    #: R0055 CONFIRMED BUG FIX -- set the instant a real confirmed barge-in
+    #: fires (mirrors production's own ``lifecycle.mark_interrupted()``
+    #: trigger, ``nexa.realtime.gemini.runtime``'s ``_on_confirmed``).
+    #: ``_play_assistant_phrase`` polls this every chunk and stops
+    #: injecting the REST of the synthetic fixture once it is set -- this
+    #: probe has no ``_ResponseGenerationGuard`` (a diagnostic harness, not
+    #: production), so this flag is the smallest equivalent: never queue
+    #: another chunk of an already-interrupted response.
+    confirmed_event: asyncio.Event = field(default_factory=asyncio.Event)
 
     def mark_vad(self, kind: str) -> None:
         self.vad_events.append({"t": time.monotonic(), "kind": kind})
@@ -472,6 +500,8 @@ class Recorder:
 
     def mark_bargein(self, kind: str) -> None:
         self.bargein_events.append({"t": time.monotonic(), "kind": kind})
+        if kind == "confirmed":
+            self.confirmed_event.set()
 
     def mark_playback_start(self) -> None:
         self.playback_start_t = time.monotonic()
@@ -489,6 +519,7 @@ class Recorder:
         self.playback_end_t = None
         self.mic_pcm_chunks = []
         self.ref_pcm_chunks = []
+        self.confirmed_event = asyncio.Event()
 
 
 def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sample_rate: int):
@@ -728,7 +759,8 @@ def build_probe_pipeline(P: dict[str, Any], *, recorder: Recorder, assistant_sam
 
 
 async def _play_assistant_phrase(
-    P: dict[str, Any], worker, *, lifecycle, bargein, pcm: bytes, sample_rate: int
+    P: dict[str, Any], worker, *, lifecycle, bargein, pcm: bytes, sample_rate: int,
+    confirmed_event: asyncio.Event | None = None,
 ) -> None:
     """Simulates exactly what ``_consume_provider_events`` does for a
     real Gemini response: marks the response dispatched (barge-in
@@ -768,18 +800,58 @@ async def _play_assistant_phrase(
     Python list built and drained in one call). Pacing each chunk with
     a real ``asyncio.sleep`` at the SAME ``ASSISTANT_CHUNK_MS`` this
     probe already uses to SIZE its chunks (not a new, invented number)
-    makes the simulation match that real per-event cadence."""
+    makes the simulation match that real per-event cadence.
+
+    R0055 CONFIRMED BUG FIX: this loop had no awareness of a confirmed
+    local barge-in at all -- ``BargeInController._do_confirm`` (the REAL,
+    unmodified production class this probe also uses) calls
+    ``on_confirmed`` then unconditionally ``await self.broadcast_interruption()``,
+    which clears the output transport's queue at that instant, but this
+    loop kept right on calling ``worker.queue_frames([frame])`` for every
+    REMAINING chunk of the same ~3.5s fixture on its own 100ms schedule,
+    oblivious to the interruption -- re-populating the just-cleared queue
+    and producing a SECOND, later ``BotStartedSpeakingFrame``/
+    ``BotStoppedSpeakingFrame`` pair. Confirmed both by direct real-hardware
+    operator observation ("Bot started speaking again" ~60ms after a
+    confirmed interruption) and by JSON self-consistency: every captured
+    trial's own (now known-corrupted) ``playback_start_t`` landed near
+    ``bargein_confirmed_t + ~0.06s``, not near the true dispatch time --
+    because ``Recorder.mark_playback_start()``/``mark_playback_end()``
+    unconditionally OVERWRITE on every ``BotStartedSpeakingFrame``/
+    ``BotStoppedSpeakingFrame``, so the LAST (post-restart) pair, not the
+    true original one, is what every prior report's
+    ``mic_phase_playback``/``ref_raw_rms_phase_playback`` windows were
+    built from -- a second diagnostic-fidelity gap, on top of R0054's own,
+    in the SAME function. Real production has no equivalent gap: a
+    confirmed local barge-in invalidates the CURRENT response generation
+    (``_ResponseGenerationGuard.interrupt()``) and calls
+    ``lifecycle.mark_interrupted()`` (``nexa.realtime.gemini.runtime``'s
+    own ``_on_confirmed``) BEFORE any further ``AssistantAudioEvent`` for
+    that response can reach ``hw_worker.queue_frames()`` -- this probe has
+    no generation guard (a diagnostic harness, not production), so the
+    smallest faithful equivalent is: stop injecting the REST of an
+    already-interrupted phrase, and call the SAME ``lifecycle.mark_interrupted()``
+    primitive production calls, rather than the normal
+    ``TTSStoppedFrame``/``mark_generation_done()`` tail. This does NOT
+    change ``BargeInController``/production playback semantics -- only
+    this diagnostic probe's own synthetic-phrase injection loop."""
     bargein.notify_response_dispatched()
     lifecycle.mark_dispatched()
     chunk_bytes = int(sample_rate * (ASSISTANT_CHUNK_MS / 1000.0) * 2)
     chunk_secs = ASSISTANT_CHUNK_MS / 1000.0
     for i in range(0, len(pcm), chunk_bytes):
+        if confirmed_event is not None and confirmed_event.is_set():
+            lifecycle.mark_interrupted()
+            return
         frame = P["TTSAudioRawFrame"](
             audio=pcm[i : i + chunk_bytes], sample_rate=sample_rate, num_channels=1
         )
         lifecycle.mark_audio_produced()
         await worker.queue_frames([frame])
         await asyncio.sleep(chunk_secs)
+    if confirmed_event is not None and confirmed_event.is_set():
+        lifecycle.mark_interrupted()
+        return
     await worker.queue_frames([P["TTSStoppedFrame"]()])
     lifecycle.mark_generation_done()
 
@@ -806,7 +878,8 @@ async def _run_silent_trial(
     trial_start = time.monotonic()
     await asyncio.sleep(QUIET_BEFORE_S)
     await _play_assistant_phrase(
-        P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm, sample_rate=sample_rate
+        P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm, sample_rate=sample_rate,
+        confirmed_event=recorder.confirmed_event,
     )
     finished = await _wait_for_finish(lifecycle, timeout=FINISH_TIMEOUT_S)
     if not finished:
@@ -846,7 +919,8 @@ async def _run_control_trial(
     print("\n  >>> Assistant will now speak. Say \"przerwij\" clearly once it starts. <<<\n")
     await asyncio.sleep(1.0)
     await _play_assistant_phrase(
-        P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm, sample_rate=sample_rate
+        P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm, sample_rate=sample_rate,
+        confirmed_event=recorder.confirmed_event,
     )
     await _wait_for_finish(lifecycle, timeout=CONTROL_TIMEOUT_S)
     await asyncio.sleep(1.0)

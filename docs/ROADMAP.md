@@ -1172,6 +1172,71 @@ unpaid-quota data is used to improve Google products.
     real-hardware acceptance, the still-pending minimal live Gemini
     conversational validation, and the proactive-reconnect-caller gap
     all remain open.
+  - **M2.6B.4N follow-up -- PCM correlation analysis of residual
+    self-echo** (`R0055`, 2026-09-13). The R0054-requested capture came
+    back: MAX volume, 3 silent trials, `--capture-pcm --max-lag-ms 500`
+    -> **3/3 false confirmed barge-ins**, gain fix confirmed still
+    active and unchanged. STEP 0 (source-audit the probe BEFORE touching
+    any PCM, per this checkpoint's own instruction) found and fixed TWO
+    real diagnostic-fidelity bugs: (1) `Recorder.mark_playback_start()`/
+    `mark_playback_end()` unconditionally overwrite on every
+    `BotStartedSpeakingFrame`/`BotStoppedSpeakingFrame` -- so every
+    PRIOR report's `mic_phase_playback`/`ref_raw_rms_phase_playback`
+    windows were built from a POST-interruption RESTART segment, not
+    the true pre-confirmation window (proven by both the operator's own
+    "Bot started speaking again" observation and independent JSON
+    self-consistency: every trial's own `playback_start_t` lands AFTER
+    `bargein_confirmed_t`, mechanically impossible for a genuine
+    pre-confirm start); root cause was `_play_assistant_phrase`'s
+    per-chunk loop having zero awareness of `BargeInController`'s own
+    real `broadcast_interruption()`, so it kept injecting the REST of
+    the fixture after a confirmed interruption -- fixed with
+    `Recorder.confirmed_event` + calling the SAME
+    `lifecycle.mark_interrupted()` primitive production's own
+    `_on_confirmed` calls (probe-only; no production/VAD/BargeInController
+    change); +3 tests. Confirmed the already-captured PCM was NOT
+    contaminated by this bug (reference WAV is always the full, uncut
+    fixture; the false trigger fires BEFORE confirmation) -- **no new
+    hardware capture was needed**. Also documented (not fixed) a
+    related whole-trial `cross_correlate_pcm` limitation: it has no
+    knowledge that mic recording starts 2.0s before reference
+    recording, so its own whole-trial `best_lag_ms` saturates at the
+    +-500ms search boundary with near-zero correlation every trial -- a
+    methodology artifact, not evidence of low real echo correlation.
+    STEP 1-5: re-derived the TRUE playback timeline externally
+    (cross-validated within 7-8ms against this checkpoint's own
+    reported wall-clock times, and within 28-63ms via an offline
+    re-derivation of the REAL installed Silero VAD model -- exact same
+    class/params production uses -- that independently reproduces the
+    real pipeline's own VAD-start decision from the raw mic WAV alone;
+    a bug in that re-derivation itself, `_prev_volume` not being
+    persisted per `VADAnalyzer._run_analyzer`'s own source, was found
+    and fixed before trusting it). Raw PCM: zero clipping / zero
+    near-saturation anywhere, any trial, any window (Class D
+    nonlinearity: tested, not supported). Bounded sliding-window
+    cross-correlation (+-500ms search, 200ms window / 50ms hop,
+    ref-offset now correctly applied) across all 3 trials: lag is
+    stable at ~85-130ms for the WHOLE trial (not spiking specifically
+    in the failure region -- a real, newly-quantified system latency
+    beyond R0054's own documented 60ms of known buffer stages, but NOT
+    the driver of which window false-triggers); normalized correlation
+    is 4-9x the measured noise floor (0.07-0.08) in the failure region
+    (0.31-0.59 named windows, up to 0.64-0.70 in the fine sweep),
+    peaking at almost the same relative offset in all 3 trials, right
+    at the VAD-start/confirm boundary. **Classification: leading
+    mechanism is C (hardware AEC leaves a real, correlated residual of
+    the assistant's own audio) with A (the newly-quantified stable
+    latency) as a confirmed but non-differentiating secondary finding
+    -- honestly E, a documented combination, with C dominant.**
+    Confidence MEDIUM-HIGH (n=3, reproducible, cross-validated against
+    the real pipeline's own VAD decision). **Per this checkpoint's own
+    gate, a NeXa-owned echo/double-talk discriminator ahead of
+    `BargeInController` confirmation is RECOMMENDED for the next
+    checkpoint as its own design proposal -- NOT implemented this
+    checkpoint.** Zero `src/nexa/**` file touched. **1061 tests, OK
+    (skipped=7)**; `ruff`/`pip check`/`git diff --check` all clean. No
+    Gemini call. `M2.6B` remains IN PROGRESS -- next step is a
+    discriminator DESIGN proposal, not another hardware capture.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

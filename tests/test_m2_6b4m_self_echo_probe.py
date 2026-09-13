@@ -10,9 +10,12 @@ from real operator runs, git-ignored under ``self_echo_captures/``).
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import unittest
 from pathlib import Path
+from typing import Any
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROBE_DIR = REPO_ROOT / "docs" / "research" / "m2_6_cloud_realtime_voice"
@@ -369,6 +372,142 @@ class TestGainToDbText(unittest.TestCase):
         # defensive: current_gain() never returns negative, but this
         # must not raise on log10 of a non-positive number either way.
         self.assertEqual(probe._gain_to_db_text(-0.1), "-inf (muted)")
+
+
+class TestPlayAssistantPhraseStopsOnConfirmedInterrupt(unittest.IsolatedAsyncioTestCase):
+    """R0055 CONFIRMED BUG FIX: real-hardware evidence (an operator seeing
+    "Bot started speaking again" ~60ms after every confirmed interruption,
+    and every captured trial's own ``playback_start_t``/``playback_end_t``
+    landing near ``bargein_confirmed_t``, not near the true dispatch time)
+    showed ``_play_assistant_phrase`` kept injecting the REST of a ~3.5s
+    fixture on its own 100ms schedule after ``BargeInController`` had
+    already confirmed a local barge-in and broadcast an interruption.
+    These tests are pure/offline (no Pipecat, no audio device, no
+    asyncio.sleep waits) -- fake ``P``/``worker``/``lifecycle``/``bargein``
+    doubles matching only the exact interface ``_play_assistant_phrase``
+    calls, per this file's own established no-Pipecat-import convention."""
+
+    class _FakeFrame:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class _FakeWorker:
+        def __init__(self) -> None:
+            self.queued: list[Any] = []
+
+        async def queue_frames(self, frames) -> None:
+            self.queued.extend(frames)
+
+    class _FakeLifecycle:
+        def __init__(self) -> None:
+            self.dispatched = False
+            self.audio_produced_count = 0
+            self.generation_done = False
+            self.interrupted = False
+
+        def mark_dispatched(self) -> None:
+            self.dispatched = True
+
+        def mark_audio_produced(self) -> None:
+            self.audio_produced_count += 1
+
+        def mark_generation_done(self) -> None:
+            self.generation_done = True
+
+        def mark_interrupted(self) -> None:
+            self.interrupted = True
+
+    class _FakeBargein:
+        def __init__(self) -> None:
+            self.dispatched = False
+
+        def notify_response_dispatched(self) -> None:
+            self.dispatched = True
+
+    @staticmethod
+    def _P() -> dict:
+        return {
+            "TTSAudioRawFrame": TestPlayAssistantPhraseStopsOnConfirmedInterrupt._FakeFrame,
+            "TTSStoppedFrame": TestPlayAssistantPhraseStopsOnConfirmedInterrupt._FakeFrame,
+        }
+
+    async def test_no_confirmed_event_plays_every_chunk_and_finishes_normally(self) -> None:
+        P = self._P()
+        worker = self._FakeWorker()
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)  # 3 full-ish chunks
+        with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
+            await probe._play_assistant_phrase(
+                P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm, sample_rate=sample_rate,
+                confirmed_event=None,
+            )
+        # every chunk queued plus one TTSStoppedFrame tail
+        self.assertGreaterEqual(len(worker.queued), 2)
+        self.assertTrue(lifecycle.generation_done)
+        self.assertFalse(lifecycle.interrupted)
+
+    async def test_confirmed_mid_phrase_stops_injecting_further_chunks(self) -> None:
+        P = self._P()
+        worker = self._FakeWorker()
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        # 10 full chunks -- plenty of room to confirm partway through.
+        pcm = b"\x00\x00" * (chunk_bytes * 5) * 2
+
+        confirmed_event = asyncio.Event()
+
+        queued_before_confirm: list[int] = []
+
+        async def _sleep_and_confirm_after_second_chunk(_seconds: float) -> None:
+            queued_before_confirm.append(len(worker.queued))
+            if len(worker.queued) == 2:
+                confirmed_event.set()
+
+        with mock.patch.object(probe.asyncio, "sleep", new=_sleep_and_confirm_after_second_chunk):
+            await probe._play_assistant_phrase(
+                P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm, sample_rate=sample_rate,
+                confirmed_event=confirmed_event,
+            )
+
+        # Exactly the 2 chunks queued before confirmation -- no
+        # TTSStoppedFrame, no further TTSAudioRawFrame chunks after.
+        self.assertEqual(len(worker.queued), 2)
+        self.assertTrue(all(isinstance(f, self._FakeFrame) for f in worker.queued))
+        # The lifecycle was ended via the SAME primitive production's own
+        # `_on_confirmed` uses, never the normal completion tail.
+        self.assertTrue(lifecycle.interrupted)
+        self.assertFalse(lifecycle.generation_done)
+
+    async def test_confirmed_before_first_chunk_injects_nothing(self) -> None:
+        P = self._P()
+        worker = self._FakeWorker()
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3)
+
+        confirmed_event = asyncio.Event()
+        confirmed_event.set()  # already confirmed before the phrase ever starts
+
+        with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
+            await probe._play_assistant_phrase(
+                P, worker, lifecycle=lifecycle, bargein=bargein, pcm=pcm, sample_rate=sample_rate,
+                confirmed_event=confirmed_event,
+            )
+
+        self.assertEqual(worker.queued, [])
+        self.assertTrue(lifecycle.interrupted)
+        self.assertFalse(lifecycle.generation_done)
+
+    @staticmethod
+    async def _instant_sleep(_seconds: float) -> None:
+        return None
 
 
 if __name__ == "__main__":
