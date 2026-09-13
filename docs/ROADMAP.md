@@ -1365,6 +1365,56 @@ unpaid-quota data is used to improve Google products.
     zero interruptions during warmup, and clean playback completion.
     Still not executed; no parameter/mixer changed by any correction
     pass.
+  - **M2.6B.4N follow-up -- warm-up lifecycle diagnostic checkpoint**
+    (`R0057`, 2026-09-13, **not** the R0057 gain A/B experiment itself,
+    which remains NOT EXECUTED). Real hardware attempts to run the
+    experiment's own warm-up kept reproducing "got cancelled from
+    outside" + an indefinite teardown stall, at three different
+    warm-up durations/repeat counts (60s/18, 10s/3, and now 1s/1).
+    **Confirmed, with a real captured traceback, the initiating cause**:
+    an `AssertionError` at `m2_6b4m_self_echo_probe.py:1393`, inside
+    `_run()`'s own third post-warm-up assert
+    (`playback_start_count == playback_stop_count == repeats_run`) --
+    `_run_warmup()`'s bounded wait polls only `ref_accepted_bytes`
+    catching up to `delivered_bytes`, never `playback_stop_count`, so
+    it returned on real hardware with the final repeat's own
+    `BotStoppedSpeakingFrame` not yet observed
+    (`playback_start_count=1`, `playback_stop_count=0`). Because this
+    assert sits outside `_run()`'s own `try:`/`finally:`, the exception
+    orphans `run_task`; `asyncio.run()`'s own cleanup then force-
+    cancels it, producing exactly the observed log line -- reproduced
+    a third time, now proven independent of warm-up duration/repeat
+    count. A new deterministic offline characterization test
+    (`TestRunWarmup.test_characterization_warmup_can_return_before_final_playback_stop_observed`,
+    explicit `asyncio.Event` control, no sleeps) independently
+    reproduces the identical condition without hardware, before the
+    hardware run confirmed it. Added probe-only instrumentation
+    (`_run_with_initiating_exception_report` wrapping `_run()` inside
+    the `asyncio.run()` boundary; explicit `RUNNER_END_OUTCOME=`/
+    `RUN_TASK_AWAIT_OUTCOME=` teardown markers replacing silent
+    `contextlib.suppress`) that made this exception directly observable
+    for the first time -- `git diff --stat -- src/nexa` confirmed
+    empty throughout. The one real-hardware reproduction run
+    (`--warmup-seconds 1 --level max --repeats 0`, under an external
+    bounded `timeout` supervisor) was externally terminated (exit 124)
+    after teardown stalled again post-cancellation -- explicitly
+    reported as an externally-terminated run, not a clean pass; the
+    deeper cause of that second-half teardown stall remains an open
+    unknown (the existing stack-dump watchdog lives inside `finally`,
+    never reached when the exception escapes before it). Hardware
+    (`Array PCM,1` -20.00dB, `UACDemoV10` -0.94dB) verified unchanged
+    before/after. 48/48 probe tests + 92/92 combined with bargein
+    tests pass; full suite 1069 tests/1 pre-existing unrelated failure
+    (`test_tts_server.py`, untouched, confirmed via empty `git diff
+    --stat`)/skipped=7; `ruff`/`git diff --check` clean. No Gemini
+    call. Not pushed. Smallest proposed fix (NOT implemented this
+    checkpoint): extend `_run_warmup`'s existing bounded-wait pattern
+    to also require `playback_stop_count` catch-up, and/or move
+    warm-up + its asserts inside the existing `try:`/`finally:`.
+    **`M2.6B` remains IN PROGRESS; R0057's own gain A/B experiment
+    remains NOT EXECUTED** -- next step is implementing this fix, then
+    re-attempting the hardware warm-up, before returning to the gain
+    A/B experiment itself.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

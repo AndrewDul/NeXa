@@ -77,6 +77,7 @@ import statistics
 import struct
 import sys
 import time
+import traceback
 import wave
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -1330,11 +1331,22 @@ async def _run(args: argparse.Namespace) -> int:
     if args.warmup_seconds:
         print(f"\n  warmup: requesting >= {args.warmup_seconds:.1f}s of real, ACCEPTED "
               "reference PCM (BargeInController disarmed -- confirmed interruptions "
-              "are structurally impossible during warmup, not merely ignored) ...")
+              "are structurally impossible during warmup, not merely ignored) ...",
+              flush=True)
         warmup_result = await _run_warmup(
             P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
             sample_rate=rate, warmup_seconds=args.warmup_seconds,
         )
+        # R0057 TEMPORARY DIAGNOSTIC INSTRUMENTATION (pre-execution
+        # root-cause audit, not a functional fix -- remove once the real
+        # cause of the observed hardware cancellation is confirmed and
+        # fixed). Every print here uses flush=True deliberately: the
+        # existing prints below it do NOT, and Python's stdout is fully
+        # block-buffered when redirected (as any backgrounded run is) --
+        # so on an abrupt process kill, un-flushed output is silently
+        # lost. That gap is itself one of this checkpoint's confirmed
+        # findings, not assumed.
+        print(f"WARMUP_RETURNED {warmup_result}", flush=True)
         queued_s = warmup_result["delivered_bytes"] / 2 / rate
         accepted_s = warmup_result["ref_accepted_bytes"] / 2 / rate
         print(
@@ -1343,22 +1355,40 @@ async def _run(args: argparse.Namespace) -> int:
             f"(requested >= {args.warmup_seconds:.1f}s) "
             f"playback_start_count={warmup_result['playback_start_count']} "
             f"playback_stop_count={warmup_result['playback_stop_count']} "
-            f"interrupt_confirmed_delta={warmup_result['interrupt_confirmed_delta']}"
+            f"interrupt_confirmed_delta={warmup_result['interrupt_confirmed_delta']}",
+            flush=True,
         )
+        # R0057 TEMPORARY DIAGNOSTIC INSTRUMENTATION (see note above) --
+        # BEFORE/AFTER markers around each assert. A future real hardware
+        # run showing "..._1_BEFORE" with no matching "..._1_AFTER" (etc.)
+        # pinpoints EXACTLY which assertion raised, without relying on the
+        # exception's own traceback ever getting a chance to print (this
+        # checkpoint's own source audit found a plausible mechanism -- an
+        # uncaught exception here propagates outside the try/finally below,
+        # letting asyncio.run()'s own internal task-cancellation cleanup
+        # forcibly cancel the still-running Pipecat pipeline; if THAT
+        # cleanup then blocks, the original exception's traceback never
+        # gets a chance to print at all).
+        #
         # R0057 CORRECTION 5 -- the authoritative proof, straight from the
         # REAL BargeInController's own telemetry: if this is ever nonzero,
         # a genuine confirmed interruption slipped through during warmup
         # despite arm_bargein=False, and NOTHING below can be trusted.
+        print("WARMUP_ASSERT_1_BEFORE", flush=True)
         assert warmup_result["interrupt_confirmed_delta"] == 0, (
             "a real confirmed barge-in occurred during warmup -- this should "
             "be structurally impossible with arm_bargein=False; treat as a "
             "bug in BargeInController or in this probe's wiring, not a "
             "passable warmup"
         )
+        print("WARMUP_ASSERT_1_AFTER", flush=True)
+        print("WARMUP_ASSERT_2_BEFORE", flush=True)
         assert accepted_s >= args.warmup_seconds, (
             "reference PCM ACCEPTED past AecReferenceFeeder under-delivered "
             "-- some already-queued PCM was lost in transit; treat as a bug"
         )
+        print("WARMUP_ASSERT_2_AFTER", flush=True)
+        print("WARMUP_ASSERT_3_BEFORE", flush=True)
         assert (
             warmup_result["playback_start_count"]
             == warmup_result["playback_stop_count"]
@@ -1367,7 +1397,9 @@ async def _run(args: argparse.Namespace) -> int:
             "playback start/stop count does not match repeats run -- a "
             "hidden mid-fixture restart occurred during warmup; treat as a bug"
         )
+        print("WARMUP_ASSERT_3_AFTER", flush=True)
 
+    print("ENTERING_TRIAL_LOOP", flush=True)
     trials: list[dict[str, Any]] = []
     try:
         if args.control:
@@ -1408,10 +1440,71 @@ async def _run(args: argparse.Namespace) -> int:
                     f"reference_gain_applied={r['reference_gain_applied']:.4f}"
                 )
     finally:
-        with contextlib.suppress(Exception):
+        # R0057 TEMPORARY DIAGNOSTIC INSTRUMENTATION (pre-execution
+        # root-cause audit for a confirmed real-hardware cancellation/hang
+        # -- not a functional fix; remove once the real cause is confirmed
+        # and fixed). Every print flushes immediately.
+        print("ENTERING_FINALLY", flush=True)
+        run_task_done = run_task.done()
+        run_task_cancelled = run_task.cancelled() if run_task_done else "n/a (not done yet)"
+        print(f"run_task.done()={run_task_done} run_task.cancelled()={run_task_cancelled}", flush=True)
+        if run_task_done and run_task_cancelled is not True:
+            with contextlib.suppress(Exception):
+                print(f"run_task.exception()={run_task.exception()!r}", flush=True)
+
+        teardown_done = asyncio.Event()
+
+        async def _dump_stacks_if_blocked() -> None:
+            await asyncio.sleep(5.0)
+            if teardown_done.is_set():
+                return
+            print("TEARDOWN_STALL_DETECTED_AFTER_5s -- dumping all task stacks", flush=True)
+            for t in asyncio.all_tasks():
+                print(f"--- task name={t.get_name()!r} done={t.done()} ---", flush=True)
+                t.print_stack(file=sys.stdout)
+                sys.stdout.flush()
+
+        watchdog = asyncio.ensure_future(_dump_stacks_if_blocked())
+
+        # R0057 TEMPORARY DIAGNOSTIC: the two blocks below previously used
+        # `contextlib.suppress(...)`, which absorbs an exception with ZERO
+        # visibility into what was absorbed. A RETURNED marker alone does
+        # not distinguish "completed cleanly" from "an exception was
+        # silently swallowed here." Replaced with explicit try/except that
+        # logs exactly one of four distinguishable outcomes
+        # (clean / timeout / cancelled / exception_suppressed) before
+        # continuing -- the ABSORPTION behavior itself (nothing propagates
+        # further than before) is unchanged; only its visibility is added.
+        print("RUNNER_END_BEGIN", flush=True)
+        try:
             await runner.end(reason="probe done")
-        with contextlib.suppress(asyncio.CancelledError, Exception):
+            print("RUNNER_END_OUTCOME=clean", flush=True)
+        except asyncio.CancelledError as e:
+            print(f"RUNNER_END_OUTCOME=cancelled repr={e!r}", flush=True)
+        except Exception as e:
+            print(
+                f"RUNNER_END_OUTCOME=exception_suppressed type={type(e).__name__} repr={e!r}",
+                flush=True,
+            )
+        print("RUNNER_END_RETURNED", flush=True)
+
+        print("RUN_TASK_AWAIT_BEGIN", flush=True)
+        try:
             await asyncio.wait_for(run_task, timeout=10)
+            print("RUN_TASK_AWAIT_OUTCOME=clean", flush=True)
+        except TimeoutError:
+            print("RUN_TASK_AWAIT_OUTCOME=timeout_10s", flush=True)
+        except asyncio.CancelledError as e:
+            print(f"RUN_TASK_AWAIT_OUTCOME=cancelled repr={e!r}", flush=True)
+        except Exception as e:
+            print(
+                f"RUN_TASK_AWAIT_OUTCOME=exception_suppressed type={type(e).__name__} repr={e!r}",
+                flush=True,
+            )
+        print("RUN_TASK_AWAIT_RETURNED", flush=True)
+
+        teardown_done.set()
+        watchdog.cancel()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -1443,10 +1536,62 @@ async def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _run_with_initiating_exception_report(args: argparse.Namespace) -> int:
+    """R0057 TEMPORARY DIAGNOSTIC (reproduction checkpoint, not a fix).
+
+    Wraps the REAL, unmodified ``_run(args)`` coroutine -- zero change to
+    its own control flow, timing, assertion positions, or completion
+    waits. This wrapper exists ONLY to observe whatever exception (if
+    any) first escapes ``_run()``, and to do so from INSIDE the task
+    ``asyncio.run()`` itself creates and awaits.
+
+    Why "inside the asyncio.run() boundary" matters (confirmed from the
+    installed CPython 3.13.5 ``asyncio/runners.py`` source this
+    checkpoint's own prior audit read directly): ``asyncio.run(coro)`` is
+    ``with Runner(...) as runner: return runner.run(coro)``;
+    ``Runner.run()`` does ``task = loop.create_task(coro); return
+    loop.run_until_complete(task)``. If ``coro`` (here, this wrapper)
+    raises, that exception propagates out of ``run_until_complete``
+    -- but ``Runner.close()`` (``_cancel_all_tasks(loop)``, which forcibly
+    cancels every OTHER still-pending task, including the probe's own
+    ``run_task``) only runs afterward, in the ``with`` block's own
+    ``__exit__``. Anything printed and flushed **inside** this wrapper's
+    own ``except`` clause therefore executes, and is guaranteed to reach
+    disk, strictly BEFORE that later cleanup ever begins -- regardless of
+    whether that later cleanup itself goes on to hang. This is the exact
+    mechanism the prior read-only audit identified as the leading,
+    unconfirmed hypothesis for why neither of the two failed real-hardware
+    runs ever showed a traceback.
+
+    ``asyncio.CancelledError`` is handled separately from other
+    exceptions per this checkpoint's own instruction: it is not a normal
+    application error and must never be conflated with one in the report
+    this produces. Both branches unconditionally re-raise -- this wrapper
+    only observes, it never suppresses or changes what ultimately
+    happens to the real exception."""
+    try:
+        return await _run(args)
+    except asyncio.CancelledError:
+        print(
+            f"INITIATING_CANCELLED_ERROR t_monotonic={time.monotonic():.6f}",
+            flush=True,
+        )
+        raise
+    except Exception as e:
+        print(
+            f"INITIATING_EXCEPTION t_monotonic={time.monotonic():.6f} "
+            f"type={type(e).__name__} message={e!r}",
+            flush=True,
+        )
+        traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
+        raise
+
+
 def main() -> int:
     args = parse_args()
     try:
-        return asyncio.run(_run(args))
+        return asyncio.run(_run_with_initiating_exception_report(args))
     except KeyboardInterrupt:
         return 130
 

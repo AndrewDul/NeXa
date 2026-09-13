@@ -849,6 +849,126 @@ class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
         # truncated -- proves the byte-count return itself is accurate too
         self.assertLess(delivered, len(pcm))
 
+    class _FakeWorkerWithheldFinalStop:
+        """CHARACTERIZATION-ONLY double (not used by any passing/fixed
+        test elsewhere in this file): every playback START and every
+        NON-FINAL playback STOP are observed synchronously and
+        immediately, exactly like ``_FakeWorkerSimulatingDownstreamPipeline``
+        above. The STOP corresponding to the configured final start index
+        is deliberately withheld -- deferred behind an explicit
+        ``asyncio.Event`` the test controls -- never behind a sleep or
+        arbitrary delay. Reference bytes are always marked accepted
+        immediately for every chunk; this double isolates the
+        playback-stop race specifically, not reference acceptance."""
+
+        def __init__(
+            self, recorder: probe.Recorder, *, withhold_stop_after_start_index: int,
+            release_event: asyncio.Event,
+        ) -> None:
+            self.queued: list[Any] = []
+            self._recorder = recorder
+            self._playback_open = False
+            self._start_count = 0
+            self._withhold_index = withhold_stop_after_start_index
+            self._release_event = release_event
+            self.deferred_tasks: list[asyncio.Task] = []
+
+        async def queue_frames(self, frames) -> None:
+            for frame in frames:
+                self.queued.append(frame)
+                if "audio" in frame.kwargs:
+                    if not self._playback_open:
+                        self._start_count += 1
+                        self._recorder.mark_playback_start()
+                        self._playback_open = True
+                    self._recorder.mark_ref_accepted(frame.kwargs["audio"])
+                else:
+                    self._playback_open = False
+                    if self._start_count == self._withhold_index:
+
+                        async def _deferred_stop(self=self) -> None:
+                            await self._release_event.wait()
+                            self._recorder.mark_playback_end()
+
+                        self.deferred_tasks.append(asyncio.ensure_future(_deferred_stop()))
+                    else:
+                        self._recorder.mark_playback_end()
+
+    async def test_characterization_warmup_can_return_before_final_playback_stop_observed(
+        self,
+    ) -> None:
+        """CHARACTERIZATION of CURRENT behavior -- not a regression test
+        proving a fix, and not itself an assertion that real hardware
+        WILL fail this way; it demonstrates, deterministically and
+        without any sleep/arbitrary delay, that ``_run_warmup``'s own
+        bounded wait (source-confirmed: it polls only
+        ``recorder.ref_accepted_bytes``, ``m2_6b4m_self_echo_probe.py``
+        's ``_run_warmup``, never ``playback_stop_count``) CAN return
+        while the final repeat's own playback-stop observation is still
+        outstanding. The withheld stop is released only via an explicit
+        ``asyncio.Event`` the test itself controls, set (or in this case
+        deliberately never set) at a precise point -- never a timing
+        guess. This characterizes the exact condition the caller's own
+        third assert in ``_run()`` (``playback_start_count ==
+        playback_stop_count == repeats_run``) exists to catch; it does
+        NOT invoke ``_run()`` or that assert directly, and does NOT
+        prove what happens on real hardware -- only that this function's
+        own return condition does not wait for it."""
+        P = self._P()
+        recorder = probe.Recorder()
+        release_event = asyncio.Event()  # deliberately never set in this test
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
+        requested_seconds = 2.0
+
+        # Derive the expected repeat count the IDENTICAL way _run_warmup
+        # itself derives it (m2_6b4m_self_echo_probe.py's own
+        # `while delivered_bytes < target_bytes` loop) -- not guessed --
+        # so the withheld stop is precisely the LAST one, not an
+        # arbitrary index.
+        target_bytes = int(round(requested_seconds * sample_rate)) * 2
+        expected_repeats = 0
+        delivered = 0
+        while delivered < target_bytes:
+            delivered += len(pcm)
+            expected_repeats += 1
+
+        worker = self._FakeWorkerWithheldFinalStop(
+            recorder, withhold_stop_after_start_index=expected_repeats,
+            release_event=release_event,
+        )
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+
+        try:
+            with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
+                result = await probe._run_warmup(
+                    P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                    sample_rate=sample_rate, warmup_seconds=requested_seconds,
+                )
+
+            # _run_warmup RETURNED even though release_event was never
+            # set -- the final stop was never observed.
+            self.assertEqual(result["repeats_run"], expected_repeats)
+            self.assertEqual(result["playback_start_count"], expected_repeats)
+            self.assertEqual(result["playback_stop_count"], expected_repeats - 1)
+            self.assertLess(result["playback_stop_count"], result["playback_start_count"])
+
+            # This is EXACTLY the snapshot condition _run()'s own third
+            # assert checks (playback_start_count == playback_stop_count
+            # == repeats_run) -- shown here to not hold, without invoking
+            # _run() or its assert statement directly.
+            caller_assert_condition_holds = (
+                result["playback_start_count"]
+                == result["playback_stop_count"]
+                == result["repeats_run"]
+            )
+            self.assertFalse(caller_assert_condition_holds)
+        finally:
+            for t in worker.deferred_tasks:
+                t.cancel()
+
 
 if __name__ == "__main__":
     unittest.main()

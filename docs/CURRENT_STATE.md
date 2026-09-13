@@ -144,7 +144,61 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0056_existing_acoustic_solutions_and_portable_frontend_design_20260913.md`
+- **Latest report:** `docs/reports/R0057_warmup_lifecycle_diagnostic_initiating_exception_20260913.md`
+  (**M2.6B.4N follow-up — warm-up lifecycle diagnostic checkpoint,
+  2026-09-13. NOT the R0057 gain A/B experiment** — that experiment
+  remains NOT EXECUTED; this checkpoint claims the R0057 report number
+  for a bounded diagnostic that had to happen first, after real
+  hardware attempts to run the gain A/B experiment's own warm-up kept
+  triggering Pipecat's "got cancelled from outside" + an indefinite
+  teardown stall. **Confirmed, with a real captured traceback (not
+  inferred from cancellation timing): the initiating cause is an
+  `AssertionError` at `m2_6b4m_self_echo_probe.py:1393`**, inside
+  `_run()`'s own third post-warm-up assertion
+  (`playback_start_count == playback_stop_count == repeats_run`) —
+  `_run_warmup()`'s bounded wait polls only `ref_accepted_bytes`
+  catching up to `delivered_bytes`, never `playback_stop_count`, so it
+  can (and, on real hardware at `--warmup-seconds 1 --level max
+  --repeats 0`, did) return with the final repeat's own
+  `BotStoppedSpeakingFrame` not yet observed
+  (`playback_start_count=1`, `playback_stop_count=0`). Because this
+  assert sits OUTSIDE `_run()`'s own `try:`/`finally:` block, the
+  exception orphans `run_task`; `asyncio.run()`'s own cleanup then
+  force-cancels it (`Runner.close()` → `_cancel_all_tasks()`),
+  producing exactly the "got cancelled from outside" log line already
+  seen twice before at different warm-up durations (60s/18 repeats,
+  10s/3 repeats) — now reproduced a third time at 1s/1 repeat,
+  confirming the race is independent of duration/repeat count. A new
+  deterministic offline characterization test
+  (`TestRunWarmup.test_characterization_warmup_can_return_before_final_playback_stop_observed`,
+  explicit `asyncio.Event` control, no sleeps) independently reproduces
+  the identical condition without hardware. Added probe-only
+  instrumentation (`_run_with_initiating_exception_report` wrapping
+  `_run()` inside the `asyncio.run()` boundary; explicit
+  `RUNNER_END_OUTCOME=`/`RUN_TASK_AWAIT_OUTCOME=` teardown markers
+  replacing silent `contextlib.suppress`) that made this exception
+  directly observable for the first time. The one real-hardware
+  reproduction run was externally terminated by a bounded `timeout`
+  supervisor (exit 124) after teardown stalled again post-cancellation
+  — **explicitly reported as an externally-terminated run, not a clean
+  pass**; the deeper cause of that second-half teardown stall remains
+  an open unknown (the existing stack-dump watchdog lives inside
+  `finally`, never reached when the exception escapes before it).
+  Hardware (`Array PCM,1` -20.00dB, `UACDemoV10` -0.94dB) verified
+  unchanged before/after; **zero `src/nexa/**` change**. 48/48 probe
+  tests + 92/92 combined with bargein tests pass; full suite 1069
+  tests/1 pre-existing unrelated failure (`test_tts_server.py`,
+  untouched by this checkpoint, confirmed via `git diff --stat`
+  empty)/skipped=7; `ruff`/`git diff --check` clean. No Gemini call.
+  Not pushed. Smallest proposed fix (NOT implemented this checkpoint):
+  extend `_run_warmup`'s existing bounded-wait pattern to also require
+  `playback_stop_count` catch-up, and/or move warm-up + its asserts
+  inside the existing `try:`/`finally:`. **`M2.6B` remains IN
+  PROGRESS; R0057's own gain A/B experiment remains NOT EXECUTED** —
+  next step is implementing this fix, then re-attempting the
+  hardware warm-up, before returning to the gain A/B experiment
+  itself.)
+- **Prior report:** `docs/reports/R0056_existing_acoustic_solutions_and_portable_frontend_design_20260913.md`
   (**M2.6B.4N follow-up — existing AEC/double-talk solutions audit +
   portable Acoustic Frontend design, 2026-09-13.** Supersedes a same-day,
   never-committed draft (`Xvf3800DoubleTalkDiscriminator`-shaped) that
