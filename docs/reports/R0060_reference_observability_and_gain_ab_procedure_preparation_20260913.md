@@ -394,8 +394,10 @@ Do not run both conditions unattended in one session.
 
 ## GIT STATUS
 
-(recorded after commit, below — observed, not predicted)
+Working tree **CONFIRMED clean** — `git status --short` returned empty
+output immediately after the commit below. Not pushed. No Gemini call.
+No hardware parameter changed.
 
 ## COMMIT HASHES
 
-(recorded after commit, below)
+- `e8858d6` — feat: R0060 reference-observability fix and gain A/B experiment procedure preparation (M2.6B.4N follow-up)
