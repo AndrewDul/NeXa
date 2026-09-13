@@ -144,7 +144,80 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0055_pcm_correlation_analysis_of_residual_self_echo_20260913.md`
+- **Latest report:** `docs/reports/R0056_existing_acoustic_solutions_and_portable_frontend_design_20260913.md`
+  (**M2.6B.4N follow-up — existing AEC/double-talk solutions audit +
+  portable Acoustic Frontend design, 2026-09-13.** Supersedes a same-day,
+  never-committed draft (`Xvf3800DoubleTalkDiscriminator`-shaped) that
+  was deleted before commit once the product direction changed:
+  **XVF3800 must never become NeXa's canonical voice architecture** —
+  NeXa must work equally well on Pi/XVF3800, Windows, Linux, macOS,
+  iPhone/iPad, Android, headsets, and future hardware. Researched
+  existing solutions FIRST, per an explicit decision hierarchy (native
+  hardware/OS AEC → mature software fallback (WebRTC AEC3) → custom
+  NeXa DSP only as a last resort). **Headline finding**: a live,
+  read-only audit of the ACTUAL Pi hardware using the official,
+  already-installed Seeed/XMOS `xvf_host` tool (no NeXa code — the real
+  vendor tool) found the reSpeaker's own `Array` USB card exposes a
+  SEPARATE ALSA mixer (`PCM,1`, currently **-20dB**, confirmed to
+  exactly match the live `AEC_FAR_EXTGAIN=-20` firmware readback) that
+  R0053's own `CoherentReferenceGain` fix has never touched or known
+  about (that fix only ever matches the SEPARATE audible-speaker
+  `UACDemoV10` device's own mixer). The official XMOS tuning guide
+  (fetched, quoted) confirms this is exactly the documented mechanism
+  for the USB variant (`AEC_FAR_EXTGAIN` auto-tracks the host-set
+  reference-device volume) — meaning the XVF3800's own adaptive filter
+  has likely been modeling an echo path against a reference ~10×
+  (-20dB) quieter than the true acoustic echo the whole time, a
+  plausible, concrete, native, zero-code, fully-reversible root-cause
+  candidate more fundamental than anything R0053-R0055 investigated (all
+  of which stayed entirely on the software side of this boundary). Also
+  found, from the same official guide: R0055's measured ~85-130ms
+  reference-to-mic lag is 35-50× the vendor's own stated "ideal" ≤40-sample
+  target (`AUDIO_MGR_SYS_DELAY`/`mic_ref_correlate` tuning procedure,
+  requiring an XMOS SDK tool — `xvf_tools.py` — not yet present on this
+  machine); `PP_DTSENSITIVE=0` (current) is actually the vendor's own
+  documented STARTING point for tuning, not a misconfiguration (corrected
+  from this checkpoint's own earlier working hypothesis before the report
+  was written). Researched WebRTC AEC3 (fallback-of-choice, portable,
+  industry-standard; exact diagnostic-stats surface for a to-be-vendored
+  version left as an open question), PipeWire's echo-cancel module
+  (WebRTC-only backend, confirmed via live fetch to expose cleaned audio
+  only, no double-talk/ERL/ERLE signal to clients), GStreamer's
+  `webrtcdsp`/`webrtcechoprobe` (same underlying engine, wrapped),
+  Apple's `AVAudioEngine` Voice Processing I/O, Android's
+  `AcousticEchoCanceler` (official availability caveat:
+  `isAvailable()` must be checked, quality varies by OEM), and Windows'
+  comparatively weaker native guarantees (platform-knowledge sections,
+  clearly flagged where a live fetch 404'd rather than succeeded).
+  Designed a device-agnostic `AcousticFrontend`/`AcousticCapabilities`/
+  `AcousticEvidence` contract (optional-evidence, capability-declared,
+  never assuming uniform DSP telemetry) that `BargeInController` would
+  consult via ONE new optional constructor parameter
+  (`acoustic_frontend=None` default = today's exact behavior, mirroring
+  the already-proven `aec_health`/`gain_source` zero-risk-when-absent
+  pattern) — `BargeInController` remains the SOLE, unmodified
+  interruption authority on every platform; only what feeds it varies
+  per device. Backend policy per platform: `Xvf3800AcousticBackend`
+  (Pi, wraps existing R0053/R0054 components verbatim, never replaces
+  them), `AppleVoiceProcessingBackend`, `AndroidNativeAcousticBackend`
+  (+ WebRTC AEC3 fallback when native unavailable), `WebRtcAecBackend`
+  (Windows/Linux default), `PassthroughAcousticBackend` (headsets,
+  `echo_risk="negligible"`). **Explicit recommendation for the CURRENT
+  Pi problem: do NOT implement a discriminator or the Xvf3800 backend
+  yet — first try native tuning** (raise the `Array` `PCM,1` mixer
+  toward unity and re-run R0055's own unmodified capture command; only
+  if insufficient, pursue `AUDIO_MGR_SYS_DELAY` recalibration once
+  `xvf_tools.py` is obtained, then `PP_GAMMA_*`; a custom NeXa
+  double-talk algorithm remains a documented, ready-to-resurrect
+  fallback only if native tuning + WebRTC both prove insufficient).
+  **Zero `src/nexa/**` change, zero test change, zero XVF3800 parameter
+  written** (every `xvf_host` call this checkpoint was a bare read).
+  **1061 tests, OK (skipped=7)**, unchanged; `ruff`/`pip check`/
+  `git diff --check` all clean. No Gemini call. Not pushed. `M2.6B`
+  remains IN PROGRESS — next checkpoint (proposed R0057) is the native
+  XVF3800 ALSA-mixer experiment, not a discriminator or backend
+  implementation.)
+- **Prior report:** `docs/reports/R0055_pcm_correlation_analysis_of_residual_self_echo_20260913.md`
   (**M2.6B.4N follow-up — PCM correlation analysis of residual self-echo,
   2026-09-13.** The R0054-requested capture came back: MAX volume, 3
   silent trials, `--capture-pcm --max-lag-ms 500` →
