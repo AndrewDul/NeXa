@@ -117,16 +117,20 @@ run. Not pushed. `M2.6B` remains IN PROGRESS.**
 
 ### Tests added
 
-`TestAecReferenceTelemetry` (7 tests, pure/offline, no asyncio): reads
-existing counters correctly; both objects `None` → all `None`; a
-present-but-missing single attribute (`chunks_dropped`) is `None` while
-a present, genuine `0` (`respawns`) is reported as `0` — the exact
-distinction required; exact delta arithmetic; a genuine zero delta
-(same snapshot twice) is reported as `0`, not confused with
-unavailable; either-snapshot-unavailable propagates `None` for deltas
-while still reporting the AFTER snapshot's own liveness state.
+**CORRECTED** (this report originally miscounted this section as
+"7 tests"; the actual class has six — verified directly by counting
+`def test_` methods in the file, not re-asserted): `TestAecReferenceTelemetry`
+(6 tests, pure/offline, no asyncio): reads existing counters correctly;
+both objects `None` → all `None`; a present-but-missing single
+attribute (`chunks_dropped`) is `None` while a present, genuine `0`
+(`respawns`) is reported as `0` — the exact distinction required; exact
+delta arithmetic; a genuine zero delta (same snapshot twice) is
+reported as `0`, not confused with unavailable; either-snapshot-unavailable
+propagates `None` for deltas while still reporting the AFTER snapshot's
+own liveness state.
 
-Two `TestRunWarmup` integration tests: `_run_warmup` correctly threads
+Two `TestRunWarmup` integration tests (6 + 2 = 8 new tests total,
+matching the 68 = 60 + 8 total below): `_run_warmup` correctly threads
 a fake feeder/health through end-to-end (reports the exact delta, not
 the fake's own absolute totals); and reports all-`None` telemetry,
 present as a key (never omitted), when neither is supplied — proving
@@ -273,7 +277,7 @@ checks and confirmed byte-for-byte unchanged (`-20.00dB` / `-0.94dB`).
   `_PlaybackWatcher`'s own docstrings for exact-tap-location accuracy
   (no behavior change).
 - `tests/test_m2_6b4m_self_echo_probe.py`: new `TestAecReferenceTelemetry`
-  (7 tests) and two new `TestRunWarmup` integration tests.
+  (6 tests) and two new `TestRunWarmup` integration tests.
 - `docs/research/m2_6_cloud_realtime_voice/R0057_gain_ab_experiment_procedure.md`
   (new, tracked): the full, reviewable procedure.
 - `docs/research/m2_6_cloud_realtime_voice/run_r0057_gain_ab_condition.sh`
@@ -327,8 +331,15 @@ procedure text (§5/§6 of the procedure doc).
   are now OBSERVABLE (this checkpoint's own fix) but not yet exercised
   against real nonzero values on hardware — the fix's own correctness
   is proven by pure/offline tests and by threading verification, not
-  yet by a real-hardware drop/failure event (none occurred in R0059's
-  own clean run, nor would be expected to for a healthy feed).
+  yet by a real-hardware drop/failure event. **CORRECTED** (the original
+  wording here claimed "none occurred in R0059's own clean run" — that
+  is not a fact this report can state: R0059's own run predates this
+  checkpoint's telemetry entirely, so `chunks_dropped`/`failure_count`
+  were simply never read or recorded during it. Their value during that
+  run is UNKNOWN, not zero — correctly stated as "not yet read by any
+  instrumentation" in R0059's own report and evidence manifest, which
+  this line should have matched instead of implying a clean reading
+  that was never taken.)
 - The genuinely-wedged-`run_task` escalation path in `_shutdown_runner`
   remains untested on real hardware (unchanged from R0058/R0059's own
   note).

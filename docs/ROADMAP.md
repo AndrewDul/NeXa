@@ -1567,6 +1567,55 @@ unpaid-quota data is used to improve Google products.
     No audio hardware run. Not pushed. **`M2.6B` remains IN PROGRESS.
     The R0057 gain A/B experiment remains NOT EXECUTED** -- awaiting
     Andrzej's explicit approval to run either condition.
+  - **M2.6B.4N follow-up -- gain A/B wrapper corrections, offline only**
+    (`R0061`, 2026-09-13; the experiment itself remains NOT EXECUTED, no
+    approval given). Review found seven concrete defects in the R0060
+    wrapper script; all fixed: (1) `set -e` made EXIT_CODE bookkeeping
+    unreachable on any real probe failure -- removed `-e` entirely,
+    every intentionally-fallible command checked explicitly instead.
+    (2) mixer readbacks were printed but never validated -- fixed with
+    parsed read/validate helpers that abort before mutation on mismatch
+    or an unreadable value. (3) `EXPECTED_UAC_RAW` was dead code -- now
+    actually used. (4) the persisted log excluded all wrapper-side
+    output -- fixed with `exec > >(tee -a "$LOG") 2>&1` capturing
+    everything in one file. (5) condition B could overwrite condition
+    A's own fixed-name PCM files -- fixed at the wrapper level with a
+    marker-file/`find -newer` current-run inventory that archives each
+    run's own JSON+WAVs, hash-verified, into a per-condition directory
+    with a MANIFEST.txt. (6) signal handling didn't distinguish
+    interruption status or stop the child before rollback -- fixed with
+    dedicated INT/TERM handlers that terminate and reap ONLY this
+    script's own child, then run the same idempotent rollback, never
+    chaining into another condition. (7) comments incorrectly implied
+    an unconditional rollback guarantee -- corrected to state a wrapper
+    SIGKILL or power loss cannot be intercepted by any shell trap. New
+    documented exit-code convention (0/2/90/91/92/93/130/143/probe's
+    own code). Verified all seven with a new offline test suite (13
+    tests) using a stateful fake `amixer` and a controllable fake probe
+    launcher, never touching real hardware (confirmed via a dedicated
+    test) -- covering normal completion, nonzero probe status,
+    supervisor timeout, precheck mismatch (3 variants), failed
+    set/readback, failed rollback (isolated from failed set),
+    SIGINT/SIGTERM (including confirming the child process is actually
+    gone), and distinct A/B artifact preservation. Aligned the
+    procedure document's invalid-run criteria: telemetry checked for
+    warm-up AND every trial, `respawns_delta`/inactive-feed added as
+    invalidating, missing telemetry stated as UNKNOWN never zero, a
+    lifecycle-timeout warning added as a validity flag, and an explicit
+    instruction not to use the probe's own known-misaligned
+    `cross_correlation` as evidence of low echo. Clarified a single
+    future approval may cover the full A-then-B experiment (conditional
+    on A's own validity). Also corrected two factual errors in the
+    R0060 report itself (identity preserved): `TestAecReferenceTelemetry`
+    has 6 tests not 7; R0059 never recorded feeder-drop telemetry at
+    all, so its value there is UNKNOWN, not "confirmed clean." **13/13
+    new wrapper tests, 112/112 probe+bargein tests unchanged**;
+    `ruff`/`bash -n`/`git diff --check` clean; `git diff --stat --
+    src/nexa` empty. No Gemini call. No hardware writes -- every real
+    `amixer` call this checkpoint was a bare read-only confirmation,
+    never through the wrapper. Not pushed. **`M2.6B` remains IN
+    PROGRESS. The R0057 gain A/B experiment remains NOT EXECUTED** --
+    no approval has been given.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

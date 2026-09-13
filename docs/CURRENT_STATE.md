@@ -144,7 +144,70 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0060_reference_observability_and_gain_ab_procedure_preparation_20260913.md`
+- **Latest report:** `docs/reports/R0061_gain_ab_wrapper_corrections_20260913.md`
+  (**M2.6B.4N follow-up — gain A/B wrapper corrections, offline only,
+  2026-09-13.** Review found seven concrete defects in the R0060 wrapper
+  script (`run_r0057_gain_ab_condition.sh`); all seven fixed here: (1)
+  `set -e` made the probe's own EXIT_CODE bookkeeping unreachable on any
+  real failure (a plain failing command under `set -e` aborts BEFORE the
+  next line's `$?` capture) -- fixed by removing `-e` entirely and
+  checking every intentionally-fallible command explicitly. (2) mixer
+  readbacks were printed but never validated -- fixed with parsed
+  `read_array_raw`/`read_uac_raws`/`validate_*` helpers that abort
+  before mutation on mismatch or an unreadable value. (3)
+  `EXPECTED_UAC_RAW` was dead code -- now the actual value validated
+  against. (4) the persisted log excluded all wrapper-side output
+  (prechecks/set/rollback) -- fixed with `exec > >(tee -a "$LOG") 2>&1`
+  capturing everything in one file. (5) condition B could overwrite
+  condition A's own fixed-name PCM files (the probe's own naming is
+  unchanged, per instruction not to redesign it) -- fixed at the
+  wrapper level with a marker-file/`find -newer` current-run inventory
+  (never "newest by mtime") that archives each run's own JSON+WAVs,
+  hash-verified, into a per-condition directory with a MANIFEST.txt
+  before the next condition can run. (6) signal handling didn't
+  distinguish interruption status or explicitly stop the child before
+  rollback -- fixed with dedicated INT/TERM handlers that record a
+  distinct status, terminate (SIGTERM then bounded SIGKILL) and reap
+  ONLY this script's own child process, then run the same idempotent
+  rollback path, never chaining into another condition. (7) comments
+  incorrectly implied an unconditional rollback guarantee -- corrected
+  to state plainly that a SIGKILL of the wrapper itself, or a power
+  loss, cannot be intercepted by any shell trap. New documented
+  exit-code convention (0/2/90/91/92/93/130/143/probe's-own-code).
+  Verified all seven fixes with a new offline test suite (13 tests,
+  `tests/test_run_r0057_gain_ab_condition_sh.py`) using a stateful fake
+  `amixer` and a controllable fake probe launcher (env-var overrides,
+  never touching real hardware, confirmed via a dedicated test that
+  `command -v amixer` resolves to the fake) -- covering normal
+  completion, nonzero probe status, supervisor timeout, precheck
+  mismatch (3 variants), failed set/readback, failed rollback (isolated
+  from failed set), SIGINT/SIGTERM (including confirming the child OS
+  process is actually gone afterward), and distinct A/B artifact
+  preservation. Aligned the procedure document's own invalid-run
+  criteria: reference telemetry now checked for warm-up AND every
+  measured trial (not warm-up-only), `respawns_delta`/inactive-feed
+  added as invalidating, missing telemetry stated as UNKNOWN never
+  zero, a measured-trial lifecycle-timeout warning added as a
+  validity FLAG, and an explicit instruction not to use the probe's
+  own built-in (known-misaligned) `cross_correlation` as evidence of
+  low echo -- archived PCM exists for correct offline re-analysis
+  instead. Clarified a single future approval may cover the full
+  A-then-B experiment (conditional on A's own validity) rather than
+  requiring two separate approvals -- no approval of any kind has been
+  given. Also corrected two factual errors in the R0060 report itself
+  (identity preserved, not renamed): `TestAecReferenceTelemetry` has 6
+  tests, not 7 (miscounted originally); R0059's own run never recorded
+  `chunks_dropped`/`failure_count` at all, so its value there is
+  UNKNOWN, not "confirmed clean" as R0060 had wrongly implied. **13/13
+  new wrapper tests, 112/112 probe+bargein tests unchanged**;
+  `ruff`/`bash -n`/`git diff --check` clean; `git diff --stat --
+  src/nexa` empty. No Gemini call. No hardware writes -- every real
+  `amixer` call this checkpoint was a bare, read-only confirmation run
+  directly, never through the wrapper (which only ran against fakes,
+  or exited at its own guard). Not pushed. **`M2.6B` remains IN
+  PROGRESS. The R0057 gain A/B experiment remains NOT EXECUTED** -- no
+  approval has been given.)
+- **Prior report:** `docs/reports/R0060_reference_observability_and_gain_ab_procedure_preparation_20260913.md`
   (**M2.6B.4N follow-up — reference-observability fix + gain A/B
   experiment procedure PREPARED (NOT EXECUTED), 2026-09-13.** Closed the
   reference-observability gap identified in review: `ref_accepted_bytes`
@@ -164,7 +227,7 @@ Runtime / test evidence outranks anything else in this repo.
   (field/behavior unchanged): it proves passage through
   `AecReferenceFeeder`'s own acceptance logic, not a successful write
   (`frames_mirrored`/`bytes_mirrored`) and not physical hardware
-  ingestion. +8 tests (7 pure `TestAecReferenceTelemetry` + 2
+  ingestion. +8 tests (6 pure `TestAecReferenceTelemetry` + 2
   `_run_warmup` integration). **Then prepared, but explicitly did NOT
   execute**, the previously-accepted R0057 gain A/B experiment: verified
   (read-only, not guessed) `Array 'PCM',1'` (numid=6) is linear 1dB/step
