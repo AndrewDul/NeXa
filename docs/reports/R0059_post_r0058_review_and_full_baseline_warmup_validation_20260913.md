@@ -494,8 +494,10 @@ review points raised against the R0058 implementation are resolved.
 
 ## GIT STATUS
 
-(recorded after commit, below — observed, not predicted)
+Working tree **CONFIRMED clean** — `git status --short` returned empty
+output immediately after the commit below. Not pushed. No Gemini call.
+No hardware parameter changed.
 
 ## COMMIT HASHES
 
-(recorded after commit, below)
+- `514c0c4` — fix: R0059 post-R0058 review fixes and full 60s baseline warm-up validation (M2.6B.4N follow-up)
