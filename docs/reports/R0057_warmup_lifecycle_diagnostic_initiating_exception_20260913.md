@@ -13,6 +13,16 @@ first. The gain A/B experiment itself is deferred to a future report
 re-validated. **No `src/nexa/**` change. No hardware parameter written.
 No Gemini. Not pushed. `M2.6B` remains IN PROGRESS.**
 
+**POST-HOC CORRECTIONS (added by the follow-up `R0058` checkpoint,
+which implements and verifies the fix this report only proposed):**
+this report's own number, `R0057`, is preserved unchanged (never
+renamed or reused) and this text is corrected in place rather than
+silently rewritten — see the four `**CORRECTED**` markers below
+(TESTS, EVENT ORDER, VERIFIED FACTS #3, GIT STATUS) for exactly what
+changed and why. The gain A/B experiment remains **NOT EXECUTED**; the
+fix proposed at the end of this report is now IMPLEMENTED and verified
+in `R0058` (`docs/reports/R0058_warmup_lifecycle_fix_and_verification_20260913.md`).
+
 ## TASK RESULT
 
 **PASS** (as a diagnostic checkpoint: the initiating exception is now
@@ -172,9 +182,17 @@ produce this result.
 in a file **never touched by this checkpoint** (`git diff --stat --
 tests/test_tts_server.py` empty; last touched by an unrelated commit,
 `47729a2`, predating this entire M2.6B.4N thread). Re-run in isolation,
-it fails identically — a real-OS-state-dependent test, unrelated to
-warm-up/bargein/probe work, not investigated further here as it is
-outside this checkpoint's scope.
+it fails identically.
+**CORRECTION (recorded in the follow-up R0058 report, not re-edited
+into this sentence's original wording): at the time this report was
+first written, "pre-existing" here was an INFERENCE from the empty
+`git diff` alone — a reasonable one, but not itself proof the SAME
+failure occurs on the baseline commit under identical conditions. R0058
+performed that direct comparison (a detached worktree at this
+checkpoint's own baseline commit, same shell, same venv, same observed
+process nice level) and CONFIRMED the identical failure there too — see
+`docs/research/m2_6_cloud_realtime_voice/R0058_evidence_manifest.md`.**
+Still outside this checkpoint's own scope to fix.
 
 ### Step 4 — the one real-hardware reproduction
 
@@ -299,7 +317,7 @@ execution never reached the `try:`/`finally:` block at all.
 | *(shortly after, same monotonic window)* | `_run_warmup` returns; three post-warm-up prints/asserts execute in order; **assert 3 raises** |
 | *(t_monotonic=423992.597927)* | `INITIATING_EXCEPTION` logged with full traceback — **inside** the `asyncio.run()` task boundary, **before** any cleanup |
 | 14:54:54.735 | `asyncio.run()`'s own cleanup (triggered by the now-unhandled `AssertionError` propagating out of the orphaned coroutine) forcibly cancels the still-running `run_task`; Pipecat logs `"got cancelled from outside"` |
-| 14:54:54.735 → (external timeout, ~60s later) | **No further log output** — teardown stalls again, exactly as in both prior (60s- and 10s-target) runs, now proven independent of warm-up duration and repeat count (1 repeat here vs. 3 and 18 previously) |
+| 14:54:54.735 → (external timeout, ~60s later) | **No further log output** — teardown stalls again, matching the SAME downstream symptom (`"got cancelled from outside"` then silence) as both prior (60s- and 10s-target) runs. **CORRECTION:** the ORIGINAL wording here ("now proven independent of warm-up duration and repeat count") overstated this — only THIS run (1 repeat) has a directly captured initiating-exception traceback; the two prior runs are matched by downstream symptom only (see VERIFIED FACTS #3, corrected) |
 | (external) | `timeout` supervisor sends SIGTERM (and, per exit code 124, the process did not exit cleanly within its own accounting) |
 
 ## RUNNER AND TEARDOWN OUTCOMES
@@ -331,11 +349,22 @@ execution never reached the `try:`/`finally:` block at all.
    (1-second-target) warm-up — the exact race the read-only audit
    identified as source-possible and this checkpoint's own offline
    characterization test reproduced deterministically beforehand.
-3. This failure is **independent of warm-up duration and repeat
-   count**: it occurred identically at 18 repeats (60s target, prior
-   session), 3 repeats (10s target, prior session), and now 1 repeat
-   (1s target, this checkpoint) — always at the *last* required
-   repeat.
+3. **CORRECTED** (the original wording below overstated this as a
+   proven universal, duration-independent fact; it is not — see the
+   distinction drawn here): **DIRECTLY CONFIRMED, with a captured
+   initiating-exception traceback, for exactly ONE data point** — 1
+   repeat, 1s target, this checkpoint's own run3. The SAME downstream
+   symptom (`"got cancelled from outside"` then an indefinite silent
+   stall, no traceback ever printed) was also observed at 18 repeats
+   (60s target, prior session) and 3 repeats (10s target, prior
+   session) — but those two earlier runs predate this checkpoint's own
+   exception-reporting instrumentation, so their initiating cause is
+   **INFERRED from the matching downstream symptom, not independently
+   confirmed by a traceback of their own**. Three data points (1, 3, 18
+   repeats) all showing the same downstream signature is suggestive of
+   duration/repeat-count independence, not proof of it for every
+   possible value — a claim of universal independence is not
+   supportable from this evidence and is withdrawn.
 4. `runner.end()` and the `run_task` await are never reached in any of
    the three real-hardware failures observed to date — confirmed
    directly from the log's own marker absence in this run, and from
@@ -505,9 +534,14 @@ experiment.
 
 ## GIT STATUS
 
-Working tree will be clean after the commit described below. Not
-pushed. No Gemini call. No hardware parameter changed.
+**CORRECTED** (the original wording below predicted a clean tree rather
+than reporting one; replaced with the observed fact): working tree
+**CONFIRMED clean** — `git status --short` returned empty output at the
+start of the R0058 follow-up checkpoint, immediately after both commits
+below existed on `main` (`HEAD` = `1e38c55`). Not pushed. No Gemini
+call. No hardware parameter changed.
 
 ## COMMIT HASHES
 
 - `5c30fe8` — fix: R0057 diagnostic checkpoint -- confirm initiating exception behind warm-up teardown hang (M2.6B.4N follow-up)
+- `1e38c55` — docs: record R0057 diagnostic checkpoint commit hash

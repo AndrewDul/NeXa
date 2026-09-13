@@ -144,7 +144,66 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0057_warmup_lifecycle_diagnostic_initiating_exception_20260913.md`
+- **Latest report:** `docs/reports/R0058_warmup_lifecycle_fix_and_verification_20260913.md`
+  (**M2.6B.4N follow-up — implements and verifies R0057's own proposed
+  fix, 2026-09-13. NOT the R0057 gain A/B experiment** — that experiment
+  remains NOT EXECUTED, deferred again now that its blocking
+  probe-lifecycle bug is fixed. **Both fixes implemented**: (1)
+  `_run_warmup`'s bounded wait now ALSO requires `playback_stop_count`
+  to catch up to `repeats_run` (not just `ref_accepted_bytes`), with
+  EXACT equality checks (never permissive `>=`) — raises a new
+  `WarmupIncompleteError` (carrying full expected-vs-observed evidence)
+  instead of ever returning an incomplete result; the three former bare
+  `assert` statements (silently stripped under `python -O`) are gone.
+  (2) `_run()` now wraps the warm-up call, its validation, and the
+  measured trial loop -- not just the trial loop as before -- inside a
+  new `_run_body_with_guaranteed_cleanup()` primitive that guarantees
+  `_shutdown_runner()` (using ONLY `WorkerRunner.end()`, the runner's
+  own public API) is attempted exactly once regardless of outcome, and
+  promotes a failed cleanup into a raised `RunnerShutdownError` when the
+  body itself succeeded -- so a teardown failure can never look like a
+  successful diagnostic result. **Caught and fixed a real bug in the
+  first draft of the cleanup helper before trusting it**: verified via a
+  standalone reproduction script that `asyncio.wait_for(existing_task,
+  timeout=...)` does NOT reliably bound a task that catches cancellation
+  and keeps running (its `TimeoutError` conversion only fires if a
+  `CancelledError` actually propagates out, which never happens if the
+  awaited task swallows it) -- fixed by using the non-cancelling
+  `asyncio.wait({task}, timeout=...)` plus an explicit, scoped
+  `run_task.cancel()` escalation instead. Removed the now-obsolete
+  characterization test (required the old bug to persist) and added 12
+  new deterministic tests (pending-while-withheld / completes-on-release
+  / bounded-failure-with-evidence / baseline-relative-counters for the
+  warm-up fix; clean/failed/escalated-cleanup coverage using fake
+  runner+task doubles, no Pipecat, for the cleanup fix). **One
+  real-hardware reproduction of the EXACT command that previously
+  failed** (`--warmup-seconds 1 --level max --repeats 0`, same external
+  `timeout` supervisor) **now completes naturally with exit code 0**
+  (was: AssertionError -> orphaned run_task -> indefinite stall -> exit
+  124) -- `playback_start_count == playback_stop_count == repeats_run
+  == 1`, zero confirmed interruptions, zero measured trials,
+  `SHUTDOWN_OUTCOME` clean, mixer values (`Array PCM,1` -20.00dB,
+  `UACDemoV10` -0.94dB) unchanged before/after, no leftover processes.
+  Also directly compared (detached worktree at the pre-fix baseline
+  commit, same shell/venv, worktree removed after) the one pre-existing
+  full-suite test failure (`test_tts_server`'s nice-value test) and
+  confirmed it fails identically at baseline -- pre-existing and
+  environment-caused (this sandbox's own base nice level), not
+  introduced by this checkpoint. Corrected four overclaims/predictions
+  in the R0057 report text itself (report identity preserved, not
+  renamed): distinguishing directly-confirmed vs inferred historical
+  evidence, withdrawing a universal duration-independence claim,
+  marking the nice-value provenance as inference-at-the-time (now
+  confirmed), and replacing predicted git cleanliness with the observed
+  fact. Wrote a tracked evidence manifest
+  (`docs/research/m2_6_cloud_realtime_voice/R0058_evidence_manifest.md`)
+  with hashes/sizes/commands/exit-statuses for the git-ignored raw logs.
+  **1080 tests, 1 failure (confirmed pre-existing), skipped=7**;
+  `ruff`/`git diff --check` clean; `git diff --stat -- src/nexa`
+  empty. No Gemini call. Not pushed. **`M2.6B` remains IN PROGRESS** —
+  next step is executing the still-pending R0057 gain A/B experiment
+  itself.)
+- **Prior report:** `docs/reports/R0057_warmup_lifecycle_diagnostic_initiating_exception_20260913.md`
   (**M2.6B.4N follow-up — warm-up lifecycle diagnostic checkpoint,
   2026-09-13. NOT the R0057 gain A/B experiment** — that experiment
   remains NOT EXECUTED; this checkpoint claims the R0057 report number

@@ -1415,6 +1415,57 @@ unpaid-quota data is used to improve Google products.
     remains NOT EXECUTED** -- next step is implementing this fix, then
     re-attempting the hardware warm-up, before returning to the gain
     A/B experiment itself.
+  - **M2.6B.4N follow-up -- warm-up lifecycle fix and verification**
+    (`R0058`, 2026-09-13, implements R0057's own proposed fix; **not**
+    the R0057 gain A/B experiment itself, still NOT EXECUTED). Both
+    fixes implemented: (1) `_run_warmup`'s bounded wait now ALSO
+    requires `playback_stop_count` to catch up to `repeats_run` (not
+    just `ref_accepted_bytes`), with exact equality checks -- raises a
+    new `WarmupIncompleteError` (full expected-vs-observed evidence
+    attached) instead of ever returning an incomplete result; the three
+    former bare `assert` statements (silently stripped under `python
+    -O`) are gone. (2) `_run()` now wraps the warm-up call, its
+    validation, and the measured trial loop -- not just the trial loop
+    as before -- inside a new `_run_body_with_guaranteed_cleanup()`
+    primitive guaranteeing `_shutdown_runner()` (using ONLY
+    `WorkerRunner.end()`, the runner's own public API) is attempted
+    exactly once regardless of outcome, and promoting a failed cleanup
+    into a raised `RunnerShutdownError` when the body itself succeeded.
+    Caught and fixed a real bug in the cleanup helper's own first draft
+    before trusting it: verified via a standalone reproduction script
+    that `asyncio.wait_for(existing_task, timeout=...)` does NOT
+    reliably bound a task that catches cancellation and keeps running
+    (its `TimeoutError` conversion only fires if a `CancelledError`
+    actually propagates out, which never happens if the awaited task
+    swallows it) -- fixed with the non-cancelling `asyncio.wait({task},
+    timeout=...)` plus an explicit, scoped `run_task.cancel()`
+    escalation instead. Removed the now-obsolete characterization test
+    and added 12 new deterministic tests (warm-up completion + cleanup
+    coverage, fake doubles only, no Pipecat). **One real-hardware
+    reproduction of the EXACT command that previously failed**
+    (`--warmup-seconds 1 --level max --repeats 0`, same external
+    `timeout` supervisor) **now completes naturally with exit code 0**
+    (was: AssertionError -> orphaned run_task -> indefinite stall ->
+    exit 124) -- matched start/stop/repeats counters, zero confirmed
+    interruptions, zero measured trials, clean shutdown outcome, mixer
+    values unchanged before/after, no leftover processes. Directly
+    compared (detached worktree at the pre-fix baseline, same
+    shell/venv, removed after) the one pre-existing full-suite failure
+    (`test_tts_server`'s nice-value test) and confirmed it fails
+    identically at baseline -- pre-existing, environment-caused (this
+    sandbox's own base nice level), unrelated to this checkpoint.
+    Corrected four overclaims/predictions in the R0057 report text
+    itself (identity preserved, not renamed): directly-confirmed vs
+    inferred historical evidence, withdrew a universal
+    duration-independence claim, marked the nice-value provenance as
+    inference-at-the-time (now confirmed), replaced predicted git
+    cleanliness with the observed fact. New tracked evidence manifest
+    (`docs/research/m2_6_cloud_realtime_voice/R0058_evidence_manifest.md`).
+    **1080 tests, 1 failure (confirmed pre-existing), skipped=7**;
+    `ruff`/`git diff --check` clean; `git diff --stat -- src/nexa`
+    empty. No Gemini call. Not pushed. **`M2.6B` remains IN PROGRESS**
+    -- next step is executing the still-pending R0057 gain A/B
+    experiment itself.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

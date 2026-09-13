@@ -11,6 +11,7 @@ from real operator runs, git-ignored under ``self_echo_captures/``).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 import unittest
 from pathlib import Path
@@ -23,6 +24,15 @@ if str(PROBE_DIR) not in sys.path:
     sys.path.insert(0, str(PROBE_DIR))
 
 import m2_6b4m_self_echo_probe as probe  # noqa: E402
+
+# Captured BEFORE any `mock.patch.object(probe.asyncio, "sleep", ...)` call
+# runs -- `probe.asyncio` IS this same `asyncio` module object (Python
+# modules are singletons), so patching `probe.asyncio.sleep` patches
+# `asyncio.sleep` process-wide for the duration of the `with` block. A
+# name bound to the ORIGINAL function object beforehand, like this one,
+# keeps pointing at it regardless of what the attribute is later
+# reassigned to.
+_REAL_ASYNCIO_SLEEP = asyncio.sleep
 
 
 class TestPcmHelpers(unittest.TestCase):
@@ -621,6 +631,23 @@ class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
     async def _instant_sleep(_seconds: float) -> None:
         return None
 
+    @staticmethod
+    async def _yielding_sleep(_seconds: float) -> None:
+        """Unlike ``_instant_sleep`` above (a true no-op with no internal
+        ``await`` at all, safe for every OTHER test in this class since
+        nothing else needs a scheduling turn concurrently), this
+        actually cedes control for one real event-loop tick
+        (``asyncio.sleep(0)``, via the pre-patch REAL ``asyncio.sleep``)
+        regardless of the requested duration. Needed wherever a
+        concurrently-scheduled task -- e.g. ``_FakeWorkerWithheldFinalStop``'s
+        own deferred stop, released via an ``asyncio.Event`` -- must get
+        a genuine chance to run while ``_run_warmup``'s own poll loop is
+        also active: a truly non-yielding sleep patch turns that poll
+        loop into a tight, never-yielding busy loop that starves every
+        other task on the event loop, including the very one whose
+        release it is waiting to observe."""
+        await _REAL_ASYNCIO_SLEEP(0)
+
     async def test_warmup_delivers_at_least_the_requested_seconds(self) -> None:
         """Direct proof of the >= guarantee, at the AUTHORITATIVE
         post-aec_feeder acceptance point (not mere queue submission): a
@@ -778,12 +805,15 @@ class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
     async def test_artificially_dropped_reference_pcm_makes_the_proof_fail(self) -> None:
         """STEP 4 test #6: if an interruption (or anything else) causes
         submitted PCM to never reach the post-aec_feeder acceptance tap,
-        ``_run_warmup``'s own returned evidence must reflect the
-        shortfall -- never silently report success on queue submission
-        alone. Uses the fake worker's own ``drop_after_n_chunks`` to
-        simulate exactly the contamination this checkpoint's bug report
-        describes (a chunk counted as "queued" that never actually
-        arrived), and a short poll timeout so the test stays fast."""
+        ``_run_warmup`` must FAIL LOUDLY -- raising ``WarmupIncompleteError``
+        with the exact expected-vs-observed shortfall attached -- never
+        silently return a dict describing success on queue submission
+        alone (R0058: this function no longer returns an incomplete
+        result for the CALLER to catch; it raises itself). Uses the fake
+        worker's own ``drop_after_n_chunks`` to simulate exactly the
+        contamination this checkpoint's bug report describes (a chunk
+        counted as "queued" that never actually arrived), and a short
+        poll timeout so the test stays fast."""
         P = self._P()
         recorder = probe.Recorder()
         # drop every chunk after the first 2 -- simulates an interruption
@@ -799,20 +829,23 @@ class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
         requested_seconds = 3.0
 
         with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
-            result = await probe._run_warmup(
-                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
-                sample_rate=sample_rate, warmup_seconds=requested_seconds,
-                poll_timeout_s=0.05,
-            )
+            with self.assertRaises(probe.WarmupIncompleteError) as cm:
+                await probe._run_warmup(
+                    P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                    sample_rate=sample_rate, warmup_seconds=requested_seconds,
+                    poll_timeout_s=0.05,
+                )
 
-        accepted_seconds = result["ref_accepted_bytes"] / 2 / sample_rate
-        queued_seconds = result["delivered_bytes"] / 2 / sample_rate
+        context = cm.exception.context
+        accepted_seconds = context["ref_accepted_bytes"] / 2 / sample_rate
+        queued_seconds = context["delivered_bytes"] / 2 / sample_rate
         # queue submission alone reached the target ...
         self.assertGreaterEqual(queued_seconds, requested_seconds)
         # ... but the AUTHORITATIVE acceptance count did NOT -- this is
-        # exactly what must make the caller's own assertion in `_run()`
-        # fail rather than falsely report >= requested_seconds.
+        # exactly what the raised exception's own attached evidence must
+        # show, never a falsely-successful >= requested_seconds result.
         self.assertLess(accepted_seconds, requested_seconds)
+        self.assertIn("under-delivered", str(cm.exception))
 
     async def test_measured_trial_path_still_truncates_on_confirmed_interruption(self) -> None:
         """Preserves R0055's own diagnostic fix: this is the SAME
@@ -894,45 +927,106 @@ class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
                     else:
                         self._recorder.mark_playback_end()
 
-    async def test_characterization_warmup_can_return_before_final_playback_stop_observed(
-        self,
-    ) -> None:
-        """CHARACTERIZATION of CURRENT behavior -- not a regression test
-        proving a fix, and not itself an assertion that real hardware
-        WILL fail this way; it demonstrates, deterministically and
-        without any sleep/arbitrary delay, that ``_run_warmup``'s own
-        bounded wait (source-confirmed: it polls only
-        ``recorder.ref_accepted_bytes``, ``m2_6b4m_self_echo_probe.py``
-        's ``_run_warmup``, never ``playback_stop_count``) CAN return
-        while the final repeat's own playback-stop observation is still
-        outstanding. The withheld stop is released only via an explicit
-        ``asyncio.Event`` the test itself controls, set (or in this case
-        deliberately never set) at a precise point -- never a timing
-        guess. This characterizes the exact condition the caller's own
-        third assert in ``_run()`` (``playback_start_count ==
-        playback_stop_count == repeats_run``) exists to catch; it does
-        NOT invoke ``_run()`` or that assert directly, and does NOT
-        prove what happens on real hardware -- only that this function's
-        own return condition does not wait for it."""
-        P = self._P()
-        recorder = probe.Recorder()
-        release_event = asyncio.Event()  # deliberately never set in this test
-        sample_rate = 16000
-        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
-        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
-        requested_seconds = 2.0
-
-        # Derive the expected repeat count the IDENTICAL way _run_warmup
-        # itself derives it (m2_6b4m_self_echo_probe.py's own
-        # `while delivered_bytes < target_bytes` loop) -- not guessed --
-        # so the withheld stop is precisely the LAST one, not an
-        # arbitrary index.
+    @staticmethod
+    def _expected_repeats(pcm: bytes, *, sample_rate: int, requested_seconds: float) -> int:
+        """Derives the repeat count the IDENTICAL way ``_run_warmup``
+        itself derives it (its own ``while delivered_bytes <
+        target_bytes`` loop) -- never guessed -- so a test can target
+        precisely the LAST repeat, not an arbitrary index."""
         target_bytes = int(round(requested_seconds * sample_rate)) * 2
         expected_repeats = 0
         delivered = 0
         while delivered < target_bytes:
             delivered += len(pcm)
             expected_repeats += 1
+        return expected_repeats
+
+    async def test_warmup_completion_waits_for_final_playback_stop_before_returning(
+        self,
+    ) -> None:
+        """R0058 FIX: proves ``_run_warmup`` no longer returns while the
+        final repeat's own playback-stop observation is still
+        outstanding (Correction 6) -- the exact gap the prior
+        characterization test (removed; this test replaces it,
+        following it up rather than requiring the old bug to persist)
+        demonstrated. Uses ``_FakeWorkerWithheldFinalStop`` with an
+        explicit ``asyncio.Event`` the TEST itself controls: the
+        function's own task must still be genuinely pending while the
+        event is unset, and must complete with fully-matched counters
+        only once it is released -- never a sleep/timing guess for
+        either half."""
+        P = self._P()
+        recorder = probe.Recorder()
+        release_event = asyncio.Event()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
+        requested_seconds = 2.0
+        expected_repeats = self._expected_repeats(
+            pcm, sample_rate=sample_rate, requested_seconds=requested_seconds
+        )
+
+        worker = self._FakeWorkerWithheldFinalStop(
+            recorder, withhold_stop_after_start_index=expected_repeats,
+            release_event=release_event,
+        )
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+
+        try:
+            # `_yielding_sleep`, not `_instant_sleep`: this test needs the
+            # deferred-stop task (parked on `release_event.wait()`) to
+            # actually get a scheduling turn while `_run_warmup`'s own
+            # poll loop is concurrently spinning -- a truly non-yielding
+            # sleep patch would starve it (see `_yielding_sleep`'s own
+            # docstring).
+            with mock.patch.object(probe.asyncio, "sleep", new=self._yielding_sleep):
+                task = asyncio.ensure_future(
+                    probe._run_warmup(
+                        P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                        sample_rate=sample_rate, warmup_seconds=requested_seconds,
+                        poll_timeout_s=5.0,
+                    )
+                )
+                # Yield control repeatedly (real event-loop ticks) so the
+                # task's own poll loop gets many chances to run without
+                # this test racing real wall-clock time (poll_timeout_s
+                # =5.0 is real seconds, measured via time.monotonic()).
+                for _ in range(200):
+                    await _REAL_ASYNCIO_SLEEP(0)
+
+                # Genuinely still pending: the withheld stop means the
+                # bounded-wait condition cannot yet hold.
+                self.assertFalse(task.done())
+
+                release_event.set()
+                result = await asyncio.wait_for(task, timeout=5.0)
+
+            self.assertEqual(result["repeats_run"], expected_repeats)
+            self.assertEqual(result["playback_start_count"], expected_repeats)
+            self.assertEqual(result["playback_stop_count"], expected_repeats)
+        finally:
+            for t in worker.deferred_tasks:
+                t.cancel()
+
+    async def test_warmup_missing_final_stop_is_a_bounded_failure_with_evidence(
+        self,
+    ) -> None:
+        """R0058: if the final repeat's playback-stop is NEVER released,
+        ``_run_warmup`` must not wait forever and must not return a
+        falsely-successful result -- it raises ``WarmupIncompleteError``
+        within its own bounded ``poll_timeout_s``, with the exact
+        expected-vs-observed counters attached as evidence."""
+        P = self._P()
+        recorder = probe.Recorder()
+        release_event = asyncio.Event()  # deliberately never set
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
+        requested_seconds = 2.0
+        expected_repeats = self._expected_repeats(
+            pcm, sample_rate=sample_rate, requested_seconds=requested_seconds
+        )
 
         worker = self._FakeWorkerWithheldFinalStop(
             recorder, withhold_stop_after_start_index=expected_repeats,
@@ -943,31 +1037,286 @@ class TestRunWarmup(unittest.IsolatedAsyncioTestCase):
 
         try:
             with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
-                result = await probe._run_warmup(
-                    P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
-                    sample_rate=sample_rate, warmup_seconds=requested_seconds,
-                )
+                with self.assertRaises(probe.WarmupIncompleteError) as cm:
+                    await probe._run_warmup(
+                        P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                        sample_rate=sample_rate, warmup_seconds=requested_seconds,
+                        poll_timeout_s=0.05,
+                    )
 
-            # _run_warmup RETURNED even though release_event was never
-            # set -- the final stop was never observed.
-            self.assertEqual(result["repeats_run"], expected_repeats)
-            self.assertEqual(result["playback_start_count"], expected_repeats)
-            self.assertEqual(result["playback_stop_count"], expected_repeats - 1)
-            self.assertLess(result["playback_stop_count"], result["playback_start_count"])
-
-            # This is EXACTLY the snapshot condition _run()'s own third
-            # assert checks (playback_start_count == playback_stop_count
-            # == repeats_run) -- shown here to not hold, without invoking
-            # _run() or its assert statement directly.
-            caller_assert_condition_holds = (
-                result["playback_start_count"]
-                == result["playback_stop_count"]
-                == result["repeats_run"]
-            )
-            self.assertFalse(caller_assert_condition_holds)
+            context = cm.exception.context
+            self.assertEqual(context["repeats_run"], expected_repeats)
+            self.assertEqual(context["playback_start_count"], expected_repeats)
+            self.assertEqual(context["playback_stop_count"], expected_repeats - 1)
+            self.assertIn("BotStoppedSpeakingFrame", str(cm.exception))
         finally:
             for t in worker.deferred_tasks:
                 t.cancel()
+
+    async def test_warmup_uses_baseline_relative_counters_not_stale_totals(self) -> None:
+        """R0058: ``_run_warmup`` must measure everything relative to the
+        counters' values AT ITS OWN START, never their absolute totals --
+        otherwise leftover counts from something that ran before it
+        (e.g. an earlier measured trial reusing the same ``Recorder``)
+        would corrupt this warm-up's own evidence. Pre-seeds the
+        recorder with a nonzero, unrelated baseline before calling
+        ``_run_warmup`` and proves the returned result reflects ONLY
+        this call's own repeats, multiple of them -- not the baseline
+        plus this call's repeats, and not stale/accumulated events."""
+        P = self._P()
+        recorder = probe.Recorder()
+        # Simulate leftover state from unrelated prior activity on this
+        # SAME recorder (e.g. a real BotStartedSpeakingFrame/
+        # BotStoppedSpeakingFrame pair and some accepted reference bytes
+        # from something else entirely) -- never reset by _run_warmup
+        # itself (only reset_trial(), which measured trials call, does
+        # that; _run_warmup deliberately never calls it, see its own
+        # docstring).
+        recorder.playback_start_count = 3
+        recorder.playback_stop_count = 3
+        recorder.ref_accepted_bytes = 999_999
+
+        worker = self._FakeWorkerSimulatingDownstreamPipeline(recorder)
+        lifecycle = self._FakeLifecycle()
+        bargein = self._FakeBargein()
+        sample_rate = 16000
+        chunk_bytes = int(sample_rate * (probe.ASSISTANT_CHUNK_MS / 1000.0) * 2)
+        pcm = b"\x00\x00" * (chunk_bytes * 3 // 2)
+        requested_seconds = 4.0
+        expected_repeats = self._expected_repeats(
+            pcm, sample_rate=sample_rate, requested_seconds=requested_seconds
+        )
+
+        with mock.patch.object(probe.asyncio, "sleep", new=self._instant_sleep):
+            result = await probe._run_warmup(
+                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                sample_rate=sample_rate, warmup_seconds=requested_seconds,
+            )
+
+        self.assertGreater(expected_repeats, 1)
+        self.assertEqual(result["repeats_run"], expected_repeats)
+        # Deltas only -- NOT 3 + expected_repeats, and NOT 999_999 + new bytes.
+        self.assertEqual(result["playback_start_count"], expected_repeats)
+        self.assertEqual(result["playback_stop_count"], expected_repeats)
+        self.assertEqual(result["ref_accepted_bytes"], len(pcm) * expected_repeats)
+        # The recorder's own absolute totals DO include the baseline --
+        # proving the baseline was real and the delta math, not the
+        # counters themselves, is what protects this warm-up's evidence.
+        self.assertEqual(recorder.playback_start_count, 3 + expected_repeats)
+        self.assertEqual(recorder.ref_accepted_bytes, 999_999 + len(pcm) * expected_repeats)
+
+
+class TestShutdownRunner(unittest.IsolatedAsyncioTestCase):
+    """R0058 -- runner-ownership/cleanup coverage for ``_shutdown_runner``,
+    the helper ``_run()`` now uses (inside
+    ``_run_body_with_guaranteed_cleanup``, wrapping startup/warmup/
+    validation/measured trials -- not just the trial loop, unlike
+    before) to guarantee a shutdown attempt happens regardless of how
+    that work ends -- using ONLY ``WorkerRunner``'s own public,
+    documented ``end()`` method; no global cancellation monkeypatch, no
+    internal Pipecat method reached into. These tests use a fake runner
+    double and real ``asyncio.Task`` objects wrapping small controllable
+    coroutines -- never a real Pipecat pipeline, matching this file's
+    own established no-Pipecat-in-unit-tests convention."""
+
+    class _FakeRunner:
+        def __init__(self, *, raise_in_end: bool = False) -> None:
+            self.end_calls = 0
+            self._raise_in_end = raise_in_end
+
+        async def end(self, reason: str | None = None) -> None:
+            self.end_calls += 1
+            if self._raise_in_end:
+                raise RuntimeError("boom in runner.end()")
+
+    @staticmethod
+    async def _quick_finishing_coro() -> None:
+        await asyncio.sleep(0)
+
+    @staticmethod
+    async def _uncancellable_coro(stop_event: asyncio.Event) -> None:
+        """Simulates a run_task that swallows cancellation and keeps
+        going -- the shape ``PipelineWorker.run()``'s own documented
+        "got cancelled from outside... let's just cancel everything...
+        wait again" retry can produce if that retry itself never
+        finishes. Only stops when the TEST explicitly sets
+        ``stop_event`` -- never a sleep/timing guess."""
+        while not stop_event.is_set():
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                continue
+
+    async def test_clean_shutdown_reports_success(self) -> None:
+        runner = self._FakeRunner()
+        run_task = asyncio.ensure_future(self._quick_finishing_coro())
+        outcome = await probe._shutdown_runner(
+            runner, run_task, end_timeout_s=1.0, run_task_timeout_s=1.0,
+            run_task_cancel_grace_s=1.0,
+        )
+        self.assertEqual(runner.end_calls, 1)
+        self.assertFalse(outcome["failed"])
+        self.assertEqual(outcome["runner_end"], "clean")
+        self.assertEqual(outcome["run_task_await"], "clean")
+        self.assertFalse(outcome["escalated"])
+
+    async def test_runner_end_exception_is_reported_as_a_failed_cleanup(self) -> None:
+        runner = self._FakeRunner(raise_in_end=True)
+        run_task = asyncio.ensure_future(self._quick_finishing_coro())
+        outcome = await probe._shutdown_runner(
+            runner, run_task, end_timeout_s=1.0, run_task_timeout_s=1.0,
+            run_task_cancel_grace_s=1.0,
+        )
+        self.assertTrue(outcome["failed"])
+        self.assertIn("exception", outcome["runner_end"])
+
+    async def test_stuck_run_task_is_escalated_then_reported_as_failed_cleanup(self) -> None:
+        """A run_task that swallows its first cancellation (matching
+        PipelineWorker.run()'s own real retry shape) must not hang this
+        helper forever: a timed-out first wait escalates to a second,
+        bounded wait (wait_for's own documented cancel-on-timeout
+        behavior re-delivers CancelledError); if it STILL never
+        finishes, ``_shutdown_runner`` must report failure rather than
+        hang or claim success."""
+        stop_event = asyncio.Event()
+        runner = self._FakeRunner()
+        run_task = asyncio.ensure_future(self._uncancellable_coro(stop_event))
+        try:
+            outcome = await probe._shutdown_runner(
+                runner, run_task, end_timeout_s=1.0,
+                run_task_timeout_s=0.05, run_task_cancel_grace_s=0.05,
+            )
+            self.assertTrue(outcome["failed"])
+            self.assertTrue(outcome["escalated"])
+            self.assertIn("still_pending_after_escalation", outcome["run_task_await"])
+        finally:
+            stop_event.set()
+            run_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await run_task
+
+    async def test_run_task_that_finishes_only_after_escalation_is_still_a_failed_cleanup(
+        self,
+    ) -> None:
+        """A run_task that needs a forced cancellation to finish at all
+        -- even if it DOES eventually finish once escalated -- must
+        still count as a failed cleanup (strict: only a fully clean,
+        non-escalated shutdown is success), since needing escalation
+        means the graceful `runner.end()` path did not work as
+        intended."""
+
+        async def _cancellable_after_one_retry() -> None:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                # Acknowledges cancellation on the SECOND attempt --
+                # simulates PipelineWorker.run()'s own documented retry
+                # actually succeeding this time.
+                return
+
+        runner = self._FakeRunner()
+        run_task = asyncio.ensure_future(_cancellable_after_one_retry())
+        outcome = await probe._shutdown_runner(
+            runner, run_task, end_timeout_s=1.0,
+            run_task_timeout_s=0.05, run_task_cancel_grace_s=1.0,
+        )
+        self.assertTrue(outcome["escalated"])
+        self.assertTrue(outcome["failed"])
+        self.assertIn("clean_after_escalation", outcome["run_task_await"])
+
+
+class TestRunBodyWithGuaranteedCleanup(unittest.IsolatedAsyncioTestCase):
+    """R0058 -- pure control-flow coverage for
+    ``_run_body_with_guaranteed_cleanup``: proves cleanup is ALWAYS
+    attempted exactly once, that a primary failure is never masked by a
+    cleanup outcome (success or failure), and that a cleanup failure
+    ALONE is enough to turn an otherwise-successful body into a raised
+    ``RunnerShutdownError`` -- never a silent, successful-looking
+    return. Pure fake callables -- no Pipecat, no asyncio.Task, matching
+    this file's own no-Pipecat-in-unit-tests convention."""
+
+    async def test_successful_body_and_clean_cleanup_returns_normally(self) -> None:
+        cleanup_calls = []
+
+        async def body():
+            return "ok"
+
+        async def cleanup():
+            cleanup_calls.append(1)
+            return {"failed": False}
+
+        result = await probe._run_body_with_guaranteed_cleanup(body, cleanup=cleanup)
+        self.assertEqual(result, "ok")
+        self.assertEqual(len(cleanup_calls), 1)
+
+    async def test_body_failure_propagates_and_cleanup_is_still_attempted(self) -> None:
+        """'failure during warm-up: cleanup is attempted and the
+        original failure remains observable' -- the exact bug the R0057
+        diagnostic checkpoint's own real-hardware run demonstrated
+        (an AssertionError that orphaned run_task because cleanup was
+        never even attempted)."""
+        cleanup_calls = []
+
+        async def body():
+            raise ValueError("original failure")
+
+        async def cleanup():
+            cleanup_calls.append(1)
+            return {"failed": False}
+
+        with self.assertRaises(ValueError) as cm:
+            await probe._run_body_with_guaranteed_cleanup(body, cleanup=cleanup)
+        self.assertEqual(str(cm.exception), "original failure")
+        self.assertEqual(len(cleanup_calls), 1)
+
+    async def test_body_failure_survives_even_if_cleanup_also_fails(self) -> None:
+        """'cleanup failure: no false success' -- but ALSO: the ORIGINAL
+        failure, never the cleanup's own, is what must propagate when
+        both fail. Deliberately NOT relying on plain try/finally
+        semantics (a bare `finally` that raises would silently replace
+        the original exception -- see `_run_body_with_guaranteed_cleanup`'s
+        own docstring for why it avoids that)."""
+
+        async def body():
+            raise ValueError("original failure")
+
+        async def cleanup():
+            raise RuntimeError("cleanup itself blew up")
+
+        with self.assertRaises(ValueError) as cm:
+            await probe._run_body_with_guaranteed_cleanup(body, cleanup=cleanup)
+        self.assertEqual(str(cm.exception), "original failure")
+
+    async def test_successful_body_with_failed_cleanup_raises_runner_shutdown_error(
+        self,
+    ) -> None:
+        """'cleanup failure: no false success' -- a cleanup failure
+        alone, with NO primary exception at all, must still prevent a
+        successful-looking result."""
+
+        async def body():
+            return "ok"
+
+        async def cleanup():
+            return {"failed": True, "run_task_await": "timeout"}
+
+        with self.assertRaises(probe.RunnerShutdownError) as cm:
+            await probe._run_body_with_guaranteed_cleanup(body, cleanup=cleanup)
+        self.assertEqual(cm.exception.outcome["run_task_await"], "timeout")
+
+    async def test_successful_body_with_cleanup_that_raises_becomes_runner_shutdown_error(
+        self,
+    ) -> None:
+        async def body():
+            return "ok"
+
+        async def cleanup():
+            raise RuntimeError("cleanup itself blew up")
+
+        with self.assertRaises(probe.RunnerShutdownError) as cm:
+            await probe._run_body_with_guaranteed_cleanup(body, cleanup=cleanup)
+        self.assertIn("cleanup_exception", cm.exception.outcome)
+        self.assertIsInstance(cm.exception.__cause__, RuntimeError)
 
 
 if __name__ == "__main__":

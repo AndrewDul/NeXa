@@ -70,7 +70,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import json
 import math
 import statistics
@@ -942,6 +941,24 @@ async def _play_assistant_phrase(
     return len(pcm)
 
 
+class WarmupIncompleteError(RuntimeError):
+    """R0058 -- raised by ``_run_warmup`` when it cannot PROVE, within its
+    own bounded wait, that every requested repeat's reference PCM was
+    accepted AND completed a full start-then-stop playback lifecycle --
+    or when the observed counters are already provably impossible
+    before the deadline (e.g. more playback starts than repeats run).
+    Carries the exact expected-vs-observed evidence in ``.context`` (the
+    same shape ``_run_warmup`` used to return unconditionally, before
+    this fix) so a caller/report never has to re-derive it from a bare
+    message string. ``_run_warmup`` never returns a dict describing an
+    incomplete or contradictory warm-up as if it were a passable one --
+    see Correction 6 in its own docstring below."""
+
+    def __init__(self, message: str, *, context: dict[str, Any]) -> None:
+        super().__init__(f"{message}: {context}")
+        self.context = context
+
+
 async def _run_warmup(
     P: dict[str, Any], worker, recorder: Recorder, *, lifecycle, bargein, pcm: bytes,
     sample_rate: int, warmup_seconds: float, poll_timeout_s: float = 5.0,
@@ -1043,7 +1060,77 @@ async def _run_warmup(
     ``arm_bargein=True``, so a confirmed interruption during an ACTUAL
     measured trial still truncates and broadcasts exactly as R0055's
     own fix intends -- only this dedicated warm-up path disarms
-    confirmation, and only here."""
+    confirmation, and only here.
+
+    CORRECTION 6 (R0058 -- confirmed by direct real-hardware
+    reproduction, ``docs/reports/R0057_warmup_lifecycle_diagnostic_
+    initiating_exception_20260913.md``, not merely inferred): the
+    bounded wait above Correction 5 added polled ONLY
+    ``recorder.ref_accepted_bytes`` catching up to ``delivered_bytes``
+    -- it never waited for ``recorder.playback_stop_count`` (the LAST
+    repeat's own real ``BotStoppedSpeakingFrame``) to be observed before
+    returning. On real hardware, at ``--warmup-seconds 1 --level max
+    --repeats 0``, this function returned with
+    ``playback_start_count=1``, ``playback_stop_count=0``,
+    ``repeats_run=1`` -- the caller's own THIRD post-warmup check (a
+    bare ``assert`` at the time) then raised OUTSIDE its
+    ``try:``/``finally:`` block, orphaning ``run_task`` and reproducing
+    the exact "Pipeline worker ... got cancelled from outside..." +
+    indefinite teardown stall this whole investigation exists to
+    resolve (R0057 report, INITIATING EXCEPTION EVIDENCE section).
+
+    LIFECYCLE-REUSE / EVENT-ORDERING INSPECTION (done before choosing
+    this fix, not assumed): every repeat within ONE ``_run_warmup`` call
+    shares the SAME ``_ResponseLifecycle`` instance and the SAME
+    ``Recorder`` -- ``playback_start_count``/``playback_stop_count`` are
+    cumulative counters incremented once per real
+    ``BotStartedSpeakingFrame``/``BotStoppedSpeakingFrame``
+    (``Recorder.mark_playback_start``/``mark_playback_end``, confirmed
+    above); ``_run_warmup`` never calls ``recorder.reset_trial()``
+    between repeats (only ``_run_silent_trial``/``_run_control_trial``
+    do, once per MEASURED trial, never mid-warmup, confirmed by reading
+    both functions above). ``_play_assistant_phrase`` itself already
+    blocks, chunk by chunk, until its own PCM is fully queued and only
+    returns after ALSO queuing ``TTSStoppedFrame`` and calling
+    ``lifecycle.mark_generation_done()`` -- but, exactly like
+    ``ref_accepted_bytes`` before it, that return proves only that the
+    frame reached the worker's OWN push queue, never that the transport
+    has actually finished producing sound for that repeat. Because the
+    counters are monotonic, cumulative, and never reset mid-warmup, a
+    stop cannot be attributed to a repeat that has not yet started, and
+    the Nth stop cannot be observed before the Nth start -- so waiting
+    ONCE, after the LAST repeat has been submitted, for
+    ``playback_stop_count``'s cumulative delta to reach ``repeats_run``
+    is equivalent in strictness to waiting after every individual
+    repeat: by the time the LAST stop is observed, every earlier
+    repeat's own stop must already have been counted too. Polling once
+    at the end (the same pattern Correction 5 already established for
+    ``ref_accepted_bytes``) is therefore correct and avoids adding an
+    unnecessary poll per repeat. No ``asyncio.sleep`` beyond the
+    existing bounded 0.02s poll interval is added anywhere by this fix.
+
+    Returns a dict with the requested-vs-observed evidence ONLY when
+    every one of the following holds, each checked from real telemetry,
+    never assumed: zero confirmed interruptions occurred; accepted
+    reference bytes reached the requested duration; and
+    ``playback_start_count == playback_stop_count == repeats_run``
+    EXACTLY (not merely ``>=`` -- an extra, unexplained start or stop is
+    just as much a bug signature as a missing one, per R0055's own
+    "hidden mid-fixture restart" finding, and must not be hidden behind
+    a permissive comparison). Byte acceptance past ``AecReferenceFeeder``
+    is proof the reference reached that ONE processor's own queue --
+    it is evidence of software-level acceptance along the real
+    production path, never proof that the physical speaker or the
+    XVF3800 reference input actually reproduced/ingested the sound (no
+    software-only signal can prove that; see ``Recorder.ref_accepted_bytes``'s
+    own docstring for exactly what tap this is and is not). If the
+    bounded wait's deadline passes without every condition holding, or
+    the observed counters are already provably impossible before the
+    deadline (more playback starts than repeats run, or more stops than
+    starts), this function raises ``WarmupIncompleteError`` with the
+    full expected-vs-observed evidence attached (``.context``) -- it
+    NEVER returns a dict describing an incomplete or contradictory
+    warm-up as if it were a passable one."""
     target_bytes = int(round(warmup_seconds * sample_rate)) * 2  # int16 mono
     interrupt_confirmed_before = bargein.telemetry.interrupt_confirmed
     ref_accepted_before = recorder.ref_accepted_bytes
@@ -1059,29 +1146,93 @@ async def _run_warmup(
         )
         repeats_run += 1
 
-    # Bounded wait for the async pipeline to finish propagating the
-    # already-submitted frames through to the post-aec_feeder
-    # acceptance tap -- `queue_frames()` returning does not mean the
-    # frame has yet reached `aec_feeder` (see the docstring above).
-    # ``poll_timeout_s`` is injectable so a test can prove the give-up
-    # path itself without a real 5-second wait.
+    # Bounded wait for BOTH real acceptance proofs this warm-up exists to
+    # establish: (a) every submitted byte was ACCEPTED past
+    # AecReferenceFeeder (Correction 5), and (b) the LAST repeat's own
+    # full start-then-stop playback lifecycle was observed (Correction 6
+    # / R0058) -- never a sleep-only wait, never a partial one. See the
+    # LIFECYCLE-REUSE note above for why checking once, after the final
+    # repeat, is sufficient. ``poll_timeout_s`` is injectable so a test
+    # can prove the give-up path itself without a real 5-second wait.
     deadline = time.monotonic() + poll_timeout_s
-    while (recorder.ref_accepted_bytes - ref_accepted_before) < delivered_bytes:
+    impossible_state = False
+    ref_accepted_delta = 0
+    playback_start_delta = 0
+    playback_stop_delta = 0
+    while True:
+        ref_accepted_delta = recorder.ref_accepted_bytes - ref_accepted_before
+        playback_start_delta = recorder.playback_start_count - playback_start_before
+        playback_stop_delta = recorder.playback_stop_count - playback_stop_before
+        ref_accepted_ok = ref_accepted_delta >= delivered_bytes
+        playback_complete_ok = (
+            playback_start_delta == repeats_run and playback_stop_delta == repeats_run
+        )
+        if ref_accepted_ok and playback_complete_ok:
+            break
+        if playback_start_delta > repeats_run or playback_stop_delta > playback_start_delta:
+            # Already provably impossible -- a hidden mid-fixture restart
+            # (extra start) or a stop counted ahead of its own start.
+            # Failing fast here (rather than spinning out the full
+            # poll_timeout_s) reports the SAME evidence shape; it only
+            # avoids waiting out a deadline that cannot change an
+            # already-contradictory outcome.
+            impossible_state = True
+            break
         if time.monotonic() > deadline:
             break
         await asyncio.sleep(0.02)
 
-    return {
+    interrupt_confirmed_delta = bargein.telemetry.interrupt_confirmed - interrupt_confirmed_before
+    result = {
         "requested_seconds": warmup_seconds,
         "delivered_bytes": delivered_bytes,
-        "ref_accepted_bytes": recorder.ref_accepted_bytes - ref_accepted_before,
-        "playback_start_count": recorder.playback_start_count - playback_start_before,
-        "playback_stop_count": recorder.playback_stop_count - playback_stop_before,
+        "ref_accepted_bytes": ref_accepted_delta,
+        "playback_start_count": playback_start_delta,
+        "playback_stop_count": playback_stop_delta,
         "repeats_run": repeats_run,
-        "interrupt_confirmed_delta": (
-            bargein.telemetry.interrupt_confirmed - interrupt_confirmed_before
-        ),
+        "interrupt_confirmed_delta": interrupt_confirmed_delta,
     }
+
+    if interrupt_confirmed_delta != 0:
+        raise WarmupIncompleteError(
+            "a real confirmed barge-in occurred during warmup -- this should "
+            "be structurally impossible with arm_bargein=False; treat as a "
+            "bug in BargeInController or in this probe's wiring, not a "
+            "passable warmup",
+            context=result,
+        )
+    if impossible_state:
+        raise WarmupIncompleteError(
+            "playback start/stop counters reached an impossible state before "
+            "the bounded wait's own deadline -- expected playback_start_count "
+            f"== playback_stop_count == repeats_run == {repeats_run}, observed "
+            f"playback_start_count={playback_start_delta} "
+            f"playback_stop_count={playback_stop_delta} (more starts than "
+            "repeats run, or a stop counted ahead of its own start) -- a "
+            "hidden mid-fixture restart or ordering bug; treat as a bug",
+            context=result,
+        )
+    if not ref_accepted_ok:
+        raise WarmupIncompleteError(
+            "reference PCM ACCEPTED past AecReferenceFeeder under-delivered "
+            f"within the {poll_timeout_s:.2f}s bounded wait -- expected "
+            f"ref_accepted_bytes >= {delivered_bytes}, observed "
+            f"{ref_accepted_delta} -- some already-queued PCM was lost in "
+            "transit; treat as a bug",
+            context=result,
+        )
+    if not playback_complete_ok:
+        raise WarmupIncompleteError(
+            "playback start/stop count did not reach repeats_run within the "
+            f"{poll_timeout_s:.2f}s bounded wait -- expected "
+            f"playback_start_count == playback_stop_count == repeats_run == "
+            f"{repeats_run}, observed playback_start_count="
+            f"{playback_start_delta} playback_stop_count={playback_stop_delta} "
+            "-- the final repeat's own BotStoppedSpeakingFrame was never "
+            "observed in time; treat as a bug",
+            context=result,
+        )
+    return result
 
 
 async def _wait_for_finish(lifecycle, *, timeout: float) -> bool:
@@ -1277,6 +1428,208 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+class RunnerShutdownError(RuntimeError):
+    """R0058 -- raised when the pipeline runner's own shutdown (see
+    ``_shutdown_runner``) did not complete cleanly: it timed out,
+    required escalated cancellation that itself never resolved, or
+    ``WorkerRunner.end()`` raised. A diagnostic run must never report
+    success (exit code 0) while this is true, even when everything
+    before teardown worked perfectly -- see
+    ``_run_body_with_guaranteed_cleanup``."""
+
+    def __init__(self, message: str, *, outcome: dict[str, Any]) -> None:
+        super().__init__(f"{message}: {outcome}")
+        self.outcome = outcome
+
+
+async def _shutdown_runner(
+    runner: Any,
+    run_task: asyncio.Task,
+    *,
+    end_timeout_s: float = 10.0,
+    run_task_timeout_s: float = 10.0,
+    run_task_cancel_grace_s: float = 10.0,
+) -> dict[str, Any]:
+    """R0058 -- the ONE place this probe asks the pipeline runner to shut
+    down, using ONLY ``WorkerRunner``'s own public, documented ``end()``
+    method (``.venv/lib/python3.13/site-packages/pipecat/workers/runner.py``,
+    read this checkpoint) -- never an internal Pipecat method, never a
+    global cancellation monkeypatch. Never raises: every outcome (clean,
+    timeout, cancelled, or an exception from ``end()`` itself) is
+    captured into the returned dict so a caller can safely call this
+    from a cleanup path without risking it silently replacing whatever
+    exception is already propagating (see
+    ``_run_body_with_guaranteed_cleanup``, which does exactly that).
+
+    SOURCE-CONFIRMED SHAPE (installed pipecat 1.8.1): ``WorkerRunner.end()``
+    itself does very little -- it sets ``_shutdown_event`` and sends one
+    ``BusEndWorkerMessage`` per still-running worker, then returns. The
+    ACTUAL teardown (draining, then cancelling, each worker's pipeline;
+    ``_cancel_spawned_workers()`` -> ``PipelineWorker.run()``'s own
+    ``_wait_for_pipeline_finished()``/``_cancel()`` dance) happens INSIDE
+    ``run_task`` itself (the ``asyncio.Task`` wrapping ``runner.run()``),
+    which only resumes and completes that work once ``_shutdown_event``
+    is set -- exactly what ``end()`` just did. So the real wait belongs
+    on ``run_task``, not on ``end()`` -- confirmed by reading
+    ``WorkerRunner.run()``'s own source, not assumed.
+
+    ESCALATION -- and a CONFIRMED CORRECTION to a more naive first draft
+    of this function, verified this checkpoint with a standalone
+    reproduction script, not merely reasoned about: a first draft used
+    ``asyncio.wait_for(run_task, timeout=...)`` directly and assumed its
+    own docstring ("cancels the task and raises TimeoutError") gives a
+    hard bound. Reading ``asyncio/timeouts.py`` (installed CPython
+    3.13.5) shows ``Timeout.__aexit__`` converts a pending cancellation
+    into ``TimeoutError`` ONLY if a ``CancelledError`` is what is
+    actually propagating out of the ``async with`` block when it exits.
+    ``_on_timeout()`` cancels the CALLING task, which (since it is
+    suspended on ``_fut_waiter = run_task``) forwards ``.cancel()`` onto
+    ``run_task`` itself -- but if ``run_task`` catches that
+    ``CancelledError`` internally and goes on to suspend on something
+    ELSE (exactly ``PipelineWorker.run()``'s own documented shape:
+    catch, call ``_cancel()``, await ``_wait_for_pipeline_finished()``
+    again), the calling task's ``await run_task`` is registered as a
+    done-callback on ``run_task`` and simply never wakes up until
+    ``run_task`` actually finishes -- NO exception ever propagates out
+    of the ``async with`` block, so NO ``TimeoutError`` is ever raised,
+    and ``wait_for`` hangs for exactly as long as ``run_task`` itself
+    takes, timeout argument notwithstanding. Confirmed directly: a
+    throwaway task that catches ``CancelledError`` and loops forever
+    hangs an ``asyncio.wait_for(task, timeout=0.05)`` call indefinitely,
+    not for 0.05s.
+
+    The correct primitive for an ACTUALLY bounded, non-cancelling peek
+    at an existing task's status is ``asyncio.wait({task}, timeout=...)``
+    -- it uses its own internal timer and returns ``(done, pending)``
+    after AT MOST ``timeout`` seconds REGARDLESS of whether the awaited
+    task ever finishes, and -- critically -- it does NOT cancel anything
+    on timeout; it only reports which set the task landed in. This
+    function uses that to get a genuine, verifiable bound: wait up to
+    ``run_task_timeout_s``; if ``run_task`` is not yet done, explicitly
+    call ``run_task.cancel()`` ITSELF (not relying on ``wait_for``'s
+    unreliable side effect) -- a scoped cancellation of a task the
+    CALLER already created and owns, never a global monkeypatch -- then
+    wait up to a further, independently-bounded ``run_task_cancel_grace_s``
+    for that explicit cancellation to actually take effect. If
+    ``run_task`` is STILL not done afterward (e.g. it keeps swallowing
+    cancellation forever), this function gives up and reports failure
+    rather than escalating further or blocking indefinitely, LEAVING
+    ``run_task`` RUNNING IN THE BACKGROUND -- an asyncio-level bound is
+    a best-effort limit on THIS coroutine's own wait, never a guaranteed
+    process-level deadline; a genuinely wedged ``run_task`` can only be
+    bounded by an external process supervisor (this checkpoint's own
+    hardware-validation ``timeout`` wrapper), never by anything inside
+    this process.
+    """
+    outcome: dict[str, Any] = {"runner_end": None, "run_task_await": None, "escalated": False}
+
+    print("RUNNER_END_BEGIN", flush=True)
+    try:
+        # `runner.end(...)` is a bare coroutine here, not a pre-existing
+        # Task -- `wait_for` drives it INLINE within this coroutine's own
+        # frame, so a cancellation genuinely propagates out as
+        # CancelledError and IS correctly converted to TimeoutError (the
+        # pitfall documented above is specific to awaiting an
+        # ALREADY-SCHEDULED, independently-running Task like `run_task`).
+        await asyncio.wait_for(runner.end(reason="probe done"), timeout=end_timeout_s)
+        outcome["runner_end"] = "clean"
+    except TimeoutError:
+        outcome["runner_end"] = f"timeout_{end_timeout_s:.2f}s"
+    except asyncio.CancelledError as e:
+        outcome["runner_end"] = f"cancelled repr={e!r}"
+    except Exception as e:
+        outcome["runner_end"] = f"exception type={type(e).__name__} repr={e!r}"
+    print(f"RUNNER_END_OUTCOME={outcome['runner_end']}", flush=True)
+
+    def _describe(task: asyncio.Task) -> str:
+        if not task.done():
+            return "still_pending"
+        if task.cancelled():
+            return "cancelled"
+        exc = task.exception()
+        if exc is not None:
+            return f"exception type={type(exc).__name__} repr={exc!r}"
+        return "clean"
+
+    print("RUN_TASK_AWAIT_BEGIN", flush=True)
+    await asyncio.wait({run_task}, timeout=run_task_timeout_s)
+    if run_task.done():
+        outcome["run_task_await"] = _describe(run_task)
+    else:
+        outcome["escalated"] = True
+        print("RUN_TASK_AWAIT_ESCALATING_AFTER_TIMEOUT", flush=True)
+        run_task.cancel()
+        await asyncio.wait({run_task}, timeout=run_task_cancel_grace_s)
+        if run_task.done():
+            outcome["run_task_await"] = (
+                f"{_describe(run_task)}_after_escalation"
+                f"(first_timeout={run_task_timeout_s:.2f}s)"
+            )
+        else:
+            outcome["run_task_await"] = (
+                f"still_pending_after_escalation(first_timeout={run_task_timeout_s:.2f}s,"
+                f"grace={run_task_cancel_grace_s:.2f}s)"
+            )
+    print(f"RUN_TASK_AWAIT_OUTCOME={outcome['run_task_await']}", flush=True)
+
+    # Strict: even an eventually-successful ESCALATED shutdown (one that
+    # needed a forced cancellation to finish at all) counts as a failed
+    # cleanup, not merely a degraded-but-acceptable one -- needing
+    # escalation itself means the graceful path did not work as
+    # intended. Only a fully clean, non-escalated shutdown is success.
+    outcome["failed"] = not (outcome["runner_end"] == "clean" and outcome["run_task_await"] == "clean")
+    print(f"SHUTDOWN_OUTCOME={outcome}", flush=True)
+    return outcome
+
+
+async def _run_body_with_guaranteed_cleanup(body, *, cleanup):
+    """R0058 -- runs ``body()``, guaranteeing ``cleanup()`` is attempted
+    exactly once afterward regardless of how ``body()`` ends (success,
+    an exception, or a cancellation) -- and, when ``body()`` itself
+    succeeds, promotes a failed cleanup outcome (``cleanup()``'s own
+    returned ``{"failed": True, ...}``, or ``cleanup()`` raising) into a
+    raised ``RunnerShutdownError`` so a teardown failure can never be
+    silently treated as a successful diagnostic result.
+
+    When ``body()`` raises, that ORIGINAL exception -- never anything
+    from ``cleanup()`` -- is what propagates: ``cleanup()`` is still
+    attempted and its own outcome is logged (via its own prints, plus a
+    marker here if ``cleanup()`` itself raises while handling an
+    already-failing ``body()``), but is never allowed to replace or mask
+    the original failure. This is deliberately NOT a plain
+    ``try/except/finally`` -- Python's own ``finally`` semantics let a
+    NEW exception raised inside ``finally`` silently replace whatever
+    was propagating, which would violate exactly the guarantee this
+    function exists to provide; the explicit try/except/else structure
+    below avoids that pitfall."""
+    try:
+        result = await body()
+    except BaseException:
+        try:
+            await cleanup()
+        except BaseException as cleanup_exc:
+            print(
+                "CLEANUP_RAISED_WHILE_HANDLING_PRIMARY_FAILURE "
+                f"type={type(cleanup_exc).__name__} repr={cleanup_exc!r}",
+                flush=True,
+            )
+        raise
+    else:
+        try:
+            cleanup_outcome = await cleanup()
+        except BaseException as cleanup_exc:
+            raise RunnerShutdownError(
+                "runner cleanup raised while shutting down after an "
+                "otherwise-successful run",
+                outcome={"cleanup_exception": repr(cleanup_exc)},
+            ) from cleanup_exc
+        if cleanup_outcome.get("failed"):
+            raise RunnerShutdownError(
+                "runner cleanup did not complete cleanly", outcome=cleanup_outcome
+            )
+        return result
+
+
 async def _run(args: argparse.Namespace) -> int:
     P = _pipecat_imports()
     print("=" * 74)
@@ -1315,93 +1668,82 @@ async def _run(args: argparse.Namespace) -> int:
     runner = runner_cls()
     await runner.add_workers(worker)
     run_task = asyncio.create_task(runner.run())
-    await asyncio.sleep(WARMUP_S)
-    print(f"  AEC_REF_ACTIVE           {aec_health.active}")
 
-    # R0053 CONTRACT FIX: prove the fix is actually active in THIS run --
-    # never assert it, print the SAME production gain component's own
-    # live reading.
-    startup_gain = reference_gain.current_gain()
-    print(f"  audible_mixer_card       {cfg.output_alsa_mixer_card}")
-    print(f"  audible_gain_db          {_gain_to_db_text(startup_gain)}")
-    print(f"  audible_linear_gain      {startup_gain:.4f}")
-    print(f"  reference_gain_applied   {startup_gain:.4f}  (fed to AecReferenceFeeder.gain_source)")
-
+    # R0058 FIX (runner ownership / cleanup): EVERYTHING from here on --
+    # the warm-up sleep/startup prints, the warm-up itself and its
+    # validation (now inside `_run_warmup` proper, see Correction 6
+    # there), and the measured trial loop -- now runs inside `_body()`,
+    # passed to `_run_body_with_guaranteed_cleanup` below, so
+    # `_shutdown_runner` (this probe's own bounded, WorkerRunner-API-only
+    # teardown) is guaranteed to be attempted exactly once no matter how
+    # that work ends: success, an exception (the R0057 diagnostic
+    # checkpoint's own confirmed failure mode), or a cancellation.
+    #
+    # R0057 confirmed the concrete cost of NOT doing this: previously
+    # only the trial loop below was wrapped in a try/finally. The
+    # warm-up call and its three post-warm-up correctness checks (bare
+    # `assert` statements at the time) sat OUTSIDE it, so an assertion
+    # failure there orphaned `run_task` entirely, leaving
+    # `asyncio.run()`'s own blunt, whole-event-loop `_cancel_all_tasks()`
+    # to attempt cleanup instead of this function's own single, targeted
+    # `runner.end()` + bounded `run_task` wait -- the confirmed
+    # mechanism behind the observed indefinite teardown stall (R0057
+    # report, EVENT ORDER / RUNNER AND TEARDOWN OUTCOMES sections).
     warmup_result: dict[str, Any] | None = None
-    if args.warmup_seconds:
-        print(f"\n  warmup: requesting >= {args.warmup_seconds:.1f}s of real, ACCEPTED "
-              "reference PCM (BargeInController disarmed -- confirmed interruptions "
-              "are structurally impossible during warmup, not merely ignored) ...",
-              flush=True)
-        warmup_result = await _run_warmup(
-            P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
-            sample_rate=rate, warmup_seconds=args.warmup_seconds,
-        )
-        # R0057 TEMPORARY DIAGNOSTIC INSTRUMENTATION (pre-execution
-        # root-cause audit, not a functional fix -- remove once the real
-        # cause of the observed hardware cancellation is confirmed and
-        # fixed). Every print here uses flush=True deliberately: the
-        # existing prints below it do NOT, and Python's stdout is fully
-        # block-buffered when redirected (as any backgrounded run is) --
-        # so on an abrupt process kill, un-flushed output is silently
-        # lost. That gap is itself one of this checkpoint's confirmed
-        # findings, not assumed.
-        print(f"WARMUP_RETURNED {warmup_result}", flush=True)
-        queued_s = warmup_result["delivered_bytes"] / 2 / rate
-        accepted_s = warmup_result["ref_accepted_bytes"] / 2 / rate
-        print(
-            f"  warmup: repeats_run={warmup_result['repeats_run']} "
-            f"queued_s={queued_s:.2f} accepted_s={accepted_s:.2f} "
-            f"(requested >= {args.warmup_seconds:.1f}s) "
-            f"playback_start_count={warmup_result['playback_start_count']} "
-            f"playback_stop_count={warmup_result['playback_stop_count']} "
-            f"interrupt_confirmed_delta={warmup_result['interrupt_confirmed_delta']}",
-            flush=True,
-        )
-        # R0057 TEMPORARY DIAGNOSTIC INSTRUMENTATION (see note above) --
-        # BEFORE/AFTER markers around each assert. A future real hardware
-        # run showing "..._1_BEFORE" with no matching "..._1_AFTER" (etc.)
-        # pinpoints EXACTLY which assertion raised, without relying on the
-        # exception's own traceback ever getting a chance to print (this
-        # checkpoint's own source audit found a plausible mechanism -- an
-        # uncaught exception here propagates outside the try/finally below,
-        # letting asyncio.run()'s own internal task-cancellation cleanup
-        # forcibly cancel the still-running Pipecat pipeline; if THAT
-        # cleanup then blocks, the original exception's traceback never
-        # gets a chance to print at all).
-        #
-        # R0057 CORRECTION 5 -- the authoritative proof, straight from the
-        # REAL BargeInController's own telemetry: if this is ever nonzero,
-        # a genuine confirmed interruption slipped through during warmup
-        # despite arm_bargein=False, and NOTHING below can be trusted.
-        print("WARMUP_ASSERT_1_BEFORE", flush=True)
-        assert warmup_result["interrupt_confirmed_delta"] == 0, (
-            "a real confirmed barge-in occurred during warmup -- this should "
-            "be structurally impossible with arm_bargein=False; treat as a "
-            "bug in BargeInController or in this probe's wiring, not a "
-            "passable warmup"
-        )
-        print("WARMUP_ASSERT_1_AFTER", flush=True)
-        print("WARMUP_ASSERT_2_BEFORE", flush=True)
-        assert accepted_s >= args.warmup_seconds, (
-            "reference PCM ACCEPTED past AecReferenceFeeder under-delivered "
-            "-- some already-queued PCM was lost in transit; treat as a bug"
-        )
-        print("WARMUP_ASSERT_2_AFTER", flush=True)
-        print("WARMUP_ASSERT_3_BEFORE", flush=True)
-        assert (
-            warmup_result["playback_start_count"]
-            == warmup_result["playback_stop_count"]
-            == warmup_result["repeats_run"]
-        ), (
-            "playback start/stop count does not match repeats run -- a "
-            "hidden mid-fixture restart occurred during warmup; treat as a bug"
-        )
-        print("WARMUP_ASSERT_3_AFTER", flush=True)
-
-    print("ENTERING_TRIAL_LOOP", flush=True)
     trials: list[dict[str, Any]] = []
-    try:
+    startup_gain = 0.0
+
+    async def _body() -> None:
+        nonlocal warmup_result, startup_gain
+        await asyncio.sleep(WARMUP_S)
+        print(f"  AEC_REF_ACTIVE           {aec_health.active}")
+
+        # R0053 CONTRACT FIX: prove the fix is actually active in THIS
+        # run -- never assert it, print the SAME production gain
+        # component's own live reading.
+        startup_gain = reference_gain.current_gain()
+        print(f"  audible_mixer_card       {cfg.output_alsa_mixer_card}")
+        print(f"  audible_gain_db          {_gain_to_db_text(startup_gain)}")
+        print(f"  audible_linear_gain      {startup_gain:.4f}")
+        print(f"  reference_gain_applied   {startup_gain:.4f}  (fed to AecReferenceFeeder.gain_source)")
+
+        if args.warmup_seconds:
+            print(
+                f"\n  warmup: requesting >= {args.warmup_seconds:.1f}s of real, "
+                "ACCEPTED reference PCM, with a full start-then-stop playback "
+                "lifecycle proven for every repeat (BargeInController "
+                "disarmed -- confirmed interruptions are structurally "
+                "impossible during warmup, not merely ignored) ...",
+                flush=True,
+            )
+            # R0058: `_run_warmup` itself now raises `WarmupIncompleteError`
+            # (with full expected-vs-observed evidence attached as
+            # `.context`) instead of ever returning a dict describing an
+            # incomplete or contradictory warm-up -- see Correction 6 in
+            # its own docstring. A successful return from the call below
+            # is therefore already fully validated evidence; no further
+            # checks are needed here (the three checks formerly here as
+            # bare `assert` statements -- silently stripped entirely
+            # under `python -O`, unlike a raised exception -- now live
+            # inside `_run_warmup` itself).
+            warmup_result = await _run_warmup(
+                P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
+                sample_rate=rate, warmup_seconds=args.warmup_seconds,
+            )
+            print(f"WARMUP_RETURNED {warmup_result}", flush=True)
+            queued_s = warmup_result["delivered_bytes"] / 2 / rate
+            accepted_s = warmup_result["ref_accepted_bytes"] / 2 / rate
+            print(
+                f"  warmup: repeats_run={warmup_result['repeats_run']} "
+                f"queued_s={queued_s:.2f} accepted_s={accepted_s:.2f} "
+                f"(requested >= {args.warmup_seconds:.1f}s) "
+                f"playback_start_count={warmup_result['playback_start_count']} "
+                f"playback_stop_count={warmup_result['playback_stop_count']} "
+                f"interrupt_confirmed_delta={warmup_result['interrupt_confirmed_delta']}",
+                flush=True,
+            )
+
+        print("ENTERING_TRIAL_LOOP", flush=True)
         if args.control:
             r = await _run_control_trial(
                 P, worker, recorder, lifecycle=lifecycle, bargein=bargein, pcm=pcm,
@@ -1439,72 +1781,11 @@ async def _run(args: argparse.Namespace) -> int:
                     f"rejected={r['bargein_rejected_count']} "
                     f"reference_gain_applied={r['reference_gain_applied']:.4f}"
                 )
-    finally:
-        # R0057 TEMPORARY DIAGNOSTIC INSTRUMENTATION (pre-execution
-        # root-cause audit for a confirmed real-hardware cancellation/hang
-        # -- not a functional fix; remove once the real cause is confirmed
-        # and fixed). Every print flushes immediately.
-        print("ENTERING_FINALLY", flush=True)
-        run_task_done = run_task.done()
-        run_task_cancelled = run_task.cancelled() if run_task_done else "n/a (not done yet)"
-        print(f"run_task.done()={run_task_done} run_task.cancelled()={run_task_cancelled}", flush=True)
-        if run_task_done and run_task_cancelled is not True:
-            with contextlib.suppress(Exception):
-                print(f"run_task.exception()={run_task.exception()!r}", flush=True)
 
-        teardown_done = asyncio.Event()
+    async def _cleanup() -> dict[str, Any]:
+        return await _shutdown_runner(runner, run_task)
 
-        async def _dump_stacks_if_blocked() -> None:
-            await asyncio.sleep(5.0)
-            if teardown_done.is_set():
-                return
-            print("TEARDOWN_STALL_DETECTED_AFTER_5s -- dumping all task stacks", flush=True)
-            for t in asyncio.all_tasks():
-                print(f"--- task name={t.get_name()!r} done={t.done()} ---", flush=True)
-                t.print_stack(file=sys.stdout)
-                sys.stdout.flush()
-
-        watchdog = asyncio.ensure_future(_dump_stacks_if_blocked())
-
-        # R0057 TEMPORARY DIAGNOSTIC: the two blocks below previously used
-        # `contextlib.suppress(...)`, which absorbs an exception with ZERO
-        # visibility into what was absorbed. A RETURNED marker alone does
-        # not distinguish "completed cleanly" from "an exception was
-        # silently swallowed here." Replaced with explicit try/except that
-        # logs exactly one of four distinguishable outcomes
-        # (clean / timeout / cancelled / exception_suppressed) before
-        # continuing -- the ABSORPTION behavior itself (nothing propagates
-        # further than before) is unchanged; only its visibility is added.
-        print("RUNNER_END_BEGIN", flush=True)
-        try:
-            await runner.end(reason="probe done")
-            print("RUNNER_END_OUTCOME=clean", flush=True)
-        except asyncio.CancelledError as e:
-            print(f"RUNNER_END_OUTCOME=cancelled repr={e!r}", flush=True)
-        except Exception as e:
-            print(
-                f"RUNNER_END_OUTCOME=exception_suppressed type={type(e).__name__} repr={e!r}",
-                flush=True,
-            )
-        print("RUNNER_END_RETURNED", flush=True)
-
-        print("RUN_TASK_AWAIT_BEGIN", flush=True)
-        try:
-            await asyncio.wait_for(run_task, timeout=10)
-            print("RUN_TASK_AWAIT_OUTCOME=clean", flush=True)
-        except TimeoutError:
-            print("RUN_TASK_AWAIT_OUTCOME=timeout_10s", flush=True)
-        except asyncio.CancelledError as e:
-            print(f"RUN_TASK_AWAIT_OUTCOME=cancelled repr={e!r}", flush=True)
-        except Exception as e:
-            print(
-                f"RUN_TASK_AWAIT_OUTCOME=exception_suppressed type={type(e).__name__} repr={e!r}",
-                flush=True,
-            )
-        print("RUN_TASK_AWAIT_RETURNED", flush=True)
-
-        teardown_done.set()
-        watchdog.cancel()
+    await _run_body_with_guaranteed_cleanup(_body, cleanup=_cleanup)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
