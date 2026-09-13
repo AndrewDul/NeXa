@@ -16,6 +16,154 @@ official XMOS tuning guide — is a strong, native, cheaply-testable
 candidate root cause, more fundamental than anything R0053-R0055
 investigated.** `M2.6B` remains IN PROGRESS.
 
+## ERRATUM — PRE-R0057 CORRECTION / VALIDATION PASS (2026-09-13, same day)
+
+**Before any hardware experiment was executed**, a validation pass on
+this report's own two central findings found both stated more strongly
+than the evidence at the time supported. **Nothing below reverses the
+decision to try native tuning before a discriminator** — the Acoustic
+Frontend architecture and the decision hierarchy remain accepted. What
+changes is precision: which parts are CONFIRMED fact, which are
+HYPOTHESIS, and which are UNKNOWN pending the vendor's own measurement
+method. Original findings are left intact below, unedited — this
+section corrects, it does not rewrite, per the same
+never-hide-an-erratum convention this whole report thread (R0052's own
+erratum, R0053's own erratum on R0054) already established.
+
+### Correction 1 — the -20dB finding, precisely restated
+
+The original XVF3800 NATIVE CAPABILITIES section below states plainly
+that the reference reaching the AEC is "roughly 10× (-20dB) quieter
+than the true acoustic echo." **That specific causal claim is not
+proven and must not be treated as confirmed.** The official XMOS text
+this report itself quotes says `AEC_FAR_EXTGAIN` **"informs the audio
+pipeline"** of an already-applied external gain — consistent with
+either (a) the AEC internally *using* that value to correctly rescale
+its own echo-path model (in which case a -20dB reference, correctly
+compensated for, need not degrade cancellation at all), or (b) the
+value being closer to bookkeeping/diagnostic metadata with a different
+or partial internal effect. Neither is confirmed from the material
+available to this checkpoint (no `sw_xvf3800` firmware source was read;
+this unit's own firmware is flagged `BLD_MODIFIED=TRUE`, so even public
+source would not be guaranteed to match exactly what is flashed here).
+
+**Source-audit of the exact topology, as precisely as it can be stated:**
+
+| Question | Answer |
+|---|---|
+| Where is the `Array` `PCM,1` attenuation applied? | **HYPOTHESIS, not confirmed from this device's own firmware source.** `PCM,1` is a genuine USB Audio Class Feature-Unit `pvolume` control (confirmed via `amixer -c Array` — real dB values, not an ALSA software-volume emulation). For virtually all class-compliant USB audio hardware, a Feature-Unit volume control attenuates the digital PCM **on the device itself**, after the full-scale stream arrives over USB — this is the standard, well-established USB Audio Class behavior, not something read from THIS device's own source. |
+| What signal does `AEC_FAR_EXTGAIN` describe? | **CONFIRMED (quoted, official doc):** "how much external gain has been applied to the AEC reference signal" — descriptive of a gain that has already happened upstream of the AEC's own knowledge, for the UA/USB variant auto-set to match the host-set volume on that same USB endpoint. |
+| Does the AEC receive the reference pre-volume or post-volume? | **UNKNOWN.** Not stated at this level of detail in the material fetched this checkpoint. If the Feature-Unit attenuation happens before the AEC's own input stage (the standard UAC pattern) then the AEC's raw sample-level input IS at the attenuated level, with `AEC_FAR_EXTGAIN` available for the algorithm to compensate however its own (unread) implementation chooses to. |
+| Does NeXa's split-speaker topology violate the UA auto-gain mechanism's own assumption? | **HYPOTHESIS, well-supported by confirmed topology facts, but not proven to cause a fault.** Confirmed: `UACDemoV10` (the physical loudspeaker) and `Array` (the reSpeaker) are separate USB devices (`lsusb`: distinct vendor/product IDs, distinct ALSA cards) with entirely independent mixers; NeXa's audible sound is produced only by `UACDemoV10`; nothing is acoustically connected to whatever `Array`'s own playback endpoint drives. The UA auto-tracking mechanism's evident design assumption — "the volume I track IS the volume of the speaker producing the echo" — is a **reasonable assumption for the reSpeaker's typical intended use** (a single combined mic+speaker conferencing puck) and is **structurally not satisfied** in NeXa's two-separate-USB-device topology. Whether that mismatch actually *degrades* cancellation (vs. being irrelevant if the adaptive filter self-normalizes regardless of absolute reference amplitude, which many NLMS-family algorithms do within headroom limits) is the exact, undetermined question the controlled experiment below exists to answer. |
+
+**Restated conclusion:** the -20dB match between `Array PCM,1` and
+`AEC_FAR_EXTGAIN` is **CONFIRMED, exact, and real** — but it is evidence
+of the auto-tracking mechanism working exactly as documented, not, by
+itself, evidence of a cancellation fault. The genuinely interesting,
+still-open hypothesis is the **topology mismatch** (a split-speaker
+setup the UA mechanism's own design likely never anticipated), not a
+bare "10x too quiet" framing. This can only be resolved by the
+controlled hardware experiment below — not asserted further from
+documentation alone.
+
+### Correction 2 — the 85-130ms vs "≤40 samples" comparison, precisely restated
+
+The original TIMING GUIDANCE section below computes "35-50× the guide's
+own ideal 40-sample bound" by directly comparing R0055's own
+end-to-end measurement against the XMOS guide's stated target. **This
+comparison is withdrawn as stated.** R0055's ~85-130ms figure is an
+end-to-end measurement across Pipecat, PortAudio, ALSA, the physically
+separate `UACDemoV10` output device, real acoustic propagation, the
+XVF3800 itself, and mic-input buffering — a measurement of a
+**completely different signal path** than whatever internal
+reference/microphone alignment point the vendor's own
+`mic_ref_correlate` tool measures (tapping signals *inside* the XVF3800's
+own processing, per the guide's own description of the tool's category-5/
+category-11/category-12 diagnostic output channels — never the same
+observation point as an external PCM capture upstream of the whole
+USB+acoustic chain). **Treating these as the same measurement, or
+computing a multiplier between them, is not supportable from what this
+checkpoint actually confirmed**, and is corrected here rather than
+carried forward.
+
+What remains true and is **kept**: R0055's own real, measured ~85-130ms
+reference-dispatch-to-VAD-confirmation timing is real telemetry about
+NeXa's own software+acoustic path, independently useful regardless of
+how it relates to the chip's own internal figure. What is **removed**:
+any claim about how that number relates to `AUDIO_MGR_SYS_DELAY`'s own
+correct value.
+
+**`AUDIO_MGR_SYS_DELAY`, precisely restated:** this checkpoint's own
+`--list-commands` query shows **no explicit valid-range or sample-rate-
+base text** for this parameter (unlike `PP_DTSENSITIVE`/`PP_GAMMA_*`,
+which do state explicit ranges) — only "Delay, measured in samples,
+that is applied to the reference signal before passing to SHF
+algorithm." The fetched tuning guide's own worked example (Fig. 24, a
+~7-sample delay scenario, "around -30" recommended *for that specific
+example*) is illustrative of the tool's *output*, not a general
+formula — it does not establish the parameter's sample-rate base or
+valid range either. **No `AUDIO_MGR_SYS_DELAY` value is derived from
+R0055's 85-130ms figure, in this report or anywhere else.** The correct
+value remains genuinely unknown pending the vendor's own
+`mic_ref_correlate` measurement (still not available on this machine —
+unchanged from the original OPEN QUESTIONS below) — the R0057 experiment
+below **does not touch `AUDIO_MGR_SYS_DELAY` at all**, precisely because
+of this unresolved gap.
+
+### Corrected fact/hypothesis/unknown ledger
+
+**CONFIRMED (measured or directly quoted this checkpoint):**
+- `Array` `PCM,1` = -20.00dB (raw ALSA index 40/60).
+- `AEC_FAR_EXTGAIN` = -20.0 (exact match).
+- `UACDemoV10` (audible loudspeaker) is a physically and electrically
+  separate USB device from `Array` (the reSpeaker) — distinct
+  vendor/product IDs, distinct ALSA cards, distinct mixers.
+- The official XMOS doc's own text: for the UA/USB variant, "when the
+  host sets the output volume, `AEC_FAR_EXTGAIN` is internally set to be
+  the same as the gain set by the host" — auto-tracking is documented,
+  intentional vendor behavior, not a coincidence.
+- The current topology drives NeXa's audible output exclusively through
+  `UACDemoV10` → a separate physical speaker; nothing audible comes from
+  `Array`'s own playback endpoint.
+- `AEC_AECCONVERGED` is documented as **latched**: "Once this value is
+  set to 1 internally, it is never reset, even if a significant path
+  change or other circumstance forces a significant change in the AEC"
+  (fetched, quoted, this checkpoint — independently confirms the
+  operator's own caution, not merely asserted on the operator's say-so).
+- AEC convergence is documented as "expected to take less than 30
+  seconds" (fetched, quoted) — informs the warm-up procedure below.
+- A `REBOOT` command exists ("reboot the chip and reset all parameters
+  to default") — the only documented way found this checkpoint to
+  un-latch `AEC_AECCONVERGED` short of a physical power cycle.
+
+**HYPOTHESIS (plausible, evidence-consistent, not proven):**
+- That `Array PCM,1`'s attenuation is applied at the sample level to
+  the digital reference before the AEC's own processing (standard UAC
+  behavior, not confirmed from this device's own closed/modified
+  firmware).
+- That NeXa's split-speaker topology violates the UA auto-gain
+  mechanism's implicit single-speaker design assumption in a way that
+  measurably degrades cancellation.
+- That raising `Array PCM,1` toward unity will reduce the false-confirm
+  rate.
+
+**UNKNOWN, pending vendor-method measurement:**
+- Whether the AEC's own internal echo-path model is, in practice,
+  scaled incorrectly by the current -20dB setting, or already correctly
+  compensated via `AEC_FAR_EXTGAIN`.
+- The true XMOS-internal mic/reference alignment (requires
+  `xvf_tools.py mic_ref_correlate`, still not on this machine).
+- The correct `AUDIO_MGR_SYS_DELAY` value for this hardware (not
+  derivable from R0055's own external measurement, per Correction 2).
+
+**Nothing in this erratum changes the recommendation to try native
+tuning (starting with the reversible `Array PCM,1` mixer experiment)
+before a discriminator or a WebRTC layer** — it only sharpens *why*:
+the -20dB / topology mismatch is a well-motivated, cheap-to-test
+HYPOTHESIS, not an already-confirmed fault, and the experiment below is
+designed accordingly (a genuine controlled test, not a confirmatory
+formality).
+
 ## R0055 EVIDENCE BASE
 
 R0055 (`docs/reports/R0055_pcm_correlation_analysis_of_residual_self_echo_20260913.md`)
@@ -158,6 +306,12 @@ never inspected the `Array` card's own mixer, only `UACDemoV10`'s).
 the leading candidate experiment for the next checkpoint (see CURRENT
 PI NEXT STEP).
 
+> **[Corrected by the ERRATUM above, same day.]** The "10× quieter"
+> framing above overstates what is proven — see ERRATUM — PRE-R0057
+> CORRECTION, Correction 1, for the precise CONFIRMED/HYPOTHESIS/UNKNOWN
+> breakdown. The controlled experiment, not this paragraph, is the
+> actual test.
+
 ### Official XMOS tuning guidance (fetched, quoted)
 
 From `xmos.com/documentation/.../04_tuning_the_application.html`
@@ -181,6 +335,11 @@ From `xmos.com/documentation/.../04_tuning_the_application.html`
   **Gap found:** `xvf_tools.py`/`mic_ref_correlate` is **not** present
   anywhere on this machine (confirmed by `find /`) — it ships in a
   separate XMOS SDK/application-note bundle not yet downloaded here.
+  > **[Corrected by the ERRATUM above, same day.]** The "35-50×"
+  > multiplier is **withdrawn** — R0055's measurement and the vendor's
+  > own `mic_ref_correlate` measurement are not the same observation
+  > point (see Correction 2). No `AUDIO_MGR_SYS_DELAY` value is derived
+  > from R0055's figure anywhere in this report.
 - **Double-talk sensitivity:** *"A recommended approach is to start with
   this parameter [`PP_DTSENSITIVE`] set to 0, and attempt to then tune
   the rest of the echo suppression parameters"* first — **the device's
@@ -655,17 +814,219 @@ Frontend contract itself (this report's own design) is implemented
 incrementally starting whenever the Pi-native experiments conclude,
 never blocking them.
 
+## R0057 EXPERIMENT DESIGN (NOT EXECUTED THIS CHECKPOINT)
+
+Designed, per the ERRATUM above, as a genuine one-variable controlled
+test — not a confirmatory formality. **Nothing below was run this
+checkpoint.** No ALSA mixer, XVF3800 parameter, or firmware was
+changed. This is the exact procedure for the operator/next checkpoint
+to execute.
+
+**Single variable under test:** `Array` `PCM,1` at -20dB (current) vs.
+≈0dB/unity (test), while `UACDemoV10`'s own audible-speaker volume,
+`AUDIO_MGR_SYS_DELAY`, every `PP_*` parameter, and NeXa's own production
+code are all held exactly constant. No Gemini at any point.
+
+### Why a REBOOT is part of this design
+
+`AEC_AECCONVERGED` is documented as latched (quoted above): once it
+reads 1, it never returns to 0 on its own, even after "a significant
+path change or other circumstance forces a significant change in the
+AEC." Since the whole point of the mixer change is exactly such a
+circumstance, a stale `AEC_AECCONVERGED=1` left over from BEFORE the
+change would be read as "converged" while telling us nothing about
+convergence under the NEW gain — a real, specifically-warned-against
+false-confidence trap. The only documented way found this checkpoint to
+un-latch it is the official `REBOOT` command ("reboot the chip and
+reset all parameters to default"). Consequence: `Array PCM,1` must be
+re-applied fresh after EACH reboot (reboot resets it to factory
+default), and each of the two conditions below gets its OWN reboot +
+warm-up, so neither condition's convergence reading is contaminated by
+the other's.
+
+### PHASE 0 — Record current state (read-only)
+
+```bash
+amixer -c Array sget 'PCM',1
+amixer -c UACDemoV10 sget PCM
+cd /home/devdul/Tools/reSpeaker_XVF3800_USB_4MIC_ARRAY/host_control/rpi_64bit
+sudo ./xvf_host AEC_FAR_EXTGAIN
+sudo ./xvf_host AUDIO_MGR_SYS_DELAY
+sudo ./xvf_host AEC_AECCONVERGED
+sudo ./xvf_host AEC_RT60
+sudo ./xvf_host AEC_AECPATHCHANGE
+```
+
+Expected (this checkpoint's own already-recorded values, for
+comparison): `PCM,1` = 40 [67%] [-20.00dB]; `UACDemoV10 PCM` ≈ -0.94dB
+(R0053/R0054/R0055's own established figure); `AEC_FAR_EXTGAIN` = -20;
+`AUDIO_MGR_SYS_DELAY` = 12; `AEC_AECCONVERGED` = 0 or 1 (irrelevant,
+about to be superseded by a reboot either way).
+
+### PHASE 1 — BASELINE condition (Array PCM,1 = -20dB, freshly converged)
+
+```bash
+sudo ./xvf_host REBOOT 1
+sleep 8   # allow USB re-enumeration
+aplay -l | grep Array   # confirm the card reappears
+amixer -c Array sget 'PCM',1        # expect -20.00dB again (factory default) -- if NOT, STOP and report before continuing
+amixer -c UACDemoV10 sget PCM       # confirm unchanged
+sudo ./xvf_host AEC_AECCONVERGED    # expect 0 (fresh)
+```
+
+**Contingency:** if post-reboot `Array PCM,1` is NOT -20dB, this itself
+is a real, reportable finding (it would mean -20dB was never the
+factory default, but some earlier leftover value) — stop and report
+before proceeding with the rest of the procedure.
+
+**Warm-up** (reuses the existing probe exactly as-is — no new script,
+no Gemini):
+
+```bash
+.venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
+  --level max --repeats 10
+```
+
+~10×3.5s ≈ 35s of real, coherent-gain-matched assistant playback through
+the production-faithful path — comfortably past the vendor's own
+"expected to take less than 30 seconds" convergence figure, with
+margin. Discard this run's own JSON/printed result (it is warm-up only,
+not measured evidence).
+
+```bash
+sudo ./xvf_host AEC_AECCONVERGED    # expect 1
+```
+
+If still 0, repeat the `--repeats 10` warm-up once or twice more (cap:
+3 attempts / ~2 minutes total) before treating non-convergence itself
+as a reportable anomaly rather than proceeding blind.
+
+**Measured baseline trial** (the exact, unmodified R0055 command):
+
+```bash
+.venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
+  --level max --repeats 3 --capture-pcm --max-lag-ms 500
+```
+
+Record the printed result and JSON path. This is a fresh,
+known-reconverged re-measurement of the EXACT R0055 baseline condition
+— expected (not guaranteed) to reproduce R0055's own 3/3 false confirms,
+which also serves as an independent re-validation of R0055 itself.
+
+### PHASE 2 — TEST condition (Array PCM,1 ≈ 0dB / unity)
+
+```bash
+sudo ./xvf_host REBOOT 1
+sleep 8
+aplay -l | grep Array
+amixer -c Array sget 'PCM',1        # expect -20.00dB again (post-reboot factory default, before our change)
+```
+
+**Now make the one experimental change:**
+
+```bash
+amixer -c Array sset 'PCM',1 100%   # raw index 60 -> 0.00dB, per the sibling PCM,0 control's own confirmed 0-60/0dB-at-60 mapping
+```
+
+**Immediately verify tracking (mandatory abort gate):**
+
+```bash
+sudo ./xvf_host AEC_FAR_EXTGAIN     # expect ~0
+```
+
+**If `AEC_FAR_EXTGAIN` does NOT read ~0** (still -20, or anything else
+unexpected): **STOP immediately.**
+
+```bash
+amixer -c Array sset 'PCM',1 40     # restore -20dB
+sudo ./xvf_host AEC_FAR_EXTGAIN     # verify it returns to -20
+```
+
+Report the tracking failure as a finding; do not proceed further in
+this session.
+
+**If tracking is confirmed correct**, continue:
+
+```bash
+amixer -c UACDemoV10 sget PCM       # confirm STILL unchanged
+sudo ./xvf_host AEC_AECCONVERGED    # expect 0 (fresh, post-reboot, pre-warm-up under the NEW gain)
+```
+
+**Warm-up under the NEW gain** (identical recipe to Phase 1):
+
+```bash
+.venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
+  --level max --repeats 10
+sudo ./xvf_host AEC_AECCONVERGED    # expect 1
+```
+
+**Measured test trial** (identical command to the baseline trial — the
+only thing that has changed is the `Array PCM,1` mixer level):
+
+```bash
+.venv/bin/python docs/research/m2_6_cloud_realtime_voice/m2_6b4m_self_echo_probe.py \
+  --level max --repeats 3 --capture-pcm --max-lag-ms 500
+```
+
+Record the printed result and JSON path.
+
+### PHASE 3 — Rollback (mandatory, regardless of result)
+
+```bash
+amixer -c Array sset 'PCM',1 40     # restore the ORIGINAL -20dB value
+amixer -c Array sget 'PCM',1        # verify: -20.00dB
+sudo ./xvf_host AEC_FAR_EXTGAIN     # verify: -20
+sudo ./xvf_host AUDIO_MGR_SYS_DELAY # sanity check: still 12 (never touched)
+sudo ./xvf_host PP_DTSENSITIVE      # sanity check: still 0 (never touched)
+```
+
+**No `SAVE_CONFIGURATION` at any point in this entire procedure** — every
+`REBOOT` returns to the chip's own factory defaults, never to a
+persisted custom state, so nothing here can leave a permanent change
+even if a step is skipped or interrupted.
+
+### Evidence to return after running this
+
+1. All PHASE 0 baseline readings.
+2. Confirmation `Array PCM,1` read -20dB immediately after each of the
+   two reboots (or a report if it did not).
+3. The `AEC_FAR_EXTGAIN` reading immediately after the Phase 2 mixer
+   change (the abort-gate check) — pass or fail, and what was read if
+   it failed.
+4. `AEC_AECCONVERGED` readings at each checkpoint (post-reboot,
+   post-warm-up) for both conditions.
+5. The full printed output + JSON file path for BOTH measured trials
+   (baseline and test) — not just the summary counts.
+6. The PHASE 3 rollback verification readings (`Array PCM,1`,
+   `AEC_FAR_EXTGAIN`, `AUDIO_MGR_SYS_DELAY`, `PP_DTSENSITIVE`).
+7. Any deviation from this exact procedure, however small (a skipped
+   wait, a different repeat count, anything) — this thread's own
+   established convention (R0052-R0056) is to report deviations
+   honestly rather than silently normalize them.
+
 ## FILES CHANGED
 
 - `docs/reports/R0056_existing_acoustic_solutions_and_portable_frontend_design_20260913.md`
   (this report; replaces the deleted, never-committed
   `R0056_echo_double_talk_discriminator_design_20260913.md` draft).
+  **Same-day PRE-R0057 CORRECTION / VALIDATION PASS added**: an
+  ERRATUM section (softening the -20dB "10x quieter" causal claim to a
+  properly-bucketed CONFIRMED/HYPOTHESIS/UNKNOWN ledger, and withdrawing
+  the "35-50× the XMOS ideal" timing comparison as not methodologically
+  supportable) plus a full R0057 EXPERIMENT DESIGN (NOT EXECUTED)
+  section — the exact, reversible, two-reboot, tracking-verified
+  procedure for the next checkpoint to run. Original findings left
+  intact with inline pointers to the correction, per this report
+  thread's own established erratum convention (never silently
+  rewritten).
 - `docs/CURRENT_STATE.md`, `docs/ROADMAP.md` — updated with
   RESEARCH/DESIGN status only.
 
 **No `src/nexa/**` file touched. No test file touched. No XVF3800
-parameter written** (every `xvf_host` invocation this checkpoint was a
-bare read — no value argument was ever passed).
+parameter written or hardware command executed this checkpoint** (every
+`xvf_host` invocation, in both the original checkpoint and this
+correction pass, was a bare read — no value argument was ever passed;
+the R0057 procedure above is designed, not run).
 
 ## TESTS / STATIC CHECKS
 

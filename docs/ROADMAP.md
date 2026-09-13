@@ -1300,7 +1300,20 @@ unpaid-quota data is used to improve Google products.
     `ruff`/`pip check`/`git diff --check` all clean. No Gemini call.
     `M2.6B` remains IN PROGRESS -- next checkpoint (proposed R0057) is
     the native XVF3800 ALSA-mixer experiment, not a discriminator or
-    backend implementation.
+    backend implementation. **SAME-DAY PRE-R0057 CORRECTION** (still
+    R0056, same file/commit sequence): softened the -20dB "10x quieter"
+    causal claim to CONFIRMED (exact -20dB match + official auto-
+    tracking mechanism) vs. HYPOTHESIS (that NeXa's split-speaker
+    topology violates the mechanism's single-speaker assumption enough
+    to matter) vs. UNKNOWN (internal AEC compensation) -- resolvable
+    only by experiment; withdrew the "35-50x the XMOS ideal" timing
+    comparison (not the same observation point as R0055's own external
+    measurement; no `AUDIO_MGR_SYS_DELAY` value derived from it). Wrote
+    the exact, reversible R0057 procedure into the report (two reboots
+    to avoid `AEC_AECCONVERGED`'s documented latch, an
+    `AEC_FAR_EXTGAIN`-tracking abort gate, per-condition warm-up,
+    mandatory rollback+verification) -- still not executed; no
+    parameter/mixer changed by this correction pass.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

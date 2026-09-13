@@ -216,7 +216,26 @@ Runtime / test evidence outranks anything else in this repo.
   `git diff --check` all clean. No Gemini call. Not pushed. `M2.6B`
   remains IN PROGRESS — next checkpoint (proposed R0057) is the native
   XVF3800 ALSA-mixer experiment, not a discriminator or backend
-  implementation.)
+  implementation. **SAME-DAY PRE-R0057 CORRECTION (still R0056, same
+  report file, same commit sequence):** a validation pass softened two
+  overclaims before any hardware change: the -20dB "10× quieter"
+  causal framing is corrected to CONFIRMED (the exact -20dB match, and
+  the official auto-tracking mechanism) vs. HYPOTHESIS (that this
+  actually degrades cancellation, given NeXa's split-speaker topology
+  likely violates the auto-tracking mechanism's single-speaker
+  assumption) vs. UNKNOWN (whether the AEC internally compensates) —
+  resolvable only by the controlled experiment, not documentation
+  alone; the "35-50× the XMOS ideal" timing comparison is withdrawn
+  (R0055's end-to-end measurement and the vendor's own internal
+  `mic_ref_correlate` measurement are not the same observation point;
+  no `AUDIO_MGR_SYS_DELAY` value is derived from R0055's figure
+  anywhere). The full, exact, reversible R0057 experiment procedure
+  (two device reboots to avoid `AEC_AECCONVERGED`'s documented latching
+  behavior, an immediate `AEC_FAR_EXTGAIN`-tracking abort gate, a
+  10-repeat local-fixture warm-up per condition, and a mandatory
+  rollback+dual verification) is now written into the R0056 report
+  itself — still NOT executed. No XVF3800 parameter or ALSA mixer was
+  changed by this correction pass either.)
 - **Prior report:** `docs/reports/R0055_pcm_correlation_analysis_of_residual_self_echo_20260913.md`
   (**M2.6B.4N follow-up — PCM correlation analysis of residual self-echo,
   2026-09-13.** The R0054-requested capture came back: MAX volume, 3
