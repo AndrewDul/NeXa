@@ -510,4 +510,4 @@ pushed. No Gemini call. No hardware parameter changed.
 
 ## COMMIT HASHES
 
-(recorded after commit, below)
+- `5c30fe8` — fix: R0057 diagnostic checkpoint -- confirm initiating exception behind warm-up teardown hang (M2.6B.4N follow-up)
