@@ -682,9 +682,10 @@ documentation:
 
 ## GIT STATUS
 
-Clean working tree after commit (see COMMIT HASHES). Not pushed. No
-Gemini call. No XVF3800 parameter changed.
+Clean working tree after commit. Not pushed. No Gemini call. No XVF3800
+parameter changed.
 
 ## COMMIT HASHES
 
-(recorded after commit, below)
+- `35d2baf` — research: existing AEC/double-talk solutions audit +
+  portable Acoustic Frontend design (M2.6B.4N follow-up / R0056).
