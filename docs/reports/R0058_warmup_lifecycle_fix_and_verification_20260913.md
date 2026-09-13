@@ -476,8 +476,10 @@ complete warm-up evidence and guaranteed cleanup.
 
 ## GIT STATUS
 
-(recorded after commit, below — observed, not predicted)
+Working tree **CONFIRMED clean** — `git status --short` returned empty
+output immediately after the commit below. Not pushed. No Gemini call.
+No hardware parameter changed.
 
 ## COMMIT HASHES
 
-(recorded after commit, below)
+- `16daf10` — fix: R0058 warm-up lifecycle fix -- playback-stop completion evidence and guaranteed runner cleanup (M2.6B.4N follow-up)
