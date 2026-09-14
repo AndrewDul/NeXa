@@ -753,7 +753,4 @@ changed (confirmed read-only, all three rounds).
 
 ## COMMIT HASHES
 
-Recorded in a follow-up "docs: record commit hash" commit, per this
-repository's own established convention (see e.g. R0062 →
-`148f486`/`9900d38`) — the implementation commit is created first, then
-a second, docs-only commit inserts its own hash here.
+- `b570d0e` — fix: R0063 gain A/B wrapper external-review corrections, offline only (M2.6B.4N follow-up)
