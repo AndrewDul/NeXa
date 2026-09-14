@@ -425,11 +425,13 @@ against real hardware for the first time.
 
 ## GIT STATUS
 
-See COMMIT HASHES below and the actual `git status --short` output
-captured at completion of this checkpoint (observed, not predicted, per
-instruction).
+Working tree clean immediately after the `148f486` commit above
+(`git status --short` empty). This report was then amended with the
+observed commit hash, producing the one further "docs: record commit
+hash" commit below — working tree clean again after that commit.
+Branch `main`, 69 commits ahead of `origin/main` (unchanged by this
+checkpoint). Not pushed. No Gemini call. No hardware parameter changed.
 
 ## COMMIT HASHES
 
-(recorded in a follow-up "docs: record commit hash" commit per this
-thread's established convention)
+- `148f486` — fix: R0062 gain A/B wrapper deep-review corrections, offline only (M2.6B.4N follow-up)
