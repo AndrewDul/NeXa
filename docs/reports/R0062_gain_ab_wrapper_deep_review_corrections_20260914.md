@@ -18,6 +18,33 @@ for it. `M2.6B` remains IN PROGRESS.**
 
 **PASS.**
 
+**CORRECTED (2026-09-14, R0063):** an EXTERNAL source review of this
+checkpoint's own wrapper found six further concrete defects — a
+process-group ownership race at launch (the parent's `ps -o pgid= -p
+"$CHILD_PID"`, read immediately after backgrounding, could sample before
+`setsid()` took effect, observing the WRAPPER's own group instead); a
+cleanup failure that only printed a warning and could still produce a
+successful exit (and did not distinguish `pgrep` itself failing from
+confirmed emptiness); mixer identity/limits validation via SUBSTRING
+matching (accepting `'PCM',10` when `'PCM',1` was expected, and
+`0 - 600` when `0 - 60` was expected) and a switch check satisfied by a
+single `[on]` marker even in a genuinely MIXED off/on state; a rollback
+readback that was skipped entirely when the restore write itself reported
+failure; archive acceptance that did not enforce its own stated contract
+(no exact WAV-count check, no validation that a trial's own recorded
+mic/ref path identified a file THIS RUN actually archived rather than
+merely one sharing a basename, and a hash/manifest failure that could go
+unpropagated behind a surrounding block's own aggregate exit status or an
+echoed command substitution); and a fake `amixer` that checked only
+card+verb, ignoring the actual control-identifier argument and value
+validity. All six are fixed in
+`docs/reports/R0063_gain_ab_wrapper_external_review_corrections_20260914.md`,
+each with a new, deterministic offline test that fails against THIS
+checkpoint's own (R0062) behavior. This note corrects the record in
+place; it does not retract the PASS verdict for what R0062's own six
+review categories actually fixed relative to R0061, only for the further
+gaps R0062 itself still contained.
+
 ## PURPOSE
 
 Review instructed: do not accept R0061's PASS claim as proof its

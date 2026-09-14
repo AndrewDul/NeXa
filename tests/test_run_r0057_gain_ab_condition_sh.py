@@ -31,6 +31,7 @@ RESEARCH_DIR = REPO_ROOT / "docs" / "research" / "m2_6_cloud_realtime_voice"
 SCRIPT = RESEARCH_DIR / "run_r0057_gain_ab_condition.sh"
 FAKE_AMIXER_SRC = RESEARCH_DIR / "test_fakes" / "fake_amixer.py"
 FAKE_PROBE = RESEARCH_DIR / "test_fakes" / "fake_probe.py"
+FAKE_PGREP_SRC = RESEARCH_DIR / "test_fakes" / "fake_pgrep.py"
 
 BASELINE_RAW = 40
 CONDITION_B_RAW = 60
@@ -284,6 +285,48 @@ class TestPrecheckFailureCausesZeroWrites(_WrapperTestCase):
         self.assertIn("SWITCH_NOT_ON", log)
         self.assertEqual([inv for inv in self._invocations() if "sset" in inv], [])
 
+    def test_array_identity_prefix_collision_causes_zero_writes(self) -> None:
+        """R0063 finding 4: a coincidentally-matching SUPERSET string
+        ('PCM',10 when 'PCM',1 is expected) must be rejected by an EXACT
+        line match, not waved through by a substring check."""
+        self._write_state(array_identity_prefix_collision=True)
+        env = self._base_env()
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 90)
+        log = self._latest_log()
+        self.assertIn("UNEXPECTED_CONTROL_IDENTITY", log)
+        self.assertEqual([inv for inv in self._invocations() if "sset" in inv], [])
+
+    def test_array_limits_prefix_collision_causes_zero_writes(self) -> None:
+        """R0063 finding 4: "Limits: Playback 0 - 600" is a superset
+        string of the expected "0 - 60" and must not pass a substring
+        check."""
+        self._write_state(array_limits_prefix_collision=True)
+        env = self._base_env()
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 90)
+        log = self._latest_log()
+        self.assertIn("UNEXPECTED_LIMITS", log)
+        self.assertEqual([inv for inv in self._invocations() if "sset" in inv], [])
+
+    def test_uac_mixed_switch_causes_zero_writes(self) -> None:
+        """R0063 finding 4: a genuinely MIXED UACDemoV10 state (Front Left
+        [off], Front Right [on]) previously passed because the old check
+        only required ONE [on] occurrence to appear anywhere in the
+        output -- the remaining [on] channel alone was enough. Fixed to
+        require the exact expected count of [on] markers and zero [off]
+        markers."""
+        self._write_state(uac_switch_off=True)
+        env = self._base_env()
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 90)
+        log = self._latest_log()
+        self.assertIn("UAC_READ_SWITCH_NOT_ON", log)
+        self.assertEqual([inv for inv in self._invocations() if "sset" in inv], [])
+
 
 class TestFailedSetReadback(_WrapperTestCase):
     def test_ineffective_condition_write_is_detected_and_aborts(self) -> None:
@@ -330,6 +373,68 @@ class TestFailedRollback(_WrapperTestCase):
         state = self._read_state()
         self.assertEqual(state["array_raw"], CONDITION_B_RAW)
 
+    def test_rollback_write_reports_failure_but_observed_state_is_independently_reported(
+        self,
+    ) -> None:
+        """R0063 finding 4: when the rollback's own `sset` call reports
+        FAILURE (not merely a silent no-op), the wrapper must still
+        independently attempt a readback and derive the outcome from what
+        is OBSERVED -- never assume failure-in/failure-out, and never hide
+        the write's own reported failure behind a readback that happens to
+        look fine or vice versa."""
+        self._write_state(array_sset_fail_for_raw=BASELINE_RAW)
+        env = self._base_env()
+        result = self._run("B", env)
+
+        self.assertEqual(result.returncode, 91)
+        log = self._latest_log()
+        self.assertIn("SET_CONDITION_B", log)
+        self.assertIn("EXIT_CODE=0", log)
+        self.assertIn("ROLLBACK_WRITE_FAILED", log)
+        self.assertIn("ROLLBACK_WRITE_STATUS=failed", log)
+        self.assertIn("ROLLBACK_OBSERVED_RAW=60", log)
+        # R0063 round 2: a failed write is now labeled distinctly from a
+        # successful-write-but-mismatched-value case (see the NEW test
+        # below for the "failed write, but baseline happens to be
+        # observed anyway" combination this distinction exists for).
+        self.assertIn("ROLLBACK_OUTCOME=write_failed_readback_mismatch", log)
+        self.assertIn("FINAL_EXIT_CODE=91", log)
+        # Ground truth: the write never took effect, and the wrapper's
+        # own report reflects that -- not silently converted to success.
+        state = self._read_state()
+        self.assertEqual(state["array_raw"], CONDITION_B_RAW)
+
+    def test_rollback_write_fails_but_readback_observes_baseline_does_not_report_success(
+        self,
+    ) -> None:
+        """R0063 round 2, finding 5: a failed RESTORATION COMMAND must
+        prevent wrapper exit 0 even when the independent readback happens
+        to observe the baseline value anyway (e.g. because the value was
+        already at baseline before the failed write was attempted). The
+        write's own outcome and the observed baseline are reported as two
+        SEPARATE facts, never conflated into a false 'clean' success."""
+        # Condition A's own target (40) EQUALS BASELINE_RAW -- its own
+        # write is the FIRST sset to raw 40 this run (succeeds normally,
+        # count=1); the LATER rollback write is the SECOND sset to raw 40
+        # (fails, per the fake's own after-first-success semantics), while
+        # the underlying value is already, genuinely, 40.
+        self._write_state(array_sset_fail_for_raw_after_first_success=BASELINE_RAW)
+        env = self._base_env(condition_label="condA")
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 91)
+        log = self._latest_log()
+        self.assertIn("SET_CONDITION_A", log)
+        self.assertIn("EXIT_CODE=0", log)
+        self.assertIn("ROLLBACK_WRITE_FAILED", log)
+        self.assertIn("ROLLBACK_WRITE_STATUS=failed", log)
+        self.assertIn("ROLLBACK_OBSERVED_RAW=40", log)
+        self.assertIn("ROLLBACK_OUTCOME=write_failed_baseline_observed", log)
+        self.assertIn("WRAPPER_FAILURE", log)
+        self.assertIn("FINAL_EXIT_CODE=91", log)
+        state = self._read_state()
+        self.assertEqual(state["array_raw"], BASELINE_RAW)
+
 
 class TestFinalUacCheck(_WrapperTestCase):
     """R0062 Correction 2: the FINAL UACDemoV10 state (after an otherwise
@@ -372,6 +477,24 @@ class TestFinalUacCheck(_WrapperTestCase):
         # "detected wrong" from "attempted to fix."
         state = self._read_state()
         self.assertEqual(state["uac_raw_r"], UAC_RAW)
+
+    def test_final_uac_mixed_switch_after_otherwise_successful_run(self) -> None:
+        """R0063 finding 4: a MIXED switch state appearing only at the
+        LATER final-state check (not at precheck) must also be caught --
+        isolates "wrong only at the end" for the switch dimension
+        specifically, symmetric to the mismatch/failure variants above."""
+        self._write_state(uac_switch_off_after_first_read=True)
+        env = self._base_env(condition_label="condA")
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 91)
+        log = self._latest_log()
+        self.assertIn("EXIT_CODE=0", log)
+        self.assertIn("ROLLBACK_OUTCOME=clean", log)
+        self.assertIn("UAC_READ_SWITCH_NOT_ON", log)
+        self.assertIn("UAC_FINAL_STATUS=1", log)
+        self.assertIn("FINAL_EXIT_CODE=91", log)
+        self.assertEqual([inv for inv in self._invocations() if "UACDemoV10 sset" in inv], [])
 
 
 def _parse_pgid(log: str) -> str | None:
@@ -722,6 +845,36 @@ class TestFakeAmixerRejectsUnsupportedInvocations(unittest.TestCase):
         result = self._call("-c", "SomeOtherCard", "sget", "PCM")
         self.assertEqual(result.returncode, 1)
 
+    def test_extra_trailing_argument_is_rejected(self) -> None:
+        """R0063 finding 6: prior revisions checked only card+verb (via
+        `len(argv) < 4`, a MINIMUM not an exact bound) -- an extra
+        trailing argument was silently ignored instead of rejected."""
+        result = self._call("-c", "Array", "sget", "PCM,1", "unexpected-extra-arg")
+        self.assertEqual(result.returncode, 1)
+
+    def test_wrong_control_argument_is_rejected(self) -> None:
+        """R0063 finding 6: argv[3] (the control identifier itself) was
+        never checked -- a call naming the WRONG control still matched on
+        card+verb alone."""
+        result = self._call("-c", "Array", "sget", "PCM,2")
+        self.assertEqual(result.returncode, 1)
+
+    def test_wrong_control_argument_on_sset_is_rejected(self) -> None:
+        result = self._call("-c", "Array", "sset", "PCM,2", "40")
+        self.assertEqual(result.returncode, 1)
+
+    def test_malformed_sset_value_is_rejected(self) -> None:
+        """R0063 finding 6: a non-integer value must be rejected cleanly,
+        not raise an uncaught Python exception."""
+        result = self._call("-c", "Array", "sset", "PCM,1", "not-a-number")
+        self.assertEqual(result.returncode, 1)
+
+    def test_out_of_range_sset_value_is_rejected(self) -> None:
+        """R0063 finding 6: the fake must not silently accept a raw value
+        the real control (0-60) could never actually hold."""
+        result = self._call("-c", "Array", "sset", "PCM,1", "999")
+        self.assertEqual(result.returncode, 1)
+
 
 class TestNeverInvokesRealAmixer(_WrapperTestCase):
     def test_resolved_amixer_is_the_fake(self) -> None:
@@ -732,6 +885,447 @@ class TestNeverInvokesRealAmixer(_WrapperTestCase):
             ["bash", "-c", "command -v amixer"], env=env, capture_output=True, text=True
         )
         self.assertEqual(check.stdout.strip(), str(self.fake_bin_dir / "amixer"))
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+class TestStartupOwnershipHandshake(_WrapperTestCase):
+    """R0063 finding 1: the parent must never sample the child's pgid
+    speculatively -- it must be established via a deterministic handshake
+    that excludes the wrapper's own process group, and an interruption
+    during that handshake must terminate the known child directly (never a
+    group signal) without leaking it."""
+
+    def test_verified_pgid_excludes_wrappers_own_process_group(self) -> None:
+        env = self._base_env(condition_label="condA")
+        proc = subprocess.Popen(
+            ["bash", str(SCRIPT), "A", "--i-have-explicit-operator-approval"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        wrapper_pgid = None
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            try:
+                wrapper_pgid = os.getpgid(proc.pid)
+                break
+            except ProcessLookupError:
+                time.sleep(0.02)
+        self.assertIsNotNone(wrapper_pgid, "could not read the wrapper's own pgid")
+
+        stdout, _ = proc.communicate(timeout=20.0)
+        self.assertEqual(proc.returncode, 0, stdout)
+        pgid = _parse_pgid(stdout)
+        self.assertIsNotNone(pgid)
+        self.assertNotEqual(
+            int(pgid),
+            wrapper_pgid,
+            "the verified child PGID must never equal the wrapper's own process group",
+        )
+        self.assertIn("(verified via startup handshake", stdout)
+
+    def test_interruption_during_startup_handshake_terminates_child_without_leaking(
+        self,
+    ) -> None:
+        env = self._base_env(condition_label="condA")
+        env["R0057_AB_TEST_HANDSHAKE_DELAY_S"] = "10"
+        proc = subprocess.Popen(
+            ["bash", str(SCRIPT), "A", "--i-have-explicit-operator-approval"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        log_dir = self.capture_root / "warmup_hang_logs"
+        deadline = time.monotonic() + 10.0
+        child_pid = None
+        while time.monotonic() < deadline and child_pid is None:
+            logs = list(log_dir.glob("gain_ab_condition_*.log")) if log_dir.exists() else []
+            if logs:
+                text = logs[0].read_text()
+                for line in text.splitlines():
+                    if line.startswith("LAUNCHED_CHILD_PID="):
+                        child_pid = int(line.split("=", 1)[1])
+                        break
+            time.sleep(0.05)
+        self.assertIsNotNone(child_pid, "wrapper never reported LAUNCHED_CHILD_PID in time")
+
+        # The handshake is deliberately delayed 10s -- signaling now is
+        # guaranteed to land DURING the handshake window, before ownership
+        # is ever verified.
+        proc.send_signal(signal.SIGTERM)
+        try:
+            stdout, _ = proc.communicate(timeout=20.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, _ = proc.communicate()
+            self.fail(f"wrapper did not exit after SIGTERM during handshake; output:\n{stdout}")
+
+        self.assertEqual(proc.returncode, 143)
+        self.assertIn("INTERRUPTED_DURING_STARTUP_HANDSHAKE", stdout)
+        self.assertNotIn("(verified via startup handshake", stdout)
+        self.assertFalse(
+            _pid_alive(child_pid),
+            "the child launched during the (delayed, never-completed) handshake must be gone",
+        )
+        state = self._read_state()
+        self.assertEqual(state["array_raw"], BASELINE_RAW)
+
+    def test_interruption_after_candidate_known_before_acknowledgement_kills_whole_group(
+        self,
+    ) -> None:
+        """R0063 round 2, finding 1: the existing test above only covers
+        interruption BEFORE the marker is even published (checking a bare
+        PID). This covers the window the external review specifically
+        named: the child HAS published its identity (CHILD_PGID_CANDIDATE
+        is known and confirmed safe) but the parent has not yet published
+        its own acknowledgement -- on_signal() must terminate the WHOLE
+        candidate GROUP here, not merely the original PID, and every
+        member (including any launcher helper) must be confirmed gone."""
+        env = self._base_env(condition_label="condA")
+        env["R0057_AB_TEST_DELAY_BEFORE_ACK_S"] = "8"
+        proc = subprocess.Popen(
+            ["bash", str(SCRIPT), "A", "--i-have-explicit-operator-approval"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        candidate_pgid_box: list[str | None] = [None]
+
+        def _bounded_cleanup() -> None:
+            # Test cleanup itself must be bounded and must not leak an
+            # owned process even if an assertion below fails first.
+            if proc.poll() is None:
+                proc.kill()
+                try:
+                    proc.communicate(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    pass
+            if candidate_pgid_box[0]:
+                subprocess.run(
+                    ["pkill", "-9", "-g", candidate_pgid_box[0]],
+                    capture_output=True,
+                    timeout=5.0,
+                )
+
+        self.addCleanup(_bounded_cleanup)
+
+        log_dir = self.capture_root / "warmup_hang_logs"
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and candidate_pgid_box[0] is None:
+            logs = list(log_dir.glob("gain_ab_condition_*.log")) if log_dir.exists() else []
+            if logs:
+                text = logs[0].read_text()
+                for line in text.splitlines():
+                    if line.startswith("CHILD_PGID_CANDIDATE="):
+                        candidate_pgid_box[0] = line.split("=", 1)[1].split()[0]
+                        break
+            time.sleep(0.05)
+        self.assertIsNotNone(
+            candidate_pgid_box[0], "wrapper never published CHILD_PGID_CANDIDATE in time"
+        )
+        self.assertTrue(
+            _pgid_alive(candidate_pgid_box[0]),
+            "the candidate group should still be alive/parked (awaiting ack) at this point",
+        )
+
+        proc.send_signal(signal.SIGTERM)
+        try:
+            stdout, _ = proc.communicate(timeout=20.0)
+        except subprocess.TimeoutExpired:
+            self.fail("wrapper did not exit after SIGTERM in the pre-ack window")
+
+        self.assertEqual(proc.returncode, 143)
+        self.assertIn("STOPPING not-yet-acknowledged owned process group", stdout)
+        self.assertNotIn("(verified via startup handshake", stdout)
+        self.assertFalse(
+            _pgid_alive(candidate_pgid_box[0]),
+            "no member of the candidate group (including any launcher helper) may remain",
+        )
+        state = self._read_state()
+        self.assertEqual(state["array_raw"], BASELINE_RAW)
+
+    def test_ack_removal_failure_aborts_before_launching_child(self) -> None:
+        """R0063 round 3, finding 1: a failed/unconfirmed initial ack
+        removal must abort BEFORE any child is ever launched -- the fake
+        probe must never start."""
+        env = self._base_env(condition_label="condA")
+        env["R0057_AB_TEST_FORCE_ACK_REMOVAL_FAILURE"] = "1"
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 97)
+        log = self._latest_log()
+        self.assertIn(
+            "STARTUP_OWNERSHIP_HANDSHAKE_FAILED: could not confirm the handshake ack "
+            "file is absent",
+            log,
+        )
+        self.assertNotIn("LAUNCHED_CHILD_PID=", log)
+        self.assertNotIn("FAKE_PROBE_READY", log)
+        self.assertIn("ROLLBACK_OUTCOME=clean", log)
+        state = self._read_state()
+        self.assertEqual(state["array_raw"], BASELINE_RAW)
+
+    def test_own_pgid_lookup_failure_aborts_before_acknowledging(self) -> None:
+        """R0063 round 3, finding 2: an empty/failed own-pgid lookup must
+        never be silently treated as "not a match" -- it must abort
+        startup via a PID-scoped termination (the candidate is never
+        acknowledged), so the fake probe never starts."""
+        env = self._base_env(condition_label="condA")
+        env["R0057_AB_TEST_FORCE_OWN_PGID_LOOKUP_FAILURE"] = "1"
+        result = self._run("A", env, timeout=20.0)
+
+        self.assertEqual(result.returncode, 97)
+        log = self._latest_log()
+        self.assertIn("LAUNCHED_CHILD_PID=", log)  # the child WAS launched...
+        self.assertIn(
+            "STARTUP_OWNERSHIP_HANDSHAKE_FAILED: could not determine the wrapper's "
+            "own process group",
+            log,
+        )
+        self.assertNotIn("CHILD_PGID_CANDIDATE=", log)
+        self.assertNotIn("FAKE_PROBE_READY", log)  # ...but never acknowledged/exec'd
+        self.assertIn("ROLLBACK_OUTCOME=clean", log)
+        state = self._read_state()
+        self.assertEqual(state["array_raw"], BASELINE_RAW)
+
+
+class TestCleanupFailure(_WrapperTestCase):
+    """R0063 finding 2: a process-group termination that cannot be
+    confirmed empty must prevent a successful exit, even when the probe
+    itself succeeded and produced complete evidence -- rollback and
+    archiving must still be attempted regardless."""
+
+    def test_cleanup_failure_after_successful_probe_prevents_exit_zero(self) -> None:
+        env = self._base_env(condition_label="condA")
+        env["R0057_AB_TEST_FORCE_CLEANUP_FAILURE"] = "1"
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 96)
+        log = self._latest_log()
+        self.assertIn("EXIT_CODE=0", log)  # the probe itself succeeded
+        self.assertIn("CLEANUP_STATUS=1", log)
+        self.assertIn("WRAPPER_FAILURE: the probe's own process group could not", log)
+        self.assertIn("FINAL_EXIT_CODE=96", log)
+        # Rollback and archiving must still have been attempted despite
+        # the unverified cleanup -- available evidence is preserved, but
+        # the run is not reported as a stable success.
+        self.assertIn("ROLLBACK_OUTCOME=clean", log)
+        self.assertIn("ARCHIVE_COMPLETE=1", log)
+        state = self._read_state()
+        self.assertEqual(state["array_raw"], BASELINE_RAW)
+        archives = self._archive_dirs()
+        self.assertEqual(len(archives), 1)
+
+
+class TestCleanupFailureQuarantine(_WrapperTestCase):
+    """R0063 round 2, finding 2: unverified cleanup must not auto-clear.
+    The concurrency lock is deliberately RETAINED (never released) so a
+    second invocation cannot start against the same, possibly-still-live
+    shared capture paths, and the ORIGINAL (shared-location) evidence
+    files are preserved rather than unlinked, since a surviving writer
+    may still need them."""
+
+    def test_unverified_cleanup_quarantines_lock_and_preserves_original_sources(self) -> None:
+        env = self._base_env(condition_label="condA")
+        env["R0057_AB_TEST_FORCE_CLEANUP_FAILURE"] = "1"
+        result = self._run("A", env, timeout=20.0)
+
+        self.assertEqual(result.returncode, 96)
+        log = self._latest_log()
+        self.assertIn("CLEANUP_STATUS=1", log)
+        self.assertIn("LOCK_QUARANTINED=1", log)
+        self.assertIn("LOCK_HELD_QUARANTINE", log)
+        self.assertIn("ARCHIVE_SOURCE_PRESERVED", log)
+
+        # The lock is genuinely still held -- a fresh invocation must be
+        # refused, never silently allowed through against contaminated
+        # shared paths.
+        self.assertTrue((self.capture_root / ".gain_ab_experiment.lock").exists())
+        second_env = self._base_env(condition_label="condB")
+        second = self._run("B", second_env, timeout=10.0)
+        self.assertEqual(second.returncode, 94)
+
+        # The original, shared-location WAV/JSON files were preserved
+        # (not unlinked) even though they were also copied into the
+        # archive.
+        self.assertTrue(list(self.capture_root.glob("self_echo_probe_*.json")))
+        self.assertTrue(list((self.capture_root / "pcm").glob("*.wav")))
+        archives = self._archive_dirs()
+        self.assertEqual(len(archives), 1)
+
+
+class TestProcessInspectionError(_WrapperTestCase):
+    """R0063 finding 2: `pgrep` itself failing to inspect (a real error,
+    not "no matches") must never be reported as verified emptiness."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        fake_pgrep_dst = self.fake_bin_dir / "pgrep"
+        shutil.copy(FAKE_PGREP_SRC, fake_pgrep_dst)
+        fake_pgrep_dst.chmod(0o755)
+
+    def test_pgrep_inspection_error_is_never_reported_as_verified_emptiness(self) -> None:
+        env = self._base_env(condition_label="condA")
+        env["PGREP_FAKE_ALWAYS_ERROR"] = "1"
+        result = self._run("A", env, timeout=25.0)
+
+        self.assertEqual(result.returncode, 96)
+        log = self._latest_log()
+        self.assertIn("PROCESS_GROUP_INSPECTION_FAILED", log)
+        self.assertIn("PROCESS_GROUP_TERMINATION_UNVERIFIED", log)
+        self.assertNotIn("PROCESS_GROUP_TERMINATED pgid=", log)
+        self.assertIn("CLEANUP_STATUS=1", log)
+        self.assertIn("FINAL_EXIT_CODE=96", log)
+        self.assertIn("ROLLBACK_OUTCOME=clean", log)
+        state = self._read_state()
+        self.assertEqual(state["array_raw"], BASELINE_RAW)
+
+
+class TestLogOpenFailure(_WrapperTestCase):
+    """R0063 finding 3: persisted-log readiness must be established BEFORE
+    any mixer interaction -- `exec > >(tee -a "$LOG")` alone does not prove
+    tee actually opened the file; directory creation alone is
+    insufficient (the directory can exist but be unwritable)."""
+
+    def test_log_directory_unwritable_aborts_before_precheck(self) -> None:
+        self.capture_root.mkdir(parents=True, exist_ok=True)
+        log_dir = self.capture_root / "warmup_hang_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_dir.chmod(0o555)
+        self.addCleanup(log_dir.chmod, 0o755)
+
+        env = self._base_env()
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 95)
+        combined = result.stdout + result.stderr
+        self.assertIn("could not create/open the persisted log file", combined)
+        self.assertEqual(list(log_dir.glob("gain_ab_condition_*.log")), [])
+        # No hardware WRITE occurred -- the safety-net UAC read-only final
+        # check in rollback() still runs even here (harmless).
+        self.assertEqual([inv for inv in self._invocations() if "sset" in inv], [])
+
+
+class TestArchiveMappingConsistency(_WrapperTestCase):
+    """R0063 finding 5: archive acceptance must validate that each trial's
+    own recorded mic/ref path identifies a file THIS RUN actually
+    archived, not merely a file sharing a basename -- missing, duplicate,
+    or inconsistent mappings, and an untracked extra WAV file, must all
+    prevent a successful exit."""
+
+    def test_wrong_path_reference_prevents_successful_exit(self) -> None:
+        env = self._base_env(condition_label="condA")
+        env["FAKE_PROBE_CORRUPT_MAPPING"] = "wrong_path"
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 93)
+        log = self._latest_log()
+        self.assertIn("MANIFEST_MAPPING_REJECTED", log)
+        self.assertIn("REJECTED (not one of this run's own newly-archived files)", log)
+        self.assertIn("ARCHIVE_MAPPING_VALID=0", log)
+        self.assertIn("ARCHIVE_COMPLETE=0", log)
+        self.assertIn("FINAL_EXIT_CODE=93", log)
+        self.assertIn("ROLLBACK_OUTCOME=clean", log)
+        # Partial evidence is still preserved, not discarded.
+        archives = self._archive_dirs()
+        self.assertEqual(len(archives), 1)
+
+    def test_duplicate_reference_prevents_successful_exit(self) -> None:
+        env = self._base_env(condition_label="condA")
+        env["FAKE_PROBE_CORRUPT_MAPPING"] = "duplicate"
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 93)
+        log = self._latest_log()
+        self.assertIn("MANIFEST_DUPLICATE_WAV_REFERENCE", log)
+        self.assertIn("ARCHIVE_MAPPING_VALID=0", log)
+        self.assertIn("ARCHIVE_COMPLETE=0", log)
+        self.assertIn("FINAL_EXIT_CODE=93", log)
+
+    def test_extra_untracked_wav_prevents_successful_exit(self) -> None:
+        env = self._base_env(condition_label="condA")
+        env["FAKE_PROBE_CORRUPT_MAPPING"] = "extra_wav"
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 93)
+        log = self._latest_log()
+        self.assertIn("ARCHIVE_WAV_COUNT=7", log)
+        self.assertIn("ARCHIVE_COMPLETE=0", log)
+        self.assertIn("FINAL_EXIT_CODE=93", log)
+
+    def test_trial_with_both_paths_missing_prevents_successful_exit(self) -> None:
+        """R0063 round 2, finding 3: the previous loop SILENTLY SKIPPED a
+        trial row when BOTH mic_wav and ref_wav were empty -- with 3 trial
+        objects, 6 real WAV files on disk, and only 2 trials actually
+        populated, completeness could still be (wrongly) reported. All 6
+        WAVs exist here; only trial 1's own JSON fields are wiped."""
+        env = self._base_env(condition_label="condA")
+        env["FAKE_PROBE_CORRUPT_MAPPING"] = "empty_trial"
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 93)
+        log = self._latest_log()
+        self.assertIn("ARCHIVE_WAV_COUNT=6", log)  # all 6 real files exist
+        self.assertIn("MANIFEST_MAPPING_FIELD_MISSING: trial 1 mic_wav", log)
+        self.assertIn("MANIFEST_MAPPING_FIELD_MISSING: trial 1 ref_wav", log)
+        self.assertIn("ARCHIVE_MAPPING_VALID=0", log)
+        self.assertIn("ARCHIVE_COMPLETE=0", log)
+        self.assertIn("FINAL_EXIT_CODE=93", log)
+
+    def test_swapped_mic_ref_roles_prevents_successful_exit(self) -> None:
+        """R0063 round 2, finding 3: both paths in a swapped trial still
+        point at real, this-run-owned files -- only in the WRONG role --
+        proving the per-trial/per-role EXACT basename check (not merely
+        "is this file owned by this run") is what catches it."""
+        env = self._base_env(condition_label="condA")
+        env["FAKE_PROBE_CORRUPT_MAPPING"] = "swapped_roles"
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 93)
+        log = self._latest_log()
+        self.assertIn("MANIFEST_MAPPING_ROLE_MISMATCH", log)
+        self.assertIn("ARCHIVE_MAPPING_VALID=0", log)
+        self.assertIn("FINAL_EXIT_CODE=93", log)
+
+
+class TestArchiveSourceRemovalFailure(_WrapperTestCase):
+    """R0063 round 2, finding 4: `archive_one_file`'s own `rm -f "$src"`
+    is now checked -- previously it unconditionally returned 0 even when
+    removal failed. Making the shared PCM directory read-only AFTER the
+    fake probe has already written its files (but before the wrapper's
+    own archiving `cp` + `rm` runs) reproduces "copy succeeds, source
+    removal fails" deterministically, without needing real hardware."""
+
+    def test_unremovable_source_is_reported_and_evidence_still_preserved(self) -> None:
+        env = self._base_env(condition_label="condA")
+        env["FAKE_PROBE_CHMOD_PCM_DIR_READONLY_AFTER_WRITE"] = "1"
+        pcm_dir = self.capture_root / "pcm"
+        self.addCleanup(lambda: pcm_dir.chmod(0o755) if pcm_dir.exists() else None)
+
+        result = self._run("A", env)
+
+        self.assertEqual(result.returncode, 93)
+        log = self._latest_log()
+        self.assertIn("ARCHIVE_SOURCE_REMOVAL_FAILED", log)
+        self.assertIn("ARCHIVE_COMPLETE=0", log)
+        # The evidence itself was still copied into the archive despite
+        # the later removal failure -- preserved, not discarded.
+        archives = self._archive_dirs()
+        self.assertEqual(len(archives), 1)
+        wavs = list((archives[0] / "pcm").glob("*.wav"))
+        self.assertEqual(len(wavs), 6)
 
 
 def _sha256(path: Path) -> str:

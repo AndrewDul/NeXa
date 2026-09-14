@@ -1670,6 +1670,84 @@ unpaid-quota data is used to improve Google products.
     bare read-only confirmation, never through the wrapper. Not pushed.
     **`M2.6B` remains IN PROGRESS. The R0057 gain A/B experiment remains
     NOT EXECUTED** -- no approval has been given.
+  - **M2.6B.4N follow-up -- gain A/B wrapper EXTERNAL-review
+    corrections, offline only** (`R0063`, 2026-09-14; the experiment
+    itself remains NOT EXECUTED, no approval given). An external source
+    review of R0062's own wrapper found six further concrete defects;
+    all fixed, each backed by a new offline test that fails against
+    R0062's own behavior. (1) Process-group ownership race at launch --
+    R0062's `ps -o pgid= -p "$CHILD_PID"`, read immediately after
+    backgrounding, could sample before `setsid()` took effect and
+    observe the wrapper's OWN group -- fixed with a deterministic
+    startup handshake: the launched child writes its own `$$` to a
+    marker file strictly after `setsid()` succeeds and strictly before
+    it execs the real command; the parent only reads what the child
+    confirmed, cross-checked against the wrapper's own pgid (exit 97 on
+    a match or an unconfirmed handshake); an interruption during the
+    handshake terminates the known child by PID directly, never a group
+    signal. A self-found race in this checkpoint's own first draft (a
+    redundant, racy second `ps` re-check) was found via the new test
+    suite and removed. (2) A failed process-group cleanup only printed
+    a warning and could still produce exit 0 -- fixed with a persisted
+    `CLEANUP_STATUS` checked before reporting success (exit 96);
+    `pgrep` reporting "no matches" is now distinguished from `pgrep`
+    itself failing to inspect, never treated as verified emptiness.
+    (3) Persisted-log readiness is now confirmed (synchronous probe
+    write + a canary line's actual on-disk appearance, bounded poll)
+    BEFORE the precheck. (4) Mixer validation is now EXACT whole-line
+    matching, not substring (`'PCM',10`/`0 - 600` no longer pass for
+    `'PCM',1`/`0 - 60`); the switch check now rejects a genuinely MIXED
+    on/off UACDemoV10 state; rollback's Array readback is now ALWAYS
+    attempted even when the restore write itself reports failure,
+    deriving the outcome from what is OBSERVED. (5) Archive
+    completeness now also requires the exact expected WAV count and a
+    validated JSON<->WAV mapping (each trial's own mic/ref path must
+    exactly match one of this run's own newly-archived originals, never
+    a basename coincidence); hash/manifest failures now propagate via
+    individually-checked statements, never a surrounding block's own
+    aggregate exit status. (6) The fake `amixer` now checks exact arity
+    and the actual control identifier, not just card+verb. Procedure
+    document §4/§5/§7 updated (exit codes 96/97 added). Corrected the
+    R0062 report in place naming all six findings. **ROUND 2 (same
+    uncommitted checkpoint): a further external review found five more
+    defects, all fixed** -- (1) the startup handshake was one-way (child
+    exec'd right after publishing its marker, before the parent finished
+    validating) -- fixed with a two-way ack the child must wait for
+    before it may ever exec, plus group-kill of the known-safe
+    `CHILD_PGID_CANDIDATE` if interrupted in the narrower pre-ack window.
+    (2) two unconditional `wait` calls could block rollback indefinitely
+    on a failed termination -- removed; unverified cleanup now
+    QUARANTINES the concurrency lock and preserves (never unlinks)
+    original evidence. (3) the mapping loop silently skipped a trial with
+    both paths empty -- fixed to reject it, require exact per-trial/role
+    basenames, and propagate JSON parse errors. (4) manifest writes and
+    source removal were unchecked, and the manifest tmp file could live
+    on a different filesystem than the claimed-atomic `mv` target -- both
+    fixed. (5) a failed rollback write could still report "clean" success
+    if the readback happened to observe baseline anyway -- fixed to
+    require both facts together. Also corrected two stale claims (a
+    header comment describing round 1's own already-removed check; "zero
+    mixer interaction" corrected to "zero mixer writes"). Round 2 alone:
+    48/48. **ROUND 3 (same checkpoint, now closed): two further, narrowly
+    scoped defects** in the round-2 handshake, both fixed -- (1) the
+    initial `rm -f "$ack"` was unchecked and its absence never
+    independently confirmed -- fixed, aborting (exit 97) BEFORE any child
+    is launched if unconfirmed. (2) an empty/failed `own_pgid` lookup
+    silently skipped the whole safety check instead of aborting -- fixed
+    to REQUIRE a successful, positive-numeric lookup before
+    `CHILD_PGID_CANDIDATE` is accepted or an ack published; failure aborts
+    via a PID-scoped (never group-scoped) termination. Two new tests
+    prove the fake probe never starts on either path. **FINAL RESULT
+    (all three rounds): 50/50 wrapper tests pass, actual unittest exit
+    status (0) captured directly** (not through a `tail` pipe);
+    `ruff`/`bash -n` clean; `git diff --stat -- src/nexa` empty; no
+    leaked owned process after any round's suite. No Gemini call. No
+    hardware writes. Wrapper SHA-256 at close:
+    `581f7dc04204a92d43a648cb9a334e0f96226cdd6d88959b9585cba57d0a8643`.
+    **This checkpoint is CLOSED WITH A LOCAL COMMIT** (see commit hash
+    below the report) -- not pushed.
+    **`M2.6B` remains IN PROGRESS. The R0057 gain A/B experiment remains
+    NOT EXECUTED** -- no approval has been given; that is the next task.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

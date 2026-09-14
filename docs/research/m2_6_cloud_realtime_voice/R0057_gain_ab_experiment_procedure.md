@@ -18,18 +18,31 @@ This procedure was originally designed in R0056/R0057, finalized in
 R0060 once the probe's own warm-up-completion/runner-cleanup bugs were
 fixed (R0058, R0059) and its reference-observability gap was closed
 (R0060), corrected in R0061 after review found seven concrete defects
-in the R0060 wrapper script, and **corrected again here in R0062**
-after a second, deeper review found that R0061's own tests did not
-actually prove several of its claims (zero-writes-on-failed-precheck,
-final hardware-state validation, owned-process termination including a
+in the R0060 wrapper script, corrected again in R0062 after a second,
+deeper review found that R0061's own tests did not actually prove
+several of its claims (zero-writes-on-failed-precheck, final
+hardware-state validation, owned-process termination including a
 SIGTERM-resistant descendant, exact archive completeness, storage-setup
-failure handling) — see
+failure handling), and **corrected a third time here in R0063** after
+an EXTERNAL source review found six further concrete defects in
+R0062's own wrapper: a process-group ownership race at launch, a
+cleanup failure that could still produce a successful exit, mixer
+reads/writes established as "readable" or "restored" less strictly
+than documented (substring identity/limits matching, a switch check
+satisfied by a single [on] marker even in a genuinely mixed state, a
+rollback readback skipped when the restore write itself reported
+failure), archive acceptance that did not enforce its own full stated
+contract (exact WAV count, JSON<->WAV mapping consistency, a hash/
+manifest failure that could go unpropagated), persisted-log readiness
+never actually confirmed before mutation, and a fake `amixer` that
+accepted unsupported control arguments — see
+`docs/reports/R0063_gain_ab_wrapper_external_review_corrections_20260914.md`
+for the full rationale and the tests behind each fix, and the
+`**CORRECTED**` note in
 `docs/reports/R0062_gain_ab_wrapper_deep_review_corrections_20260914.md`
-for the full rationale, and the `**CORRECTED**` note in
-`docs/reports/R0061_gain_ab_wrapper_corrections_20260913.md` for exactly
-which of its claims were not substantiated. The experiment's own design
-(§1, §2, §3, §6) is unchanged from R0060; §4 and §5 are corrected again
-here, and the wrapper script is corrected again.
+for exactly which of ITS claims were affected. The experiment's own
+design (§1, §2, §3, §6) is unchanged from R0060; §4, §5, and §7 are
+corrected again here, and the wrapper script is corrected again.
 
 ## 1. What this tests
 
@@ -131,47 +144,76 @@ physical microphone/speaker placement and room conditions, identical
 `UACDemoV10` MAX setting (the script's own precheck now VALIDATES this,
 not merely displays it — see §5).
 
-### What the corrected wrapper actually does (R0062, superseding R0061's own description below)
+### What the corrected wrapper actually does (R0063, superseding R0062's own description below)
 
-1. **Mutation-tracked, validated precheck:** parses (never just prints)
+1. **Mutation-tracked, validated precheck, now with EXACT (never
+   substring) mixer-output matching:** parses (never just prints)
    `Array 'PCM',1` and both `UACDemoV10` channels, checking each
-   control's exact identity line, its documented limits, and its
-   `[on]` switch state — never accepting a coincidentally-matching raw
-   integer from the wrong control as proof of anything. An explicit
-   `MUTATION_ATTEMPTED` flag is set immediately BEFORE, and only
-   before, the one condition write is issued — never earlier. On any
-   precheck mismatch or unreadable value the script aborts (exit `90`)
-   having issued **zero** `amixer sset` calls, verified by a dedicated
-   offline test that records every fake invocation and asserts none of
-   them is a write.
+   control's exact WHOLE-LINE identity, its documented WHOLE-LINE
+   limits, and the EXACT expected count of `[on]` markers with zero
+   `[off]` markers anywhere — R0062's own substring checks accepted a
+   coincidentally-matching SUPERSET string (`'PCM',10` when `'PCM',1`
+   was expected; `0 - 600` when `0 - 60` was expected) and accepted a
+   genuinely MIXED UACDemoV10 switch state (one channel `[off]`, the
+   other `[on]`) on the strength of the one remaining `[on]` channel
+   alone. An explicit `MUTATION_ATTEMPTED` flag is set immediately
+   BEFORE, and only before, the one condition write is issued — never
+   earlier. On any precheck mismatch or unreadable value the script
+   aborts (exit `90`) having issued **zero** `amixer sset` calls,
+   verified by a dedicated offline test that records every fake
+   invocation and asserts none of them is a write.
 2. **Set + immediately verify:** writes the intended condition value,
    then re-reads and parses it (same identity/limits/switch validation
    as the precheck) to confirm the write actually took effect (catches
    a "succeeded but silently ineffective" write); aborts with exit `92`
    on mismatch, but still attempts rollback afterward since a write was
    attempted (`MUTATION_ATTEMPTED=1`).
-3. **One persisted transcript:** every wrapper action (prechecks,
-   set/readback, interruption, rollback/readback, archive) AND the
-   probe's own complete stdout/stderr live in the SAME log file under
+3. **Persisted-log readiness confirmed BEFORE any mixer interaction
+   (R0063):** `exec > >(tee -a "$LOG") 2>&1` alone proves nothing about
+   whether `tee` actually opened the file — a synchronous probe write
+   to `$LOG` is checked first, then a canary line's actual on-disk
+   appearance is confirmed via a bounded poll BEFORE the precheck (or
+   anything else) proceeds; a failure aborts (exit `95`) with zero
+   mixer interaction of any kind. This establishes readiness AT THAT
+   POINT ONLY — not a guarantee against every possible LATER storage
+   failure (e.g. the disk filling up mid-run). Once confirmed, every
+   subsequent wrapper action (prechecks, set/readback, interruption,
+   rollback/readback, archive) AND the probe's own complete
+   stdout/stderr live in the SAME persisted file under
    `self_echo_captures/warmup_hang_logs/gain_ab_condition_<A|B>_<ts>.log`.
 4. **Exit-code convention** (documented in full in the script's own
    header): `0` fully successful; `2` usage error; `90` precheck
    failed (zero writes issued); `92` condition write/readback failed;
    `91` rollback did not verify OR the independent final-hardware-state
    check (below) failed (overrides an otherwise-successful `0`); `93`
-   this run's own artifact archive is not exactly complete; `94` a
-   concurrent invocation already holds the capture-location lock; `95`
-   required evidence-storage setup (directories, marker, manifest,
-   persisted log) could not be created; `130`/`143` interrupted
+   this run's own artifact archive is not exactly complete (including a
+   validated JSON<->WAV mapping, R0063); `94` a concurrent invocation
+   already holds the capture-location lock; `95` required
+   evidence-storage setup (directories, marker, persisted-log
+   readiness) could not be established; `96` the probe's own process
+   group could not be CONFIRMED terminated (R0063 — a writer may still
+   be alive; overrides an otherwise-successful `0`); `97` the probe's
+   own launch could not be verified as running under an
+   ownership-confirmed, isolated process group within the bounded
+   startup window (R0063 — the child, if any, was terminated by PID
+   directly; rollback is still attempted); `130`/`143` interrupted
    (SIGINT/SIGTERM); otherwise the probe's own exit code (e.g. `1`,
    `124`) is preserved as this script's own exit code.
-5. **Rollback that only runs if a mutation was attempted, and validates
-   BOTH sides of hardware state independently:** if `MUTATION_ATTEMPTED`
-   is unset, rollback is explicitly SKIPPED (`ROLLBACK_SKIPPED: no
-   mutation was attempted`) and issues no write at all — there is
-   nothing to restore. If a mutation was attempted (even a possibly
-   partial, failed one), rollback restores `Array 'PCM',1'` to raw `40`
-   and INDEPENDENTLY reads it back to confirm (exit `91` on mismatch).
+5. **Rollback that only runs if a mutation was attempted, ALWAYS
+   independently reads back the observed state regardless of the
+   write's own reported outcome (R0063), and validates BOTH sides of
+   hardware state independently:** if `MUTATION_ATTEMPTED` is unset,
+   rollback is explicitly SKIPPED (`ROLLBACK_SKIPPED: no mutation was
+   attempted`) and issues no write at all — there is nothing to
+   restore. If a mutation was attempted (even a possibly partial,
+   failed one), rollback attempts to restore `Array 'PCM',1'` to raw
+   `40` and — regardless of whether that write itself reported success
+   or failure — ALWAYS independently reads the control back; the
+   reported outcome (`clean`/`readback_mismatch`/`readback_unreadable`)
+   is derived strictly from what is OBSERVED, never assumed from the
+   write command's own self-reported exit status (R0062's own version
+   skipped the readback entirely when the write itself reported
+   failure, so the actual final state in that case was never learned).
    Separately, and regardless of whether a mutation was attempted,
    rollback INDEPENDENTLY re-reads both `UACDemoV10` channels
    (identity/limits/switch included) to confirm they are still at their
@@ -180,47 +222,91 @@ not merely displays it — see §5).
    mismatched final UAC reading is reported (`UAC_FINAL_CHECK_FAILED`)
    and forces exit `91`, since it means the run's own environment
    cannot be trusted even if the Array side rolled back cleanly.
-6. **Explicit interruption handling with verified process-group
-   termination:** the probe is launched under its own dedicated
-   `setsid`-created process group; on SIGINT/SIGTERM the wrapper sends
-   SIGTERM to that OWNED group specifically (never a broad
-   process-kill, never a PID guessed from an environment marker),
-   polls for the group to actually empty, and escalates to SIGKILL only
-   if a bounded grace period elapses with a member still alive —
-   cleanup is reported only once the group is CONFIRMED empty, not
-   merely once a signal was sent. The same group-termination safety net
-   also runs after ordinary completion, in case the probe left an
-   orphaned descendant. **Explicit limitation, not hidden:** a SIGKILL
-   sent to this wrapper itself, or a host power loss, cannot be
-   intercepted by any shell trap — no unconditional rollback guarantee
-   is claimed for those cases; an operator who kills -9 this script, or
-   who loses power mid-run, must manually verify and, if needed,
-   restore `Array 'PCM',1'` to raw `40` afterward.
-7. **Exact per-run artifact archive, with a concurrency lock:** a
-   `mkdir`-based lock (exit `94` if already held) prevents two wrapper
-   invocations from ever sharing the same capture location at all —
-   `find -newer <marker>` inventories a run's own candidate files, but
-   is never treated as proof of ownership by itself. Archive
-   completeness for a claimed successful run requires EXACTLY one
-   current-run results JSON reporting the expected trial count, plus
-   EVERY expected mic/reference WAV pair by the probe's own real fixed
-   naming scheme — missing, incomplete, or ambiguous evidence produces
-   exit `93`, never a silent success. Whatever partial evidence DOES
-   exist is still archived (never discarded) even on failure or
-   interruption, without delaying the hardware-restoration steps above.
-   Archiving copies, hash-verifies, and removes each original file into
+6. **Deterministic startup ownership handshake, and verified,
+   persisted cleanup outcome (R0063):** the probe's own process group is
+   never sampled speculatively — the launched child itself writes its
+   OWN `$$` (which, immediately after it has called `setsid()`, IS both
+   its new pid and its new pgid) to a marker file strictly AFTER
+   `setsid()` has completed and strictly BEFORE it execs the real
+   command; the parent only reads what the child itself already
+   confirmed, bounded and polled, and cross-checks it against the
+   wrapper's OWN current process group (rejecting a match) before ever
+   treating it as owned (exit `97` on failure, terminating the known
+   child by PID directly, never a group signal — this is exactly what
+   protects an interruption arriving DURING the handshake from leaking
+   the child or signalling an unrelated process). Once ownership is
+   verified, SIGINT/SIGTERM (and a safety-net check after ordinary
+   completion) sends SIGTERM to that OWNED group specifically, polls
+   for the group to actually empty via a liveness check that
+   distinguishes "confirmed empty" from "the inspection itself
+   failed" (an inspection failure is NEVER reported as verified
+   emptiness), and escalates to SIGKILL only if a bounded grace period
+   elapses with a member still alive. The outcome of this verification
+   is PERSISTED (`CLEANUP_STATUS`) and checked before a successful exit
+   is ever reported — an unverified termination now forces exit `96`,
+   distinct from every other failure class, even when the probe itself
+   succeeded and produced complete evidence. Rollback and archiving are
+   still always attempted regardless of the cleanup outcome (available
+   evidence is preserved, but original shared-location files are NOT
+   unlinked when cleanup is unverified — a possibly-still-alive writer
+   may still need them), but the run's own final reported outcome can
+   no longer silently claim a stable capture while a writer may still
+   be alive. **The concurrency lock is QUARANTINED (deliberately
+   retained, never auto-released) whenever exit `96` occurs** — a second
+   invocation is refused (`94`) until an operator manually verifies
+   nothing is still writing and removes the lock directory; this is not
+   automatically cleared by any later run. The startup handshake itself
+   is now two-way (an explicit parent acknowledgement gates the child's
+   own `exec`, so no probe descendant can exist before ownership is
+   fully verified) and no unbounded wait remains anywhere in the
+   termination/signal path. **Explicit limitation, not hidden:** a
+   SIGKILL sent to this wrapper itself, or a host power loss, cannot be
+   intercepted by any
+   shell trap — no unconditional rollback guarantee is claimed for
+   those cases; an operator who kills -9 this script, or who loses
+   power mid-run, must manually verify and, if needed, restore
+   `Array 'PCM',1'` to raw `40` afterward.
+7. **Exact per-run artifact archive, with a validated JSON<->WAV mapping
+   and a concurrency lock:** a `mkdir`-based lock (exit `94` if already
+   held) prevents two wrapper invocations from ever sharing the same
+   capture location at all — `find -newer <marker>` inventories a run's
+   own candidate files, but is never treated as proof of ownership by
+   itself. Archive completeness for a claimed successful run now
+   requires (R0063, strengthening R0062's filename-presence-only check):
+   EXACTLY one current-run results JSON reporting the expected trial
+   count, EXACTLY the expected total WAV count (never silently
+   accepting an untracked extra file), every expected mic/reference WAV
+   pair by the probe's own real fixed naming scheme, AND a validated
+   structural mapping — every one of the expected trial rows must be
+   present with BOTH its own mic and ref path populated (a trial with
+   both fields empty is REJECTED, not silently skipped, round 2), each
+   matching its own EXACT expected per-trial/per-role basename (catching
+   a swapped mic/ref role, not just a wrong file), and identifying one
+   of THIS RUN's own newly-discovered, successfully-archived WAV
+   originals (never merely a file sharing a basename), with zero
+   duplicate references. A malformed JSON structure is an explicit
+   parse ERROR, never silently coerced to empty output. Missing,
+   incomplete, ambiguous, or inconsistent evidence produces exit `93`,
+   never a silent success. Whatever partial evidence DOES exist is still
+   archived (never discarded) even on failure or interruption, without
+   delaying the hardware-restoration steps above. Archiving copies,
+   hash-verifies, and removes each original file into
    `self_echo_captures/gain_ab_experiment/<timestamp>_condition_<A|B>/`,
    with a `MANIFEST.txt` listing every archived file's SHA-256 AND an
    explicit mapping from each original JSON WAV path to its archived
    file and hash — condition A's own archived bytes are verified
    unchanged after condition B runs, since each run's fixed-name
-   working files are fully cleared before the lock is released.
+   working files are fully cleared before the lock is released. Hash
+   and manifest computation are now performed as individually-checked
+   statements (R0063) so a hash failure can no longer go unpropagated
+   behind a surrounding block's own aggregate exit status or an echoed
+   command substitution.
 8. **Operational failures are checked, not swallowed:** creation of the
-   evidence-storage directories, the run marker, the persisted log
-   redirection, every archive copy/hash, and manifest writing are each
-   explicitly checked; a failure at any of these aborts (exit `95` for
-   storage/logging setup) rather than silently proceeding to a mutation
-   with evidence storage not actually ready.
+   evidence-storage directories, the run marker, the persisted-log
+   readiness confirmation, every archive copy/hash, and manifest
+   writing are each explicitly checked; a failure at any of these
+   aborts (exit `95` for storage/logging setup) rather than silently
+   proceeding to a mutation with evidence storage not actually ready.
 
 ### Timeout/supervision budget (shown, not merely asserted)
 
@@ -249,10 +335,14 @@ comparison) if ANY of the following hold:
   precheck failed — zero writes issued, `92` condition write/readback
   failed, `91` rollback or the independent final-hardware-state check
   did not verify, `93` this run's own artifact archive is not exactly
-  complete, `94` a concurrent invocation held the capture-location lock
-  and this run never proceeded, `95` required evidence-storage setup
-  could not be created, `130`/`143` interrupted, or the probe's own
-  preserved nonzero code including `124`/external-timeout).
+  complete (including a validated JSON<->WAV mapping), `94` a
+  concurrent invocation held the capture-location lock and this run
+  never proceeded, `95` required evidence-storage/persisted-log setup
+  could not be established, `96` the probe's own process group could
+  not be confirmed terminated (R0063 — a writer may still be alive),
+  `97` the probe's own launch ownership could not be verified within
+  the bounded startup window (R0063), `130`/`143` interrupted, or the
+  probe's own preserved nonzero code including `124`/external-timeout).
 - The probe raises `WarmupIncompleteError` (incomplete warm-up) or
   `RunnerShutdownError`, or the log's own `SHUTDOWN_OUTCOME` shows
   `'failed': True`.
@@ -350,24 +440,39 @@ not an immediate hardware-setting change.
 ## 7. Rollback / safety summary (implemented in the script; restated here)
 
 - Every mixer mutation is followed by an independent, PARSED readback
-  (control identity, limits, and switch state — not just a raw integer)
-  in the SAME persisted log, checked by the script itself, not left for
-  a human to notice a mismatch.
+  (EXACT whole-line control identity, EXACT whole-line limits, and the
+  exact expected switch-marker count — not just a raw integer, and not
+  a substring that a superset string or a partially-off channel could
+  satisfy, R0063) in the SAME persisted log, checked by the script
+  itself, not left for a human to notice a mismatch.
 - Rollback runs ONLY if a mutation was actually attempted this run — a
   precheck failure that wrote nothing skips rollback explicitly rather
   than issuing a redundant, no-op write. When rollback does run, it
-  restores `Array 'PCM',1'` to `40` on every exit path this script can
-  intercept (normal completion, any detected failure, SIGINT, SIGTERM)
-  — idempotent, independently verified — and SEPARATELY, always,
-  independently re-validates that `UACDemoV10` is still at its own
-  verified MAX baseline, never writing to it to correct what it finds.
-  Both outcomes are reported separately from the run's own outcome.
-  **Not claimed for a SIGKILL of this wrapper or a power loss** — see
-  §4.
-- The probe runs under its own dedicated process group; on interruption
-  (or as a safety net after ordinary completion) the wrapper terminates
-  and CONFIRMS-empty that owned group specifically — escalating from
-  SIGTERM to SIGKILL only after a bounded grace period — before
-  proceeding to rollback. No broad process-kill.
+  attempts to restore `Array 'PCM',1'` to `40` on every exit path this
+  script can intercept (normal completion, any detected failure,
+  SIGINT, SIGTERM) and ALWAYS independently re-reads the control
+  afterward regardless of whether the restore write itself reported
+  success or failure (R0063) — the reported outcome reflects what is
+  OBSERVED, never assumed from the write's own exit status — and
+  SEPARATELY, always, independently re-validates that `UACDemoV10` is
+  still at its own verified MAX baseline, never writing to it to
+  correct what it finds. Both outcomes are reported separately from the
+  run's own outcome. **Not claimed for a SIGKILL of this wrapper or a
+  power loss** — see §4.
+- The probe's own process group is established via a deterministic
+  startup handshake, never a speculative sample (R0063) — the launched
+  child reports its own pgid itself, in-process, strictly after
+  `setsid()` succeeds; the parent cross-checks it against its OWN
+  process group before ever treating it as owned. On interruption (or
+  as a safety net after ordinary completion) the wrapper terminates and
+  CONFIRMS-empty that owned group specifically — via a liveness check
+  that never reports an inspection FAILURE as verified emptiness —
+  escalating from SIGTERM to SIGKILL only after a bounded grace period
+  — before proceeding to rollback. An interruption arriving DURING the
+  handshake (before ownership is verified) terminates the known child
+  by PID directly, never a group signal. No broad process-kill, ever.
+  The verified outcome of this termination is PERSISTED and prevents a
+  successful exit when it could not be confirmed (exit `96`), even when
+  the probe itself succeeded.
 - No control other than `Array 'PCM',1'` is ever written by this
   procedure.

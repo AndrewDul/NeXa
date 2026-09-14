@@ -5,7 +5,7 @@ Runtime / test evidence outranks anything else in this repo.
 
 ---
 
-- **Last verified:** 2026-09-13
+- **Last verified:** 2026-09-14
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)
@@ -144,7 +144,115 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0062_gain_ab_wrapper_deep_review_corrections_20260914.md`
+- **Latest report:** `docs/reports/R0063_gain_ab_wrapper_external_review_corrections_20260914.md`
+  (**M2.6B.4N follow-up — gain A/B wrapper EXTERNAL-review corrections,
+  offline only, 2026-09-14.** An external source review of R0062's own
+  wrapper found six further concrete defects; all fixed, each backed by
+  a new offline test that fails against R0062's own behavior. (1)
+  Process-group ownership race at launch: R0062's `ps -o pgid= -p
+  "$CHILD_PID"`, read immediately after backgrounding `setsid timeout
+  ...`, could sample BEFORE `setsid()` took effect and observe the
+  WRAPPER's own group instead -- fixed with a deterministic startup
+  handshake (`launch_probe_with_verified_ownership`): the launched
+  child writes its OWN `$$` to a marker file strictly after `setsid()`
+  succeeds and strictly before it execs the real command; the parent
+  only reads what the child confirmed (bounded poll), cross-checked
+  against the wrapper's own pgid (rejected on match, exit 97). An
+  interruption during this handshake terminates the known child by PID
+  directly, never a group signal. (A self-found race in this
+  checkpoint's own FIRST draft -- a redundant second `ps` re-check of
+  the child's own pgid, itself racy against a fast-completing fake
+  probe -- was found via the new test suite (16/42 failures) and
+  removed; recorded in the report, not hidden.) (2) A failed process-
+  group cleanup only printed a warning and could still produce exit 0
+  -- fixed with a persisted `CLEANUP_STATUS`, checked by `finalize()`
+  before reporting success (exit 96 on an unverified termination,
+  distinct from every other failure class); `pgid_liveness()` now
+  distinguishes `pgrep` reporting "no matches" (confirmed empty) from
+  `pgrep` itself failing to inspect (never treated as verified
+  emptiness, at any point in the escalation logic). Rollback/archiving
+  still always attempted regardless. (3) Persisted-log readiness is
+  now confirmed (a synchronous probe write, then a canary line's actual
+  on-disk appearance via a bounded poll) BEFORE the precheck -- not
+  merely assumed from `exec > >(tee -a "$LOG"))` having been set up.
+  (4) Mixer validation is now EXACT (whole-line `grep -qxF`), not
+  substring -- `'PCM',10`/`0 - 600` no longer pass as a match for
+  `'PCM',1`/`0 - 60`; the switch check now requires the exact expected
+  count of `[on]` markers with zero `[off]` anywhere, rejecting a
+  genuinely MIXED UACDemoV10 state a single-`[on]`-anywhere check
+  used to accept; `rollback()` now ALWAYS attempts the independent
+  Array readback even when the restore write itself reports failure,
+  deriving the outcome strictly from what is OBSERVED. (5) Archive
+  completeness now also requires the exact expected WAV count (never
+  silently accepting an untracked extra file) and a validated JSON<->
+  WAV mapping -- each trial's own recorded mic/ref path must exactly
+  match one of THIS RUN's own newly-archived originals, never merely a
+  basename coincidence, with zero duplicate references; hash/manifest
+  computation is now a sequence of individually-checked statements
+  (never a surrounding `if ! { block; }` whose exit status only ever
+  reflected its last command, and never a hash failure hidden inside
+  an echoed command substitution). (6) The fake `amixer` now checks
+  EXACT arity and the actual control-identifier argument (not just
+  card+verb) and validates `sset` values (parseable, in-range) --
+  R0062's own fake ignored `argv[3]` and used `argv[-1]` for the
+  value. Procedure document §4/§5/§7 updated (exit codes 96/97 added).
+  Corrected the R0062 report in place (identity preserved) naming all
+  six findings. **ROUND 2 (same uncommitted checkpoint):** a further
+  external review of round 1's own diff found five more defects, all
+  fixed -- (1) the startup handshake was one-way (child exec'd right
+  after publishing its marker, before the parent finished validating) --
+  fixed with an explicit two-way ack: the child now blocks on a
+  parent-published ACK file before it may ever exec, so no probe
+  descendant can exist before ownership is fully verified; the narrower
+  "candidate known, not yet acked" window is now also group-killed on
+  interruption via a new `CHILD_PGID_CANDIDATE`, not just a bare-PID
+  kill. (2) two unconditional `wait` calls (in `terminate_by_pid` and
+  `on_signal` after a FAILED group termination) could block rollback
+  indefinitely -- removed; unverified cleanup now also QUARANTINES the
+  concurrency lock (never auto-released) and preserves original
+  evidence files (never unlinked) instead of auto-clearing. (3) the
+  mapping loop silently skipped a trial row with both mic/ref paths
+  empty -- fixed to reject it, require exact per-trial/per-role
+  basenames (catching swapped roles), and propagate JSON structural
+  parse errors instead of coercing to empty output. (4) manifest line
+  writes and `archive_one_file`'s own source removal were unchecked, and
+  its tmp file lived in a possibly-different filesystem than the
+  claimed-atomic `mv` target -- all now checked, tmp file now created
+  inside `$ARCHIVE_DIR` itself. (5) a failed rollback WRITE could still
+  be reported as a "clean" success if the readback happened to observe
+  baseline anyway -- fixed to require both facts together, with the
+  write's own outcome and the observed value reported separately.
+  Corrected two stale claims found by the same review (a header comment
+  still describing round 1's own already-removed second `ps` check; "zero
+  mixer interaction" on log-open failure, corrected to "zero mixer
+  WRITES" -- the harmless read-only UAC check via `finalize()` still
+  runs). Round 2 alone: 48/48 wrapper tests. **ROUND 3 (same checkpoint,
+  now closed):** a further external review found two more, narrowly
+  scoped defects in the round-2 startup handshake, both fixed -- (1) the
+  initial `rm -f "$ack"` (clearing any stale ack before a child is ever
+  launched) was unchecked and its absence never independently confirmed
+  -- fixed with both the removal's own exit status and `[[ ! -e "$ack"
+  ]]` checked together; failure aborts (exit 97) BEFORE any child is
+  launched. (2) the wrapper's own pgid lookup (`own_pgid`) being empty
+  made the safety check `-n "$own_pgid" && candidate==own_pgid` silently
+  skip itself, treating an UNVERIFIED own-group as "not a match" instead
+  of aborting -- fixed to REQUIRE a successful lookup with a valid,
+  positive numeric result before `CHILD_PGID_CANDIDATE` is ever accepted
+  or an ack ever published; a failed/empty/malformed lookup now aborts
+  via a PID-scoped (never group-scoped) termination. Two new tests prove
+  the fake probe never starts on either path. **FINAL RESULT (all three
+  rounds): 50/50 wrapper tests pass, `ACTUAL_UNITTEST_EXIT_CODE=0`
+  captured directly (not through a `tail` pipe)**; `ruff`/`bash -n`
+  clean; `git diff --stat -- src/nexa` empty; no leaked owned process
+  after any round's suite. No Gemini call. No hardware writes -- every
+  real `amixer` call was a bare, read-only confirmation, never through
+  the wrapper. Wrapper SHA-256 at close:
+  `581f7dc04204a92d43a648cb9a334e0f96226cdd6d88959b9585cba57d0a8643`.
+  This checkpoint is now **CLOSED WITH A LOCAL COMMIT** (see commit hash
+  below the report) -- not pushed. **`M2.6B` remains IN PROGRESS. The
+  R0057 gain A/B experiment remains NOT EXECUTED** -- no approval has
+  been given; that is the next task.)
+- **Prior report:** `docs/reports/R0062_gain_ab_wrapper_deep_review_corrections_20260914.md`
   (**M2.6B.4N follow-up — gain A/B wrapper deep-review corrections,
   offline only, 2026-09-14.** A second, deeper review found R0061's own
   13-test suite did not actually prove several of its claims -- fixed

@@ -46,6 +46,38 @@ Controlled entirely via environment variables (all optional):
                                  (a descendant the wrapper's own
                                  process-group termination must also
                                  reach, not just this direct process).
+  FAKE_PROBE_CHMOD_PCM_DIR_READONLY_AFTER_WRITE -- (R0063 round 2,
+                                 optional) "1" makes the fake probe
+                                 chmod its own PCM_DIR to 0555 right
+                                 after writing all artifacts, so the
+                                 wrapper's own LATER `rm -f` of each
+                                 source WAV (after a successful copy)
+                                 fails with a permission error --
+                                 deterministically reproducing "copy
+                                 succeeded, source removal failed".
+  FAKE_PROBE_CORRUPT_MAPPING -- (R0063, optional) deliberately corrupts the
+                                 JSON<->WAV relationship, for testing the
+                                 wrapper's own structural mapping
+                                 validation (never a real probe behavior):
+                                   "wrong_path" -- trial 1's own mic_wav
+                                     points at a path never actually
+                                     written this run.
+                                   "duplicate"  -- trial 2's own mic_wav is
+                                     made identical to trial 1's.
+                                   "empty_trial" -- (R0063 round 2) trial
+                                     1's own mic_wav AND ref_wav fields
+                                     are both wiped to "", while its own
+                                     two real WAV files are still written
+                                     normally (6 files on disk, 3 trial
+                                     objects, only 2 trials populated).
+                                   "swapped_roles" -- (R0063 round 2)
+                                     trial 1's own mic_wav/ref_wav values
+                                     are swapped -- both still point at
+                                     real, owned files, but in the wrong
+                                     role.
+                                   "extra_wav"  -- one extra, genuinely
+                                     written WAV file that no trial
+                                     references at all.
 """
 import json
 import os
@@ -110,8 +142,53 @@ def main() -> int:
                 }
             )
 
+        # R0063: deliberately corrupt the JSON<->WAV relationship, for
+        # testing the wrapper's own new structural mapping validation
+        # (never the production probe's own real behavior).
+        corrupt = os.environ.get("FAKE_PROBE_CORRUPT_MAPPING", "")
+        if corrupt == "wrong_path" and trials:
+            # Trial 1's own mic_wav now points at a path with the CORRECT
+            # expected basename (max_trial1_mic.wav -- passes the
+            # wrapper's own per-trial/per-role basename check) but sitting
+            # OUTSIDE this run's own PCM_DIR -- i.e. NOT one of the paths
+            # this run actually discovered and archived. This isolates
+            # "REJECTED: not owned" from "ROLE_MISMATCH: wrong basename"
+            # (a different corruption mode a different mic/ref value would
+            # trip; a plainly wrong basename is covered by
+            # "swapped_roles" below instead).
+            bogus_path = pcm_dir.parent / f"{level}_trial1_mic.wav"
+            trials[0]["cross_correlation"]["mic_wav"] = str(bogus_path)
+        elif corrupt == "duplicate" and len(trials) >= 2:
+            # Trial 2's own mic_wav is made IDENTICAL to trial 1's --
+            # the same real, archived file referenced by two different
+            # trials.
+            trials[1]["cross_correlation"]["mic_wav"] = trials[0]["cross_correlation"]["mic_wav"]
+        elif corrupt == "empty_trial" and trials:
+            # R0063 round 2: trial 1 exists structurally and its own TWO
+            # real WAV files were still written normally (unlike the
+            # other corruption modes) -- but its own JSON fields are
+            # wiped. The EXACT "three trial objects, six real WAV files,
+            # only two populated mapping rows" scenario the external
+            # review named.
+            trials[0]["cross_correlation"]["mic_wav"] = ""
+            trials[0]["cross_correlation"]["ref_wav"] = ""
+        elif corrupt == "swapped_roles" and trials:
+            # R0063 round 2: trial 1's own mic_wav/ref_wav values are
+            # swapped -- both still point at real, this-run-owned files,
+            # but in the WRONG role, proving the wrapper's own per-role
+            # basename check (not just "is this file owned") catches it.
+            cc = trials[0]["cross_correlation"]
+            cc["mic_wav"], cc["ref_wav"] = cc["ref_wav"], cc["mic_wav"]
+        elif corrupt == "extra_wav":
+            # An extra, genuinely-written WAV file that no trial
+            # references at all -- proves the wrapper's own exact
+            # ARCHIVE_WAV_COUNT check catches an untracked extra, not just
+            # a missing expected file.
+            stray_path = pcm_dir / f"{level}_trial{trial_count + 1}_mic.wav"
+            stray_path.write_bytes(f"FAKEWAVMIC label={label} trial=stray".encode())
+
         payload = {
-            "report": "FAKE (test-only, R0062 offline wrapper test)",
+            "report": "FAKE (test-only, R0063 offline wrapper test)",
             "label": label,
             "warmup_result": {
                 "repeats_run": 18,
@@ -122,6 +199,15 @@ def main() -> int:
             "trials": trials,
         }
         (json_dir / f"self_echo_probe_{ts}.json").write_text(json.dumps(payload, indent=2))
+
+        if os.environ.get("FAKE_PROBE_CHMOD_PCM_DIR_READONLY_AFTER_WRITE") == "1":
+            # R0063 round 2: makes the wrapper's own LATER `rm -f "$src"`
+            # (inside archive_one_file, after a successful copy) fail with
+            # a permission error -- deterministically reproduces "copy
+            # succeeded, source removal failed" without real hardware.
+            # POSIX removal needs write access to the PARENT directory,
+            # not the file itself.
+            os.chmod(pcm_dir, 0o555)
 
     if child_proc is not None:
         child_proc.wait()
