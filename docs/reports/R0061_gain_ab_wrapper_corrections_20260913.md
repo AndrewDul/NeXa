@@ -16,6 +16,72 @@ any kind has been given for it. `M2.6B` remains IN PROGRESS.**
 
 **PASS.**
 
+**CORRECTED (2026-09-14, R0062):** a second, deeper review found that
+several claims below were not actually proven by this report's own
+13-test suite — the suite passed, but several tests exercised the
+wrapper too weakly to substantiate the claim made about them. This
+section names each one; the fixes and their new, stronger tests are in
+`docs/reports/R0062_gain_ab_wrapper_deep_review_corrections_20260914.md`.
+This note corrects the record in place; it does not retract the PASS
+verdict for what this checkpoint's seven defects actually fixed, only
+for the specific unsupported claims listed here.
+
+1. **"Precheck mismatch ... no mutation attempted" (§ coverage table,
+   `TestPrecheckMismatch`) was not proven.** The test itself asserted
+   the Array raw value was forced back to `40` after a failed precheck
+   — i.e. it expected a mutation (or at least an assumed-successful
+   rollback) even on the failure path, and never inspected which
+   `amixer` invocations actually occurred. It could not have caught a
+   version of the script that issued a write despite a failed precheck.
+   **R0062 fix:** explicit `MUTATION_ATTEMPTED` tracking plus a
+   recorded-invocation-log assertion of zero writes.
+2. **"Rollback ... verified" never validated the UAC side.** Every
+   rollback test checked only that `Array 'PCM',1'` was restored;
+   nothing read back `UACDemoV10` independently after rollback, so a
+   version of the script that left the UAC channels silently wrong
+   would still have reported this suite's own tests as passing.
+   **R0062 fix:** an independent, read-only final-UAC check in
+   `rollback()` with dedicated failure/mismatch tests.
+3. **The interruption tests' own process-liveness check
+   ("a THIRD test confirms the fake probe's own OS process is actually
+   gone") used an environment-marker `pgrep` pattern-match, not the
+   actual recorded PID/PGID** — it could not distinguish "the process
+   this run started is gone" from "some other process matching that
+   marker string happens to be gone or was never running." It also
+   never exercised a process that ignores SIGTERM, so the SIGKILL
+   escalation path this report's own §6 description claims was never
+   actually run. **R0062 fix:** exact-PGID tracking and verification,
+   plus a fake probe that installs `SIG_IGN` for SIGTERM and spawns a
+   child, forcing the escalation path.
+4. **"Distinct A/B artifacts" used different filenames for condition A
+   vs B's own fake WAVs**, which does not exercise the real collision
+   risk at all — the real probe always writes the SAME fixed filenames
+   regardless of condition. The test could not have caught a version of
+   the archiving logic that let condition B silently overwrite
+   condition A's own archived files. **R0062 fix:** the fake probe now
+   uses the real probe's fixed filenames for every condition, with the
+   condition label folded into file CONTENT instead, and the test now
+   hashes condition A's archived bytes before and after condition B
+   runs.
+5. **No test exercised a missing/incomplete artifact set, a storage-
+   setup failure, or a concurrent invocation** — "13/13 pass" was
+   accurate as a test-count statement but did not mean archive
+   completeness, storage-failure handling, or concurrency safety had
+   been verified, since no test existed for any of them yet. **R0062
+   fix:** `TestIncompleteArchive`, `TestStorageFailure`,
+   `TestConcurrencyLock` (new).
+6. **The fake `amixer`'s own UAC dB formula was wrong** (raw `147`
+   reported `0.00dB`; the real device reports `-0.94dB` at that raw
+   value), so any assertion in this suite that referenced a dB reading
+   for UAC was checking against a value the real hardware never
+   produces. **R0062 fix:** corrected linear interpolation matching the
+   real device's own verified `dBminmax` range.
+
+None of the above changes this report's own account of the SEVEN
+original defects and their fixes, which remain correctly described
+above — only the SUFFICIENCY of the tests cited as proof for several of
+them is corrected.
+
 ## PURPOSE
 
 Fix the seven confirmed defects review found in

@@ -1616,6 +1616,60 @@ unpaid-quota data is used to improve Google products.
     never through the wrapper. Not pushed. **`M2.6B` remains IN
     PROGRESS. The R0057 gain A/B experiment remains NOT EXECUTED** --
     no approval has been given.
+  - **M2.6B.4N follow-up -- gain A/B wrapper deep-review corrections,
+    offline only** (`R0062`, 2026-09-14; the experiment itself remains
+    NOT EXECUTED, no approval given). A second, deeper review found
+    R0061's own 13-test suite did not actually prove several of its own
+    claims -- fixed the underlying wrapper gaps and rewrote the test
+    doubles/suite so each claim is backed by a test that could fail
+    against the previous behavior. (1) Zero-writes-on-failed-precheck:
+    an explicit `MUTATION_ATTEMPTED` flag set only immediately before
+    the one condition write; `rollback()` skips entirely when unset;
+    a recorded-invocation-log now asserts zero `sset` calls on every
+    precheck-failure variant (5 tests, incl. new wrong-control-identity
+    and switch-off cases) -- R0061's own test had instead expected a
+    write on this path. (2) Final hardware-state validation: rollback
+    now independently re-reads both `Array 'PCM',1'` and both
+    `UACDemoV10` channels (exact control identity/limits/switch, not
+    just a matching integer), never issuing a corrective UAC write; an
+    unreadable/mismatched final UAC state forces exit 91 (new
+    `TestFinalUacCheck`, 2 tests). (3) Owned-process termination: the
+    probe now runs under its own `setsid`-created process group,
+    terminated via `kill -TERM/-KILL -- "-$PGID"` with polling and
+    bounded SIGKILL escalation, verified CONFIRMED-EMPTY before
+    rollback; replaced the old environment-marker/pgrep test with exact
+    recorded-PGID verification and a new fake-probe SIGTERM-ignore +
+    child-spawn mode that forces and proves the real escalation path.
+    (4) Archive acceptance: fake probe now uses the real probe's fixed
+    filenames for every condition (label moved into file content) so
+    identical-filename collision risk is genuinely exercised; archive
+    requires exactly the expected JSON + all expected WAV pairs (exit
+    93 otherwise, partial evidence still archived); MANIFEST.txt now
+    records an explicit original-JSON-path -> archived-file+hash
+    mapping; condition A's archived bytes verified byte-identical
+    before/after B runs; a `mkdir`-based concurrency lock (exit 94) now
+    prevents two invocations from sharing capture locations. (5)
+    Operational failures: storage/marker creation now explicitly
+    checked, aborting (exit 95) before the lock/precheck/any mutation.
+    (6) Fixed the fake `amixer`'s own UAC dB formula (raw 147 was
+    reporting 0.00dB; real hardware verified this checkpoint as
+    -0.94dB); added dedicated rejection tests for the fake's
+    already-correct-but-previously-untested invocation rejection.
+    Strengthened the procedure document: execution success (exit 0) now
+    stated explicitly as a precondition for trusting a run's data, never
+    proof of scientific validity; a measured-trial lifecycle-timeout
+    warning now stated as remaining UNRESOLVED evidence that must not
+    silently qualify condition A's trials as sufficient to proceed to
+    condition B. Corrected the R0061 report in place (identity
+    preserved) naming exactly which of its claims its own test suite did
+    not substantiate. **24/24 wrapper tests pass in a single full-suite
+    run** (up from 13; probe/bargein regression suites deliberately not
+    re-run -- no `src/nexa` production code touched); `ruff`/`bash -n`
+    clean; `git diff --stat -- src/nexa` empty. No Gemini call. No
+    hardware writes -- every real `amixer` call this checkpoint was a
+    bare read-only confirmation, never through the wrapper. Not pushed.
+    **`M2.6B` remains IN PROGRESS. The R0057 gain A/B experiment remains
+    NOT EXECUTED** -- no approval has been given.
 
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the

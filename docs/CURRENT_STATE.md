@@ -144,7 +144,72 @@ Runtime / test evidence outranks anything else in this repo.
   owning layer / deps / tests / failure cases / frozen-path impact) and 19
   measurable **M2.6B acceptance gates**. No `src/nexa/**` / `tests/**` /
   `pyproject.toml` change in the ADR task.)
-- **Latest report:** `docs/reports/R0061_gain_ab_wrapper_corrections_20260913.md`
+- **Latest report:** `docs/reports/R0062_gain_ab_wrapper_deep_review_corrections_20260914.md`
+  (**M2.6B.4N follow-up — gain A/B wrapper deep-review corrections,
+  offline only, 2026-09-14.** A second, deeper review found R0061's own
+  13-test suite did not actually prove several of its claims -- fixed
+  the underlying wrapper gaps and rewrote the test doubles/suite so each
+  claim is backed by a test that could fail against the previous
+  behavior. (1) Zero-writes-on-failed-precheck: R0061's own precheck
+  test expected the Array value to be FORCED BACK on failure (i.e.
+  expected a write) and never inspected invocations -- fixed with an
+  explicit `MUTATION_ATTEMPTED` flag set only immediately before the one
+  condition write, `rollback()` skipping entirely when unset, and a
+  recorded-invocation-log (`AMIXER_FAKE_INVOCATION_LOG`) asserting zero
+  `sset` calls on every precheck-failure variant (5 tests, incl. new
+  wrong-control-identity and switch-off cases). (2) Final hardware-state
+  validation: rollback now independently re-reads BOTH `Array 'PCM',1'`
+  AND both `UACDemoV10` channels (exact control identity/limits/switch,
+  not just a matching integer) after restoring, never issuing a
+  corrective UAC write -- an unreadable/mismatched final UAC state
+  forces exit 91 (new `TestFinalUacCheck`, 2 tests, isolated to occur
+  only after an otherwise-successful precheck via new call-counted fake
+  drift). (3) Owned-process termination: the probe now runs under its
+  own `setsid`-created process group, terminated via `kill -TERM/-KILL
+  -- "-$PGID"` with polling and bounded SIGKILL escalation, verified
+  CONFIRMED-EMPTY (not merely signaled) before rollback; replaced the
+  old environment-marker/pgrep test with exact recorded-PGID
+  verification and a new fake-probe SIGTERM-ignore + child-spawn mode
+  that forces and proves the real escalation path (`~5.9s` runtime,
+  consistent with the wrapper's own 5s grace period). (4) Archive
+  acceptance: fake probe now uses the REAL probe's fixed filenames for
+  every condition (label moved into file content, not filename) so
+  identical-filename collision risk is genuinely exercised; archive
+  requires EXACTLY the expected JSON + all expected WAV pairs (exit 93
+  otherwise, partial evidence still archived, never discarded);
+  MANIFEST.txt now also records an explicit original-JSON-path ->
+  archived-file+hash mapping; condition A's archived bytes verified
+  byte-identical before/after B runs; a `mkdir`-based concurrency lock
+  (exit 94) now prevents two invocations from sharing capture locations
+  (`find -newer` alone is no longer treated as ownership proof). (5)
+  Operational failures: evidence-storage directory/marker creation now
+  explicitly checked, aborting (exit 95) before the lock/precheck/any
+  mutation, reachable safely because `trap finalize EXIT` is already
+  installed (rollback/archive both correctly no-op this early). (6)
+  Fixed the fake `amixer`'s own UAC dB formula (was reporting raw 147 as
+  0.00dB; real hardware verified this checkpoint as -0.94dB at that raw
+  value -- linear interpolation between the device's own verified
+  dBminmax endpoints now used); added dedicated
+  `TestFakeAmixerRejectsUnsupportedInvocations` (3 tests) for the fake's
+  already-correct-but-previously-untested invocation rejection.
+  Strengthened the procedure document: execution success (exit 0) is
+  now stated explicitly as a precondition for trusting a run's data,
+  never proof of scientific validity; a measured-trial lifecycle-timeout
+  warning is now stated as remaining UNRESOLVED evidence that must not
+  silently qualify condition A's trials as sufficient to proceed to
+  condition B. Corrected the R0061 report in place (identity preserved)
+  with an explicit note naming exactly which of its claims its own test
+  suite did not substantiate. **24/24 wrapper tests pass in a single
+  full-suite run** (up from R0061's 13; probe/bargein regression suites
+  not re-run -- no `src/nexa` production code touched, a deliberate,
+  stated skip); `ruff`/`bash -n` clean; `git diff --stat -- src/nexa`
+  empty. No Gemini call. No hardware writes -- every real `amixer` call
+  this checkpoint was a bare, read-only confirmation run directly
+  (including sourcing the corrected fake's own dB formula), never
+  through the wrapper. Not pushed. **`M2.6B` remains IN PROGRESS. The
+  R0057 gain A/B experiment remains NOT EXECUTED** -- no approval has
+  been given.)
+- **Prior report:** `docs/reports/R0061_gain_ab_wrapper_corrections_20260913.md`
   (**M2.6B.4N follow-up — gain A/B wrapper corrections, offline only,
   2026-09-13.** Review found seven concrete defects in the R0060 wrapper
   script (`run_r0057_gain_ab_condition.sh`); all seven fixed here: (1)
