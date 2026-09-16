@@ -1785,34 +1785,103 @@ during longer assistant speech -- backlog, not investigated). See
 to **M3 -- NeXa Core**. Voice/AEC/VAD/confirm-hold/scheduled-reference/
 PipeWire work stays paused unless a future product requirement reopens it.
 
-**Then, after local + cloud voice are both complete, in order:** memory / identity
-/ personality / capabilities → full graphical UI → typed chat in that UI using the
-**same** `ConversationSession` / NeXa brain as voice. There must never be separate
-voice-NeXa and chat-NeXa brains.
+**Then, after local + cloud voice are both complete, in order (M3.1-M3.6
+below):** identity → memory → context → personality/relationship →
+capabilities/permissions → learning → full graphical UI → typed chat in
+that UI using the **same** `ConversationSession` / NeXa brain as voice.
+There must never be separate voice-NeXa and chat-NeXa brains.
 
 ---
 
-## M3 — Robust Context
+## M3 — NeXa Core
 
-Turn-to-turn and session context that is coherent, bounded, and observable.
-Clear separation between transient context, chat history, and long-term memory.
+**The canonical active milestone (R0071 pivot, ADR-0004 Amendment 2,
+ADR-0005).** One local, provider-independent Core owns identity, memory,
+context, personality, relationship, capabilities, permissions, device
+awareness, and learning — a cloud provider or local LLM never owns this
+state; a model may *propose* a Core write, NeXa Core alone decides and
+persists it. Each subsystem below is its own narrow module with its own
+owner, never one aggregating `NeXaCore` god-object (ADR-0005 D5).
+
+**User Model, Goals/Projects, and Device Awareness** remain canonical NeXa
+Core concerns even though none of them gets its own numbered submilestone
+yet — they are placed under the M3.x subsystem below that will own them
+first (User Model/Goals under M3.4 Personality+Relationship's user-specific
+state and M3.2 Memory's project/goal memory; Device Awareness under M3.5
+Capabilities + Permissions), not forgotten.
+
+### M3.1 — Identity Foundation
+
+**STATUS: COMPLETE** (R0072, 2026-09-16). Small, stable, immutable identity
+root (`NeXaIdentity`: `identity_id`/`name`/`product_name`/`purpose`/
+`principles`/`identity_schema_version`, nothing else) — explicitly distinct
+from Persona (conversation style layer, unchanged, `configs/personas/`) and
+from every mutable Core subsystem below. See ADR-0005
+(`docs/decisions/ADR-0005_nexa_core_identity_boundary.md`),
+`docs/reports/R0072_m3_1_identity_foundation_20260916.md`.
+
+### M3.2 — Memory Foundation
+
+Local persistent storage foundation + canonical typed memory contracts —
+supersedes the earlier "M5 — Long-Term Memory" framing below. One canonical
+local memory authority; explicitly distinct from `ConversationSession.history`
+(the chat transcript, unchanged — never becomes the memory database) and
+from any cloud provider's own ephemeral session state. Design document:
+`docs/reports/R0073_m3_2_memory_foundation_design_20260916.md`
+(design-first; implementation gated on review, not started with this
+design).
+
+### M3.3 — Context Engine
+
+Decides what NeXa needs to know *now* and produces provider/local context
+projections — supersedes the earlier "M3 — Robust Context" framing below
+(turn-to-turn/session context, coherent/bounded/observable, clear
+separation between transient context, chat history, and long-term memory).
+Reads from Memory (M3.2); never itself becomes a second memory store.
+
+### M3.4 — Personality + Relationship
+
+Stable personality state, user-specific relationship state (User Model),
+communication adaptation. Distinct from Persona (the M1.1 conversation
+style prompt, which stays the default/fallback voice) and from Identity
+(M3.1, invariant across users).
+
+### M3.5 — Capabilities + Permissions
+
+Capability registry, permission authority, and device-aware availability —
+supersedes the earlier "M4 — Device Awareness + Capability Registry"
+framing below. Device Awareness ("what hardware / body do I currently
+have?") is owned here. Foundational for multi-device and the robot body.
+
+### M3.6 — Learning + Adaptation
+
+Explicit, inspectable learning of preferences, routines, useful facts, and
+later skills — proposed by models, decided and persisted by NeXa Core, per
+the ownership rule above.
 
 ---
 
-## M4 — Device Awareness + Capability Registry
+### Historical framing, superseded by the M3.1-M3.6 sequence above
 
+Kept for historical evidence only — do not treat as current planning; the
+M3.1-M3.6 sequence above is the canonical, active structure.
+
+**M3 — Robust Context (historical, pre-R0071):** Turn-to-turn and session
+context that is coherent, bounded, and observable. Clear separation between
+transient context, chat history, and long-term memory. → now **M3.3
+Context Engine**.
+
+**M4 — Device Awareness + Capability Registry (historical, pre-R0071):**
 - **Device Awareness:** "What hardware / body do I currently have?"
 - **Capability Registry:** "What can I actually do with this hardware, these
   permissions, and this runtime state?"
 
-Foundational for multi-device and for the robot body.
+Foundational for multi-device and for the robot body. → now **M3.5
+Capabilities + Permissions**.
 
----
-
-## M5 — Long-Term Memory
-
-User-owned long-term memory as a system distinct from chat history. Local-first
-storage. Explicit write / retrieve paths.
+**M5 — Long-Term Memory (historical, pre-R0071):** User-owned long-term
+memory as a system distinct from chat history. Local-first storage.
+Explicit write / retrieve paths. → now **M3.2 Memory Foundation**.
 
 ---
 

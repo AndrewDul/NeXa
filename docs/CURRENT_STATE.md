@@ -3,83 +3,33 @@
 Short operational truth. Keep this file current after every meaningful task.
 Runtime / test evidence outranks anything else in this repo.
 
-## Current checkpoint — R0071, 2026-09-16
+## Current checkpoint — R0072, 2026-09-16
 
-**Cloud realtime conversation baseline = ACCEPTED / FROZEN.** Real-hardware
-acceptance PASSED (2026-09-16, same day): normal conversation, PL/EN +
-language switching, no self-conversation, natural interruption, correct
-recovery after interruption, `CloudContextSnapshot` `CLOUD_SAFE`
-context-fact integration — all confirmed by the operator, comparable to
-golden M2.6A. `KNOWN NON-BLOCKING ISSUE: occasional playback/stream
-continuity stutter during longer assistant speech` — recorded as backlog,
-not investigated. **Project priority moves to M3 — NeXa Core.** Do not
-resume voice/AEC/VAD/confirm-hold/scheduled-reference/PipeWire work without
-an explicit new product requirement.
+**M3.1 Identity Foundation = PASS / COMPLETE.** `NeXaIdentity` (small,
+immutable root: `identity_id`/`name`/`product_name`/`purpose`/`principles`/
+`identity_schema_version`, nothing else — ADR-0005) + fail-loud loader +
+pure renderer, composed into `bootstrap.build_default_session()` ahead of
+the existing persona (additive; persona unchanged, still the conversation
+style layer). 13 new tests PASS; full suite 1186 passed / 7 skipped / 1
+known pre-existing unrelated failure (paused R0068-R0070
+`scheduled_aec_reference` field, not touched this checkpoint). See
+`docs/decisions/ADR-0005_nexa_core_identity_boundary.md`,
+`docs/reports/R0072_m3_1_identity_foundation_20260916.md`.
 
-**STRATEGIC PIVOT that led here.** M2.6B dual-pipeline production media
-path (the whole R0038–R0070 acoustic/scheduling/self-echo investigation
-line) is PAUSED — not solved, not deleted. Latest report:
-`docs/reports/R0071_golden_voice_recovery_and_boundary_20260916.md`
-(supersedes R0070/R0067... as the "current objective" driver below; their
-own evidence/code is preserved unchanged and remains valid history).
+**Project priority: M3.2 Memory Foundation — DESIGN NEXT.** Design document
+`docs/reports/R0073_m3_2_memory_foundation_design_20260916.md`;
+implementation not started, gated on review.
 
-**What happened, in order, today:** (1) the ORIGINAL, OPERATOR-CONFIRMED
-R0031/M2.6A probe (commit `7dd6b87`) was re-run, unmodified, in an isolated
-worktree, on TODAY's real hardware (current reSpeaker mic, current separate
-USB speaker, real Gemini, Sulafat) — **clean, 10/10, zero self-interruption
-across a 14s silent window** — reconfirms the golden baseline is not a
-historical fluke. (2) A source-level differential audit against M2.6B's
-dual-pipeline runtime found and fixed a real ownership gap (a raw local VAD
-candidate could reach the cloud provider before `BargeInController` decided
-confirm/reject) — **kept, this is a genuine correctness fix**, 4 new tests.
-(3) Real-hardware acceptance of the FIXED M2.6B runtime: **FAIL** — sustained
-self-echo/self-conversation (self-triggered VAD survives the 300ms
-confirm-hold *legitimately*, so the ownership fix cannot stop it). (4) A
-controlled A/B (R0053's `CoherentReferenceGain` on vs. off) **also FAILED
-both ways** — reverted to original wiring, unchanged. (5) Root cause of
-M2.6B's self-echo remains **unproven** (leading candidates: hardware AEC
-residual correlation, the reSpeaker's own un-corrected firmware
-`AEC_FAR_EXTGAIN=-20dB` per R0056, M2.6B's dual-pipeline timing overhead) —
-**investigation explicitly stopped here, by product decision, not by
-running out of ideas.**
-
-**Product decision (ADR-0004 Amendment 2):** stop building a second,
-NeXa-owned realtime-interruption architecture to compete with Gemini
-Live's own. Extract golden M2.6A's *behavior* (one Pipecat pipeline,
-Gemini's own native VAD/turn/interruption handling) into a new, simplified
-production adapter — `nexa.realtime.gemini.simple_conversation.
-CloudRealtimeConversationAdapter` + `apps/nexa_cloud_voice_simple.py` —
-wired to the SAME `ConversationSession`/`ConversationRouter`/
-`CloudContextSnapshot` boundary ADR-0004 already defined. NeXa Core
-(identity/personality/memory/user-model/goals/capabilities/permissions/
-device-state/canonical history) vs. cloud-provider (ephemeral realtime
-session only, replaceable) ownership is now stated explicitly. New
-`nexa.realtime.privacy.CloudEligibility` (`LOCAL_ONLY`/`CLOUD_SAFE`/
-`CLOUD_WITH_USER_APPROVAL`) formalizes what may cross to a provider;
-`CloudContextSnapshot` gained an optional, already-filtered
-`context_facts` field.
-
-**Verified:** 25 new tests (privacy filter, snapshot context-facts,
-adapter dry-construction + real-Pipecat frame-tap-to-router translation) +
-148 unaffected regression tests, all green; `ruff`/`py_compile` clean.
-Dry-constructed the new adapter (Sulafat default, seeded history,
-`CLOUD_SAFE`-only context filtering all confirmed), then **real-hardware
-accepted** (see the ACCEPTED/FROZEN summary above; session log
-`var/r0071_final_acceptance_session.log`, ~9 min, ~40+ natural
-interruptions, multi-topic PL/EN, no self-conversation pattern anywhere).
-
-**M2.6B dual-pipeline code (`nexa.realtime.gemini.runtime`,
-`apps/nexa_cloud_voice_app.py`, `BargeInController` cloud wiring, the
-candidate/reject ownership fix, all R0068–R0070 scheduled-reference work)
-is PRESERVED, UNCHANGED, and NOT the production default going forward** —
-available to resume only if a future real product requirement needs it.
-No commits, no push. Historical entries below (R0070 and earlier) remain
-accurate AS HISTORY of that now-paused investigation line; they do not
-describe the current production path.
+**Cloud realtime conversation baseline = ACCEPTED / FROZEN** (R0071,
+unchanged this checkpoint, not the active task). Known non-blocking issue
+unchanged: occasional playback/stream continuity stutter during longer
+assistant speech, still backlog, not investigated. M2.6B dual-pipeline path
+remains PAUSED, unchanged. See
+`docs/reports/R0071_golden_voice_recovery_and_boundary_20260916.md`.
 
 ---
 
-- **Last verified:** 2026-09-14
+- **Last verified:** 2026-09-16 (R0072 — M3.1 Identity Foundation)
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)

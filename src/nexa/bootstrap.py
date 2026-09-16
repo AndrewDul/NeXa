@@ -17,6 +17,11 @@ provider, one model (`gemma4:e4b`), one session authority:
   never uses a second session / provider / persona. If Ollama is
   unavailable it raises `ModelUnavailableError` — visible, no silent
   alternate model.
+
+M3.1 adds NeXa's Identity root (ADR-0005) to `system_prompt`, composed
+ahead of the existing persona — additive, not a replacement. Identity
+states what NeXa is (stable, immutable); persona stays the conversation
+style layer (how NeXa speaks) — see `nexa.core.identity` / ADR-0005 D2.
 """
 
 from __future__ import annotations
@@ -27,10 +32,12 @@ from dataclasses import dataclass, replace
 from .config import load_persona, local_provider_settings_from_env
 from .conversation.response_mode import ResponseMode
 from .conversation.session import ConversationSession
+from .core.identity import load_identity, render_identity_instruction
 from .providers.ollama import LocalModelProvider
 
 
 def build_default_session() -> ConversationSession:
+    identity = load_identity()
     persona = load_persona()
     settings = local_provider_settings_from_env()
     provider = LocalModelProvider(
@@ -39,9 +46,10 @@ def build_default_session() -> ConversationSession:
         keep_alive=settings.keep_alive,
         num_thread=settings.num_thread,
     )
+    system_prompt = f"{render_identity_instruction(identity)}\n\n{persona.system}"
     return ConversationSession(
         provider=provider,
-        system_prompt=persona.system,
+        system_prompt=system_prompt,
         options=persona.options,
     )
 
