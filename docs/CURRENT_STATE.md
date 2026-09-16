@@ -3,33 +3,37 @@
 Short operational truth. Keep this file current after every meaningful task.
 Runtime / test evidence outranks anything else in this repo.
 
-## Current checkpoint — R0072, 2026-09-16
+## Current checkpoint — R0074, 2026-09-16
 
-**M3.1 Identity Foundation = PASS / COMPLETE.** `NeXaIdentity` (small,
-immutable root: `identity_id`/`name`/`product_name`/`purpose`/`principles`/
-`identity_schema_version`, nothing else — ADR-0005) + fail-loud loader +
-pure renderer, composed into `bootstrap.build_default_session()` ahead of
-the existing persona (additive; persona unchanged, still the conversation
-style layer). 13 new tests PASS; full suite 1186 passed / 7 skipped / 1
+**M3.2 Memory Foundation = PASS / COMPLETE.** The NeXa Memory Platform:
+one canonical local `MemoryService` authority (`nexa.core.memory`) for
+every current/future NeXa subsystem (LiFeOS, NeXa Teacher, Projects,
+Goals, Routines, Health, Finance, device/home/robot state) — domain
+systems own semantics within their own `namespace`; Memory owns
+persistence, provenance, privacy, lifecycle, retrieval. SQLite-backed
+(`MemoryRecord`/`MemoryEvidence`/`MemoryRelation`, XDG application-data
+location, component-aware schema versioning), no vector DB, no automatic
+conversation-to-memory extraction. Prerequisite: `CloudEligibility`
+relocated from `nexa.realtime.privacy` to `nexa.core.privacy` (Core no
+longer depends on the realtime layer; old import path re-exports,
+unbroken). 78 new tests PASS; full suite 1264 passed / 7 skipped / 1
 known pre-existing unrelated failure (paused R0068-R0070
-`scheduled_aec_reference` field, not touched this checkpoint). See
-`docs/decisions/ADR-0005_nexa_core_identity_boundary.md`,
-`docs/reports/R0072_m3_1_identity_foundation_20260916.md`.
+`scheduled_aec_reference` field, still untouched). See
+`docs/reports/R0073_m3_2_memory_foundation_design_20260916.md` (design,
+3 revisions), `docs/reports/R0074_m3_2_memory_foundation_implementation_20260916.md`.
 
-**Project priority: M3.2 Memory Foundation — DESIGN NEXT.** Design document
-`docs/reports/R0073_m3_2_memory_foundation_design_20260916.md`;
-implementation not started, gated on review.
+**Project priority: M3.3 Context Engine — proposed next, not started.**
+Decides which memories matter for a given turn and produces the
+provider/local context projection; gated on review.
 
 **Cloud realtime conversation baseline = ACCEPTED / FROZEN** (R0071,
-unchanged this checkpoint, not the active task). Known non-blocking issue
-unchanged: occasional playback/stream continuity stutter during longer
-assistant speech, still backlog, not investigated. M2.6B dual-pipeline path
+unchanged this checkpoint, not the active task). M2.6B dual-pipeline path
 remains PAUSED, unchanged. See
 `docs/reports/R0071_golden_voice_recovery_and_boundary_20260916.md`.
 
 ---
 
-- **Last verified:** 2026-09-16 (R0072 — M3.1 Identity Foundation)
+- **Last verified:** 2026-09-16 (R0074 — M3.2 Memory Foundation)
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)

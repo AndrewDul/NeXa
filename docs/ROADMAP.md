@@ -1822,22 +1822,41 @@ from every mutable Core subsystem below. See ADR-0005
 
 ### M3.2 — Memory Foundation
 
-Local persistent storage foundation + canonical typed memory contracts —
-supersedes the earlier "M5 — Long-Term Memory" framing below. One canonical
-local memory authority; explicitly distinct from `ConversationSession.history`
-(the chat transcript, unchanged — never becomes the memory database) and
-from any cloud provider's own ephemeral session state. Design document:
-`docs/reports/R0073_m3_2_memory_foundation_design_20260916.md`
-(design-first; implementation gated on review, not started with this
-design).
+**STATUS: COMPLETE** (R0074, 2026-09-16). The NeXa Memory Platform —
+supersedes the earlier "M5 — Long-Term Memory" framing below. One
+canonical local `MemoryService` authority (`nexa.core.memory`), built for
+every current/future NeXa subsystem (LiFeOS, NeXa Teacher, Projects,
+Goals, Routines, Health, Finance, device/home/robot state), not just
+assistant chat memory: extensible `namespace`/`record_type` (no central
+enum edit per new domain), a small stable `category`
+(FACT/STATE/PREFERENCE/EPISODE/EVENT, defined by information shape, never
+by provenance), generic `scope_type`/`scope_id` anchor, structured
+`payload`/`payload_version`, temporal validity (`valid_from`/`valid_until`)
+kept separate from storage bookkeeping, a `memory_evidence` table so
+multiple independent sources for the same fact are preserved (never
+silently discarded on dedup), a closed-graph `memory_relations`, SQLite
+persistence at an XDG application-data location (never the repo's `var/`),
+component-aware schema versioning, and a WAL-safe backup path via the
+stdlib `sqlite3.Connection.backup()`. Explicitly distinct from
+`ConversationSession.history` (the chat transcript, unchanged — never
+becomes the memory database) and from any cloud provider's own ephemeral
+session state — `MemoryService` is provider-neutral (no
+`CloudContextSnapshot`/Gemini knowledge; `cloud_eligibility` is a generic
+query filter). Prerequisite correction: `CloudEligibility` relocated from
+`nexa.realtime.privacy` to `nexa.core.privacy` — NeXa Core no longer
+depends on the realtime/provider layer. Design:
+`docs/reports/R0073_m3_2_memory_foundation_design_20260916.md` (3
+revisions). Implementation: `docs/reports/R0074_m3_2_memory_foundation_implementation_20260916.md`.
 
 ### M3.3 — Context Engine
 
-Decides what NeXa needs to know *now* and produces provider/local context
-projections — supersedes the earlier "M3 — Robust Context" framing below
-(turn-to-turn/session context, coherent/bounded/observable, clear
-separation between transient context, chat history, and long-term memory).
-Reads from Memory (M3.2); never itself becomes a second memory store.
+**STATUS: proposed next, not started, gated on review.** Decides what
+NeXa needs to know *now* and produces provider/local context projections
+— supersedes the earlier "M3 — Robust Context" framing below (turn-to-turn/
+session context, coherent/bounded/observable, clear separation between
+transient context, chat history, and long-term memory). Reads from Memory
+(M3.2) via its bounded/paginated retrieval methods, including the generic
+`cloud_eligibility` filter; never itself becomes a second memory store.
 
 ### M3.4 — Personality + Relationship
 

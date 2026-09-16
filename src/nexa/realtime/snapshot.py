@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 from ..conversation.session import ConversationSession
 from ..conversation.turn import ConversationTurn, Role
-from .privacy import CloudEligibility, filter_cloud_safe
+from ..core.privacy import CloudEligibility, filter_cloud_safe
 
 #: ADR-0004 Decision E defaults — "~12 turns" + an explicit character budget
 #: in the low thousands.
@@ -137,9 +137,9 @@ def build_cloud_context_snapshot(
     ``context_facts`` (ADR-0004 Amendment 2) — optional short strings a
     future NeXa Core component (memory, project/task state, device
     awareness) wants this session to know about, each explicitly tagged
-    with a :class:`~nexa.realtime.privacy.CloudEligibility`. Only
+    with a :class:`~nexa.core.privacy.CloudEligibility`. Only
     ``CLOUD_SAFE``-tagged facts are ever included (enforced here via
-    :func:`~nexa.realtime.privacy.filter_cloud_safe`, not by caller
+    :func:`~nexa.core.privacy.filter_cloud_safe`, not by caller
     discipline) — never the raw memory store, never a whole file, never
     anything tagged ``LOCAL_ONLY``/``CLOUD_WITH_USER_APPROVAL``.
     """
