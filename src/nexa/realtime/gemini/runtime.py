@@ -388,7 +388,7 @@ from ...voice.aec_gain import CoherentReferenceGain
 from ...voice.bargein import BargeInController, InterruptContext
 from ...voice.config import LocalAudioConfig
 from ...voice.device import find_device_index
-from ...voice_tts.aec_reference import AecReferenceFeeder
+from ...voice_tts.aec_reference import AEC_REFERENCE_PCM, AecReferenceFeeder
 from ..policy import ConversationPolicy
 from ..provider import (
     AssistantAudioEvent,
@@ -506,6 +506,25 @@ class _ProviderHandle:
         #: even if the seal happens before the runtime starts waiting).
         self.sealed_utterances: list[bytes] = []
         self.sealed_utterance_ready = asyncio.Event()
+        #: Self-interruption fix (post-R0071 differential audit) — True
+        #: from the instant ``BargeInController`` classifies a local VAD
+        #: start as an interruption CANDIDATE (``response_in_flight`` was
+        #: True) until it is either CONFIRMED (cleared by ``_on_confirmed``,
+        #: which also sets ``quarantined``) or REJECTED (cleared by
+        #: ``_VadToProviderBridge`` itself, in its own
+        #: ``VADUserStoppedSpeakingFrame`` handler, the instant it observes
+        #: this flag still set with ``quarantined`` still False — see that
+        #: method's own comment for why no dedicated "rejected" signal from
+        #: the controller is needed for correctness). While True, the
+        #: bridge MUST NOT call ``user_turn_start``/``send_user_audio`` for
+        #: this utterance — only ``UtteranceBuffer`` accumulates it — so a
+        #: candidate BargeInController later rejects can never have already
+        #: reached the provider as a real user turn. This is the exact
+        #: invariant the R0071 differential audit found broken: raw VAD
+        #: candidates were being forwarded to Gemini unconditionally,
+        #: before ``BargeInController`` — the single interruption
+        #: authority — had decided anything.
+        self.candidate_pending = False
 
 
 class _ResponseLifecycle:
@@ -773,7 +792,22 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
                 # for it). See the module docstring's M2.6B.4H section.
                 if not self._router.has_turn_awaiting_assistant():
                     self._router.begin_cloud_turn()
-                if not self._handle.quarantined:
+                if self._handle.candidate_pending:
+                    # Self-interruption fix -- BargeInController (which
+                    # runs BEFORE this bridge in the pipeline and has
+                    # therefore already processed this SAME frame) has
+                    # classified this VAD start as an interruption
+                    # CANDIDATE, not yet confirmed or rejected (its own
+                    # ``on_candidate`` hook already set this flag,
+                    # synchronously, before this frame was forwarded
+                    # downstream). Buffer only -- ``mark_speech_started()``
+                    # above already did that -- never tell the provider
+                    # anything happened until ``BargeInController`` itself
+                    # decides (see ``_on_confirmed`` and the
+                    # ``VADUserStoppedSpeakingFrame`` branch below for the
+                    # confirmed/rejected outcomes).
+                    pass
+                elif not self._handle.quarantined:
                     await self._handle.current.user_turn_start()
                     # M2.6B.4J (R0049) -- inject the retained prefix
                     # exactly ONCE, before any further live frame, in one
@@ -786,7 +820,11 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
                 # ``is_capturing`` state -- never a separate NeXa-owned
                 # flag that could drift from it.
                 self._pcm.append_audio(frame.audio)
-                if self._pcm.is_capturing and not self._handle.quarantined:
+                if (
+                    self._pcm.is_capturing
+                    and not self._handle.quarantined
+                    and not self._handle.candidate_pending
+                ):
                     await self._handle.current.send_user_audio(frame.audio)
             elif isinstance(frame, P["VADUserStoppedSpeakingFrame"]):
                 self._nexa_metrics.local_vad_eot()
@@ -796,19 +834,35 @@ def _make_vad_bridge_class(P: dict[str, Any]) -> type:
                 # turn's audio forward).
                 complete_utterance = self._pcm.mark_speech_stopped()
                 if self._handle.quarantined:
-                    # M2.6B.4G (R0045) -- this utterance was never sent
-                    # live past the point quarantine began (it may have
-                    # begun BEFORE quarantine started -- the prefix
-                    # already reached the OLD, doomed provider live and
-                    # is harmless there, since its output is never read
-                    # again). Hand the COMPLETE sealed copy (preroll
-                    # included) to the replacement flow instead of
-                    # closing a turn on `current` (which, while
-                    # quarantined, may still be the doomed OLD provider,
-                    # or a not-yet-ready NEW one that must receive this
-                    # as ONE coherent replay, never a live partial send).
+                    # M2.6B.4G (R0045) -- CONFIRMED. Since the
+                    # self-interruption fix, nothing for this utterance
+                    # was ever sent live at all (candidate_pending kept
+                    # it buffered-only from VAD start; ``_on_confirmed``
+                    # then set ``quarantined`` for the remainder). Hand
+                    # the COMPLETE sealed copy (preroll included) to the
+                    # replacement flow instead of closing a turn on
+                    # `current` (which, while quarantined, may still be
+                    # the doomed OLD provider, or a not-yet-ready NEW one
+                    # that must receive this as ONE coherent replay,
+                    # never a live partial send).
                     self._handle.sealed_utterances.append(complete_utterance)
                     self._handle.sealed_utterance_ready.set()
+                elif self._handle.candidate_pending:
+                    # Self-interruption fix -- REJECTED. BargeInController
+                    # never confirmed this candidate (VAD stopped before
+                    # ``confirm_hold_secs`` elapsed -- its own
+                    # ``on_candidate_rejected`` hook already fired,
+                    # synchronously, before this frame was forwarded
+                    # downstream, for observability only). Nothing was
+                    # ever sent live to the provider for it (see the
+                    # VADUserStartedSpeakingFrame/InputAudioRawFrame
+                    # branches above), so there is nothing to retract and
+                    # no ``user_turn_end()`` to send either -- the
+                    # provider never learns this episode existed. Discard
+                    # the buffered PCM silently; the in-flight assistant
+                    # response is untouched.
+                    self._handle.candidate_pending = False
+                    self._nexa_metrics.candidate_rejected_discarded()
                 else:
                     await self._handle.current.user_turn_end()
             elif isinstance(frame, P["BotStartedSpeakingFrame"]):
@@ -856,6 +910,18 @@ class RuntimeMetrics:
         if not self._first_audio_played_marked:
             self._first_audio_played_marked = True
             logger.info("nexa.realtime.metrics: first assistant audio played")
+
+    def candidate_pending_opened(self) -> None:
+        # Self-interruption fix -- observability only: BargeInController
+        # classified a local VAD start as an interruption candidate; the
+        # bridge is now buffering it, not forwarding it to the provider,
+        # pending confirm/reject.
+        logger.info("nexa.realtime.metrics: CANDIDATE_PENDING (buffered, not sent to provider)")
+
+    def candidate_rejected_discarded(self) -> None:
+        # Self-interruption fix -- the buffered candidate PCM was
+        # discarded; the provider never learned this episode existed.
+        logger.info("nexa.realtime.metrics: CANDIDATE_REJECTED_DISCARDED (never reached provider)")
 
     def local_interruption_confirmed(
         self,
@@ -1472,9 +1538,40 @@ def build_gemini_voice_runtime(
     # observable instead of assumed.
     _confirm_counts = {"local_bargein_confirmed": 0, "output_interruption_broadcast": 0}
 
+    def _on_candidate(response_id: int | None) -> None:  # noqa: ARG001 - hook signature
+        # Self-interruption fix -- BargeInController just classified a
+        # local VAD start as an interruption CANDIDATE (response_in_flight
+        # was True). Runs synchronously inside BargeInController's own
+        # VADUserStartedSpeakingFrame handling, i.e. BEFORE that same
+        # frame is forwarded downstream to `bridge` (bargein precedes
+        # bridge in the hardware pipeline) -- so `bridge` is guaranteed to
+        # see this flag already set when it processes the same frame.
+        provider_handle.candidate_pending = True
+        metrics.candidate_pending_opened()
+
+    def _on_candidate_rejected() -> None:
+        # Self-interruption fix -- observability only. BargeInController
+        # rejected the candidate (VAD stopped before confirm_hold_secs).
+        # `bridge`'s own VADUserStoppedSpeakingFrame handler is what
+        # actually clears `candidate_pending` and discards the buffered
+        # PCM -- it processes the SAME stop frame immediately after this
+        # hook returns (bargein precedes bridge), so it always sees
+        # `candidate_pending` still True and `quarantined` still False,
+        # which unambiguously means "rejected" (a confirm, if it had
+        # happened first, would already have set `quarantined`). No
+        # cross-object state mutation is needed here for correctness.
+        logger.info("nexa.realtime.metrics: BARGEIN_CANDIDATE_REJECTED (observability)")
+
     def _on_confirmed(ctx: InterruptContext) -> None:
         t_confirm = time.monotonic()
         metrics.bargein_confirmed_t(monotonic_s=t_confirm)
+        # Self-interruption fix -- this candidate is now resolved (
+        # confirmed, not rejected). `quarantined` (set below) is what
+        # `bridge` checks from this point on; clearing `candidate_pending`
+        # here is state hygiene, not load-bearing (the bridge's own
+        # branch ordering already checks `quarantined` before
+        # `candidate_pending` everywhere).
+        provider_handle.candidate_pending = False
         _confirm_counts["local_bargein_confirmed"] += 1
         metrics.local_interruption_confirmed(
             confirm_count=_confirm_counts["local_bargein_confirmed"],
@@ -1602,7 +1699,12 @@ def build_gemini_voice_runtime(
         # replacement itself completes.
         bargein.notify_interruption_complete()
 
-    bargein = BargeInController(aec_health=aec_health, on_confirmed=_on_confirmed)
+    bargein = BargeInController(
+        aec_health=aec_health,
+        on_confirmed=_on_confirmed,
+        on_candidate=_on_candidate,
+        on_candidate_rejected=_on_candidate_rejected,
+    )
 
     if dry:
         return GeminiVoiceRuntime(
@@ -1626,18 +1728,38 @@ def build_gemini_voice_runtime(
     in_idx = find_device_index(pa, cfg.input_device_name, require_input=True)
     out_idx = find_device_index(pa, cfg.output_device_name, require_output=True)
 
-    transport = P["LocalAudioTransport"](
-        P["LocalAudioTransportParams"](
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            audio_in_sample_rate=INPUT_SAMPLE_RATE_HZ,
-            audio_out_sample_rate=OUTPUT_SAMPLE_RATE_HZ,
-            audio_in_channels=1,
-            audio_out_channels=1,
-            input_device_index=in_idx,
-            output_device_index=out_idx,
-        )
+    transport_params = P["LocalAudioTransportParams"](
+        audio_in_enabled=True,
+        audio_out_enabled=True,
+        audio_in_sample_rate=INPUT_SAMPLE_RATE_HZ,
+        audio_out_sample_rate=OUTPUT_SAMPLE_RATE_HZ,
+        audio_in_channels=1,
+        audio_out_channels=1,
+        input_device_index=in_idx,
+        output_device_index=out_idx,
     )
+    acoustic_frontend = None
+    reference_gain = CoherentReferenceGain(card=cfg.output_alsa_mixer_card)
+    if cfg.scheduled_aec_reference:
+        from ...voice.acoustic.local_transport import ScheduledReferenceTransport
+        from ...voice.acoustic.scheduled_reference import (
+            AlsaReferenceSink,
+            ScheduledNativeFrontend,
+        )
+
+        acoustic_frontend = ScheduledNativeFrontend(
+            aec_health=aec_health,
+            sample_rate=OUTPUT_SAMPLE_RATE_HZ,
+            channels=1,
+            sink_factory=lambda: AlsaReferenceSink(
+                device=AEC_REFERENCE_PCM, sample_rate=OUTPUT_SAMPLE_RATE_HZ, channels=1,
+            ),
+            gain_source=reference_gain.current_gain,
+            gain_valid=lambda: reference_gain.last_read_succeeded,
+        )
+        transport = ScheduledReferenceTransport(transport_params, frontend=acoustic_frontend)
+    else:
+        transport = P["LocalAudioTransport"](transport_params)
     vad_analyzer = P["SileroVADAnalyzer"](
         sample_rate=INPUT_SAMPLE_RATE_HZ, params=P["VADParams"](stop_secs=0.5)
     )
@@ -1668,24 +1790,19 @@ def build_gemini_voice_runtime(
     # barge-ins at LOW, 1/5 at NORMAL, 5/5 at MAX). Reads the audible
     # device's own real mixer gain (bounded-cost, cached) and scales the
     # reference PCM to match -- never touches VAD/Silero/BargeInController.
-    reference_gain = CoherentReferenceGain(card=cfg.output_alsa_mixer_card)
-    aec_feeder = AecReferenceFeeder(
-        aec_health=aec_health,
-        sample_rate=OUTPUT_SAMPLE_RATE_HZ,
-        channels=1,
-        gain_source=reference_gain.current_gain,
-    )
+    stages = [transport.input()]
+    if acoustic_frontend is not None:
+        from ...voice.acoustic.local_transport import AcousticCaptureProcessor
 
-    pipeline = P["Pipeline"](
-        [
-            transport.input(),
-            vad_processor,
-            bargein,
-            bridge,
-            aec_feeder,
-            transport.output(),
-        ]
-    )
+        stages.append(AcousticCaptureProcessor(acoustic_frontend))
+    stages.extend([vad_processor, bargein, bridge])
+    if acoustic_frontend is None:
+        stages.append(AecReferenceFeeder(
+            aec_health=aec_health, sample_rate=OUTPUT_SAMPLE_RATE_HZ, channels=1,
+            gain_source=reference_gain.current_gain,
+        ))
+    stages.append(transport.output())
+    pipeline = P["Pipeline"](stages)
     hw_worker = P["PipelineWorker"](
         pipeline,
         params=P["PipelineParams"](

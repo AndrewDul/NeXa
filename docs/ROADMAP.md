@@ -1749,6 +1749,42 @@ unpaid-quota data is used to improve Google products.
     **`M2.6B` remains IN PROGRESS. The R0057 gain A/B experiment remains
     NOT EXECUTED** -- no approval has been given; that is the next task.
 
+**R0071 (2026-09-16) — STRATEGIC PIVOT, M2.6B dual-pipeline PAUSED (ADR-0004
+Amendment 2):** re-ran the original R0031/M2.6A probe unmodified on today's
+hardware -- clean, 10/10, reconfirms golden. Fixed a real ownership gap in
+M2.6B's dual-pipeline bridge (candidate/reject vs. provider, kept), but
+real-hardware acceptance of the fixed M2.6B runtime still FAILED (sustained
+self-echo survives the 300ms confirm-hold legitimately); a controlled
+reference-gain A/B also failed both ways. Root cause remains unproven
+(hardware AEC residual / uncorrected reSpeaker firmware `AEC_FAR_EXTGAIN`
+/ dual-pipeline timing overhead, per R0053-R0056 + this checkpoint's own
+audit) -- **investigation explicitly stopped by product decision, not
+abandoned mid-idea.** Decision: stop building a second, NeXa-owned
+realtime-interruption architecture to compete with Gemini Live's own.
+Extracted golden M2.6A's *behavior* (one Pipecat pipeline, Gemini's native
+VAD/turn/interruption handling) into a new simplified adapter
+(`nexa.realtime.gemini.simple_conversation`, `apps/nexa_cloud_voice_simple.py`),
+wired to the SAME `ConversationSession`/`ConversationRouter`/
+`CloudContextSnapshot` boundary. NeXa Core (identity/memory/personality/
+capabilities/permissions/device-state/canonical history, all local) vs.
+cloud provider (ephemeral realtime session only, replaceable) ownership
+now stated explicitly; new `CloudEligibility` (`LOCAL_ONLY`/`CLOUD_SAFE`/
+`CLOUD_WITH_USER_APPROVAL`) formalizes the privacy boundary.
+**M2.6B dual-pipeline code preserved, unchanged, paused -- not the
+production default.** 25 new tests + 148 unaffected regression tests
+green. **Real-hardware acceptance of the new simplified adapter PASSED,
+same day (2026-09-16): normal conversation, PL/EN + language switching, no
+self-conversation, natural interruption + correct recovery,
+`CLOUD_SAFE` context-fact integration -- operator-confirmed comparable to
+golden M2.6A.** `Cloud realtime conversation baseline = ACCEPTED / FROZEN`
+(known non-blocking issue: occasional playback/stream continuity stutter
+during longer assistant speech -- backlog, not investigated). See
+`docs/reports/R0071_golden_voice_recovery_and_boundary_20260916.md`.
+
+**M2 — REALTIME VOICE (LOCAL + CLOUD): COMPLETE.** Project priority moves
+to **M3 -- NeXa Core**. Voice/AEC/VAD/confirm-hold/scheduled-reference/
+PipeWire work stays paused unless a future product requirement reopens it.
+
 **Then, after local + cloud voice are both complete, in order:** memory / identity
 / personality / capabilities → full graphical UI → typed chat in that UI using the
 **same** `ConversationSession` / NeXa brain as voice. There must never be separate

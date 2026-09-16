@@ -18,6 +18,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 from fakes import FakeModelProvider  # noqa: E402
 from nexa.conversation.session import ConversationSession  # noqa: E402
 from nexa.conversation.turn import Role  # noqa: E402
+from nexa.realtime.privacy import CloudEligibility  # noqa: E402
 from nexa.realtime.snapshot import (  # noqa: E402
     CLOUD_ROLE_CARD,
     build_cloud_context_snapshot,
@@ -110,6 +111,51 @@ class TestCloudContextSnapshot(unittest.IsolatedAsyncioTestCase):
         snapshot = build_cloud_context_snapshot(session, max_turns=100)
         roles = [t.role for t in snapshot.recent_turns]
         self.assertEqual(roles, [Role.USER, Role.ASSISTANT] * 3)
+
+    async def test_context_facts_default_empty(self) -> None:
+        session = await self._session_with_turns(1)
+        snapshot = build_cloud_context_snapshot(session)
+        self.assertEqual(snapshot.context_facts, ())
+        self.assertEqual(snapshot.system_instruction, CLOUD_ROLE_CARD)
+
+    async def test_cloud_safe_context_fact_is_included(self) -> None:
+        session = await self._session_with_turns(1)
+        snapshot = build_cloud_context_snapshot(
+            session,
+            context_facts=[("current project: NeXa voice pipeline", CloudEligibility.CLOUD_SAFE)],
+        )
+        self.assertEqual(snapshot.context_facts, ("current project: NeXa voice pipeline",))
+        self.assertIn("current project: NeXa voice pipeline", snapshot.system_instruction)
+
+    async def test_local_only_context_fact_never_reaches_snapshot(self) -> None:
+        session = await self._session_with_turns(1)
+        snapshot = build_cloud_context_snapshot(
+            session,
+            context_facts=[(SECRET_PERSONA, CloudEligibility.LOCAL_ONLY)],
+        )
+        self.assertEqual(snapshot.context_facts, ())
+        self.assertNotIn(SECRET_PERSONA, snapshot.system_instruction)
+
+    async def test_cloud_with_user_approval_fact_never_auto_included(self) -> None:
+        session = await self._session_with_turns(1)
+        snapshot = build_cloud_context_snapshot(
+            session,
+            context_facts=[("needs approval first", CloudEligibility.CLOUD_WITH_USER_APPROVAL)],
+        )
+        self.assertEqual(snapshot.context_facts, ())
+        self.assertNotIn("needs approval first", snapshot.system_instruction)
+
+    async def test_mixed_eligibility_context_facts_keeps_only_cloud_safe(self) -> None:
+        session = await self._session_with_turns(1)
+        snapshot = build_cloud_context_snapshot(
+            session,
+            context_facts=[
+                ("safe fact", CloudEligibility.CLOUD_SAFE),
+                (SECRET_PERSONA, CloudEligibility.LOCAL_ONLY),
+            ],
+        )
+        self.assertEqual(snapshot.context_facts, ("safe fact",))
+        self.assertNotIn(SECRET_PERSONA, snapshot.system_instruction)
 
 
 if __name__ == "__main__":

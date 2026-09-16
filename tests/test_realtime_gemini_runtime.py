@@ -47,7 +47,7 @@ from nexa.realtime.router import ConversationRouter  # noqa: E402
 from nexa.stt.utterance_buffer import PRE_ROLL_MS  # noqa: E402
 from nexa.voice.aec import AecReferenceHealth  # noqa: E402
 from nexa.voice.bargein import BargeInController, InterruptContext  # noqa: E402
-from nexa.voice.interruption import InterruptionState  # noqa: E402
+from nexa.voice.interruption import DEFAULT_CONFIRM_HOLD_SECS, InterruptionState  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fakes import FakeModelProvider  # noqa: E402
@@ -1621,6 +1621,286 @@ class TestVadBridgePrerollParity(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.1)
         self.assertEqual(stub.calls, ["start", ("audio", b"TWO1"), "end"])
         await self._teardown(runner, run_task)
+
+
+class TestSelfInterruptionCandidateOwnership(unittest.IsolatedAsyncioTestCase):
+    """R0071 differential-audit fix — ``BargeInController`` is the single
+    interruption authority: a raw local VAD candidate must never reach the
+    provider as a real user turn before ``BargeInController`` has decided
+    confirm/reject. The audit found this invariant broken (``bridge`` sent
+    ``user_turn_start``/``send_user_audio`` unconditionally on every VAD
+    start, before ``bargein`` could reject it) and found ZERO existing test
+    combining the real ``bargein`` + ``bridge`` together in one pipeline —
+    every prior test built them separately. These tests close that gap:
+    the REAL ``BargeInController`` and the REAL ``_VadToProviderBridge``
+    run together in one Pipecat ``Pipeline``, fed the SAME VAD marker
+    frames a real ``VADProcessor`` would hand them. ``vad_processor``
+    itself (Pipecat-owned, decides WHEN to emit those marker frames from
+    raw audio) is orthogonal to this ownership invariant and is not
+    included here — these tests start from the marker frames directly,
+    avoiding a real Silero/ONNX model load this suite does not otherwise
+    pay for.
+
+    Does NOT touch ``confirm_hold_secs``'s production default (0.3s,
+    unchanged) — tests that need to observe a CONFIRMED outcome pass a
+    smaller value to ``BargeInController`` directly (a test-speed
+    accommodation, not a production change)."""
+
+    class _StubProvider:
+        def __init__(self) -> None:
+            self.calls: list = []
+
+        async def user_turn_start(self) -> None:
+            self.calls.append("start")
+
+        async def send_user_audio(self, pcm: bytes) -> None:
+            self.calls.append(("audio", pcm))
+
+        async def user_turn_end(self) -> None:
+            self.calls.append("end")
+
+    async def _build(self, *, confirm_hold_secs: float = DEFAULT_CONFIRM_HOLD_SECS):
+        P = _pipecat_hw_imports()
+        stub = self._StubProvider()
+        handle = _ProviderHandle(stub)
+        metrics = RuntimeMetrics()
+        lifecycle = _ResponseLifecycle(on_finished=lambda: None)
+        router = _fresh_router()
+        bridge_cls = _make_vad_bridge_class(P)
+        bridge = bridge_cls(
+            provider_handle=handle,
+            metrics=metrics,
+            lifecycle=lifecycle,
+            router=router,
+            preroll_ms=PRE_ROLL_MS,
+        )
+
+        aec_health = AecReferenceHealth()
+        aec_health.mark_started()  # R0028/M2.5A.1 -- interruptions need this to admit at all
+
+        confirmed_events: list[InterruptContext] = []
+
+        def _on_candidate(response_id: int | None) -> None:  # noqa: ARG001
+            # Mirrors build_gemini_voice_runtime's own _on_candidate.
+            handle.candidate_pending = True
+
+        def _on_candidate_rejected() -> None:
+            # Mirrors build_gemini_voice_runtime's own _on_candidate_rejected
+            # -- observability only; the bridge's own VADUserStoppedSpeakingFrame
+            # handler is what actually discards the buffered PCM.
+            pass
+
+        def _on_confirmed(ctx: InterruptContext) -> None:
+            # Mirrors the two lines of build_gemini_voice_runtime's own
+            # _on_confirmed that are load-bearing for THIS invariant
+            # (candidate_pending -> quarantined handoff); the full
+            # production hook additionally touches router/generation_guard/
+            # metrics, already covered by TestBargeInWiring/
+            # TestAtomicProviderReplacement — not re-tested here.
+            handle.candidate_pending = False
+            handle.quarantined = True
+            confirmed_events.append(ctx)
+
+        bargein = BargeInController(
+            aec_health=aec_health,
+            on_confirmed=_on_confirmed,
+            on_candidate=_on_candidate,
+            on_candidate_rejected=_on_candidate_rejected,
+            confirm_hold_secs=confirm_hold_secs,
+        )
+
+        pipeline = P["Pipeline"]([bargein, bridge])
+        worker = P["PipelineWorker"](
+            pipeline,
+            params=P["PipelineParams"](audio_in_sample_rate=16000, audio_out_sample_rate=24000),
+            enable_rtvi=False,
+            idle_timeout_secs=None,
+        )
+        runner = P["WorkerRunner"]()
+        await runner.add_workers(worker)
+        run_task = asyncio.create_task(runner.run())
+        # Longer than the other bridge-only fixtures in this file (0.1s) --
+        # empirically, StartFrame propagation through a REAL [bargein,
+        # bridge] chain (bargein's own StartFrame handler resets its state
+        # machine) can take longer than 0.1s+0.05s to settle in this
+        # environment; 0.3s was verified reliable (3/3) where 0.1s+0.05s
+        # was not, since these tests call `bargein.notify_response_dispatched()`
+        # directly, out-of-band from the frame flow, and must not race a
+        # still-in-flight StartFrame reset.
+        await asyncio.sleep(0.3)
+        return P, stub, handle, bargein, bridge, worker, runner, run_task, confirmed_events
+
+    async def _teardown(self, runner, run_task) -> None:
+        await runner.end(reason="test done")
+        await asyncio.wait_for(run_task, timeout=5.0)
+
+    async def test_1_rejected_candidate_never_reaches_provider(self) -> None:
+        """Assistant response active; a short VAD blip stops well before
+        confirm_hold_secs -> CANDIDATE_REJECTED. The provider must see
+        ZERO calls for it, and the in-flight response stays untouched."""
+        P, stub, handle, bargein, bridge, worker, runner, run_task, _confirmed = (
+            await self._build()  # real production confirm_hold_secs=0.3
+        )
+        try:
+            bargein.notify_response_dispatched()
+            await asyncio.sleep(0.05)  # extra margin past _build()'s own 0.3s settle
+            self.assertEqual(bargein.state_machine.state, InterruptionState.RESPONDING)
+
+            await worker.queue_frames(
+                [
+                    P["VADUserStartedSpeakingFrame"](),
+                    P["InputAudioRawFrame"](audio=b"COUGH", sample_rate=16000, num_channels=1),
+                ]
+            )
+            await asyncio.sleep(0.02)  # well under confirm_hold_secs=0.3
+            await worker.queue_frames([P["VADUserStoppedSpeakingFrame"]()])
+            await asyncio.sleep(0.05)
+
+            self.assertEqual(stub.calls, [])  # start/send_user_audio/end: 0 calls
+            self.assertEqual(handle.sealed_utterances, [])
+            self.assertFalse(handle.candidate_pending)
+            self.assertFalse(handle.quarantined)
+            # rejected, not confirmed -- the response is still just
+            # RESPONDING, never entered INTERRUPTING, was never cancelled.
+            self.assertEqual(bargein.state_machine.state, InterruptionState.RESPONDING)
+            self.assertEqual(bargein.telemetry.interrupt_confirmed, 0)
+            self.assertEqual(bargein.state_machine.rejected_candidates, 1)
+        finally:
+            # Always tear down the runner, even on assertion failure -- an
+            # orphaned PipelineWorker/WorkerRunner task left running past
+            # the test method's return can hang IsolatedAsyncioTestCase's
+            # own event-loop teardown (observed while developing this
+            # test: a failed assertion skipped teardown and the whole
+            # process hung indefinitely rather than reporting the
+            # failure).
+            await self._teardown(runner, run_task)
+
+    async def test_2_confirmed_interruption_sends_buffered_pcm_exactly_once(self) -> None:
+        """Assistant response active; sustained VAD past confirm_hold_secs
+        -> CONFIRMED. Preroll + the whole candidate window's PCM (none of
+        it ever sent live) reaches the replacement flow's own
+        ``sealed_utterances`` exactly once — the SAME, already-tested
+        R0045 mechanism, not a new send path."""
+        P, stub, handle, bargein, bridge, worker, runner, run_task, confirmed = (
+            await self._build(confirm_hold_secs=0.05)
+        )
+        try:
+            bargein.notify_response_dispatched()
+            await asyncio.sleep(0.05)  # extra margin past _build()'s own 0.3s settle
+
+            # pre-VAD-start ambience -> retained in the idle ring (preroll)
+            await worker.queue_frames(
+                [P["InputAudioRawFrame"](audio=b"PRE", sample_rate=16000, num_channels=1)]
+            )
+            await asyncio.sleep(0.02)
+
+            await worker.queue_frames(
+                [
+                    P["VADUserStartedSpeakingFrame"](),
+                    P["InputAudioRawFrame"](audio=b"MID1", sample_rate=16000, num_channels=1),
+                ]
+            )
+            await asyncio.sleep(0.01)
+            # still just a pending candidate -- nothing sent to the provider yet
+            self.assertEqual(stub.calls, [])
+
+            await _wait_until(lambda: len(confirmed) == 1, timeout=1.0)
+            self.assertEqual(bargein.state_machine.state, InterruptionState.INTERRUPTING)
+            self.assertTrue(handle.quarantined)
+            self.assertFalse(handle.candidate_pending)
+            # confirmation only quarantines -- it does not itself flush; the
+            # flush is the existing VADUserStoppedSpeakingFrame -> sealed_utterances
+            # path below (R0045, unchanged).
+            self.assertEqual(stub.calls, [])
+
+            await worker.queue_frames(
+                [P["InputAudioRawFrame"](audio=b"MID2", sample_rate=16000, num_channels=1)]
+            )
+            await worker.queue_frames([P["VADUserStoppedSpeakingFrame"]()])
+            await asyncio.sleep(0.05)
+
+            # the beginning of the interrupting utterance is not lost (preroll
+            # "PRE" is included); the complete utterance is sealed exactly
+            # once, never sent live to `stub` at all.
+            self.assertEqual(stub.calls, [])
+            self.assertEqual(handle.sealed_utterances, [b"PREMID1MID2"])
+            self.assertEqual(len(handle.sealed_utterances), 1)
+        finally:
+            await self._teardown(runner, run_task)
+
+    async def test_3_normal_turn_unaffected_no_confirm_hold(self) -> None:
+        """Assistant NOT responding -- BargeInController does nothing at
+        all (``response_in_flight`` is False); the bridge's ordinary-turn
+        behavior is byte-for-byte what it was before this fix: an
+        immediate ``user_turn_start()``+preroll+live PCM+``user_turn_end()``,
+        with no confirm-hold wait of any kind."""
+        P, stub, handle, bargein, bridge, worker, runner, run_task, _confirmed = (
+            await self._build()
+        )
+        try:
+            self.assertEqual(bargein.state_machine.state, InterruptionState.IDLE)
+
+            await worker.queue_frames(
+                [P["InputAudioRawFrame"](audio=b"ONSET", sample_rate=16000, num_channels=1)]
+            )
+            await asyncio.sleep(0.02)
+            await worker.queue_frames(
+                [
+                    P["VADUserStartedSpeakingFrame"](),
+                    P["InputAudioRawFrame"](audio=b"REST", sample_rate=16000, num_channels=1),
+                    P["VADUserStoppedSpeakingFrame"](),
+                ]
+            )
+            # no wait for confirm_hold_secs at all -- must be immediate
+            await asyncio.sleep(0.02)
+
+            self.assertEqual(
+                stub.calls,
+                ["start", ("audio", b"ONSET"), ("audio", b"REST"), "end"],
+            )
+            self.assertFalse(handle.candidate_pending)
+            self.assertFalse(handle.quarantined)
+        finally:
+            await self._teardown(runner, run_task)
+
+    async def test_4_real_bargein_and_bridge_chain_ownership_invariant(self) -> None:
+        """The main invariant this fix protects, through the REAL
+        ``[bargein, bridge]`` chain together (not simulated separately —
+        the exact coverage gap the R0071 audit found): it must be
+        impossible for ``BargeInController`` to reach ``CANDIDATE_REJECTED``
+        while the provider has already received ``user_turn_start``/
+        ``send_user_audio`` for that same episode. Runs BOTH outcomes
+        back-to-back on the SAME response to prove the invariant holds
+        regardless of which one happens."""
+        P, stub, handle, bargein, bridge, worker, runner, run_task, confirmed = (
+            await self._build(confirm_hold_secs=0.05)
+        )
+        try:
+            bargein.notify_response_dispatched()
+            await asyncio.sleep(0.05)  # extra margin past _build()'s own 0.3s settle
+
+            # -- episode A: rejected (short blip) --
+            await worker.queue_frames([P["VADUserStartedSpeakingFrame"]()])
+            await asyncio.sleep(0.01)  # well under confirm_hold_secs
+            await worker.queue_frames([P["VADUserStoppedSpeakingFrame"]()])
+            await asyncio.sleep(0.03)
+            self.assertEqual(bargein.state_machine.state, InterruptionState.RESPONDING)
+            # INVARIANT: rejected => provider was never told anything.
+            self.assertEqual(stub.calls, [])
+
+            # -- episode B: confirmed (sustained) -- same response, same bargein/bridge
+            await worker.queue_frames([P["VADUserStartedSpeakingFrame"]()])
+            await _wait_until(lambda: len(confirmed) == 1, timeout=1.0)
+            self.assertEqual(bargein.state_machine.state, InterruptionState.INTERRUPTING)
+            await worker.queue_frames([P["VADUserStoppedSpeakingFrame"]()])
+            await asyncio.sleep(0.05)
+
+            # INVARIANT holds for the confirmed episode too: never sent LIVE
+            # to `stub` (only sealed for the existing replacement flow).
+            self.assertEqual(stub.calls, [])
+            self.assertEqual(len(handle.sealed_utterances), 1)
+        finally:
+            await self._teardown(runner, run_task)
 
 
 @unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")

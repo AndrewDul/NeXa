@@ -1766,3 +1766,106 @@ barge-in authority; the optional `cloud-gemini` dependency; tools controlled
 by a future NeXa ActionRouter; Gemini session ≠ NeXa identity / memory;
 Pipecat infrastructure-only authority boundary. **M2.6A remains PASS /
 OPERATOR-CONFIRMED. M2.6B remains NEXT / NOT STARTED.**
+
+---
+
+## Amendment 2 — NeXa Core boundary, M2.6B dual-pipeline pause, simplified golden-derived baseline (2026-09-16)
+
+### Context
+
+M2.6B's production HYBRID runtime (`nexa.realtime.gemini.runtime`, M2.6B.3+)
+is a DUAL-PIPELINE architecture: the provider's own headless Pipecat
+pipeline is bridged to a separate hardware pipeline via an `asyncio.Queue`,
+with a NeXa-owned `BargeInController`/candidate-ownership state machine
+layered on top of Gemini's own native turn/interruption handling.
+
+R0071 (real-hardware acceptance, 2026-09-16) found this dual-pipeline
+runtime produces sustained self-echo/self-conversation on the current Pi
+topology, even after (a) fixing a genuine architectural ownership gap
+(a raw local VAD candidate could reach the provider before
+`BargeInController` decided confirm/reject — fixed, kept, see below) and
+(b) a controlled reference-gain A/B (`CoherentReferenceGain` on vs. off)
+that did not reproduce clean behavior either way. The SAME day, on the
+SAME physical microphone + separate USB speaker, a from-source re-run of
+the ORIGINAL, OPERATOR-CONFIRMED R0031/M2.6A probe (commit `7dd6b87`) —
+ONE Pipecat pipeline, Gemini's own native VAD-driven turn/interruption
+handling, no NeXa-owned interruption-authority layer — was clean: natural
+conversation, natural interruption, zero self-interruption during a 14s
+silent-operator window, all operator-rated 10/10. See
+`docs/reports/R0071_golden_voice_recovery_and_boundary_20260916.md`.
+
+### Decision
+
+1. **The M2.6B dual-pipeline production media path is PAUSED, not
+   deleted.** `nexa.realtime.gemini.runtime`, `BargeInController`'s use in
+   the cloud path, the R0068–R0070 scheduled-reference research, and every
+   R00xx self-echo/AEC investigation report remain in the repository as
+   evidence and as a resumable investigation, should a future real product
+   requirement need it. None of it is removed or reverted.
+2. **The accepted `CLOUD PREFERRED` production baseline is the simplified,
+   golden-M2.6A-derived path**: `nexa.realtime.gemini.simple_conversation`
+   (`CloudRealtimeConversationAdapter`) + `apps/nexa_cloud_voice_simple.py`.
+   ONE Pipecat pipeline; Gemini's own native VAD-driven turn/interruption
+   handling (no second, NeXa-owned interruption-authority state machine);
+   `AecReferenceFeeder` fed WITHOUT `gain_source` (byte-for-byte golden's
+   own reference path). This is BEHAVIOR extracted from the proven probe,
+   not the probe's own diagnostics, wired to the SAME `ConversationRouter`/
+   `ConversationSession`/`CloudContextSnapshot` boundary this ADR already
+   established — zero new conversation-state logic.
+3. **NeXa Core vs. cloud provider ownership is now stated explicitly**
+   (previously implicit in this ADR's "Responsibility boundaries" /
+   "Privacy boundary" sections, which are unchanged and still govern):
+
+   NeXa Core (local, canonical, persistent) owns identity, personality,
+   memory, user model, relationship state, goals, capabilities,
+   permissions, device state, `ConversationSession` and canonical
+   history, and learning/adaptation. A `RealtimeVoiceProvider` (Gemini
+   Live today) owns only the realtime conversational session it is
+   handed: audio ingress, conversational inference, speech-to-speech
+   generation, its own native turn/interruption handling, and streaming
+   transcripts/events back through the SAME `ConversationRouter` entry
+   point this ADR already defines. Provider state is ephemeral and is
+   never canonical NeXa memory; a provider is replaceable without
+   changing NeXa's identity. This does not change any decision already
+   made in this ADR — it is the explicit statement of what Decisions A/D/E
+   already implied.
+4. **Explicit cloud-eligibility classification** (`nexa.realtime.privacy.
+   CloudEligibility`: `LOCAL_ONLY` / `CLOUD_SAFE` / `CLOUD_WITH_USER_APPROVAL`)
+   gives the "Privacy boundary" section's existing prose rule
+   ("anything under `LOCAL_ONLY`" never leaves the device) a real type.
+   `CloudContextSnapshot` gains an optional `context_facts` field, built
+   only through `build_cloud_context_snapshot(..., context_facts=[(text,
+   eligibility), ...])`, which keeps only `CLOUD_SAFE`-tagged facts
+   (`filter_cloud_safe`) — never a raw memory query, never a whole file,
+   never anything the caller tagged `LOCAL_ONLY`/`CLOUD_WITH_USER_APPROVAL`.
+   No memory system exists yet (M5) — this is the boundary a future one
+   will use, not a memory implementation.
+5. **Not rebuilt in NeXa**: turn semantics, native speech-to-speech
+   conversation, and Gemini's own interruption handling remain
+   provider-owned, exactly as Decision C/F already say. The tool/capability
+   boundary (Decision N) is unchanged — a cloud provider still never
+   executes an action; NeXa Core's Capability + Permission authority
+   remains the sole gate, once M4 exists.
+
+### Preserved unchanged by Amendment 2
+
+Everything in "Preserved unchanged by Amendment 1"; every M2.6B dual-pipeline
+component (paused, not deleted); the candidate/reject ownership invariant
+fix (a real, tested architectural correctness fix, independent of which
+runtime is active); local voice (`nexa.voice`/`nexa.voice_tts`), untouched;
+`ConversationPolicy` (`LOCAL_ONLY`/`CLOUD_PREFERRED`/`AUTO`); `Sulafat`;
+XVF3800 AEC as the LOCAL voice's own accepted mechanism (M2.5B, unaffected —
+Amendment 2 only changes which CLOUD path is production-default).
+
+### Real-hardware acceptance (2026-09-16, same day)
+
+`CloudRealtimeConversationAdapter`/`apps/nexa_cloud_voice_simple.py` passed
+real-hardware acceptance (current reSpeaker mic, current separate USB
+speaker, real Gemini, Sulafat, one `CLOUD_SAFE` context fact). Operator-
+confirmed comparable to golden M2.6A: normal conversation, PL/EN +
+language switching, no self-conversation, natural interruption with
+correct recovery, `CloudContextSnapshot` context-fact integration all
+PASS. **`Cloud realtime conversation baseline = ACCEPTED / FROZEN`** —
+known non-blocking issue: occasional playback/stream continuity stutter
+during longer assistant speech (backlog, not investigated). See
+`docs/reports/R0071_golden_voice_recovery_and_boundary_20260916.md`.

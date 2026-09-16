@@ -20,10 +20,12 @@ talk to any provider.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 
 from ..conversation.session import ConversationSession
 from ..conversation.turn import ConversationTurn, Role
+from .privacy import CloudEligibility, filter_cloud_safe
 
 #: ADR-0004 Decision E defaults — "~12 turns" + an explicit character budget
 #: in the low thousands.
@@ -86,6 +88,14 @@ class CloudContextSnapshot:
     recent_turns: tuple[SnapshotTurn, ...]
     policy_name: str
     active_provider_name: str
+    #: ADR-0004 Amendment 2 — already-filtered (CLOUD_SAFE only) short
+    #: context facts NeXa Core chose to surface for this session (e.g.
+    #: "the operator is currently working on the NeXa voice pipeline").
+    #: Never populated with anything the caller tagged LOCAL_ONLY or
+    #: CLOUD_WITH_USER_APPROVAL -- see ``build_cloud_context_snapshot``'s
+    #: own ``context_facts`` parameter, which is the only way this field
+    #: is ever populated.
+    context_facts: tuple[str, ...] = field(default_factory=tuple)
 
 
 def _bounded_recent_turns(
@@ -115,6 +125,7 @@ def build_cloud_context_snapshot(
     active_provider_name: str = "",
     max_turns: int = DEFAULT_SNAPSHOT_TURNS,
     max_chars: int = DEFAULT_SNAPSHOT_CHAR_BUDGET,
+    context_facts: Iterable[tuple[str, CloudEligibility]] = (),
 ) -> CloudContextSnapshot:
     """Build one ``CloudContextSnapshot`` from canonical NeXa state.
 
@@ -122,10 +133,22 @@ def build_cloud_context_snapshot(
     ``session.history`` — never ``session.system_prompt`` (the real
     persona) and never anything from a future memory store, so the
     allow-list cannot be bypassed by an oversight here.
+
+    ``context_facts`` (ADR-0004 Amendment 2) — optional short strings a
+    future NeXa Core component (memory, project/task state, device
+    awareness) wants this session to know about, each explicitly tagged
+    with a :class:`~nexa.realtime.privacy.CloudEligibility`. Only
+    ``CLOUD_SAFE``-tagged facts are ever included (enforced here via
+    :func:`~nexa.realtime.privacy.filter_cloud_safe`, not by caller
+    discipline) — never the raw memory store, never a whole file, never
+    anything tagged ``LOCAL_ONLY``/``CLOUD_WITH_USER_APPROVAL``.
     """
     instruction = CLOUD_ROLE_CARD
     if language_preference:
         instruction += f" Current language preference: {language_preference}."
+    safe_facts = filter_cloud_safe(context_facts)
+    if safe_facts:
+        instruction += " Known current context: " + " ".join(safe_facts)
     return CloudContextSnapshot(
         system_instruction=instruction,
         language_preference=language_preference,
@@ -134,4 +157,5 @@ def build_cloud_context_snapshot(
         ),
         policy_name=policy_name,
         active_provider_name=active_provider_name,
+        context_facts=safe_facts,
     )
