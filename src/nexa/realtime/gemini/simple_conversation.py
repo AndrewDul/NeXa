@@ -211,6 +211,19 @@ def _make_event_tap_class(P: dict[str, Any]) -> type:
             #: only, since it is the operator's own speech, locally
             #: printed, opted into explicitly) the transcript text itself.
             self._on_diagnostic = on_diagnostic
+            #: R0081 (continued) -- local bookkeeping only, never sent
+            #: anywhere but the diagnostic sink: whether a LOCAL_VAD_START
+            #: has fired without a matching LOCAL_VAD_STOP yet. Lets the
+            #: diagnostic distinguish an InterruptionFrame arriving WHILE
+            #: local VAD is actively detecting speech (the synchronous,
+            #: local-aggregator path) from one arriving with no local VAD
+            #: activity in progress (consistent with the installed SDK's
+            #: OWN, separate broadcast_interruption() call site --
+            #: GeminiLiveLLMService itself, triggered by a DELAYED
+            #: serverContent.interrupted acknowledgement from Gemini's
+            #: server, confirmed by direct source read, see R0081's
+            #: report). Never influences routing/turn logic -- read-only.
+            self._vad_active = False
 
         def _publish(self, event: Any) -> None:
             self._router.handle_provider_event(event)
@@ -235,6 +248,7 @@ def _make_event_tap_class(P: dict[str, Any]) -> type:
         async def process_frame(self, frame: Any, direction: Any) -> None:
             await super().process_frame(frame, direction)
             if isinstance(frame, P["UserStartedSpeakingFrame"]):
+                self._vad_active = True
                 self._diag("LOCAL_VAD_START")
                 # Mirrors the (paused) dual-pipeline runtime's own R0046
                 # guard: a genuinely new local turn opens one canonical
@@ -249,6 +263,7 @@ def _make_event_tap_class(P: dict[str, Any]) -> type:
                 # R0081: not previously observed at all -- purely additive,
                 # never routed anywhere, matches golden's own behavior of
                 # not reacting to this frame.
+                self._vad_active = False
                 self._diag("LOCAL_VAD_STOP")
             elif isinstance(frame, P["TTSStartedFrame"]):
                 self._diag("BOT_AUDIO_STARTED")
@@ -267,15 +282,49 @@ def _make_event_tap_class(P: dict[str, Any]) -> type:
                 self._diag("USER_TURN_END")
                 self._publish(GenerationCompleteEvent())
             elif isinstance(frame, P["InterruptionFrame"]):
-                self._diag("INTERRUPTION_FRAME")
-                # R0081 §7: broadcast_interruption() (see the comment two
-                # lines below) has already stopped playback BEFORE this
-                # frame reaches any processor, so this marker's timestamp
-                # is a lower-bound proxy for when playback actually
-                # stopped, not the literal physical moment -- the deeper
-                # transport-level instrumentation that would give the
-                # exact moment is exactly the kind of architectural change
-                # this milestone must not make.
+                # R0081 (corrected -- see the report's "not every
+                # InterruptionFrame is directly paired with a fresh local
+                # VAD onset" finding): TWO INDEPENDENT call sites can
+                # invoke Pipecat's broadcast_interruption() in this
+                # pipeline, confirmed by direct installed-source read
+                # (pipecat 1.8.1) -- (1) LLMContextAggregatorPair's own
+                # VAD-driven aggregator (llm_response_universal.py:1292),
+                # firing synchronously with a fresh local
+                # UserStartedSpeakingFrame; (2) GeminiLiveLLMService
+                # ITSELF (gemini_live/llm.py:1333), firing when Gemini's
+                # own server sends `serverContent.interrupted=True` -- a
+                # DELAYED acknowledgement of the client-sent activity_start
+                # NeXa already issued when local VAD fired, arriving over
+                # the network on Gemini's own schedule, not paired with any
+                # new local VAD event (its own code comment: "it does *not*
+                # emit UserStarted/StoppedSpeakingFrames"). Each call site's
+                # own broadcast_interruption() ALSO fans out an upstream +
+                # downstream instance (R0043's original finding, still
+                # true) -- so up to 4 total InterruptionFrame sightings can
+                # legitimately correspond to ONE physical interruption.
+                # `frame.id`/`frame.broadcast_sibling_id` (plain integers,
+                # Pipecat's own frame-debugging fields) let the operator's
+                # log distinguish "these two are fan-out siblings from the
+                # SAME call" from "these are from two independent calls" --
+                # `vad_active` (this tap's own bookkeeping, above) further
+                # distinguishes "arrived while local VAD is actively
+                # detecting speech" (source 1) from "arrived with no local
+                # VAD activity in progress" (consistent with source 2).
+                frame_id = getattr(frame, "id", None)
+                sibling_id = getattr(frame, "broadcast_sibling_id", None)
+                self._diag(
+                    f"INTERRUPTION_FRAME_{direction.name} id={frame_id} "
+                    f"sibling={sibling_id} vad_active={self._vad_active} "
+                    f"awaiting_assistant={self._router.has_turn_awaiting_assistant()}"
+                )
+                # R0081 §7: broadcast_interruption() (see below) has
+                # already stopped playback BEFORE this frame reaches any
+                # processor, so this marker's timestamp is a lower-bound
+                # proxy for when playback actually stopped, not the
+                # literal physical moment -- the deeper transport-level
+                # instrumentation that would give the exact moment is
+                # exactly the kind of architectural change this milestone
+                # must not make.
                 self._diag("PLAYBACK_STOPPED")
                 # M2.6B.3B's own conservative rule, reused verbatim: no
                 # deterministic assistant-text/audio alignment exists in
@@ -288,16 +337,15 @@ def _make_event_tap_class(P: dict[str, Any]) -> type:
                 # only updates canonical history, never speaker state.
                 #
                 # `InterruptionFrame` can legitimately arrive more than
-                # once for ONE interruption (R0043's own finding, still
-                # true here: broadcast_interruption() fans out an
-                # upstream + downstream instance). Calling this sequence
-                # twice is safe, not just tolerated: `commit_cloud_turn()`
-                # on an already-empty just-opened turn is a documented
-                # no-op (CloudTurnAccumulator guarantees at most one
-                # commit per turn), and `start_turn()` on a non-terminal
-                # empty turn just abandons it and allocates the next
-                # generation -- no corruption, no new state machine
-                # needed to de-duplicate it.
+                # once (or more than twice -- see above) for ONE
+                # interruption. Calling this sequence twice is safe, not
+                # just tolerated: `commit_cloud_turn()` on an already-empty
+                # just-opened turn is a documented no-op
+                # (CloudTurnAccumulator guarantees at most one commit per
+                # turn), and `start_turn()` on a non-terminal empty turn
+                # just abandons it and allocates the next generation -- no
+                # corruption, no new state machine needed to de-duplicate
+                # it.
                 self._router.set_spoken_prefix("")
                 self._publish(ProviderInterruptionEvent(source="native_pipecat"))
                 self._diag("USER_TURN_END")

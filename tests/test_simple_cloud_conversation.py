@@ -343,7 +343,10 @@ class TestDiagnosticTimeline(unittest.IsolatedAsyncioTestCase):
         finally:
             await self._teardown(runner, run_task)
 
-        self.assertIn("INTERRUPTION_FRAME", events)
+        # R0081 (corrected): direction-aware label, not a bare
+        # "INTERRUPTION_FRAME" string -- see TestInterruptionDirectionTelemetry
+        # below for the dedicated, detailed coverage of its exact content.
+        self.assertTrue(any(e.startswith("INTERRUPTION_FRAME_") for e in events))
         self.assertIn("PLAYBACK_STOPPED", events)
         # interruption closes the current turn AND opens a fresh one
         self.assertEqual(events.count("USER_TURN_END"), 1)
@@ -392,6 +395,173 @@ class TestDiagnosticTimeline(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(session.history[0].content, "still works")
         finally:
             await self._teardown(runner, run_task)
+
+
+@unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+class TestInterruptionDirectionTelemetry(unittest.IsolatedAsyncioTestCase):
+    """R0081 (continued) -- direction/sibling/vad_active-aware
+    InterruptionFrame diagnostics, added after live evidence proved a
+    bare 'not every InterruptionFrame is paired with a fresh local VAD
+    onset' claim was too strong. Real Pipeline/PipelineWorker/
+    ConversationRouter, same discipline as every other tap test."""
+
+    async def _build(self, *, on_diagnostic):
+        P = _pipecat_imports()
+        router, session = _fresh_router()
+        tap_cls = _make_event_tap_class(P)
+        tap = tap_cls(router=router, on_diagnostic=on_diagnostic)
+        pipeline = P["Pipeline"]([tap])
+        worker = P["PipelineWorker"](
+            pipeline,
+            params=P["PipelineParams"](audio_in_sample_rate=16000, audio_out_sample_rate=24000),
+            enable_rtvi=False,
+            idle_timeout_secs=None,
+        )
+        runner = P["WorkerRunner"]()
+        await runner.add_workers(worker)
+        run_task = asyncio.create_task(runner.run())
+        await asyncio.sleep(0.2)
+        return P, router, session, worker, runner, run_task
+
+    async def _teardown(self, runner, run_task) -> None:
+        await runner.end(reason="test done")
+        await asyncio.wait_for(run_task, timeout=5.0)
+
+    async def test_interruption_while_vad_active_is_labeled_true(self) -> None:
+        events: list[str] = []
+        P, router, session, worker, runner, run_task = await self._build(
+            on_diagnostic=events.append
+        )
+        try:
+            await worker.queue_frames(
+                [P["UserStartedSpeakingFrame"](), P["InterruptionFrame"]()]
+            )
+            await asyncio.sleep(0.2)
+        finally:
+            await self._teardown(runner, run_task)
+        interruption_events = [e for e in events if e.startswith("INTERRUPTION_FRAME_")]
+        self.assertEqual(len(interruption_events), 1)
+        self.assertIn("vad_active=True", interruption_events[0])
+
+    async def test_interruption_with_no_vad_activity_is_labeled_false(self) -> None:
+        """R0081's live evidence: a DELAYED InterruptionFrame (consistent
+        with GeminiLiveLLMService's own serverContent.interrupted
+        acknowledgement, per the installed SDK's own source, not a fresh
+        local VAD onset) arrives with no local VAD activity in progress."""
+        events: list[str] = []
+        P, router, session, worker, runner, run_task = await self._build(
+            on_diagnostic=events.append
+        )
+        try:
+            await worker.queue_frames([P["InterruptionFrame"]()])
+            await asyncio.sleep(0.2)
+        finally:
+            await self._teardown(runner, run_task)
+        interruption_events = [e for e in events if e.startswith("INTERRUPTION_FRAME_")]
+        self.assertEqual(len(interruption_events), 1)
+        self.assertIn("vad_active=False", interruption_events[0])
+
+    async def test_direction_is_captured_in_the_label(self) -> None:
+        events: list[str] = []
+        P, router, session, worker, runner, run_task = await self._build(
+            on_diagnostic=events.append
+        )
+        from pipecat.processors.frame_processor import FrameDirection
+
+        try:
+            await worker.queue_frame(P["InterruptionFrame"](), FrameDirection.UPSTREAM)
+            await asyncio.sleep(0.2)
+        finally:
+            await self._teardown(runner, run_task)
+        interruption_events = [e for e in events if e.startswith("INTERRUPTION_FRAME_")]
+        self.assertEqual(len(interruption_events), 1)
+        self.assertTrue(interruption_events[0].startswith("INTERRUPTION_FRAME_UPSTREAM"))
+
+    async def test_sibling_fan_out_pair_is_identifiable(self) -> None:
+        """Two InterruptionFrame instances sharing broadcast_sibling_id
+        (Pipecat's own real fan-out mechanism, confirmed by installed-
+        source read) must be identifiable as siblings from the
+        diagnostic labels alone -- proving 'these two sightings are ONE
+        physical interruption's fan-out' is directly readable, not
+        guessed."""
+        events: list[str] = []
+        P, router, session, worker, runner, run_task = await self._build(
+            on_diagnostic=events.append
+        )
+        try:
+            downstream = P["InterruptionFrame"]()
+            upstream = P["InterruptionFrame"]()
+            downstream.broadcast_sibling_id = upstream.id
+            upstream.broadcast_sibling_id = downstream.id
+            await worker.queue_frames([downstream])
+            await asyncio.sleep(0.1)
+        finally:
+            await self._teardown(runner, run_task)
+        interruption_events = [e for e in events if e.startswith("INTERRUPTION_FRAME_")]
+        self.assertEqual(len(interruption_events), 1)
+        self.assertIn(f"id={downstream.id}", interruption_events[0])
+        self.assertIn(f"sibling={upstream.id}", interruption_events[0])
+
+    async def test_awaiting_assistant_state_is_captured(self) -> None:
+        """R0081 side-finding, worth recording precisely: InterruptionFrame
+        is a Pipecat SystemFrame (confirmed by installed-source read,
+        frames.py -- `class InterruptionFrame(SystemFrame)`), which Pipecat
+        gives priority/out-of-band handling over normally-queued data
+        frames -- queuing all three frames in ONE batch (no real
+        wall-clock gap) lets the InterruptionFrame jump ahead of the
+        still-in-flight TranscriptionFrame, unlike real production timing
+        (where a genuine STT/Gemini transcript event and a later VAD
+        onset are always separated by real wall-clock time). This test
+        forces realistic sequential timing with explicit awaits between
+        frames, matching how the real pipeline actually behaves turn by
+        turn, rather than relying on same-batch queue order."""
+        events: list[str] = []
+        P, router, session, worker, runner, run_task = await self._build(
+            on_diagnostic=events.append
+        )
+        try:
+            await worker.queue_frames([P["UserStartedSpeakingFrame"]()])
+            await asyncio.sleep(0.1)
+            await worker.queue_frames(
+                [
+                    P["TranscriptionFrame"](
+                        text="hi", user_id="", timestamp="", finalized=True
+                    )
+                ]
+            )
+            await asyncio.sleep(0.1)
+            await worker.queue_frames([P["InterruptionFrame"]()])
+            await asyncio.sleep(0.1)
+        finally:
+            await self._teardown(runner, run_task)
+        interruption_events = [e for e in events if e.startswith("INTERRUPTION_FRAME_")]
+        self.assertEqual(len(interruption_events), 1)
+        self.assertIn("awaiting_assistant=True", interruption_events[0])
+
+    async def test_never_leaks_conversation_content(self) -> None:
+        """The direction-aware label carries only IDs/booleans/direction
+        -- never transcript/Memory/recall content."""
+        events: list[str] = []
+        P, router, session, worker, runner, run_task = await self._build(
+            on_diagnostic=events.append
+        )
+        try:
+            await worker.queue_frames(
+                [
+                    P["UserStartedSpeakingFrame"](),
+                    P["TranscriptionFrame"](
+                        text="a very specific secret sentence", user_id="",
+                        timestamp="", finalized=True,
+                    ),
+                    P["InterruptionFrame"](),
+                ]
+            )
+            await asyncio.sleep(0.2)
+        finally:
+            await self._teardown(runner, run_task)
+        interruption_events = [e for e in events if e.startswith("INTERRUPTION_FRAME_")]
+        self.assertEqual(len(interruption_events), 1)
+        self.assertNotIn("secret sentence", interruption_events[0])
 
 
 @unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")

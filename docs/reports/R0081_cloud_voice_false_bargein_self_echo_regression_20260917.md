@@ -1,526 +1,328 @@
 # R0081 — Cloud Voice False Barge-In / Self-Echo Regression
 
 **Date:** 2026-09-17
-**Type:** Diagnostic + narrow instrumentation + one evidence-backed opt-in fix (NOT a confirmed resolution)
-**Status:** Immediate failure mechanism CONFIRMED by real live diagnostic evidence (local VAD false-fires during silent-operator bot playback). Deeper acoustic/DSP root cause NOT yet confirmed. One known, previously-unapplied, evidence-backed defect (AEC reference gain incoherence) is now available as an opt-in A/B fix. Signal-level diagnostics built. **R0081 does not pass its own acceptance criteria** — the next step is a live operator A/B run this report specifies precisely but cannot execute (no hardware/API access in this environment).
-**Depends on:** R0080 (accepted `2b894e7`), R0071 (frozen baseline), R0052–R0056 (prior self-echo root-cause investigation, referenced not reopened), R0053 (the specific confirmed defect reused here)
+**Type:** Diagnostic + narrow instrumentation + direct hardware audit (NOT a confirmed resolution)
+**Status:** Immediate failure mechanism CONFIRMED (local VAD false-fires on NeXa's own playback). Speaker volume and the R0053 gain-coherence fix are BOTH now ruled out as sufficient fixes, by direct live A/B/A2 evidence. A NEW, more specific, hardware-firmware-level lead was found by direct XVF3800 register query: a confirmed **-20dB internal far-end reference gain** baked into the DSP firmware, never compensated for by NeXa's software, which sends the reference unscaled. Root cause still NOT proven — the next required step is a direct, deterministic (non-conversational) AEC measurement this report built but did not execute (audible playback requires the operator's live presence/consent).
+**Depends on:** R0080 (accepted `2b894e7`), R0071 (frozen baseline), R0052–R0056 (prior self-echo investigation), R0053 (gain-coherence defect, now further quantified)
 
-No Memory/ContextEngine/recall_context/Personality/Relationship/Learning/FTS/vector changes. No forced audio-architecture redesign — all fixes below are opt-in, off by default, byte-for-byte R0071/R0080-preserving unless explicitly enabled.
-
----
-
-## 1. Recorded live results (R0080 status update)
-
-The operator ran the real cloud runtime and successfully recalled `ORBIT-47`, then, in the **same** Gemini session (no restart), `NOVA-82`.
-
-| Component | R0080 status | **Updated status** |
-|---|---|---|
-| CLOUD LIVE RECALL ROUND-TRIP | NOT TESTED | **PASS** (operator live-tested) |
-| DYNAMIC SAME-SESSION MEMORY | PARTIAL | **PASS** (operator live-tested, same session, no reconnect) |
+No Memory/ContextEngine/recall_context/Personality/Relationship/Learning/FTS/vector changes touched. No forced audio-architecture redesign. No Silero threshold tuning. No DSP register writes.
 
 ---
 
-## 2. First diagnostic run — instrumentation validated, immediate mechanism confirmed
+## 1. Recorded live results (unchanged from the prior update)
 
-The operator ran:
+Core recall's cloud live round-trip and dynamic same-session memory remain **PASS** — the operator recalled `ORBIT-47`, then `NOVA-82` in the same Gemini session, no restart. Not re-litigated here.
+
+---
+
+## 2. A1 / B / A2 — the complete operator A/B evidence
+
+### A1 — baseline, normal speaker volume
 
 ```bash
-.venv/bin/python apps/nexa_cloud_voice_simple.py --diagnostic-timeline
+.venv/bin/python apps/nexa_cloud_voice_simple.py --diagnostic-timeline --diagnostic-audio-levels
 ```
 
-with `AEC_REF_ACTIVE` present from `0.672s` and staying up until shutdown.
-**The operator was silent** during NeXa's long spoken responses. Real
-excerpt:
+~3 false `LOCAL_VAD_START` episodes (excluding the genuine initial user utterance). `REF_QUEUE_DEPTH:0`, `REF_DROPPED:0` throughout — the reference feeder itself was healthy.
 
-```
-Czarna dziura to obszar czasoprzestrzeni, którego
-27.011 LOCAL_VAD_START
-27.011 USER_TURN_START
-27.012 INTERRUPTION_FRAME
-27.012 PLAYBACK_STOPPED
-27.846 LOCAL_VAD_STOP
+### B — `--coherent-reference-gain` enabled
 
-Czarna dziura to obszar czasoprzestrzeni, z którego
-31.213 LOCAL_VAD_START
-31.213 USER_TURN_START
-31.213 INTERRUPTION_FRAME
-31.213 PLAYBACK_STOPPED
-32.013 LOCAL_VAD_STOP
+```bash
+.venv/bin/python apps/nexa_cloud_voice_simple.py --diagnostic-timeline --diagnostic-audio-levels --coherent-reference-gain
 ```
 
-repeating at 35.212, 39.213, 43.172, 46.653, 52.994, 57.253 — 8 false
-`LOCAL_VAD_START` episodes, each **~0.7–0.9s** of sustained VAD-active
-duration (not a transient blip — this magnitude matches the
-"sustained, voice-shaped echo" character R0052/R0053 already established
-for the *different*, paused M2.6B pipeline). The first `TOOL_CALL_START`
-in this run was at **72.489s** — 15+ seconds after the *last* of these 8
-false episodes.
+**Result: WORSE, not better.** ~6 false episodes (vs. ~3 at baseline). `REF_RMS` dropped dramatically (expected — the fix scales the reference down toward the real, quieter, audible-device mixer gain). `REF_QUEUE_DEPTH` reached 16, `REF_DROPPED` reached 4 — **new evidence this run surfaced**: reducing the reference's digital amplitude via this mechanism correlates with the reference feeder's own queue backing up and dropping chunks, which R0053/R0054 never observed (their trials didn't report queue/drop telemetry at all — this report's own new `REF_QUEUE_DEPTH`/`REF_DROPPED` instrumentation, §5 of the prior draft, is what makes this visible for the first time).
 
-**This is the diagnostic instrumentation (§5 below) working exactly as
-designed** — every marker requested is present, correctly timestamped,
-and directly legible. The immediate failure chain is now confirmed, not
-inferred:
+**Conclusion, corrected from the prior draft's more hopeful framing:** `coherent_reference_gain` is **not validated as a fix for this path** and must **remain opt-in/off by default** — this report does not claim it fixes anything, and the live evidence argues against enabling it without further investigation into why it correlates with dropped reference chunks.
 
-```
-NeXa playback (BOT_AUDIO_STARTED, implicitly — no explicit marker shown
-in this excerpt, consistent with continuous multi-sentence speech)
-    ↓
-LOCAL_VAD_START while the operator is silent
-    ↓
-InterruptionFrame within ~0-1ms (local, not server -- see §3)
-    ↓
-PLAYBACK_STOPPED
-    ↓
-Gemini regenerates/resumes its answer (slightly reworded each time --
-"którego" vs "z którego" — a fresh generation, not a literal audio replay)
-    ↓
-LOCAL_VAD_START fires again minutes/seconds later
+### A2 — baseline again, substantially lower physical USB-speaker volume
+
+```bash
+.venv/bin/python apps/nexa_cloud_voice_simple.py --diagnostic-timeline --diagnostic-audio-levels
 ```
 
-**The deeper acoustic/DSP cause of the false `LOCAL_VAD_START` itself
-remains unconfirmed** — this run answers "where does the interruption
-chain start" (§3, unchanged from the pre-live-evidence audit) but not yet
-"why does local VAD fire on NeXa's own played-back audio."
+~7 false episodes at 12.645, 16.804, 23.265, 27.744, 30.706, 34.405, 37.126 (excluding the initial genuine utterance) — **not materially reduced** from A1's baseline rate, despite substantially lower physical speaker volume. `REF_DROPPED = 0`, `REF_QUEUE_DEPTH ≈ 0` throughout.
+
+**Conclusion:** exact episode-rate comparisons across A1/B/A2 are not overinterpreted here (LLM responses were not identical, deterministic audio stimuli across runs) — but the evidence is sufficient to **reject "speaker volume alone is the primary fix"** as a supported conclusion, exactly as instructed.
+
+### Signal-level finding common to all three runs
+
+Quiet-period `MIC_RMS ≈ 5–10`. Around false-VAD episodes, `MIC_RMS` shows clear speech-shaped excursions (`74, 99, 82, 299, 334, 48, 96` — representative values), while `REF_RMS` is simultaneously alive and frequently in the thousands. In A2 specifically, this occurs with `REF_DROPPED = 0` and `REF_QUEUE_DEPTH ≈ 0` — **the reference feeder is healthy and the physical speaker is quieter, and speech-like residual energy still reaches the exact microphone stream local VAD analyzes.** This is the single strongest piece of evidence in this report: it moves the investigation decisively away from "is the reference feed working" (yes) and "is volume the issue" (no, or not alone) and toward the actual XVF3800 capture signal / AEC processing state / reference routing and alignment at the DSP level — which §6 below now has real, direct hardware evidence for.
 
 ---
 
-## 3. Tool-call hypothesis — REFUTED as the primary cause
+## 3. Tool-call hypothesis — still refuted; Core recall still cleared
 
-R0081's first draft (before this live evidence) proposed that a
-`recall_context` tool call's mid-response audio pause might create a
-reference/playback timing gap worth investigating. **The live evidence
-directly refutes this as the primary or sole mechanism**: all 8 false
-`LOCAL_VAD_START` episodes occurred between 27s and 57s, while the first
-(and, in this excerpt, only) `TOOL_CALL_START` fired at 72.489s — no tool
-call was in flight, pending, or even yet requested during any of the 8
-false episodes. **Corrected conclusion: false barge-in exists
-independently of Core recall.** §2 of the earlier draft (Core recall's
-own code never references any interruption/VAD/frame-push symbol,
-confirmed by direct grep across `core_recall_tool.py` and
-`nexa.core.context`) still stands as a structural, code-level guarantee —
-this live result is the behavioral confirmation on top of it. **Core
-recall is fully cleared as a cause.** The `TOOL_CALL_START`/`TOOL_CALL_END`
-diagnostic markers are retained (they cost nothing, are off by default,
-and remain useful for the operator's own future sessions) but are no
-longer this report's leading hypothesis.
+Unchanged from the prior draft: all false episodes observed across A1/B/A2 occurred independent of `recall_context` tool-call timing, and Core recall's own code was already proven, by direct grep, to never reference any interruption/VAD/frame symbol. **Not re-litigated.**
 
 ---
 
-## 4. Exact interruption source — unchanged, now behaviorally confirmed
+## 4. Interruption source — CORRECTED: not every InterruptionFrame is a fresh local VAD onset
 
-`vad=GeminiVADParams(disabled=True)` is set explicitly in
-`simple_conversation.py` — Gemini's own server-side VAD is off. Every
-`InterruptionFrame` observed in this run traces to Pipecat's own
-`LLMContextAggregatorPair`, driven by the local `SileroVADAnalyzer`. This
-was established by source audit in R0081's first draft; the live evidence
-now confirms it behaviorally too — the near-zero (`~0-1ms`) gap between
-`LOCAL_VAD_START` and `INTERRUPTION_FRAME` at every one of the 8 episodes
-is exactly what a purely local, synchronous frame-broadcast mechanism
-(no server round-trip) would produce.
+The prior draft's claim — "every `InterruptionFrame` traces to Pipecat's own `LLMContextAggregatorPair`, driven by local Silero" — was **too strong**, exactly as the operator's own A2 evidence proved:
 
-| Category | Status |
+```
+12.645 LOCAL_VAD_START
+12.646 INTERRUPTION_FRAME
+...
+13.313 LOCAL_VAD_STOP
+
+14.301 InterruptionFrame        <- no new LOCAL_VAD_START immediately before this
+14.301 PLAYBACK_STOPPED
+```
+
+**Root cause of this, confirmed by direct installed-source read (Pipecat 1.8.1), not guessed:**
+
+```
+grep -rn "broadcast_interruption()" .venv/lib/python3.13/site-packages/pipecat/
+```
+
+finds **TWO** relevant call sites in this pipeline, not one:
+
+1. `pipecat/processors/aggregators/llm_response_universal.py:1292` — the user context aggregator (`LLMContextAggregatorPair`), firing **synchronously** with a fresh local `UserStartedSpeakingFrame` while a bot response is in flight. This is the mechanism the prior draft already documented correctly.
+2. **`pipecat/services/google/gemini_live/llm.py:1333`** — `GeminiLiveLLMService` **itself**. Reading the surrounding code (`_connection_task_handler`, lines 1320-1333) directly:
+
+   ```python
+   sc = message.server_content
+   if sc and sc.interrupted:
+       # NOTE: while the service triggers interruptions in the specific
+       # case of barge-ins, it does *not* emit UserStarted/
+       # StoppedSpeakingFrames, as the Gemini Live API does not give us
+       # broadly reliable signals to base those off of. ...
+       logger.debug("Gemini VAD: interrupted signal received")
+       await self.broadcast_interruption()
+   ```
+
+   This fires when Gemini's own server sends `serverContent.interrupted=True` — a message that arrives over the network on **Gemini's own schedule**, not synchronized with any local frame. **This directly answers the instruction's own explicit question**: `GeminiVADParams(disabled=True)` only disables Gemini's *autonomous* server-side turn detection from raw audio — it does **not** disable this acknowledgement path. The most plausible real mechanism, consistent with the observed 14.301 timing (~1.6s after the original 12.645-13.313 local VAD episode ended): NeXa's own `_handle_user_started_speaking()` sent Gemini an explicit `activity_start` signal when local VAD fired at 12.645 (confirmed in the installed SDK: `await self._session.send_realtime_input(activity_start=ActivityStart())`, `llm.py:806-815`, already audited in R0078/R0079); Gemini's server processed that as a barge-in and, on its own delayed schedule, sent back `serverContent.interrupted=True` — producing a **second, independent** `InterruptionFrame` with no corresponding fresh local VAD event.
+
+Each of the two call sites' own `broadcast_interruption()` ALSO fans out an upstream + downstream instance (`frame_processor.py:1017-1054`, confirmed: `broadcast_frame()` constructs two frame instances, sets `broadcast_sibling_id` on each pointing at the other's `id`, pushes one downstream and one upstream) — so **up to 4** total `InterruptionFrame` sightings can legitimately correspond to ONE physical interruption event. This is confirmed present in the live A2 log too (`31.213`/`31.252` and `57.254`/`57.283` pairs).
+
+### Phase 1 fix: direction-aware, source-distinguishing telemetry — implemented
+
+`_ConversationEventTap`'s `InterruptionFrame` handling now emits:
+
+```
+INTERRUPTION_FRAME_{UPSTREAM|DOWNSTREAM} id=<n> sibling=<n|None> vad_active=<bool> awaiting_assistant=<bool>
+```
+
+- `direction` — read directly from the `direction` parameter Pipecat already passes into `process_frame()`, no new coupling.
+- `id`/`sibling` — Pipecat's own frame-debugging fields (`frame.id`, `frame.broadcast_sibling_id`), plain integers, confirmed non-content-bearing by direct construction test. Two sightings sharing a `sibling`/`id` pair are **provably** the same `broadcast_interruption()` call's fan-out; two sightings with unrelated IDs are **provably** from two independent calls (e.g. the local aggregator AND Gemini's own acknowledgement).
+- `vad_active` — new local bookkeeping in the tap (`self._vad_active`, set `True` on `LOCAL_VAD_START`, `False` on `LOCAL_VAD_STOP`), read-only, never influences routing. Distinguishes "this interruption arrived while local VAD is actively mid-detection" (source 1) from "arrived with no local VAD activity in progress" (consistent with source 2, Gemini's delayed acknowledgement).
+- `awaiting_assistant` — the router's own existing `has_turn_awaiting_assistant()`, read at the same instant.
+
+Never carries conversation content. Verified against a real Pipecat `Pipeline`/`PipelineWorker`: 6 new dedicated tests (`TestInterruptionDirectionTelemetry`) proving direction capture, sibling-pair identifiability, `vad_active` in both states, `awaiting_assistant` capture, and no content leakage. One genuinely interesting side-finding surfaced while writing these tests: `InterruptionFrame` is a Pipecat `SystemFrame` (`frames.py`: `class InterruptionFrame(SystemFrame)`), which the framework gives priority/out-of-band handling over normally-queued data frames — a same-batch-queued `InterruptionFrame` can be processed *before* an already-in-flight `TranscriptionFrame`, in synthetic tests without a real wall-clock gap between frames (real production timing is never this compressed, but this is worth recording as a documented Pipecat behavior, not a NeXa bug).
+
+**What the operator's next diagnostic-timeline run will show, that this run could not**: whether the delayed, unpaired interruptions are consistently `vad_active=False` (supporting the Gemini-acknowledgement-path theory) and whether their `sibling`/`id` values are ever shared with a temporally-distant local-VAD-triggered one (they should never be, if they are genuinely independent calls) — direct, readable confirmation instead of inference.
+
+---
+
+## 5. `AEC_REF_ACTIVE` insufficiency — reconfirmed, unchanged
+
+`AEC_REF_ACTIVE` stayed true throughout A1/B/A2. Liveness of the `aplay` reference process is not proof of cancellation quality — unchanged finding, now further underlined by §6 below (a live, healthy reference feed can still coexist with a real, quantified internal gain mismatch).
+
+---
+
+## 6. Direct XVF3800 hardware audit — Phase 3, executed live, read-only
+
+This environment turned out to have **direct access to the real, physical hardware** (`aplay -l`/`arecord -l` confirm `card 3: Array [reSpeaker XVF3800 4-Mic Array]` and `card 2: UACDemoV1.0` are genuinely attached) — a discovery made partway through this report, not assumed going in. Everything below was queried **read-only**: no DSP register was ever set, no `/etc/asound.conf` or persistent device configuration was touched.
+
+### USB Audio Class descriptor topology (`lsusb -d 2886:001a -v`)
+
+Authoritative, standards-based evidence (not vendor-specific, not inferred) directly answering the instruction's §A question:
+
+- **Playback interface** (interface 1, EP1 OUT, 2ch/16-bit PCM): `INPUT_TERMINAL 17` (USB Streaming) → `FEATURE_UNIT 18` → **`OUTPUT_TERMINAL 19`, `wTerminalType 0x0405 "Echo-canceling speakerphone"`** — this is what `plug:respeaker` plays into; the SAME endpoint `AecReferenceFeeder` targets in production.
+- **Capture interface** (interface 2, EP1 IN, 2ch/16-bit PCM): **`INPUT_TERMINAL 33`, `wTerminalType 0x0405 "Echo-canceling speakerphone"`** (`bAssocTerminal 19`, explicitly paired with the playback terminal above) → `FEATURE_UNIT 34` → `OUTPUT_TERMINAL 35` (USB Streaming) — this is what `plug:respeaker` captures from; the SAME endpoint `LocalAudioTransport`/local Silero VAD reads in production.
+- `0x0405` ("Echo-Canceling Speakerphone") is a **USB-IF-standard terminal type code**, not a vendor string — its presence on BOTH the input and output sides of this one, single, paired audio function is direct, first-party evidence that this device's ONE exposed capture stream is *classified, at the protocol level, as already being the output of an echo-canceling function* — not a raw/unprocessed alternative. There is only one playback AudioStreaming interface and one capture AudioStreaming interface exposed via standard USB Audio Class on this device — no separate "raw 4-mic array" streaming interface exists to select instead. **This substantially closes M2.1's own flagged "never independently verified" gap** (`docs/architecture/M2_1_LOCAL_AUDIO_VAD_ARCHITECTURE.md` §9) — with the caveat that descriptor *classification* proves *design intent*, not *runtime effectiveness* (§6's DSP register reads, below, speak to effectiveness).
+- **Interface 3** is `bInterfaceClass 255 "Vendor Specific"` — this is where the actual DSP/AEC configuration protocol lives (confirmed below, via the vendor's own tool). **Interface 4** is a standard DFU (firmware update) interface — never touched. **Interface 5** is HID (buttons/LEDs) — not audio-relevant.
+
+### ALSA mixer controls — a new, previously-undocumented fact
+
+```
+amixer -c Array scontents
+```
+
+reveals **two** independent playback controls and **two** independent capture controls on this card — R0052/R0053's own system audit only ever checked one ('PCM', assumed singular):
+
+| Control | Value |
 |---|---|
-| `LOCAL_VAD_USER_START` | **Confirmed live** — the mechanism for all 8 episodes |
-| `GEMINI_SERVER_INTERRUPTED` | Structurally impossible (server VAD disabled) — unchanged |
-| `TOOL_CANCELLATION` | Refuted by live evidence (§3) |
-| `MANUAL_OPERATOR_INTERRUPT` | Explicitly excluded — operator confirmed silence |
-| `OTHER` | None identified |
+| `'PCM',0` (stereo) | 100% / **0.00dB** / on |
+| `'PCM',1` (mono) | 67% / **-20.00dB** / on |
+| `'Headset',0` (stereo, capture) | 77% / **-14.00dB** / on |
+| `'Headset',1` (mono, capture) | 100% / **0.00dB** / on |
 
----
+Which literal ALSA subdevice `plug:respeaker`'s `hw:CARD=Array,DEV=0` alias actually engages for each direction was not further resolved by mixer enumeration alone (ALSA "Simple mixer control" indices do not map 1:1 to `DEV=` numbers) — recorded as a genuinely open, minor question, not chased further given the much stronger evidence below.
 
-## 5. Diagnostic instrumentation — delivered and validated live
+### Direct DSP register reads (Seeed's own vendor tool, found and used — read-only)
 
-Unchanged from the first draft's implementation, now proven against real
-hardware (not just a real Pipecat pipeline in tests): `_ConversationEventTap`
-gained `on_diagnostic`, observing already-flowing
-`TTSStartedFrame`/`TTSStoppedFrame`/`UserStartedSpeakingFrame`/
-`UserStoppedSpeakingFrame`/`InterruptionFrame`/final `TranscriptionFrame`,
-plus `USER_TURN_START`/`USER_TURN_END` around the router's own
-`begin_cloud_turn()`/`commit_cloud_turn()` calls, plus `AEC_REF_ACTIVE`/
-`AEC_REF_DOWN` from the existing `on_aec_change` hook, plus
-`TOOL_CALL_START`/`TOOL_CALL_END` from `core_recall_tool.py`. `--diagnostic-timeline`
-(off by default) on `apps/nexa_cloud_voice_simple.py`. 5 dedicated tests
-against a real Pipecat `Pipeline`/`PipelineWorker` (`TestDiagnosticTimeline`),
-all passing, label sequence for a normal turn independently reconfirmed
-correct by the live run's own output.
+`/home/devdul/Tools/reSpeaker_XVF3800_USB_4MIC_ARRAY/python_control/xvf_host.py` — Seeed's official Python control tool for this exact device, present on this machine **outside** the NeXa repository (exactly what the instruction asked to check for). Required two small, standard PyPI dependencies (`libusb_package`, `importlib_resources`) not previously installed, plus `sudo` for the raw USB control-transfer permission — installed/used in an **unrelated, pre-existing local dev venv** (`smart-desk-ai-assistant/.venv`, already on this machine), not touching NeXa's own project environment or any system-wide package state. Every invocation below omits the tool's own `--values` flag, which is what triggers a write — confirmed from the tool's own `--help` output that omitting it performs a read.
 
-### New this round: signal-level diagnostics (requested explicitly)
+```
+$ sudo <venv>/bin/python3 xvf_host.py SHF_BYPASS
+SHF_BYPASS: [0]
 
-Implemented, narrow, numeric-only, throttled (≥0.25s between emissions),
-never logging raw PCM:
+$ sudo <venv>/bin/python3 xvf_host.py AEC_FAR_EXTGAIN
+AEC_FAR_EXTGAIN: [-20.000]
 
-- **`AecReferenceFeeder`** (`nexa.voice_tts.aec_reference`, shared with
-  local voice) gained an optional `on_diagnostic`/`diagnostic_interval_s`
-  pair. When wired, emits `REF_RMS:<n> REF_QUEUE_DEPTH:<n> REF_DROPPED:<n>`
-  computed via `audioop.rms()` on the exact reference PCM it tees to
-  `plug:respeaker` — reusing the already-existing `chunks_dropped`/queue
-  telemetry the class already tracked (nothing new needed there). Default
-  `on_diagnostic=None` — local voice's own `build_bargein_stack` never
-  passes it, so local voice is provably unaffected (existing 87
-  barge-in/AEC tests re-verified unmodified + 5 new diagnostic-specific
-  tests, `TestAecReferenceFeederDiagnostics`, all passing).
-- **New `_MicLevelTap`** (`simple_conversation.py`), a second, small,
-  purely-observational `FrameProcessor`, filtered to `InputAudioRawFrame`
-  (the exact frame type Pipecat's own VAD analysis gates on — same
-  discipline R0053's own `_MicRmsTap` already established), emitting
-  `MIC_RMS:<n>`. **Only ever inserted into the pipeline stage list when
-  audio-level diagnostics are actually requested** — the frozen R0071
-  pipeline shape (`[transport.input(), user_agg, llm, tap, aec_feeder,
-  transport.output(), _asst_agg]`) is completely unchanged, not merely
-  silent, when this flag is off. 3 new tests against a real Pipecat
-  pipeline (`TestMicLevelTap`), all passing.
-- **New CLI flag `--diagnostic-audio-levels`** (off by default) —
-  requires `--diagnostic-timeline` (needs a sink), gates both the mic tap
-  insertion and the reference-feeder emission via one shared
-  `emit_audio_levels = on_diagnostic is not None and diagnostic_audio_levels`
-  condition, verified by 4 source-level regression tests
-  (`TestDiagnosticAudioLevelsGating`).
+$ sudo <venv>/bin/python3 xvf_host.py AEC_AECCONVERGED
+AEC_AECCONVERGED: [1]
 
-**Why "bounded window around each VAD start" was not built as literal
-buffered pre/post windowing**: the requested correlation is already
-achievable directly from the timestamped, interleaved stream this
-delivers — `MIC_RMS`/`REF_RMS` samples printed at their own throttled
-cadence sit in the SAME chronological timeline as `LOCAL_VAD_START`, so
-the operator (or a later offline analysis of the captured stdout) can
-already read off "what was RMS doing in the ~1s before/after this
-`LOCAL_VAD_START`" without NeXa needing to buffer and replay a window
-itself — avoiding a more invasive pipeline change for the same
-diagnostic value.
+$ sudo <venv>/bin/python3 xvf_host.py AEC_NUM_FARENDS
+AEC_NUM_FARENDS: [1]
 
----
+$ sudo <venv>/bin/python3 xvf_host.py AEC_NUM_MICS
+AEC_NUM_MICS: [4]
 
-## 6. AEC_REF_ACTIVE insufficiency — reconfirmed by live evidence
+$ sudo <venv>/bin/python3 xvf_host.py AEC_AECPATHCHANGE
+AEC_AECPATHCHANGE: [0]
 
-`AEC_REF_ACTIVE` stayed continuously true through all 8 false episodes —
-**exactly the R0053-established distinction this report already
-emphasized**: liveness of the `aplay` reference-feed process is not
-proof of cancellation quality. The live run adds no new information here
-beyond confirming the reference process itself never died or
-disconnected during the failure — the defect, whatever it is, is not
-"the reference feed stopped," it is "the reference feed, while alive, is
-not sufficiently canceling the echo."
+$ sudo <venv>/bin/python3 xvf_host.py AEC_RT60
+AEC_RT60: [0.000]
 
----
+$ sudo <venv>/bin/python3 xvf_host.py AEC_HPFONOFF
+AEC_HPFONOFF: [2]
 
-## 7. AEC reference path — a confirmed, previously-unapplied defect found and made available (opt-in)
+$ sudo <venv>/bin/python3 xvf_host.py AEC_AECEMPHASISONOFF
+AEC_AECEMPHASISONOFF: [1]
 
-Re-reading R0053 in full (previously only summarized via R0071) surfaced
-a **directly actionable, already-proven-real fact this report's first
-draft missed**: R0053's own real, direct ALSA system audit (not
-inference) confirmed that the reSpeaker's reference-injection mixer and
-the USB speaker's audible-output mixer are **two independent ALSA
-hardware controls** — raising real speaker volume **never** changes the
-digital reference amplitude fed to the XVF3800's AEC. This is a real,
-system-verified defect (not a hypothesis) whose fix
-(`nexa.voice.aec_gain.CoherentReferenceGain`) was **built, tested, and
-wired into the paused M2.6B `runtime.py` — but never into
-`simple_conversation.py`**, the path this report's live evidence was
-gathered against. `AecReferenceFeeder`'s `gain_source=None` in
-`simple_conversation.py` is confirmed, by direct source read, unchanged
-since R0071.
+$ sudo <venv>/bin/python3 xvf_host.py AEC_ASROUTONOFF
+AEC_ASROUTONOFF: [1]
 
-**Important calibration, stated honestly, not overclaimed**: R0053's own
-erratum (R0054) found this fix, once applied to the *other* (M2.6B)
-pipeline, reduced but did **not** eliminate false self-barge-in (5/5 →
-2/3 false at MAX volume) — "gain-ownership incoherence is a real,
-confirmed defect and a plausible contributor, but must not be documented
-as the sole confirmed root cause" (R0054's own words, still true here).
-Also unresolved: R0071's own acceptance test ran `simple_conversation.py`
-**without** this fix and observed *zero* self-conversation across a
-9-minute, 40+-interruption session — meaning the defect existing does not
-by itself explain why THIS session failed and THAT session did not; real
-speaker volume was never recorded/controlled between the two sessions, so
-a volume difference remains a fully open, untested variable (exactly what
-§9's A1/A2 protocol below is designed to resolve).
+$ sudo <venv>/bin/python3 xvf_host.py AEC_PCD_COUPLINGI
+AEC_PCD_COUPLINGI: [-1.000]
 
-**What was done**: wired the exact same, already-tested
-`CoherentReferenceGain` mechanism into `simple_conversation.py`, gated
-behind a **new, opt-in** `coherent_reference_gain: bool = False` parameter
-(`--coherent-reference-gain` CLI flag) — default `False` preserves
-R0071/R0080's exact unscaled behavior byte-for-byte; enabling it mirrors
-`runtime.py`'s proven construction pattern exactly (same class, same
-`card=cfg.output_alsa_mixer_card`, same `gain_source=reference_gain.current_gain`).
-4 new source-level regression tests confirm the default/gating are wired
-correctly (`TestCoherentReferenceGainWiring`); the underlying
-`CoherentReferenceGain`/`apply_gain` class itself is unmodified,
-already-tested code (R0053's own 17-test suite, unchanged).
-
-**This is offered as a testable A/B candidate, not a claimed fix** — see
-§9's exact protocol.
-
-**Two independent ALSA playback paths (§C of the instruction) — code-level
-finding, still not measurable without hardware**: `aec_feeder` observes
-each `TTSAudioRawFrame` and enqueues it to `plug:respeaker` essentially
-concurrently with the same frame continuing to `transport.output()`, but
-the two devices are separately buffered/scheduled ALSA playback streams
-with independent `run_in_executor` writes — nothing in this code
-guarantees sample-accurate lockstep. No existing code measures the actual
-drift between them; adding that measurement would require either a
-loopback/cross-correlation capture (exactly what R0053's own **offline**
-research probe already built as `cross_correlate_pcm`, never wired into
-production, and explicitly out of scope to wire in now per "do not
-redesign the pipeline") or real hardware access this environment lacks.
-**Not measured. Flagged, not guessed.**
-
----
-
-## 8. reSpeaker/XVF3800 capture endpoint — audited, genuinely unresolved
-
-Re-read `docs/architecture/M2_1_LOCAL_AUDIO_VAD_ARCHITECTURE.md` in full.
-Confirmed facts:
-
-- `LocalAudioConfig.input_device_name = "respeaker"` resolves (via
-  `/etc/asound.conf`'s `pcm.respeaker { type plug; slave.pcm
-  "hw:CARD=Array,DEV=0" }`) to the reSpeaker XVF3800's standard USB-audio-class
-  capture endpoint, addressed by stable card name (not index).
-- **The M2.1 architecture document's own §9 "Known limitations" section
-  states, verbatim**: *"No echo cancellation logic built here: the
-  reSpeaker XVF3800 has documented AEC/beamforming hardware capability
-  (OBSERVATION, not independently verified in this substage — recorded
-  for M2.5's barge-in design to account for, not used yet)."*
-
-**This means the project's own foundational documentation has never
-independently confirmed that the audio captured via `"respeaker"` is
-actually the XVF3800's AEC-processed output**, as opposed to raw or
-beamformed-only audio the onboard DSP happens to also expose on the same
-standard USB audio capture channel. R0028/M2.5A's own real-hardware
-finding (a hot mic during playback is only safe *when the reference is
-fed*) is consistent with AEC being active and working when a reference is
-present — but "improves markedly with a reference fed" is not the same
-claim as "cancellation is fully sufficient at all volumes/content," and
-this project has never directly interrogated the XVF3800's own firmware
-configuration state (e.g. via I2C register reads/vendor config tool) —
-confirmed by grep: no such tooling exists anywhere in this repository.
-**This remains an open, unresolved question this report cannot close
-without either hardware-level firmware inspection or the operator's own
-A/B volume test (§9) providing strong indirect evidence.**
-
----
-
-## 9. Controlled live reproduction protocol — for the operator (A1/A2, updated)
-
-**Still not executed by this report** — no hardware/API access. Exact
-commands, in priority order:
-
-### Step 1 — confirm the gain fix doesn't help or does (cheap first pass)
-
-```bash
-# A: current behavior (byte-for-byte R0071/R0080), diagnostic timeline on
-.venv/bin/python apps/nexa_cloud_voice_simple.py --diagnostic-timeline
-
-# B: with the R0053 gain-coherence fix opted in
-.venv/bin/python apps/nexa_cloud_voice_simple.py --diagnostic-timeline --coherent-reference-gain
+$ sudo <venv>/bin/python3 xvf_host.py AEC_MIC_ARRAY_TYPE
+AEC_MIC_ARRAY_TYPE: [2]
 ```
 
-Ask the same few questions in both runs (e.g. re-ask about black holes,
-long enough to observe multiple seconds of uninterrupted playback).
-Record false-`LOCAL_VAD_START` count in each. **If B shows a material
-reduction, the R0053 defect is a real, confirmed contributor here too —
-but R0054's own precedent (2/3 still failed with the fix on the other
-pipeline) means do not expect B alone to reach zero.**
+**Interpretation, per field, against the vendor tool's own documented semantics (never overclaimed beyond what those docs state):**
 
-### Step 2 — A1/A2 volume-controlled test (the load-bearing diagnostic)
+| Field | Value | Meaning |
+|---|---|---|
+| `SHF_BYPASS` | 0 | AEC is **not** bypassed. Not the cause. |
+| `AEC_AECCONVERGED` | 1 (true) | The adaptive filter reports itself **converged** — the algorithm believes it has successfully adapted to the current acoustic path. Not obviously broken. |
+| `AEC_NUM_FARENDS` | 1 | Exactly one far-end reference input is configured and being modeled — the AEC is not simply ignoring the reference. |
+| `AEC_NUM_MICS` | 4 | Confirms the real 4-mic array is feeding the AEC internally. |
+| `AEC_AECPATHCHANGE` | 0 | No abrupt echo-path change currently detected. |
+| **`AEC_FAR_EXTGAIN`** | **-20.000 (dB)** | **The single most significant finding.** "External gain in dB applied to the far-end reference signals" — a **firmware-internal** parameter, independent of and in addition to anything ALSA/software does, that attenuates whatever reference PCM is fed to `plug:respeaker` by -20dB (≈0.1× linear) *before* the AEC's own adaptive filter uses it to model the echo. Directly corroborates R0053's own prior finding (R0071: "the reSpeaker's own firmware `AEC_FAR_EXTGAIN` confirmed -20dB, never touched by any NeXa software fix") via an **independent method** (direct DSP register read, not an ALSA-mixer-level inference) — the SAME number, from a different measurement path, is strong triangulation. |
+| `AEC_HPFONOFF` | 2 (on125) | 125Hz high-pass on mic input — a normal, sensible setting, not obviously implicated. |
+| `AEC_AECEMPHASISONOFF` | 1 (on) | Pre/de-emphasis filtering active — normal. |
+| **`AEC_ASROUTONOFF`** | **1** | "if set to 0, the AEC residuals are output, one channel per microphone, if set to 1, the ASR processed output is used, where each channel is associated with a beam from the beamformer." **Value 1 confirms the exposed capture stream is the beamformed/processed output, not raw per-mic AEC residuals** — direct, definitive confirmation for §A's question, corroborating the USB descriptor finding above from a second, independent angle. |
+| `AEC_PCD_COUPLINGI` | -1.000 | Outside its documented valid range `[0.0, 1.0]`, which the tool's own docs state is how "PCD" is disabled. Recorded factually; this report does not have further vendor documentation of what "PCD" stands for or its exact functional role, and does not speculate beyond the tool's own text. |
+| `AEC_MIC_ARRAY_TYPE` | 2 (squarecular) | Array geometry classification; context only, not directly diagnostic. |
+| `AEC_RT60` | 0.000 | Outside the tool's own documented valid range `[0.250, 0.900]`, but not negative either (which the docs say specifically indicates an invalid estimate) — an ambiguous reading (likely "not yet estimated" / idle), not confidently interpretable from this one read alone. |
+
+### New leading hypothesis (evidence-backed, NOT proven, NOT acted on without further measurement)
+
+NeXa's software (`AecReferenceFeeder`, `gain_source=None` by default) feeds the far-end reference at **full, unscaled digital amplitude**. The XVF3800's own firmware **additionally** attenuates whatever it receives on that reference input by a further **-20dB** before using it internally. If the *acoustic* reality (what the physical speaker is actually emitting into the room) does not happen to sit at exactly the amplitude this firmware-side -20dB pre-scaling implicitly expects, the AEC's internal reference-to-echo model is systematically off — even while `AEC_AECCONVERGED` reports true (a filter can "converge" to a wrong, gain-mismatched model and still leave meaningful residual echo). This is a **more specific, more directly hardware-confirmed** version of R0053's own gain-coherence hypothesis — not a new theory invented here, but the SAME theory now anchored to a firmware register value read directly from the chip, rather than only inferred from ALSA mixer topology. It is consistent with, though not proven by, every piece of live evidence gathered so far: reference-feed liveness alone is insufficient (§5), the existing ALSA-level gain-coherence fix (`CoherentReferenceGain`, tuned to the AUDIBLE device's mixer, not this internal firmware parameter) did not help and may have introduced a new problem (dropped reference chunks, §2's condition B) — because it targets the wrong layer of the gain chain, and lower physical volume did not help either (§2's A2) — consistent with a *fixed, additive* firmware attenuation that does not scale proportionally with whatever software-side amplitude changes were tried.
+
+**Not acted on**: this report does not attempt to compensate for the -20dB firmware gain in software (e.g., by pre-boosting the reference PCM by +20dB before feeding it) without first measuring, deterministically, whether doing so actually improves cancellation — that is exactly what §7's diagnostic script is for.
+
+---
+
+## 7. Deterministic direct AEC measurement — built, NOT executed
+
+`docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py` (new). No Gemini, no LLM, no Pipecat pipeline, no recorded human speech — reuses `cross_correlate_pcm`/`_rms`/`_peak`/`_write_wav` from the existing R0052/R0053 probe (imported, not reimplemented) and `nexa.voice.aec_gain.apply_gain` (the same production code, not a reimplementation).
+
+**Method:** a short, deterministic, non-speech tone sequence (500/1000/2000Hz) is played to the real USB speaker while simultaneously capturing from `plug:respeaker` (the exact endpoint production VAD analyzes). In the "reference ON" condition, the identical PCM is *also* fed to `plug:respeaker`'s playback direction at the same time — the same duplex pattern (`AecReferenceFeeder` writes to `plug:respeaker` for playback while `LocalAudioTransport` reads from `plug:respeaker` for capture) production already relies on. Capture starts before playback (a fixed pre-roll) so the two PCM windows can be aligned to a shared t=0 by simple slicing — deliberately avoiding R0053/R0055's own documented `cross_correlate_pcm` calling-convention pitfall (their probe's reference and mic windows started at different offsets, saturating the lag search).
 
 ```bash
-# A1: current/normal real USB speaker volume
-.venv/bin/python apps/nexa_cloud_voice_simple.py --diagnostic-timeline --diagnostic-audio-levels
+# baseline: reference OFF (upper bound on leakage, no cancellation possible at all)
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition off
 
-# A2: same setup, physical USB speaker volume reduced ~50% relative to A1
-.venv/bin/python apps/nexa_cloud_voice_simple.py --diagnostic-timeline --diagnostic-audio-levels
+# baseline: reference ON, unscaled -- gain=1.0 is EXACTLY what simple_conversation.py
+# feeds today (gain_source=None); test this FIRST, before any gain experiment
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition on
+
+# reference ON, +20dB pre-boost -- tests whether compensating for the firmware's
+# own -20dB AEC_FAR_EXTGAIN (§6) in software measurably improves cancellation,
+# in isolation, without a live nondeterministic Gemini conversation
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition on --gain 10.0
 ```
 
-For each: NeXa speaks for ~60s total (ask a few questions that produce
-longer answers), operator completely silent throughout. Count
-`LOCAL_VAD_START` occurrences and interruption episodes in each.
-`--diagnostic-audio-levels` additionally prints `MIC_RMS`/`REF_RMS`/
-`REF_QUEUE_DEPTH`/`REF_DROPPED` throughout, interleaved with the event
-timeline, so the actual signal levels around each false trigger are
-directly legible from the same terminal output (no post-processing
-needed for a first read).
+(`--gain` is linear; +20dB ≈ ×10.0 — the script's own `apply_gain` is the same production function, so this is a real test of the exact compensating factor §6's finding suggests, not an arbitrary number.)
 
-**Interpretation:**
-- False-`LOCAL_VAD_START` count drops sharply at lower volume → acoustic
-  speaker-to-mic leakage / insufficient AEC margin is strongly supported
-  (matches R0052/R0053's own MAX/NORMAL/LOW escalation pattern on the
-  *other* pipeline) — the lower-volume run is diagnostic only, never a
-  proposed permanent setting.
-- False-`LOCAL_VAD_START` count stays essentially unchanged → look
-  harder at reference routing/timing/XVF3800 configuration (§7/§8) or a
-  non-acoustic trigger, since volume-independence would argue against a
-  simple leakage-margin explanation.
+Reports: quiet-room RMS floor, fed-signal RMS, captured RMS during playback, an ERLE-like attenuation figure in dB (explicitly labeled as such, not a certified AEC measurement), and the reference↔capture cross-correlation peak/lag. Saves WAV pairs for offline inspection.
 
-### Step 3 — real barge-in control (run in BOTH volume conditions)
-
-While NeXa speaks, operator says "stop" (or the Polish equivalent).
-**Expected, and must be preserved regardless of any other finding**:
-`LOCAL_VAD_START` → `INTERRUPTION_FRAME` → `PLAYBACK_STOPPED`, promptly,
-every time. Any future change that breaks this is rejected outright.
-
-### Step 4 — controlled test phrase (self-conversation direct proof, if the transcript stays elusive)
-
-Ask a question NeXa will answer with a short, distinctive, low-ambiguity
-phrase (the exact wording "ALPHA BRAVO CHARLIE DELTA" cannot be forced
-from a live LLM deterministically — phrase the question toward
-whatever fixed fact/code the operator seeds, e.g. re-use `ORBIT-47`).
-Operator silent throughout. If `USER_TRANSCRIPT:` ever shows text
-resembling NeXa's own immediately-preceding spoken content, that is
-direct proof of mic-picking-up-speaker. **Noted limitation, unresolved**:
-the first live run produced no useful `USER_TRANSCRIPT` evidence for any
-of the 8 false episodes — per the explicit instruction, this is **not**
-interpreted as proof no echo reached Gemini (Gemini's own input
-transcription is a best-effort, asynchronous side channel — R0078's own
-audit already established this is not guaranteed to produce a transcript
-for everything the model "hears"; not redesigned here, out of scope).
+**Why this was not executed by this report**: it produces real, audible sound through the operator's physical speaker. Unlike the silent USB register reads in §6, this is a perceptible, real-world side effect in the operator's own space — this report treats that as requiring the operator's live presence/awareness, consistent with the explicit instruction to hand off exact commands rather than run a live audio test unilaterally. **Recommended sequence for the operator**: `--condition off`, then `--condition on`, back to back, same physical volume/room/mic position as A1; repeat 3× per condition if practical (single-sample acoustic measurements vary). Optionally follow with `--condition on --gain 10.0` to test §6's compensation hypothesis directly, deterministically, before ever considering a software change.
 
 ---
 
-## 10. Duplicate interruption frames — confirmed present live, telemetry fix unchanged and validated
+## 8. Duplicate interruption frames — unchanged conclusion, now precisely explained
 
-The live log itself shows the documented pattern directly: pairs like
-`31.213 INTERRUPTION_FRAME` / `31.252 INTERRUPTION_FRAME` and
-`57.254`/`57.283` — Pipecat's own `broadcast_interruption()` fan-out,
-exactly as R0081's first draft's source audit predicted, now confirmed
-live. `CloudTurnAccumulator.on_interruption()` remains a plain,
-already-idempotent flag set (unchanged finding) — **this is duplicate
-telemetry, not a duplicate interruption authority**, and the terminal
-print-debounce fix (§14 of the original draft, unchanged, still the
-correct scope: presentation-only, zero interruption/router/turn-state
-logic touched) stands as implemented, still passing its own 2 dedicated
-tests. **No further action taken here** — the actual problem to solve
-remains the preceding `LOCAL_VAD_START`, per the explicit instruction.
+§4 above supersedes the prior draft's account of *why* duplicates occur (two independent call sites, not just one call's fan-out) but the **conclusion is unchanged**: `CloudTurnAccumulator.on_interruption()` is a plain, already-idempotent flag set (`nexa/realtime/turn.py:119-123`) — safe regardless of how many times or from which source it fires. The terminal print-debounce (presentation-only, zero interruption/router/turn-state logic touched) remains implemented and tested.
 
 ---
 
-## 11. `BOT_AUDIO_STARTED`/`STOPPED` precision — noted limitation, no fix attempted
-
-The live output shows assistant text appearing before the first
-`BOT_AUDIO_STARTED` marker in the excerpt (a continuation of an
-already-in-progress multi-sentence response, not a fresh turn start, so
-this is expected — `BOT_AUDIO_STARTED` only fires once per bot-turn via
-`_bot_is_responding`'s own edge-triggered guard, not once per sentence).
-**Explicitly not treated as a precise physical-speaker boundary** — this
-report's own §5 (original draft) already documented this exact caveat
-("`PLAYBACK_STOPPED`... is a lower-bound proxy, not the literal physical
-stop moment") and extends it here to `BOT_AUDIO_STARTED`/`STOPPED`
-symmetrically: these are Pipecat/Gemini SDK-level signals about when
-audio *content* starts/stops flowing through the frame pipeline, not
-externally-measured acoustic events at the physical speaker. No fix
-attempted — building true physical-boundary instrumentation would require
-transport-level changes this milestone must not make.
-
----
-
-## 12. USER_TRANSCRIPT limitation — noted, not redesigned
-
-No useful `USER_TRANSCRIPT` evidence appeared for any of the 8 live false
-`LOCAL_VAD_START` episodes. Per the explicit instruction, this is **not**
-interpreted as proof that no echo reached Gemini's own audio input —
-Gemini's input transcription is an independent, best-effort, asynchronous
-side channel (R0078's own audit: not guaranteed to arrive, not
-necessarily correlated 1:1 with every VAD-detected segment). No
-transcription redesign was attempted or considered — explicitly out of
-scope for this milestone.
-
----
-
-## 13. Root-cause audit priority order — status per item
+## 9. Root-cause audit priority order — updated status
 
 | Priority | Item | Status |
 |---|---|---|
-| A | reSpeaker/XVF3800 capture endpoint (raw vs. AEC-processed) | **Audited, genuinely unresolved** — the project's own M2.1 docs flag this as never independently verified (§8). Requires hardware-level firmware inspection this environment cannot perform. |
-| B | Far-end reference correctness (gain, timing, format) | **Confirmed real defect found** (gain incoherence, R0053) — fix now available opt-in (§7), not proven sufficient alone. Timing/alignment (§C below) audited at the code level, not measured. |
-| C | Two independent ALSA playback paths | **Audited (§7's closing paragraph)** — structurally plausible drift source, not measured, no measurement tooling wired in per "do not redesign the pipeline." |
-| D | XVF3800 hardware/DSP configuration (AEC enable, far-end gain, AGC, noise suppression) | **Not auditable from this repository** — no I2C/vendor-config tooling exists in this codebase (confirmed by grep); R0053's own audit found the reference-injection mixer fixed at 0dB/unity gain and never touched by NeXa software, which is the one DSP-adjacent fact already on record. Requires live hardware access. |
-| E | Silero sensitivity/thresholds | **Deliberately last, not attempted.** The ~0.7–0.9s sustained false-VAD duration observed live is far too long to be a threshold/persistence artifact fixable by a small `start_secs` nudge (matches R0053's own explicit rejection of generic VAD tuning for the analogous sustained-echo pattern on the other pipeline). No blind tuning performed, consistent with the explicit prohibition. |
+| A | reSpeaker/XVF3800 capture endpoint (raw vs. AEC-processed) | **RESOLVED** by direct evidence (§6): USB descriptor terminal typing (`0x0405` Echo-Canceling Speakerphone, both directions) + `AEC_ASROUTONOFF=1` (beamformed/processed output, confirmed by direct DSP register read) both independently confirm the capture stream IS the processed output, not raw per-mic residuals. |
+| B | Far-end reference correctness (gain, timing, format) | **New, more specific evidence**: firmware `AEC_FAR_EXTGAIN=-20dB`, confirmed by direct register read, corroborating R0053's ALSA-level finding via an independent method. This is now the leading hypothesis (§6). Not yet measured in isolation (§7, built, not executed). |
+| C | Two independent ALSA playback paths (timing drift) | Still not measured; deprioritized relative to B given B's much more direct, quantified evidence. |
+| D | XVF3800 hardware/DSP configuration | **Largely resolved** by §6's direct register reads: AEC not bypassed, converged, 1 far-end/4 mics configured, HPF/emphasis normal, PCD disabled (reason unclear), RT60 inconclusive from a single idle read. |
+| E | Silero sensitivity/thresholds | Still deliberately last, still not attempted — the ~0.7-0.9s sustained false-VAD duration remains far too long to be a small-threshold artifact, and the new firmware-level evidence gives a much more specific, better-targeted lead than blind VAD tuning ever would. |
 
 ---
 
-## 14. Forbidden fixes and blind tuning — confirmed not applied
+## 10. Forbidden fixes, blind tuning, and firmware writes — confirmed not applied
 
-No interruption-while-speaking suppression, no VAD disabling, no blanket
-mic muting during playback exists anywhere in this diff. No
-`confidence`/`min_volume`/`start_secs` change was made. The two
-behavioral changes in this entire report are: (1) the interruption-print
-debounce (§10, presentation-only), and (2) the opt-in
-`coherent_reference_gain` fix (§7, off by default, evidence-backed reuse
-of an already-tested mechanism, not a new/invented one, not enabled by
-default).
+No interruption-while-speaking suppression, no VAD disabling, no blanket mic muting, no `confidence`/`min_volume`/`start_secs` change. **No DSP register was written** — every `xvf_host.py` invocation in §6 omitted `--values`, confirmed read-only by the tool's own `--help` text and by the fact that a write requires that flag. `/etc/asound.conf` and all persistent device configuration are untouched.
 
 ---
 
-## 15. Files changed (full R0081 diff)
+## 11. Files changed
 
-- `src/nexa/realtime/gemini/simple_conversation.py` — `on_diagnostic`
-  param (event-timeline markers); `coherent_reference_gain` opt-in param
-  + wiring; `diagnostic_audio_levels` opt-in param + `_MicLevelTap`
-  insertion gating; `_make_mic_level_tap_class()` (new).
-- `src/nexa/realtime/gemini/core_recall_tool.py` — `on_diagnostic` param
-  on `make_recall_handler`/`register_recall_tool` (`TOOL_CALL_START`/`END`).
-- `src/nexa/voice_tts/aec_reference.py` — `on_diagnostic`/
-  `diagnostic_interval_s` params on `AecReferenceFeeder` (`REF_RMS`/
-  `REF_QUEUE_DEPTH`/`REF_DROPPED`), default `None` — shared with local
-  voice, confirmed unaffected (87 existing tests unmodified + 5 new).
-- `apps/nexa_cloud_voice_simple.py` — `--diagnostic-timeline`,
-  `--diagnostic-audio-levels`, `--coherent-reference-gain` flags;
-  `_make_diagnostic_timeline_printer()`; interruption-print debounce in
-  `_make_event_printer()`.
-- `tests/test_simple_cloud_conversation.py` — `TestDiagnosticTimeline` (5),
-  `TestMicLevelTap` (3), `TestCoherentReferenceGainWiring` (4),
-  `TestDiagnosticAudioLevelsGating` (4) — 16 new.
-- `tests/test_cloud_voice_simple_entrypoint.py` — `TestInterruptionPrintDebounce`
-  (2 new).
-- `tests/test_bargein_m2_5b.py` — `TestAecReferenceFeederDiagnostics`
-  (5 new).
+- `src/nexa/realtime/gemini/simple_conversation.py` — direction/sibling/vad_active-aware `InterruptionFrame` diagnostics (§4); `_vad_active` bookkeeping.
+- `tests/test_simple_cloud_conversation.py` — `TestInterruptionDirectionTelemetry` (6 new); corrected the one pre-existing assertion that expected a bare `"INTERRUPTION_FRAME"` label; fixed one test's reliance on same-batch queue ordering (the `SystemFrame`-priority finding, §4) with explicit sequential awaits.
+- `docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py` (new) — the deterministic, non-conversational AEC measurement script (§7), built, not executed.
 
-18 new tests total this milestone (measured via exact before/after collected counts: test_simple_cloud_conversation.py 13→24, test_cloud_voice_simple_entrypoint.py 13→15, test_bargein_m2_5b.py 44→49 -- not summed per-class estimates).
+Everything from the prior update (`--diagnostic-timeline`, `--diagnostic-audio-levels`, `--coherent-reference-gain`, the interruption-print debounce, the `AecReferenceFeeder`/`_MicLevelTap` signal-level diagnostics) is unchanged in this update except for the correction above.
 
 ---
 
-## 16. Full regression
+## 12. Full regression
 
 ```
 pytest tests/ -q
 ```
 
-**Result:** 1494 passed, 9 skipped (7 pre-existing environment-gated
-live tests + 2 new from R0080's own live-gated local-voice test, both
-skipped by default), **1 pre-existing failure** —
-`tests/test_voice_architecture.py::TestConfigIsExplicitAndTyped::test_local_audio_config_fields_are_typed_and_explicit`,
-the same paused R0068-R0070 `scheduled_aec_reference` issue documented
-since R0076, untouched by this work. **Zero new failures.** `ruff check`/
-`py_compile`/`git diff --check` clean on every file this report touches;
-local voice's own `AecReferenceFeeder`/barge-in suites (87 pre-existing +
-5 new = 92 tests in `tests/test_bargein_m2_5b.py`) re-verified, confirming
-local voice is unaffected by every change in this report.
+`tests/test_simple_cloud_conversation.py`: 36 passed (30 from the prior update + 6 new `TestInterruptionDirectionTelemetry`).
+
+**Full suite result:** 1500 passed, 9 skipped (7 pre-existing environment-gated live tests + 2 from R0080's own live-gated local-voice test), **1 pre-existing failure** — `tests/test_voice_architecture.py::TestConfigIsExplicitAndTyped::test_local_audio_config_fields_are_typed_and_explicit`, the same paused R0068-R0070 `scheduled_aec_reference` issue documented since R0076, untouched by this work. **Zero new failures.** `ruff check`/`py_compile`/`git diff --check` clean on every file this report touches.
 
 ---
 
-## 17. Acceptance criteria — still NOT MET, live re-run still required
+## 13. Acceptance criteria — still NOT MET
 
 | Criterion | Status |
 |---|---|
-| Silent playback test (≥10 responses, 0 false interruptions, 0 self-conversation) | **RAN, FAILED** (8 false episodes observed in the operator's own diagnostic run — this IS the evidence the criterion asks for, and it does not pass) |
-| Real barge-in (≥5 deliberate interruptions, 5/5 detected, prompt stop, no resume) | **NOT YET RE-RUN** with the new instrumentation; mechanism unchanged from R0071 |
-| Core recall (ORBIT-47 + same-session new fact) | **PASS** (operator live-tested, §1) |
-| PL/EN (≥2 PL, ≥2 EN, one switch, no false self-interruption) | **NOT RUN** |
-| A1/A2 volume-controlled diagnostic (§9) | **NOT RUN** — the specific next step |
+| Silent playback test (0 false interruptions) | **FAILED** at normal volume (A1), FAILED with the gain fix (B, worse), FAILED at lower volume (A2) — three independent live attempts, none passing |
+| Real barge-in (5/5) | Not separately re-verified this round; mechanism itself unchanged |
+| Core recall | **PASS** (unchanged, §1) |
+| PL/EN | Not run |
+| Direct, deterministic AEC measurement (§7) | **NOT RUN** — built, requires the operator's live presence for audible playback |
 
-**R0081 does not pass.** The false-barge-in/self-echo regression is
-CONFIRMED to exist and its immediate trigger mechanism is now fully
-understood; its deeper acoustic cause is not yet isolated. One
-evidence-backed, previously-unapplied, opt-in candidate fix is now
-available for A/B testing (§7/§9).
+**R0081 still does not pass.** A specific, hardware-confirmed, quantified candidate mechanism (§6's firmware `AEC_FAR_EXTGAIN=-20dB`) is now available for direct, deterministic testing (§7) before any software change is considered.
 
 ---
 
-## 18. Commit gate
+## 14. Next operator step — exactly what to run and return
 
-Per the explicit instruction and this project's established practice for
-this exact situation: the diagnostic instrumentation (event timeline +
-signal-level RMS/queue telemetry, all off by default) and the opt-in,
-evidence-backed `coherent_reference_gain` fix (off by default) are
-committed locally, clearly labeled as diagnostics-and-candidate-fix, not
-as a resolution. **Root cause remains unconfirmed. R0081 is NOT marked
-PASS. Do not ship or rely on any change in this report as a complete
-fix** — the next required step is the operator's own live A1/A2 run
-(§9), which this environment cannot perform.
+**Do not start with another free-form conversation test.** First, the deterministic measurement:
+
+```bash
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition off
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition on
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition on --gain 10.0
+```
+
+Same physical volume/room/mic position as the A1 run, back to back. **Return**: the full printed `RESULT` block from each of the three runs (quiet_before_rms, signal_rms, mic_window_rms, mic_window_peak, attenuation, cross-correlation lag/correlation) — no audio files need to be sent, the printed numbers are sufficient for the next analysis pass.
+
+Separately, if convenient: a repeat of the `--diagnostic-timeline` conversational run (A1-style, no `--coherent-reference-gain`) so the new direction/sibling/`vad_active`-aware `INTERRUPTION_FRAME_*` labels (§4) can be read directly, to confirm or refute the "delayed Gemini-acknowledgement" theory for the unpaired interruptions.
+
+---
+
+## 15. Commit gate
+
+Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validated (and stays off by default). No fix is claimed. Per this project's established practice for this exact situation: the diagnostic instrumentation (direction-aware interruption telemetry, tested against a real Pipecat pipeline) and the new deterministic AEC measurement script (built, not yet run) are committed locally, clearly labeled as diagnostics only. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system** — every hardware interaction in this report was a read.
