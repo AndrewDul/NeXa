@@ -109,7 +109,11 @@ class ConversationSession:
             response_languages=self._response_languages,
         )
 
-    def _render_provider_window(self, response_mode: ResponseMode) -> list:
+    def _render_provider_window(
+        self,
+        response_mode: ResponseMode,
+        context_provider: Callable[[ConversationSession], str | None] | None = None,
+    ) -> list:
         """M2.5B.2 — render the bounded provider window, first consuming any
         reset the policy calls for (see ``ProviderWindow``).
 
@@ -122,6 +126,15 @@ class ConversationSession:
         (~4-6 s, an ordinary turn). It is logged at WARNING so it is never
         silent. Either way, vastly cheaper — and it never recurs — versus
         the permanent every-turn collapse the sliding cap caused.
+
+        ``context_provider`` (R0079, M3.3 local-voice parity): the SAME
+        optional hook ``send()``'s non-``provider_window`` branch already
+        honors (R0077) — invoked here too, with the same fail-safe
+        try/except, so local voice gets the identical Context Engine
+        addendum typed chat does, rendered via ``ProviderWindow.render()``'s
+        own ``context_addendum`` trailing-message seam instead of
+        ``ConversationContext``'s. ``None`` (the default) means this method
+        behaves byte-for-byte as before R0079.
         """
         w = self.provider_window
         assert w is not None
@@ -143,11 +156,30 @@ class ConversationSession:
                 "nexa.conversation: provider-context cutover (pre-warmed, cheap) "
                 "base %d->%d at %d entries", old, new, n,
             )
+
+        context_addendum: str | None = None
+        if context_provider is not None:
+            start = time.monotonic()
+            try:
+                context_addendum = context_provider(self)
+            except Exception:
+                logger.warning(
+                    "nexa.conversation: context_provider raised for this turn -- "
+                    "continuing WITHOUT extra context (fail-safe by design, R0079)",
+                    exc_info=True,
+                )
+            else:
+                logger.debug(
+                    "nexa.conversation: context_provider took %.1fms",
+                    (time.monotonic() - start) * 1000,
+                )
+
         return w.render(
             self.system_prompt,
             self._history,
             self._response_languages,
             response_mode=response_mode,
+            context_addendum=context_addendum,
         )
 
     async def prewarm_provider_context(
@@ -243,8 +275,11 @@ class ConversationSession:
         already is (the canonical transcript authority) with one small,
         optional hook, not a new dependency. Only honored on the
         non-``provider_window`` path (the local typed-chat path this was
-        built for) — the KV-cache ``provider_window`` path (M2.5B.2,
-        voice) is unaffected, unchanged, not wired in R0077.
+        built for) prior to R0079 — the KV-cache ``provider_window`` path
+        (M2.5B.2, local voice) now honors it too (R0079), rendered via
+        ``ProviderWindow.render()``'s own trailing ``context_addendum``
+        seam instead of ``ConversationContext``'s, so prefix stability is
+        preserved (see ``ProviderWindow.render()``'s docstring).
 
         Fails safe, not loud: if ``context_provider`` raises, the turn
         proceeds without extra context (logged, never silent) — a Context
@@ -254,7 +289,7 @@ class ConversationSession:
         self._response_languages.append(response_language)
 
         if self.provider_window is not None:
-            messages = self._render_provider_window(response_mode)
+            messages = self._render_provider_window(response_mode, context_provider)
         else:
             extra_system_context: str | None = None
             if context_provider is not None:

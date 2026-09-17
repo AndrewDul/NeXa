@@ -25,6 +25,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fakes import FakeModelProvider  # noqa: E402
 from nexa.conversation.session import ConversationSession  # noqa: E402
+from nexa.realtime.gemini.core_recall_tool import (  # noqa: E402
+    RECALL_TOOL_NAME,
+    RECALL_TOOL_USE_INSTRUCTION,
+    RecallExecutor,
+)
 from nexa.realtime.gemini.simple_conversation import (  # noqa: E402
     _make_event_tap_class,
     _pipecat_imports,
@@ -81,6 +86,44 @@ class TestDryConstruction(unittest.TestCase):
             session=session, api_key="DRY-NO-KEY", snapshot=snapshot, dry=True,
         )
         self.assertIsNotNone(adapter.llm)  # constructed without error with seeded history
+
+    def test_no_recall_executor_is_byte_for_byte_unchanged(self) -> None:
+        """R0079: default recall_executor=None must reproduce exactly the
+        pre-R0079 construction -- no tools, no appended instruction text."""
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        snapshot = build_cloud_context_snapshot(session)
+        adapter = build_cloud_realtime_conversation_adapter(
+            session=session, api_key="DRY-NO-KEY", snapshot=snapshot, dry=True,
+        )
+        self.assertNotIn(RECALL_TOOL_NAME, adapter.llm._functions)  # noqa: SLF001
+        self.assertEqual(
+            adapter.llm._settings.system_instruction, snapshot.system_instruction  # noqa: SLF001
+        )
+
+    def test_recall_executor_registers_tool_and_appends_instruction(self) -> None:
+        session = ConversationSession(provider=FakeModelProvider(), system_prompt="p")
+        snapshot = build_cloud_context_snapshot(session)
+        executor = RecallExecutor()
+        try:
+            adapter = build_cloud_realtime_conversation_adapter(
+                session=session,
+                api_key="DRY-NO-KEY",
+                snapshot=snapshot,
+                dry=True,
+                recall_executor=executor,
+            )
+            item = adapter.llm._functions[RECALL_TOOL_NAME]  # noqa: SLF001
+            self.assertTrue(item.cancel_on_interruption)
+            self.assertIn(
+                RECALL_TOOL_USE_INSTRUCTION,
+                adapter.llm._settings.system_instruction,  # noqa: SLF001
+            )
+            self.assertIn(
+                snapshot.system_instruction,
+                adapter.llm._settings.system_instruction,  # noqa: SLF001
+            )
+        finally:
+            executor.close()
 
 
 @unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")

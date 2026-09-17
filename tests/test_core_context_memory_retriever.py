@@ -70,13 +70,17 @@ class TestDomainDiscovery(_RetrieverTestCase):
     def test_no_hints_enumerates_domains(self) -> None:
         self._remember("teacher.python", "x")
         request = ContextRequest(session=_session())
-        descriptors = self.retriever.describe_available_knowledge(request)
+        descriptors = self.retriever.describe_available_knowledge(
+            domain_hint=request.domain_hint, subject_hints=request.subject_hints
+        )
         self.assertTrue(any(d.domain == "teacher.python" for d in descriptors))
 
     def test_exact_domain_hint_matches_leaf(self) -> None:
         self._remember("teacher.python", "x")
         request = ContextRequest(session=_session(), domain_hint="teacher.python")
-        descriptors = self.retriever.describe_available_knowledge(request)
+        descriptors = self.retriever.describe_available_knowledge(
+            domain_hint=request.domain_hint, subject_hints=request.subject_hints
+        )
         self.assertEqual([d.domain for d in descriptors], ["teacher.python"])
         self.assertEqual(descriptors[0].kind, KnowledgeDescriptorKind.DOMAIN)
 
@@ -84,7 +88,9 @@ class TestDomainDiscovery(_RetrieverTestCase):
         """R0075 §5: a DOMAIN_GROUP is synthesized for even one child."""
         self._remember("lifeos.sleep", "x")
         request = ContextRequest(session=_session(), domain_hint="lifeos")
-        descriptors = self.retriever.describe_available_knowledge(request)
+        descriptors = self.retriever.describe_available_knowledge(
+            domain_hint=request.domain_hint, subject_hints=request.subject_hints
+        )
         groups = [d for d in descriptors if d.kind is KnowledgeDescriptorKind.DOMAIN_GROUP]
         self.assertEqual(len(groups), 1)
         self.assertEqual(groups[0].child_domains, ("lifeos.sleep",))
@@ -93,14 +99,18 @@ class TestDomainDiscovery(_RetrieverTestCase):
         self._remember("teacher.python", "x")
         self._remember("teacher.math", "y")
         request = ContextRequest(session=_session(), domain_hint="teacher")
-        descriptors = self.retriever.describe_available_knowledge(request)
+        descriptors = self.retriever.describe_available_knowledge(
+            domain_hint=request.domain_hint, subject_hints=request.subject_hints
+        )
         groups = [d for d in descriptors if d.kind is KnowledgeDescriptorKind.DOMAIN_GROUP]
         self.assertEqual(groups[0].child_domains, ("teacher.math", "teacher.python"))
 
     def test_flat_namespace_gets_no_group(self) -> None:
         self._remember("core", "x")
         request = ContextRequest(session=_session())
-        descriptors = self.retriever.describe_available_knowledge(request)
+        descriptors = self.retriever.describe_available_knowledge(
+            domain_hint=request.domain_hint, subject_hints=request.subject_hints
+        )
         self.assertFalse(any(d.kind is KnowledgeDescriptorKind.DOMAIN_GROUP and d.domain == "core"
                               for d in descriptors))
 
@@ -110,7 +120,9 @@ class TestDomainDiscovery(_RetrieverTestCase):
         self._remember("lifeos", "flat one")
         self._remember("lifeos.sleep", "child one")
         request = ContextRequest(session=_session(), domain_hint="lifeos")
-        descriptors = self.retriever.describe_available_knowledge(request)
+        descriptors = self.retriever.describe_available_knowledge(
+            domain_hint=request.domain_hint, subject_hints=request.subject_hints
+        )
         ids = {d.id for d in descriptors}
         self.assertIn("memory:domain:lifeos", ids)
         self.assertIn("memory:domain_group:lifeos", ids)
@@ -128,13 +140,17 @@ class TestDomainDiscovery(_RetrieverTestCase):
         self._remember("projects.nexa", "x")
         self.conn.commit()
         req = ContextRequest(session=_session(), domain_hint="projects.nexa")
-        first = self.retriever.describe_available_knowledge(req)
+        first = self.retriever.describe_available_knowledge(
+            domain_hint=req.domain_hint, subject_hints=req.subject_hints
+        )
 
         other_conn = connect(Path(self._tmp.name) / "core.sqlite3")
         try:
             other_service = MemoryService(MemoryRepository(other_conn))
             other_retriever = MemoryRetriever(other_service)
-            second = other_retriever.describe_available_knowledge(req)
+            second = other_retriever.describe_available_knowledge(
+                domain_hint=req.domain_hint, subject_hints=req.subject_hints
+            )
         finally:
             other_conn.close()
 
@@ -143,7 +159,9 @@ class TestDomainDiscovery(_RetrieverTestCase):
     def test_subject_hint_substring_match(self) -> None:
         self._remember("projects.nexa", "x")
         request = ContextRequest(session=_session(), subject_hints=("nexa",))
-        descriptors = self.retriever.describe_available_knowledge(request)
+        descriptors = self.retriever.describe_available_knowledge(
+            domain_hint=request.domain_hint, subject_hints=request.subject_hints
+        )
         self.assertTrue(any(d.domain == "projects.nexa" for d in descriptors))
 
     def test_paraphrase_that_does_not_match_text_finds_nothing(self) -> None:
@@ -153,14 +171,18 @@ class TestDomainDiscovery(_RetrieverTestCase):
         even though semantically-relevant content exists."""
         self._remember("projects.nexa", "We chose one MemoryService authority.")
         request = ContextRequest(session=_session(), subject_hints=("architectural cohesion",))
-        descriptors = self.retriever.describe_available_knowledge(request)
+        descriptors = self.retriever.describe_available_knowledge(
+            domain_hint=request.domain_hint, subject_hints=request.subject_hints
+        )
         self.assertEqual(descriptors, ())
 
     def test_descriptor_privacy_is_most_restrictive_of_members(self) -> None:
         self._remember("mixed.ns", "a", cloud_eligibility=CloudEligibility.CLOUD_SAFE)
         self._remember("mixed.ns", "b", cloud_eligibility=CloudEligibility.LOCAL_ONLY)
         request = ContextRequest(session=_session(), domain_hint="mixed.ns")
-        descriptors = self.retriever.describe_available_knowledge(request)
+        descriptors = self.retriever.describe_available_knowledge(
+            domain_hint=request.domain_hint, subject_hints=request.subject_hints
+        )
         self.assertEqual(descriptors[0].cloud_eligibility, CloudEligibility.LOCAL_ONLY)
 
     def test_discovery_is_bounded_by_scan_limit_not_unbounded(self) -> None:
@@ -171,7 +193,9 @@ class TestDomainDiscovery(_RetrieverTestCase):
         for i in range(300):
             self._remember(f"ns{i}", f"x{i}")
         request = ContextRequest(session=_session())
-        descriptors = self.retriever.describe_available_knowledge(request)
+        descriptors = self.retriever.describe_available_knowledge(
+            domain_hint=request.domain_hint, subject_hints=request.subject_hints
+        )
         self.assertLess(len(descriptors), 300, "discovery must be bounded, not unbounded")
 
 

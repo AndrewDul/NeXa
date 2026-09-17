@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 from ...conversation.turn import ConversationTurn, Role
 from ..identity.model import NeXaIdentity
+from .derivation import derive_subject_hints
 from .models import (
     ConflictType,
     ContextBudget,
@@ -24,10 +25,20 @@ from .models import (
     KnowledgeDescriptorKind,
     KnowledgeGap,
     KnowledgeGapState,
+    RecallBudget,
+    RecallOutcome,
+    RecallRequest,
+    RecallResult,
     RetrievalAttempt,
     RetrievalOutcome,
+    TemporalIntent,
 )
-from .retrieval import ContextRetriever, RetrievalNotSupportedError, RetrievalQuery
+from .retrieval import (
+    ContextRetriever,
+    RetrievalBudget,
+    RetrievalNotSupportedError,
+    RetrievalQuery,
+)
 
 _MIN_DATETIME = datetime.min.replace(tzinfo=UTC)
 
@@ -65,7 +76,9 @@ class ContextEngine:
         )
 
         discovery_start = time.monotonic()
-        all_descriptors = self._discover(request)
+        all_descriptors = self._discover(
+            domain_hint=request.domain_hint, subject_hints=request.subject_hints
+        )
         discovery_ms = (time.monotonic() - discovery_start) * 1000
         capped_descriptors = all_descriptors[: budget.max_knowledge_references]
         omitted_descriptor_count = max(0, len(all_descriptors) - len(capped_descriptors))
@@ -103,7 +116,10 @@ class ContextEngine:
 
         retrieval_start = time.monotonic()
         selected_items, retrieval_attempts, retrieval_gaps, rounds = self._retrieve(
-            capped_descriptors, request, budget
+            capped_descriptors,
+            temporal_intent=request.temporal_intent,
+            historical_at=request.historical_at,
+            budget=budget,
         )
         retrieval_ms = (time.monotonic() - retrieval_start) * 1000
         knowledge_gaps.extend(retrieval_gaps)
@@ -143,6 +159,74 @@ class ContextEngine:
             trace=trace,
         )
 
+    def recall(self, request: RecallRequest) -> RecallResult:
+        """The SECOND entry mode (R0079 / R0078 Revision 2 §1-§3): targeted
+        knowledge retrieval with no ``ConversationSession`` and no current
+        USER turn required. Exists because a live cloud realtime turn has
+        no canonical current turn to build one from while Gemini is
+        generating (R0078 §4's audit) -- ``build_context()``'s hard
+        precondition would be unsatisfiable there, and this method never
+        pretends otherwise.
+
+        Reuses the exact same ``_discover``/``_retrieve``/``_trim_to_budget``
+        internals and the exact same ``self._retrievers`` (so the exact same
+        ``MemoryRetriever`` instance) as ``build_context()`` -- one engine,
+        two entry modes, never a second retrieval implementation or a
+        second Memory authority.
+
+        No conflict detection: unlike ``build_context()``, this returns a
+        flat, bounded item set for ONE targeted query, not a composed
+        current-turn context -- conflict detection is a composition
+        concern that doesn't apply here."""
+        budget = request.budget or RecallBudget()
+        subject_hints = derive_subject_hints(request.query_text)
+
+        all_descriptors = self._discover(
+            domain_hint=request.domain_hint, subject_hints=subject_hints
+        )
+        capped_descriptors = all_descriptors[: budget.max_knowledge_references]
+
+        selected_items, retrieval_attempts, gaps, rounds = self._retrieve(
+            capped_descriptors,
+            temporal_intent=request.temporal_intent,
+            historical_at=request.historical_at,
+            budget=budget,
+        )
+        selected_items.sort(key=lambda i: (i.freshness or _MIN_DATETIME, i.source_id), reverse=True)
+        trimmed, rejected = _trim_to_budget(selected_items, budget)
+        outcome = _recall_outcome(trimmed, gaps)
+
+        # Trace safety (R0079 §9): IDs/counts/closed reason codes only --
+        # NEVER request.query_text itself. subject_hints are already
+        # normalized single lexical tokens (derive_subject_hints' output),
+        # the same representation build_context()'s own trace already
+        # carries via ContextRequest -- not raw provider/user input.
+        trace = ContextBuildTrace(
+            request_summary=(
+                f"domain_hint={request.domain_hint!r} subject_hints={subject_hints!r} "
+                f"temporal={request.temporal_intent.value}"
+            ),
+            candidate_descriptor_ids=tuple(d.id for d in all_descriptors),
+            selected_item_ids=tuple(i.source_id for i in trimmed),
+            rejected_item_ids=tuple(i.source_id for i in rejected),
+            rejection_reason_codes={i.source_id: "budget_exceeded" for i in rejected},
+            retrieval_attempts=tuple(retrieval_attempts),
+            budget_used={
+                "items": len(trimmed),
+                "content_chars": sum(len(i.content) for i in trimmed),
+                "rounds": rounds,
+            },
+            gap_ids=tuple(g.id for g in gaps),
+            omitted_descriptor_count=max(0, len(all_descriptors) - len(capped_descriptors)),
+        )
+
+        return RecallResult(
+            outcome=outcome,
+            items=tuple(trimmed),
+            knowledge_gaps=tuple(gaps),
+            trace=trace,
+        )
+
     # ---- pipeline steps ----
 
     def _mandatory_turns(
@@ -166,18 +250,26 @@ class ContextEngine:
         )
         return current_turn, conversation_window
 
-    def _discover(self, request: ContextRequest) -> list[KnowledgeDescriptor]:
+    def _discover(
+        self, *, domain_hint: str | None, subject_hints: tuple[str, ...]
+    ) -> list[KnowledgeDescriptor]:
         descriptors: list[KnowledgeDescriptor] = []
         for retriever in self._retrievers:
-            descriptors.extend(retriever.describe_available_knowledge(request))
+            descriptors.extend(
+                retriever.describe_available_knowledge(
+                    domain_hint=domain_hint, subject_hints=subject_hints
+                )
+            )
         descriptors.sort(key=lambda d: (d.freshness or _MIN_DATETIME, d.id), reverse=True)
         return descriptors
 
     def _retrieve(
         self,
         descriptors: list[KnowledgeDescriptor],
-        request: ContextRequest,
-        budget: ContextBudget,
+        *,
+        temporal_intent: TemporalIntent,
+        historical_at: datetime | None,
+        budget: RetrievalBudget,
     ) -> tuple[list[ContextItem], list[RetrievalAttempt], list[KnowledgeGap], int]:
         selected_items: list[ContextItem] = []
         attempts: list[RetrievalAttempt] = []
@@ -189,7 +281,12 @@ class ContextEngine:
             if rounds >= budget.max_retrieval_rounds:
                 break
             retriever = self._retrievers_by_kind[descriptor.source_kind]
-            query = _build_retrieval_query(descriptor, request, budget)
+            query = _build_retrieval_query(
+                descriptor,
+                temporal_intent=temporal_intent,
+                historical_at=historical_at,
+                budget=budget,
+            )
             result = retriever.retrieve(query, budget)
             rounds += 1
 
@@ -231,7 +328,11 @@ class ContextEngine:
 
 
 def _build_retrieval_query(
-    descriptor: KnowledgeDescriptor, request: ContextRequest, budget: ContextBudget
+    descriptor: KnowledgeDescriptor,
+    *,
+    temporal_intent: TemporalIntent,
+    historical_at: datetime | None,
+    budget: RetrievalBudget,
 ) -> RetrievalQuery:
     if descriptor.kind is not KnowledgeDescriptorKind.DOMAIN:
         raise RetrievalNotSupportedError(
@@ -241,10 +342,25 @@ def _build_retrieval_query(
     return RetrievalQuery(
         descriptor_id=descriptor.id,
         domain=descriptor.domain,
-        temporal_intent=request.temporal_intent,
-        at=request.historical_at,
+        temporal_intent=temporal_intent,
+        at=historical_at,
         limit=budget.max_items_per_source,
     )
+
+
+def _recall_outcome(items: list[ContextItem], gaps: list[KnowledgeGap]) -> RecallOutcome:
+    """Explicit precedence, never enum-declaration-order (matches
+    ``most_restrictive_cloud_eligibility()``'s own discipline):
+    ``FOUND`` iff ``items`` is non-empty; otherwise the single most
+    restrictive gap state present, ``PERMISSION_REQUIRED`` >
+    ``UNAVAILABLE`` > ``NO_MATCH``."""
+    if items:
+        return RecallOutcome.FOUND
+    if any(g.state is KnowledgeGapState.PERMISSION_REQUIRED for g in gaps):
+        return RecallOutcome.PERMISSION_REQUIRED
+    if any(g.state is KnowledgeGapState.UNAVAILABLE for g in gaps):
+        return RecallOutcome.UNAVAILABLE
+    return RecallOutcome.NO_MATCH
 
 
 def _bounded_prior_turns(
@@ -268,7 +384,7 @@ def _bounded_prior_turns(
 
 
 def _trim_to_budget(
-    items: list[ContextItem], budget: ContextBudget
+    items: list[ContextItem], budget: RetrievalBudget
 ) -> tuple[list[ContextItem], list[ContextItem]]:
     """``items`` must already be sorted freshest-first. Drops
     lowest-priority (all OPTIONAL in V1 -- MANDATORY fields are

@@ -264,3 +264,115 @@ class CurrentTurnContext:
     conflicts: tuple[ContextConflict, ...]
     knowledge_gaps: tuple[KnowledgeGap, ...]
     trace: ContextBuildTrace
+
+
+# --------------------------------------------------------------------- #
+# R0079 (R0078 Revision 2 §2/§3) -- ContextEngine's SECOND entry mode:
+# recall() for a caller with no ConversationSession (a live cloud realtime
+# turn never has a canonical current USER turn to point to -- see R0078
+# §4's audit). RecallRequest/RecallResult/RecallBudget/RecallOutcome are
+# deliberately smaller siblings of ContextRequest/CurrentTurnContext/
+# ContextBudget -- provider-neutral, self-contained, no
+# ConversationSession, no conversation-window/current-turn fields (recall()
+# has no conversation-window or current-turn concept at all).
+# --------------------------------------------------------------------- #
+
+
+class RecallOutcome(StrEnum):
+    """The result of ONE :meth:`~nexa.core.context.engine.ContextEngine.recall`
+    call. Deliberately smaller than ``RetrievalOutcome``/``KnowledgeGapState``:
+    recall() is a single flat operation over possibly several descriptors,
+    not a multi-item build pipeline, so it reports one outcome for the
+    whole call. ``FOUND`` iff at least one item is selected (enforced by
+    ``RecallResult.__post_init__``, mirroring ``RetrievalResult``'s own
+    outcome/items invariant)."""
+
+    FOUND = "found"
+    NO_MATCH = "no_match"
+    UNAVAILABLE = "unavailable"
+    PERMISSION_REQUIRED = "permission_required"
+
+
+#: Untrusted-input bound (R0078 Revision 2 §11) -- a provider's tool-call
+#: argument is never trusted; enforced at RecallRequest construction, not a
+#: tunable RecallBudget knob (this is input validation, not a resource
+#: budget). Generous for a spoken/typed question, far below anything that
+#: could smuggle a large payload through a "query" field.
+MAX_RECALL_QUERY_CHARS = 500
+
+
+@dataclass(frozen=True, slots=True)
+class RecallBudget:
+    """Deliberately narrower than :class:`ContextBudget` -- no
+    ``max_conversation_turns``/``max_conversation_chars``/
+    ``max_current_turn_chars``, because :meth:`~nexa.core.context.engine.ContextEngine.recall`
+    has no conversation window or current-turn concept at all. Field names
+    and defaults mirror the equivalent ``ContextBudget`` fields exactly, so
+    the two share behavior even though they share no inheritance
+    relationship (R0078 Revision 2 §5) -- see
+    :class:`~nexa.core.context.retrieval.RetrievalBudget` for the explicit
+    structural contract both satisfy."""
+
+    max_items: int = 20
+    max_content_chars: int = 4000
+    max_items_per_source: int = 10
+    max_retrieval_rounds: int = 2
+    max_knowledge_references: int = 10
+
+
+@dataclass(frozen=True, slots=True)
+class RecallRequest:
+    """Self-contained: the caller's query text IS the information need. No
+    ``ConversationSession`` field -- a live cloud realtime turn has no
+    canonical current turn to point to while Gemini is still generating
+    (R0078 §4), so this must never require or fabricate one. Historical
+    prior-conversation state may be added as an explicit, separate field
+    later ONLY if a real, audited need emerges -- never smuggled in by
+    attaching a session (R0078 Revision 2 §3)."""
+
+    query_text: str
+    domain_hint: str | None = None
+    temporal_intent: TemporalIntent = TemporalIntent.CURRENT
+    historical_at: datetime | None = None
+    budget: RecallBudget | None = None
+
+    def __post_init__(self) -> None:
+        if not self.query_text or not self.query_text.strip():
+            raise ValueError("RecallRequest.query_text must not be blank")
+        if len(self.query_text) > MAX_RECALL_QUERY_CHARS:
+            raise ValueError(
+                f"RecallRequest.query_text is {len(self.query_text)} chars, exceeds "
+                f"max {MAX_RECALL_QUERY_CHARS} (untrusted provider input must be "
+                f"bounded -- R0078 Revision 2 §11)"
+            )
+        if self.temporal_intent is TemporalIntent.HISTORICAL and self.historical_at is None:
+            raise ValueError("RecallRequest(temporal_intent=HISTORICAL) requires historical_at")
+
+
+@dataclass(frozen=True, slots=True)
+class RecallResult:
+    """Provider-neutral. Never a ``MemoryRecord``, never a SQL row, never a
+    ``KnowledgeDescriptor`` (no descriptor list is ever included here --
+    recall() callers get bounded, already-selected ``ContextItem``s only,
+    the same Knowledge-Awareness-stays-internal rule ``build_context()``
+    already follows). ``ContextItem.cloud_eligibility`` travels with each
+    item UNFILTERED -- exactly like ``CurrentTurnContext.selected_context_items``
+    today (``MemoryRetriever`` never applies a cloud filter at retrieval
+    time). Privacy filtering to a SPECIFIC provider happens at the adapter
+    boundary (e.g. ``nexa.realtime.gemini``), never inside Core -- the same
+    place ``to_cloud_snapshot()`` already does it for ``build_context()``'s
+    output today."""
+
+    outcome: RecallOutcome
+    items: tuple[ContextItem, ...] = field(default_factory=tuple)
+    knowledge_gaps: tuple[KnowledgeGap, ...] = field(default_factory=tuple)
+    trace: ContextBuildTrace | None = None  # Core-internal only; never serialized to a provider
+
+    def __post_init__(self) -> None:
+        has_items = bool(self.items)
+        if (self.outcome is RecallOutcome.FOUND) != has_items:
+            raise ValueError(
+                f"RecallResult invariant violated: outcome={self.outcome!r} but items "
+                f"{'is empty' if not has_items else 'is non-empty'} -- outcome=FOUND iff "
+                f"items is non-empty"
+            )

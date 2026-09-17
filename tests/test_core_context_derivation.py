@@ -81,6 +81,66 @@ class TestDeriveSubjectHints(unittest.TestCase):
             derive_subject_hints("What did we decide about NeXa memory?")
 
 
+class TestDeriveSubjectHintsPLEN(unittest.TestCase):
+    """R0079 (R0078 Revision 2 §16): Unicode-safe, generic PL+EN stopword
+    filtering, unconditional (no language detection)."""
+
+    def test_polish_only_produces_useful_hints(self) -> None:
+        hints = derive_subject_hints("Dlaczego źle spałem ostatnio?")
+        self.assertIn("źle", hints)
+        self.assertIn("spałem", hints)
+        self.assertIn("ostatnio", hints)
+        # "dlaczego" (why) is a Polish stopword and must be dropped.
+        self.assertNotIn("dlaczego", hints)
+
+    def test_polish_stopwords_dropped(self) -> None:
+        hints = derive_subject_hints("Co my na to zrobiliśmy wczoraj?")
+        for stopword in ("co", "my", "na", "to"):
+            self.assertNotIn(stopword, hints)
+        self.assertIn("zrobiliśmy", hints)
+        self.assertIn("wczoraj", hints)
+
+    def test_english_only_unaffected_by_polish_stopwords(self) -> None:
+        """Regression: adding Polish stopwords must not change behavior
+        for pure-English input (strict superset, R0078 Revision 2 §16)."""
+        self.assertEqual(
+            derive_subject_hints("What should I learn next in Python?"),
+            ("learn", "next", "python"),
+        )
+
+    def test_mixed_pl_en_utterance_filters_both_languages(self) -> None:
+        hints = derive_subject_hints("What did we decide o architekturze NeXa?")
+        self.assertIn("decide", hints)
+        self.assertIn("architekturze", hints)
+        self.assertIn("nexa", hints)
+        # "what"/"did"/"we" (EN) and "o" (PL, dropped as <3 chars anyway,
+        # but also a PL stopword) must not survive.
+        self.assertNotIn("what", hints)
+        self.assertNotIn("did", hints)
+        self.assertNotIn("we", hints)
+
+    def test_polish_diacritics_preserved_through_tokenization(self) -> None:
+        """re's \\w is Unicode-aware by default -- Polish diacritics
+        (ą ć ę ł ń ó ś ź ż) must survive tokenization unmangled."""
+        hints = derive_subject_hints("architektura pamięć źródło łączność")
+        self.assertIn("architektura", hints)
+        self.assertIn("pamięć", hints)
+        self.assertIn("źródło", hints)
+        self.assertIn("łączność", hints)
+
+    def test_deterministic_for_polish_text(self) -> None:
+        text = "Dlaczego źle spałem ostatnio?"
+        self.assertEqual(derive_subject_hints(text), derive_subject_hints(text))
+
+    def test_no_language_detection_import(self) -> None:
+        """No language-detection library/heuristic is introduced -- both
+        stopword sets are applied unconditionally, always."""
+        source_path = SRC / "nexa" / "core" / "context" / "derivation.py"
+        source = source_path.read_text(encoding="utf-8")
+        for forbidden in ("langdetect", "fasttext", "detect_language", "pycld"):
+            self.assertNotIn(forbidden, source)
+
+
 class TestDeriveContextRequest(unittest.TestCase):
     def _session_with_turn(self, text: str) -> ConversationSession:
         session = ConversationSession(

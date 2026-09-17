@@ -168,6 +168,7 @@ class VoiceConversationAdapter:
         interruption_complete_hook: Callable[[], None] | None = None,
         interrupt_capture_timeout_s: float = 15.0,
         cancel_watch_timeout_s: float = 5.0,
+        context_provider: Callable[[ConversationSession], str | None] | None = None,
     ) -> None:
         # M2.4B.3.3: this adapter *is* the voice surface, so it defaults to
         # ``ResponseMode.VOICE`` — a transient per-request hint the same
@@ -196,6 +197,10 @@ class VoiceConversationAdapter:
         self._interruption_complete_hook = interruption_complete_hook
         self._interrupt_capture_timeout_s = interrupt_capture_timeout_s
         self._cancel_watch_timeout_s = cancel_watch_timeout_s
+        # R0079: optional Context Engine hook, threaded straight through to
+        # ConversationSession.send() -- default None is byte-for-byte the
+        # pre-R0079 path (no Context Engine participation in local voice).
+        self._context_provider = context_provider
         self._active_response_id: int | None = None
         self._active_cancel_token: CancelToken | None = None
         self._consume_task: asyncio.Task | None = None
@@ -710,6 +715,7 @@ class VoiceConversationAdapter:
             response_mode=self._response_mode,
             response_language=response_language,
             cancel_token=cancel_token,
+            context_provider=self._context_provider,
         )
 
         async def _consume() -> None:

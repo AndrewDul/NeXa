@@ -27,13 +27,17 @@ from .models import (
     KnowledgeDescriptorKind,
     KnowledgeGap,
     KnowledgeGapState,
+    RecallBudget,
+    RecallOutcome,
+    RecallRequest,
+    RecallResult,
     RetrievalAttempt,
     RetrievalOutcome,
     RetrievalReasonCode,
     RetrievalResult,
     TemporalIntent,
 )
-from .retrieval import ContextRetriever, RetrievalNotSupportedError, RetrievalQuery
+from .retrieval import ContextRetriever, RetrievalBudget, RetrievalNotSupportedError, RetrievalQuery
 
 __all__ = [
     "ContextEngine",
@@ -41,6 +45,7 @@ __all__ = [
     "derive_context_request",
     "derive_subject_hints",
     "ContextRetriever",
+    "RetrievalBudget",
     "RetrievalNotSupportedError",
     "RetrievalQuery",
     "MemoryRetriever",
@@ -62,4 +67,8 @@ __all__ = [
     "ContextBudget",
     "ContextRequest",
     "CurrentTurnContext",
+    "RecallBudget",
+    "RecallOutcome",
+    "RecallRequest",
+    "RecallResult",
 ]

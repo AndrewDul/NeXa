@@ -3,14 +3,17 @@ conversation turn (R0077) — so a caller never has to know internal Memory
 namespaces (e.g. ``domain_hint="projects.nexa"``) by hand.
 
 V1 subject-hint derivation is deliberately simple: deterministic lexical
-tokenization + a small, general (not domain/business-specific) English
-stopword filter. It is NOT semantic search — a hint only helps
+tokenization + a small, general (not domain/business-specific) PL+EN
+stopword filter (R0079 / R0078 Revision 2 §16 -- NeXa is canonically
+bilingual). It is NOT semantic search — a hint only helps
 :class:`~nexa.core.context.memory_retriever.MemoryRetriever` find a
 namespace whose name/summary literally contains that word (R0075 §7's
 "topic discovery" honesty applies unchanged here). No model call, no
-network, no hardcoded namespace mapping (e.g. never ``if "python" in
-text: domain_hint = "teacher.python"``) — the generic descriptor matching
-already built for M3.3 does the actual work.
+network, no language detection (both stopword sets are applied
+unconditionally, so a bilingual utterance is filtered correctly regardless
+of which language dominates), no hardcoded namespace mapping (e.g. never
+``if "python" in text: domain_hint = "teacher.python"``) — the generic
+descriptor matching already built for M3.3 does the actual work.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from .models import ContextBudget, ContextRequest, TemporalIntent
 
 #: A small, general set of common English function words -- NOT a
 #: business/domain-specific list. Purely linguistic filtering.
-_STOPWORDS = frozenset(
+_STOPWORDS_EN = frozenset(
     {
         "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
         "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
@@ -37,6 +40,32 @@ _STOPWORDS = frozenset(
         "and", "or", "but", "if", "so", "not", "no",
     }
 )
+
+#: R0079 (R0078 Revision 2 §16): a small, general set of common Polish
+#: function words -- pronouns, articles-equivalents, conjunctions, common
+#: prepositions/copulas -- the SAME kind of purely-linguistic list as
+#: ``_STOPWORDS_EN``, never a domain/business-specific term (no
+#: Teacher/LiFeOS/Projects vocabulary). Applied unconditionally alongside
+#: the English set (never conditionally, never via language detection) so
+#: a bilingual PL/EN utterance is filtered correctly regardless of which
+#: language dominates.
+_STOPWORDS_PL = frozenset(
+    {
+        "i", "w", "we", "na", "do", "z", "ze", "się", "jest", "są", "to", "że",
+        "czy", "o", "jak", "ale", "dla", "po", "od", "ten", "ta", "te", "był",
+        "była", "było", "byli", "być", "nie", "tak", "co", "kto", "gdzie",
+        "kiedy", "dlaczego", "jaki", "jaka", "jakie", "który", "która", "które",
+        "moje", "moja", "mój", "twoje", "twoja", "twój", "nasz", "nasza", "nasze",
+        "ich", "jego", "jej", "mnie", "mi", "cię", "ci", "go", "ją", "je", "im",
+        "a", "albo", "lub", "oraz", "bo", "gdy", "aby", "żeby", "przez", "pod",
+        "nad", "przy", "bez", "między", "już", "jeszcze", "też", "także",
+    }
+)
+
+#: The union both languages are checked against -- see the module docstring
+#: and ``derive_subject_hints()`` for why this is unconditional, not
+#: language-detected.
+_STOPWORDS = _STOPWORDS_EN | _STOPWORDS_PL
 
 _MIN_TOKEN_LENGTH = 3
 _MAX_HINTS = 10

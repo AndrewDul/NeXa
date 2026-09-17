@@ -212,12 +212,24 @@ class ProviderWindow:
         *,
         response_mode: ResponseMode = ResponseMode.TEXT,
         base: int | None = None,
+        context_addendum: str | None = None,
     ) -> list[ProviderMessage]:
         """Wire message list for ``history[base:]`` — byte-identical to
         ``ConversationContext.to_provider_messages`` for the same slice
         (same fixed persona, fixed-position voice directive, per-USER-turn
         language directive, ``INTERRUPTED_WIRE_SUFFIX``), so a stable
-        ``base`` yields a pure prefix-extension every turn."""
+        ``base`` yields a pure prefix-extension every turn.
+
+        ``context_addendum`` (R0079, M3.3 local-voice parity): an optional,
+        already-rendered bounded Context Engine addendum, appended as ONE
+        trailing system message after the whole loop below -- the same
+        position class as the existing per-turn language directive above,
+        which already proves a small trailing system message after the
+        stable prefix costs only a few new tokens, never a prefix break
+        (``base`` and everything before it are untouched). Never persisted
+        -- this list is rebuilt fresh every call, ``self._base``/history
+        are never touched by this parameter. ``None`` (the default) is
+        byte-for-byte the pre-R0079 rendering."""
         b = self._base if base is None else base
         langs: Sequence[str | None] = (
             response_languages
@@ -248,6 +260,8 @@ class ProviderWindow:
                             role="system", content=language_directive(language)
                         )
                     )
+        if context_addendum is not None:
+            messages.append(ProviderMessage(role="system", content=context_addendum))
         return messages
 
     def snapshot(self) -> dict[str, int | None]:

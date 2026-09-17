@@ -75,6 +75,12 @@ from ..provider import (
 )
 from ..router import ConversationRouter
 from ..snapshot import CloudContextSnapshot
+from .core_recall_tool import (
+    RECALL_TOOL_USE_INSTRUCTION,
+    RecallExecutor,
+    recall_tool_schema,
+    register_recall_tool,
+)
 from .voice import DEFAULT_VOICE_PREFERENCE, gemini_voice_for_preference
 
 logger = logging.getLogger(__name__)
@@ -301,6 +307,7 @@ def build_cloud_realtime_conversation_adapter(
     on_event: Any = None,
     on_aec_change: Any = None,
     dry: bool = False,
+    recall_executor: RecallExecutor | None = None,
 ) -> CloudRealtimeConversationAdapter:
     """Construct the simplified, golden-M2.6A-derived cloud voice adapter.
 
@@ -308,6 +315,18 @@ def build_cloud_realtime_conversation_adapter(
     aggregator pair, GeminiLiveLLMService) without opening an audio device
     or a network connection -- mirrors the golden probe's own ``--dry`` and
     ``build_gemini_voice_runtime``'s own ``dry=True`` convention.
+
+    ``recall_executor`` (R0079 / R0078 Revision 2 §5, optional, default
+    ``None``): when supplied, registers the ``recall_context`` tool
+    (``nexa.realtime.gemini.core_recall_tool``) on the constructed
+    ``GeminiLiveLLMService`` and appends the tool-use instruction to the
+    system instruction -- Pattern B turn-dynamic Core recall. ``None`` (the
+    default) reproduces byte-for-byte pre-R0079 behavior: no tool
+    registered, no instruction text appended, identical wire construction
+    to every existing caller/test. This does NOT touch the audio/Pipecat
+    pipeline, VAD, barge-in, AEC, or Gemini's own audio streaming -- it
+    only adds ``tools=``/``register_function()`` to the SAME
+    ``GeminiLiveLLMService`` construction that already exists here.
     """
     cfg = audio_config or LocalAudioConfig()
     router = ConversationRouter(session, policy=policy)
@@ -336,19 +355,27 @@ def build_cloud_realtime_conversation_adapter(
         realtime_service_mode=True,
     )
     gemini_voice = gemini_voice_for_preference(voice_preference)
+    system_instruction = snapshot.system_instruction
+    tools = None
+    if recall_executor is not None:
+        system_instruction = f"{system_instruction}\n\n{RECALL_TOOL_USE_INSTRUCTION}"
+        tools = [recall_tool_schema()]
     llm = P["GeminiLiveLLMService"](
         api_key=api_key,
-        system_instruction=snapshot.system_instruction,
+        system_instruction=system_instruction,
+        tools=tools,
         settings=P["GeminiLiveLLMService"].Settings(
             modalities=P["GeminiModalities"].AUDIO,
             voice=gemini_voice,
             vad=P["GeminiVADParams"](disabled=True),
             context_window_compression=P["ContextWindowCompressionParams"](enabled=True),
-            system_instruction=snapshot.system_instruction,
+            system_instruction=system_instruction,
         ),
         inference_on_context_initialization=False,
         user_audio_preroll_secs=None,
     )
+    if recall_executor is not None:
+        register_recall_tool(llm, recall_executor)
 
     if dry:
         return CloudRealtimeConversationAdapter(

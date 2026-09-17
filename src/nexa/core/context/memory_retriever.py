@@ -12,10 +12,8 @@ from datetime import UTC, datetime
 from ..memory.service import MemoryService
 from ..privacy import most_restrictive_cloud_eligibility
 from .models import (
-    ContextBudget,
     ContextItem,
     ContextItemPriority,
-    ContextRequest,
     KnowledgeAvailability,
     KnowledgeDescriptor,
     KnowledgeDescriptorKind,
@@ -23,7 +21,7 @@ from .models import (
     RetrievalResult,
     TemporalIntent,
 )
-from .retrieval import RetrievalQuery
+from .retrieval import RetrievalBudget, RetrievalQuery
 
 #: Bounded scan width for hint-based discovery -- deliberately wider than
 #: ContextBudget.max_knowledge_references, because matching must search
@@ -50,7 +48,9 @@ def _top_level_prefix(namespace: str) -> str | None:
 
 
 def _matches(
-    descriptor: KnowledgeDescriptor, domain_hint: str | None, subject_hints: tuple[str, ...]
+    descriptor: KnowledgeDescriptor,
+    domain_hint: str | None,
+    subject_hints: tuple[str, ...],
 ) -> bool:
     if domain_hint is not None and descriptor.domain == domain_hint:
         return True
@@ -119,7 +119,7 @@ class MemoryRetriever:
         return tuple(groups)
 
     def describe_available_knowledge(
-        self, request: ContextRequest
+        self, *, domain_hint: str | None, subject_hints: tuple[str, ...]
     ) -> tuple[KnowledgeDescriptor, ...]:
         """Scans up to ``_DISCOVERY_SCAN_LIMIT`` namespaces (bounded, not
         unbounded) and returns every candidate it finds -- NOT capped to
@@ -127,8 +127,14 @@ class MemoryRetriever:
         accounting is the ENGINE's job (R0075 implementation correction):
         if this retriever self-capped, the engine could never observe "more
         candidates existed than fit," making ``omitted_descriptor_count``
-        unobservable whenever there is exactly one retriever."""
-        has_hints = bool(request.domain_hint or request.subject_hints)
+        unobservable whenever there is exactly one retriever.
+
+        R0079 (R0078 Revision 2 §2): narrowed to the two fields this method
+        ever read from ``ContextRequest`` -- it never touched ``session``,
+        so it works identically whether the caller is
+        ``ContextEngine.build_context()`` (a real current turn) or
+        ``ContextEngine.recall()`` (no session at all)."""
+        has_hints = bool(domain_hint or subject_hints)
 
         summaries = self._memory_service.namespace_summary(limit=_DISCOVERY_SCAN_LIMIT)
         leaves = tuple(self._leaf_descriptor(s) for s in summaries)
@@ -137,12 +143,12 @@ class MemoryRetriever:
 
         if has_hints:
             candidates = tuple(
-                d for d in candidates if _matches(d, request.domain_hint, request.subject_hints)
+                d for d in candidates if _matches(d, domain_hint, subject_hints)
             )
 
         return tuple(sorted(candidates, key=lambda d: d.freshness or _MIN_DATETIME, reverse=True))
 
-    def retrieve(self, query: RetrievalQuery, budget: ContextBudget) -> RetrievalResult:
+    def retrieve(self, query: RetrievalQuery, budget: RetrievalBudget) -> RetrievalResult:
         limit = min(query.limit, budget.max_items_per_source)
         if query.temporal_intent is TemporalIntent.HISTORICAL:
             if query.at is None:

@@ -162,5 +162,63 @@ class TestRendering(unittest.TestCase):
         self.assertEqual(sum(1 for m in pre if m.role != "system"), 8)  # keep 8 entries
 
 
+class TestContextAddendum(unittest.TestCase):
+    """R0079 (R0078 Revision 2 §14) — local voice Context Engine parity:
+    ``context_addendum`` is a trailing, non-persisted system message,
+    appended at most once, never affecting prefix stability."""
+
+    def test_default_none_is_byte_for_byte_unchanged(self) -> None:
+        hist = _hist(2)
+        without = ProviderWindow(_base=0).render(SYS, hist)
+        with_none = ProviderWindow(_base=0).render(SYS, hist, context_addendum=None)
+        self.assertEqual(
+            [(m.role, m.content) for m in without],
+            [(m.role, m.content) for m in with_none],
+        )
+
+    def test_addendum_appended_as_one_trailing_system_message(self) -> None:
+        hist = _hist(1)
+        msgs = ProviderWindow(_base=0).render(SYS, hist, context_addendum="Relevant: X")
+        self.assertEqual(msgs[-1].role, "system")
+        self.assertEqual(msgs[-1].content, "Relevant: X")
+        # exactly one occurrence -- never duplicated
+        self.assertEqual(sum(1 for m in msgs if m.content == "Relevant: X"), 1)
+
+    def test_addendum_present_exactly_once_alongside_language_directive(self) -> None:
+        hist = _hist(1)
+        msgs = ProviderWindow(_base=0).render(SYS, hist, context_addendum="Relevant: X")
+        system_messages = [m for m in msgs if m.role == "system"]
+        # persona + (no voice directive, TEXT mode) + language directive + addendum
+        addendum_count = sum(1 for m in system_messages if m.content == "Relevant: X")
+        self.assertEqual(addendum_count, 1)
+
+    def test_addendum_never_appears_before_the_current_turn(self) -> None:
+        hist = _hist(2)
+        msgs = ProviderWindow(_base=0).render(SYS, hist, context_addendum="Relevant: X")
+        addendum_index = next(i for i, m in enumerate(msgs) if m.content == "Relevant: X")
+        last_user_index = max(i for i, m in enumerate(msgs) if m.role == "user")
+        self.assertGreater(addendum_index, last_user_index)
+
+    def test_addendum_does_not_change_base_or_rollover_counters(self) -> None:
+        """Prefix-stability regression: rendering with an addendum must not
+        itself trigger or affect base/rollover bookkeeping -- render() is
+        pure, only send()'s own reset logic (unchanged, R0079 doesn't
+        touch it) ever advances base."""
+        w = ProviderWindow(keep_entries=0, soft_entries=6, hard_entries=8)
+        hist = _hist(2)
+        before = (w.base, w.rollovers_background, w.rollovers_sync)
+        w.render(SYS, hist, context_addendum="Relevant: X")
+        after = (w.base, w.rollovers_background, w.rollovers_sync)
+        self.assertEqual(before, after)
+
+    def test_addendum_not_added_to_history_or_window_slice(self) -> None:
+        hist = _hist(1)
+        msgs = ProviderWindow(_base=0).render(SYS, hist, context_addendum="Relevant: X")
+        # history itself is untouched -- only the rendered message LIST gained
+        # one trailing entry; the window's own turn count is unchanged.
+        non_system = [m for m in msgs if m.role != "system"]
+        self.assertEqual(len(non_system), len(hist))
+
+
 if __name__ == "__main__":
     unittest.main()
