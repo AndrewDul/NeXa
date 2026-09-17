@@ -50,10 +50,13 @@ cannot answer on its own:
        ``quiet_before_rms`` on several points' FIRST trial only (recovering
        by the 2nd/3rd trial at that same gain), an open confound that
        could inflate or distort the sweep's own comparison. ``--confirm``
-       (new this revision) runs a balanced, alternating A/B sequence
-       (default gain=0.5 vs gain=1.0, longer settle, optional post-settle
-       gap) specifically to test whether gain=0.5's advantage survives
-       order/carryover control — **not yet run live**.
+       runs a COUNTERBALANCED A/B design (default gain=0.5 vs gain=1.0,
+       longer settle, optional post-settle gap): BOTH an A-first AND a
+       B-first alternating sequence, so neither gain is stuck only in the
+       "goes first" or "goes second" role — an earlier single-sequence
+       version of this mode risked over-claiming an order-independent
+       result from an inherently order-confounded design; fixed this
+       revision, before that risk became live. **Not yet run live.**
 
     E. Timing: an offline audit of the 3 already-captured OFF-condition
        MLS WAVs (this revision, no new hardware access) found the 3
@@ -204,11 +207,13 @@ already defines (R0053's own system audit).
     python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
         --condition off --stimulus mls --repeats 3
 
-    # balanced A/B confirmation: gain=0.5 (the sweep's lowest-residual
-    # point) vs gain=1.0 (today's production default), alternating
-    # ABABAB (3 cycles = 3 measured trials per gain), with a longer
-    # settle (3s vs --sweep's 1.0s) to test whether the sweep's own
-    # gain=0.5 advantage survives order/carryover control
+    # counterbalanced A/B confirmation: gain=0.5 (the sweep's
+    # lowest-residual point) vs gain=1.0 (today's production default).
+    # Runs BOTH an ABABAB (A-first) AND a BABABA (B-first) sequence in
+    # one invocation (3 cycles each = 6 trials per gain total), with a
+    # longer settle (3s vs --sweep's 1.0s), to test whether the sweep's
+    # own gain=0.5 advantage survives order/carryover control in BOTH
+    # directions -- not just one alternating pass
     python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --confirm
 
     # same, plus an explicit post-settle silent gap -- opt in if a
@@ -806,12 +811,15 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--confirm", action="store_true",
-        help="Run a balanced, order-controlled A/B confirmation between two specific gains "
-        "(default 0.5 vs 1.0 -- --sweep's own two lowest-residual points), alternating "
-        "A,B,A,B,... (--confirm-cycles pairs, default 3 -- i.e. 3 A trials + 3 B trials, "
-        "each its own single measured trial after its own settle+gap) instead of one "
-        "ascending block per gain, to rule out order/carryover confounds. Ignores "
-        "--condition/--gain/--sweep. Defaults --amplitude to 0.05 if not explicitly given.",
+        help="Run a COUNTERBALANCED A/B confirmation between two specific gains (default 0.5 "
+        "vs 1.0 -- --sweep's own two lowest-residual points): BOTH an A-first (ABABAB...) AND "
+        "a B-first (BABABA...) alternating sequence, in one invocation, under identical "
+        "amplitude/settle/gap/duration (--confirm-cycles pairs per sequence, default 3 -- "
+        "6 A trials + 6 B trials total across both sequences, each its own single measured "
+        "trial after its own settle+gap). A single alternating sequence alone does NOT rule "
+        "out order effects (one gain never gets the 'goes first' role) -- running both orders "
+        "does. Ignores --condition/--gain/--sweep. Defaults --amplitude to 0.05 if not "
+        "explicitly given.",
     )
     p.add_argument(
         "--confirm-gain-a", type=float, default=0.5,
@@ -952,91 +960,178 @@ async def _run_sweep(args: argparse.Namespace) -> int:
     return 0
 
 
-async def _run_confirm(args: argparse.Namespace) -> int:
-    a_gain, b_gain = args.confirm_gain_a, args.confirm_gain_b
-    sequence: list[tuple[str, float]] = []
-    for _ in range(args.confirm_cycles):
-        sequence.append(("A", a_gain))
-        sequence.append(("B", b_gain))
+def _confirm_build_sequence(
+    *, start: str, cycles: int, a_gain: float, b_gain: float
+) -> list[tuple[str, float]]:
+    """One alternating A/B sequence of length ``2 * cycles``, starting with
+    ``start`` ('A' or 'B'). Used to build BOTH the A-first (ABABAB...) and
+    B-first (BABABA...) sequences -- see ``_run_confirm``'s own docstring
+    for why a single alternating sequence alone is NOT a counterbalanced
+    design (every B is preceded by A and vice versa; there is no run where
+    B is the FIRST/predecessor role)."""
+    seq: list[tuple[str, float]] = []
+    other = "B" if start == "A" else "A"
+    for _ in range(cycles):
+        seq.append((start, a_gain if start == "A" else b_gain))
+        seq.append((other, a_gain if other == "A" else b_gain))
+    return seq
 
-    print(f"NeXa R0081 — balanced A/B gain confirmation (A=gain{a_gain:g} vs B=gain{b_gain:g})")
-    print(f"  fixed amplitude={args.amplitude} (same acoustic stimulus for every block)")
-    print(f"  sequence: {''.join(letter for letter, _ in sequence)} "
-          f"({args.confirm_cycles} cycles, {len(sequence)} blocks total, "
-          f"1 measured trial per block -- >= {args.confirm_cycles} trials per gain)")
-    print(f"  settle before each block: {args.confirm_settle}s  "
-          f"post-settle silent gap: {args.post_settle_gap}s  stimulus: {args.stimulus}")
-    print("  order rationale: alternating A/B (not one ascending block per gain, unlike "
-          "--sweep) specifically to rule out order/carryover confounds -- if A beats B (or "
-          "vice versa) by a consistent, material margin regardless of WHICH cycle each "
-          "occurrence falls in, that is much stronger evidence than a single ascending pass.")
-    print()
 
-    per_letter_results: dict[str, list[dict]] = {"A": [], "B": []}
+async def _run_confirm_sequence(
+    *, seq_id: str, sequence: list[tuple[str, float]], args: argparse.Namespace
+) -> dict[str, list[dict]]:
+    """Run ONE alternating sequence (all its blocks, in order) and return
+    its own per-letter result lists. Extracted so ``_run_confirm`` can run
+    the A-first and B-first sequences identically and keep their results
+    separate as well as combined."""
+    per_letter: dict[str, list[dict]] = {"A": [], "B": []}
     for i, (letter, gain) in enumerate(sequence):
         cycle = i // 2 + 1
-        print(f"=== confirm block {i + 1}/{len(sequence)}: {letter} (gain={gain:g}, "
-              f"cycle {cycle}/{args.confirm_cycles}) ===")
+        print(f"=== confirm {seq_id} block {i + 1}/{len(sequence)}: {letter} (gain={gain:g}, "
+              f"cycle {cycle}) ===")
         results = await run_condition(
             feed_reference=True,
             gain=gain,
             amplitude=args.amplitude,
             duration_s=args.duration,
             repeats=1,
-            label=f"confirm_{letter}{cycle}_gain{gain:g}_amp{args.amplitude:g}_{args.stimulus}",
+            label=f"confirm_{seq_id}_{letter}{cycle}_gain{gain:g}_amp{args.amplitude:g}_{args.stimulus}",
             stimulus=args.stimulus,
             settle_s=args.confirm_settle,
             post_settle_gap_s=args.post_settle_gap,
         )
-        per_letter_results[letter].extend(results)
+        per_letter[letter].extend(results)
         print()
+    return per_letter
 
-    a_results = per_letter_results["A"]
-    b_results = per_letter_results["B"]
-    a_rms = [r["mic_window_rms"] for r in a_results]
-    b_rms = [r["mic_window_rms"] for r in b_results]
-    a_quiet = [r["quiet_before_rms"] for r in a_results]
-    b_quiet = [r["quiet_before_rms"] for r in b_results]
-    a_clip = max((r["reference_clipped_percent"] for r in a_results), default=0.0)
-    b_clip = max((r["reference_clipped_percent"] for r in b_results), default=0.0)
+
+def _print_confirm_block_summary(
+    label: str, results: dict[str, list[dict]], a_gain: float, b_gain: float
+) -> None:
+    a_rms = [r["mic_window_rms"] for r in results["A"]]
+    b_rms = [r["mic_window_rms"] for r in results["B"]]
+    a_quiet = [r["quiet_before_rms"] for r in results["A"]]
+    b_quiet = [r["quiet_before_rms"] for r in results["B"]]
+    print(f"  --- {label} ---")
+    print(f"    A (gain={a_gain:g}) mic_window_rms  : {_mean_min_max(a_rms)}")
+    print(f"    B (gain={b_gain:g}) mic_window_rms  : {_mean_min_max(b_rms)}")
+    print(f"    A quiet_before_rms               : {_mean_min_max(a_quiet)}")
+    print(f"    B quiet_before_rms               : {_mean_min_max(b_quiet)}")
+    print("    paired differences per cycle (A_rms - B_rms; negative = A lower/better):")
+    for cycle in range(min(len(a_rms), len(b_rms))):
+        diff = a_rms[cycle] - b_rms[cycle]
+        print(f"      cycle {cycle + 1}: A={a_rms[cycle]:.2f}  B={b_rms[cycle]:.2f}  "
+              f"diff={diff:+.2f}")
+
+
+async def _run_confirm(args: argparse.Namespace) -> int:
+    """Genuinely counterbalanced A/B gain confirmation: runs BOTH an
+    A-first (ABABAB...) and a B-first (BABABA...) alternating sequence, in
+    one invocation, under identical amplitude/settle/gap/duration and (as
+    far as this script can control) identical physical hardware
+    conditions. A single alternating sequence alone (the prior version of
+    this mode) does NOT rule out order/transition effects: every B is
+    always preceded by A, and every A except the very first is always
+    preceded by B, so there is no run in which B occupies the
+    'predecessor'/first role -- a claim that a result holds "regardless
+    of order" was too strong from that design alone. Running the mirrored
+    B-first sequence too gives both gains a turn in both the
+    predecessor and successor role."""
+    a_gain, b_gain = args.confirm_gain_a, args.confirm_gain_b
+    seq_a_first = _confirm_build_sequence(
+        start="A", cycles=args.confirm_cycles, a_gain=a_gain, b_gain=b_gain
+    )
+    seq_b_first = _confirm_build_sequence(
+        start="B", cycles=args.confirm_cycles, a_gain=a_gain, b_gain=b_gain
+    )
+
+    print(f"NeXa R0081 — counterbalanced A/B gain confirmation "
+          f"(A=gain{a_gain:g} vs B=gain{b_gain:g})")
+    print(f"  fixed amplitude={args.amplitude} "
+          f"(same acoustic stimulus for every block, both sequences)")
+    print(f"  sequence 1 (A-first): {''.join(letter for letter, _ in seq_a_first)}")
+    print(f"  sequence 2 (B-first): {''.join(letter for letter, _ in seq_b_first)}")
+    print(f"  {args.confirm_cycles} cycles per sequence, {len(seq_a_first)} blocks per sequence, "
+          f"1 measured trial per block -- {2 * args.confirm_cycles} trials per gain total")
+    print(f"  settle before each block: {args.confirm_settle}s  "
+          f"post-settle silent gap: {args.post_settle_gap}s  stimulus: {args.stimulus}")
+    print("  counterbalancing rationale: running BOTH orders means each gain occupies the "
+          "'goes first after a different gain's settle' role in one sequence and the "
+          "'goes second, immediately after the OTHER gain's own trial' role in the other -- "
+          "a claim that one gain is materially lower 'regardless of order' is only made below "
+          "if it holds in BOTH sequences separately, not just in the combined pool.")
+    print()
+
+    print("### sequence 1: A-first (ABABAB...) ###")
+    seq1_results = await _run_confirm_sequence(seq_id="s1Afirst", sequence=seq_a_first, args=args)
+    print("### sequence 2: B-first (BABABA...) ###")
+    seq2_results = await _run_confirm_sequence(seq_id="s2Bfirst", sequence=seq_b_first, args=args)
+
+    combined = {
+        "A": seq1_results["A"] + seq2_results["A"],
+        "B": seq1_results["B"] + seq2_results["B"],
+    }
+    a_clip = max((r["reference_clipped_percent"] for r in combined["A"]), default=0.0)
+    b_clip = max((r["reference_clipped_percent"] for r in combined["B"]), default=0.0)
+
+    combined_a_rms = [r["mic_window_rms"] for r in combined["A"]]
+    combined_b_rms = [r["mic_window_rms"] for r in combined["B"]]
+    combined_a_quiet = [r["quiet_before_rms"] for r in combined["A"]]
+    combined_b_quiet = [r["quiet_before_rms"] for r in combined["B"]]
 
     print("=== CONFIRM SUMMARY ===")
-    print(f"  A (gain={a_gain:g}) mic_window_rms  : {_mean_min_max(a_rms)}")
-    print(f"  B (gain={b_gain:g}) mic_window_rms  : {_mean_min_max(b_rms)}")
-    print(f"  A quiet_before_rms               : {_mean_min_max(a_quiet)}")
-    print(f"  B quiet_before_rms               : {_mean_min_max(b_quiet)}")
-    print(f"  A max reference_clipped_percent  : {a_clip}%")
-    print(f"  B max reference_clipped_percent  : {b_clip}%")
+    _print_confirm_block_summary(
+        "A-first sequence (ABABAB...) results", seq1_results, a_gain, b_gain
+    )
+    _print_confirm_block_summary(
+        "B-first sequence (BABABA...) results", seq2_results, a_gain, b_gain
+    )
+    print("  --- combined (both sequences pooled) ---")
+    print(f"    A (gain={a_gain:g}) mic_window_rms  : {_mean_min_max(combined_a_rms)}")
+    print(f"    B (gain={b_gain:g}) mic_window_rms  : {_mean_min_max(combined_b_rms)}")
+    print(f"    A quiet_before_rms               : {_mean_min_max(combined_a_quiet)}")
+    print(f"    B quiet_before_rms               : {_mean_min_max(combined_b_quiet)}")
+    print(f"    A max reference_clipped_percent  : {a_clip}%")
+    print(f"    B max reference_clipped_percent  : {b_clip}%")
     if a_clip > 0 or b_clip > 0:
-        print("  *** at least one block was CLIPPED -- do not use this run as gain evidence. ***")
+        print("    *** at least one block was CLIPPED -- do not use this run as gain evidence. ***")
+
+    def _wins(results: dict[str, list[dict]]) -> tuple[int, int]:
+        a_rms = [r["mic_window_rms"] for r in results["A"]]
+        b_rms = [r["mic_window_rms"] for r in results["B"]]
+        n = min(len(a_rms), len(b_rms))
+        wins = sum(1 for i in range(n) if a_rms[i] < b_rms[i])
+        return wins, n
+
+    seq1_wins, seq1_n = _wins(seq1_results)
+    seq2_wins, seq2_n = _wins(seq2_results)
+    a_combined_mean = sum(combined_a_rms) / len(combined_a_rms) if combined_a_rms else None
+    b_combined_mean = sum(combined_b_rms) / len(combined_b_rms) if combined_b_rms else None
 
     print()
-    print("  paired differences per cycle (A_rms - B_rms; negative = A lower/better):")
-    for cycle in range(args.confirm_cycles):
-        if cycle < len(a_rms) and cycle < len(b_rms):
-            diff = a_rms[cycle] - b_rms[cycle]
-            print(f"    cycle {cycle + 1}: A={a_rms[cycle]:.2f}  B={b_rms[cycle]:.2f}  "
-                  f"diff={diff:+.2f}")
-
-    if a_rms and b_rms:
-        a_mean = sum(a_rms) / len(a_rms)
-        b_mean = sum(b_rms) / len(b_rms)
-        a_wins = sum(1 for i in range(min(len(a_rms), len(b_rms))) if a_rms[i] < b_rms[i])
-        n_pairs = min(len(a_rms), len(b_rms))
-        print()
-        print(f"  A beat B in {a_wins}/{n_pairs} cycles (A mean={a_mean:.2f}, B mean={b_mean:.2f})")
-        if a_wins == n_pairs and a_mean < b_mean:
-            print("  -> A was lower in EVERY cycle, regardless of order: consistent with a "
-                  "real effect, not an ordering artifact. Still NOT sufficient on its own to "
-                  "change production default -- see this script's own docstring / R0081 "
-                  "report for what else is required first.")
-        elif a_wins == 0 and a_mean > b_mean:
-            print("  -> B was lower in EVERY cycle: the original sweep's gain=0.5 advantage "
-                  "did not reproduce under balanced order/settle control -- treat the first "
-                  "sweep as confounded and de-prioritize gain calibration versus timing.")
+    print(f"  A-first sequence: A beat B in {seq1_wins}/{seq1_n} cycles")
+    print(f"  B-first sequence: A beat B in {seq2_wins}/{seq2_n} cycles")
+    if a_combined_mean is not None and b_combined_mean is not None:
+        print(f"  combined means: A={a_combined_mean:.2f}  B={b_combined_mean:.2f}")
+        a_wins_both = seq1_wins == seq1_n and seq2_wins == seq2_n
+        b_wins_both = seq1_wins == 0 and seq2_wins == 0
+        if a_wins_both and a_combined_mean < b_combined_mean:
+            print("  -> A was lower in EVERY cycle in BOTH the A-first AND the B-first "
+                  "sequence: this DOES hold regardless of which gain went first/second, "
+                  "consistent with a real effect rather than an ordering artifact. Still NOT "
+                  "sufficient on its own to change production default -- see this script's "
+                  "own docstring / R0081 report for what else is required first.")
+        elif b_wins_both and a_combined_mean > b_combined_mean:
+            print("  -> B was lower in EVERY cycle in BOTH sequences: the original sweep's "
+                  "gain=0.5 advantage did not reproduce under counterbalanced order/settle "
+                  "control -- treat the first sweep as confounded and de-prioritize gain "
+                  "calibration versus timing.")
         else:
-            print("  -> mixed result (neither gain won every cycle) -- inconclusive from this "
-                  "run alone; report both sequences rather than picking a favored side.")
+            print("  -> mixed result: the two sequences do NOT agree with each other (or one "
+                  "sequence itself was mixed) -- this is NOT evidence of an order-independent "
+                  "effect either way. Report both sequences' own numbers rather than the "
+                  "combined pool alone, and do not describe this as holding 'regardless of "
+                  "order.'")
     return 0
 
 

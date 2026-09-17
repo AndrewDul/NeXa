@@ -1893,6 +1893,13 @@ runtime integration: `docs/reports/R0077_m3_3_runtime_integration_20260917.md`.
 
 ### M3.4 — Personality + Relationship
 
+**BLOCKED as of R0081 (2026-09-17): do not start.** A cloud voice
+false-barge-in/self-echo regression (`docs/reports/
+R0081_cloud_voice_false_bargein_self_echo_regression_20260917.md`) is
+the active task and must reach live acceptance PASS before M3.4 work
+begins — see `docs/CURRENT_STATE.md`'s "Active checkpoint" section for
+the current status.
+
 Stable personality state, user-specific relationship state (User Model),
 communication adaptation. Distinct from Persona (the M1.1 conversation
 style prompt, which stays the default/fallback voice) and from Identity

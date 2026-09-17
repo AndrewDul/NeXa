@@ -3,7 +3,25 @@
 Short operational truth. Keep this file current after every meaningful task.
 Runtime / test evidence outranks anything else in this repo.
 
-## Current checkpoint — R0077, 2026-09-17
+## Active checkpoint — R0081, 2026-09-17 (READ THIS FIRST — blocks M3.4)
+
+**Active checkpoint: R0081 — Cloud Voice False Barge-In / Self-Echo Regression. Status: IN PROGRESS / NOT PASS.**
+
+- Core Recall: PASS / cleared as cause.
+- False `LOCAL_VAD_START` during NeXa's own playback: CONFIRMED (the immediate failure mechanism).
+- AEC (XVF3800 onboard): functioning (confirmed, live-measured at multiple signal levels), but a substantial residual remains at every level tested.
+- Software ×10 (+20dB) compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB`: REFUTED (makes the residual worse, not better).
+- `gain=0.5` reference-gain candidate: found in an initial (ascending, not counterbalanced) sweep — NOT YET APPROVED; a counterbalanced A/B live test is pending.
+- MLS timing stimulus: fixes the periodic-tone lag ambiguity, but the measured OFF-condition acoustic lag is BIMODAL (~102.5ms / ~134.4ms, an exact 512-sample/32.000ms split) — cause unresolved.
+- **M3.4 Personality + Relationship: BLOCKED. Do not start it until R0081's live acceptance criteria pass.**
+
+Full detail and exact next steps: `docs/reports/R0081_cloud_voice_false_bargein_self_echo_regression_20260917.md`.
+
+The R0077/M3.3 section immediately below is the last COMPLETED milestone's own record, unchanged — not the active task.
+
+---
+
+## Prior checkpoint — R0077, 2026-09-17 (M3.3 — completed; not the active task, see R0081 above)
 
 **M3.3 Context Engine + Knowledge Awareness: foundation = COMPLETE (R0076);
 runtime integration = LOCAL WIRED, CLOUD AUDITED-NOT-WIRED (R0077).**
@@ -51,8 +69,9 @@ untouched). See
 (design, 3 revisions),
 `docs/reports/R0076_m3_3_context_engine_knowledge_awareness_implementation_20260917.md`.
 
-**Project priority: M3.4 Personality + Relationship — proposed next, not
-started.**
+**Project priority at R0077: M3.4 Personality + Relationship was proposed
+next. This is now superseded — see the R0081 checkpoint at the top of
+this file: M3.4 is BLOCKED until R0081's live acceptance passes.**
 
 **Cloud realtime conversation baseline = ACCEPTED / FROZEN** (R0071,
 unchanged this checkpoint, not the active task). M2.6B dual-pipeline path
