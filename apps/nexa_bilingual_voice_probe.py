@@ -43,12 +43,17 @@ import aiohttp  # noqa: E402
 from loguru import logger  # noqa: E402
 from pipecat.services.piper.tts import PiperHttpTTSService  # noqa: E402
 
-from nexa.bootstrap import build_default_session, warm_up_session  # noqa: E402
+from nexa.bootstrap import (  # noqa: E402
+    build_default_context_runtime,
+    build_default_session,
+    warm_up_session,
+)
 from nexa.conversation import (  # noqa: E402
     ProviderWindow,
     ResponseLanguageResolver,
     ResponseMode,
 )
+from nexa.conversation.context_projection import make_local_context_provider  # noqa: E402
 from nexa.providers.base import ModelUnavailableError  # noqa: E402
 from nexa.stt import (  # noqa: E402
     BilingualSpeechTranscriber,
@@ -169,6 +174,16 @@ async def main() -> None:
     pw = session.provider_window
     print(f"provider window: keep={pw.keep_entries} soft={pw.soft_entries} "
           f"hard={pw.hard_entries} entries (canonical history stays complete)")
+
+    # R0080 §2: ONE ContextRuntime for the whole application lifetime --
+    # never rebuilt per turn (same composition-root pattern R0077 already
+    # established for apps/nexa_chat.py). make_local_context_provider()
+    # never filters cloud_eligibility -- local voice may legitimately use
+    # LOCAL_ONLY content (R0079's own proven local-voice parity).
+    context_runtime = build_default_context_runtime()
+    context_provider = make_local_context_provider(context_runtime.context_engine)
+    print("Core Context: ContextRuntime ready, context_provider wired into "
+          "local voice (R0080)")
     try:
         await warm_up_session(session)
         print("warm-up: model + persona/VOICE prefix primed")
@@ -300,6 +315,7 @@ async def main() -> None:
         on_turn_dropped=on_turn_dropped,
         on_turn_interrupted=(on_turn_interrupted if bargein_on else None),
         response_mode=ResponseMode.VOICE,
+        context_provider=context_provider,
         response_id_source=(stack.response_id_source if bargein_on else None),
         spoken_prefix_source=(stack.spoken_prefix_source if bargein_on else None),
         interruption_complete_hook=(
@@ -348,6 +364,7 @@ async def main() -> None:
         await adapter.shutdown()
         await aiohttp_session.close()
         detector.close()
+        context_runtime.connection.close()
         try:
             await piper_server.stop()
         except PiperHttpError:

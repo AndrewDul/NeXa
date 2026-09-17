@@ -95,6 +95,23 @@ VAD_STOP_SECS = 0.5
 KICKOFF_TIMEOUT_SECS = 15.0
 KICKOFF_SETTLE_SECS = 0.3
 
+#: R0080 §5/§6 -- explicitly pinned. Before R0080 this path silently
+#: inherited Pipecat 1.8.1's own hardcoded ``GeminiLiveLLMService`` default
+#: (``models/gemini-2.5-flash-native-audio-preview-12-2025``, set in
+#: ``GeminiLiveLLMService.__init__``'s ``default_settings``) -- an
+#: invisible third-party dependency, not a NeXa decision. Pinning it here
+#: makes today's already-accepted (R0071) production model explicit and
+#: reproducible; it is NOT a migration. Confirmed both by Pipecat's own
+#: source (``llm.py``, R0079 audit) and by Google's own official docs
+#: (Live API + Function calling both listed "Supported" for this exact
+#: model, https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-native-audio-preview-12-2025,
+#: accessed 2026-09-17) that this model exists and is current -- distinct
+#: from, and unrelated to, the paused M2.6B dual-pipeline's own
+#: ``gemini-3.1-flash-live-preview`` string (``nexa.realtime.gemini.service``,
+#: never imported by this module). Do not change this string to migrate
+#: models without a dedicated evaluation milestone (R0080 §15).
+GEMINI_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+
 
 def _pipecat_imports() -> dict[str, Any]:
     """Deferred import (never at module import time -- this module stays
@@ -365,6 +382,7 @@ def build_cloud_realtime_conversation_adapter(
         system_instruction=system_instruction,
         tools=tools,
         settings=P["GeminiLiveLLMService"].Settings(
+            model=GEMINI_MODEL,
             modalities=P["GeminiModalities"].AUDIO,
             voice=gemini_voice,
             vad=P["GeminiVADParams"](disabled=True),

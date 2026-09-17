@@ -9,10 +9,21 @@ NOT the paused M2.6B dual-pipeline runtime (``apps/nexa_cloud_voice_app.py``,
 unchanged, kept as paused/experimental) — see
 ``src/nexa/realtime/gemini/simple_conversation.py`` for why.
 
+R0080: this entrypoint now activates NeXa Core recall (M3.3/R0079's
+``recall_context`` tool -- see ``nexa.realtime.gemini.core_recall_tool``)
+by default, ON TOP OF the unchanged R0071 audio/VAD/AEC/barge-in
+architecture -- nothing about audio construction changes. One
+``RecallExecutor`` is created and started before the adapter, reused for
+the whole session, and closed at shutdown; never rebuilt per tool call
+(R0079 §22, R0080 §3). ``--no-core-recall`` disables it for diagnostics/
+rollback without touching code -- the resulting construction is
+byte-for-byte the pre-R0079 path (``recall_executor=None``).
+
 Usage::
 
     .venv/bin/python apps/nexa_cloud_voice_simple.py --dry
     .venv/bin/python apps/nexa_cloud_voice_simple.py
+    .venv/bin/python apps/nexa_cloud_voice_simple.py --no-core-recall
     .venv/bin/python apps/nexa_cloud_voice_simple.py --context-fact \\
         "The operator is currently working on the NeXa voice pipeline."
 """
@@ -32,11 +43,13 @@ if str(SRC) not in sys.path:
 from loguru import logger  # noqa: E402
 
 from nexa.bootstrap import build_default_session  # noqa: E402
+from nexa.realtime.gemini.core_recall_tool import RecallExecutor  # noqa: E402
 from nexa.realtime.gemini.credentials import (  # noqa: E402
     GeminiCredentialError,
     load_gemini_credential,
 )
 from nexa.realtime.gemini.simple_conversation import (  # noqa: E402
+    GEMINI_MODEL,
     build_cloud_realtime_conversation_adapter,
 )
 from nexa.realtime.policy import ConversationPolicy  # noqa: E402
@@ -68,6 +81,14 @@ def parse_args() -> argparse.Namespace:
         help="one CLOUD_SAFE context fact to inject into this session's "
         "CloudContextSnapshot (repeatable). Never use sensitive information.",
     )
+    p.add_argument(
+        "--core-recall", action=argparse.BooleanOptionalAction, default=True,
+        help="R0080: NeXa Core recall_context tool (M3.3/R0079). Default ON. "
+        "Use --no-core-recall to disable for diagnostics/regression without "
+        "reverting code -- falls back to byte-for-byte pre-R0079 construction "
+        "(no tool registered, no RecallExecutor). NOT YET live-hardware-"
+        "verified end to end (R0080) -- keep this available for rapid rollback.",
+    )
     return p.parse_args()
 
 
@@ -83,6 +104,16 @@ def _make_event_printer():
     return on_event
 
 
+def _print_core_recall_diagnostics(*, enabled: bool, executor: RecallExecutor | None) -> None:
+    """R0080 §10 -- startup diagnostics. Never logs Memory contents; only
+    boolean/readiness state and the pinned model string."""
+    print(f"CORE_RECALL {'enabled' if enabled else 'disabled (--no-core-recall)'}")
+    if enabled and executor is not None:
+        print(f"CORE_RECALL executor ready: {executor.started}")
+        print("CORE_RECALL tool registered: recall_context")
+    print(f"GEMINI_MODEL {GEMINI_MODEL}")
+
+
 async def main() -> None:
     args = parse_args()
     _quiet_pipecat()
@@ -96,20 +127,39 @@ async def main() -> None:
         active_provider_name="cloud", context_facts=context_facts,
     )
 
+    # R0080 §3: ONE RecallExecutor for the whole application/session
+    # lifetime -- never rebuilt per tool call. None when --no-core-recall,
+    # which makes build_cloud_realtime_conversation_adapter's construction
+    # byte-for-byte the pre-R0079 path (R0079's own `recall_executor=None`
+    # default).
+    recall_executor: RecallExecutor | None = None
+    if args.core_recall:
+        recall_executor = RecallExecutor()
+        await recall_executor.start()
+
     if args.dry:
         adapter = build_cloud_realtime_conversation_adapter(
             session=session, api_key="DRY-RUN-NO-KEY", snapshot=snapshot, dry=True,
+            recall_executor=recall_executor,
         )
         print("dry mode: object graph constructed (router, Gemini service) -- "
               "no audio device, no Gemini connection.")
         print(f"  router policy: {adapter.router.policy.value}")
-        print(f"  system_instruction: {snapshot.system_instruction}")
+        # R0080: show what Gemini actually receives, not just the snapshot's
+        # own value -- when Core recall is enabled the builder appends
+        # RECALL_TOOL_USE_INSTRUCTION, so these can legitimately differ.
+        print(f"  system_instruction: {adapter.llm._settings.system_instruction}")  # noqa: SLF001
+        _print_core_recall_diagnostics(enabled=args.core_recall, executor=recall_executor)
+        if recall_executor is not None:
+            recall_executor.close()
         return
 
     try:
         credential = load_gemini_credential()
     except GeminiCredentialError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        if recall_executor is not None:
+            recall_executor.close()
         sys.exit(1)
 
     def _on_aec_change(active: bool) -> None:
@@ -125,7 +175,9 @@ async def main() -> None:
         on_event=_make_event_printer(),
         on_aec_change=_on_aec_change,
         dry=False,
+        recall_executor=recall_executor,
     )
+    _print_core_recall_diagnostics(enabled=args.core_recall, executor=recall_executor)
 
     print("connecting to Gemini Live and opening the reSpeaker/USB-speaker "
           "hardware pipeline...")
@@ -134,6 +186,8 @@ async def main() -> None:
         print("error: Gemini socket did not connect before the kickoff "
               "timeout -- stopping.", file=sys.stderr)
         await adapter.stop(reason="kickoff timeout")
+        if recall_executor is not None:
+            recall_executor.close()
         sys.exit(1)
 
     print("\n>>> CLOUD_READY <<<\n")
@@ -146,6 +200,8 @@ async def main() -> None:
         print("\n(stopped)")
     finally:
         await adapter.stop(reason="operator shutdown")
+        if recall_executor is not None:
+            recall_executor.close()
         print(f"\ncanonical history: {len(session.history)} entries")
 
 
