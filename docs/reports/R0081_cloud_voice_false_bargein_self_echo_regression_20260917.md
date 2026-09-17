@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-17
 **Type:** Diagnostic + narrow instrumentation + direct hardware audit (NOT a confirmed resolution)
-**Status:** Immediate failure mechanism CONFIRMED (local VAD false-fires on NeXa's own playback). Speaker volume and the R0053 gain-coherence fix are BOTH now ruled out as sufficient fixes, by direct live A/B/A2 evidence. AEC effectiveness is **CONFIRMED** at two independently measured signal levels and is **level-dependent** (§7b). A clean, non-clipped retest of +20dB software compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB` **REFUTES** the naive "invert it in software" hypothesis (§7b). The narrow gain sweep (0.25x-4.0x) built last update **has now been run live** (§7c): `gain=0.5` gave the LOWEST residual RMS of all six points (~30% lower than `gain=1.0`) — a real, material candidate — but the same run shows a suspicious first-trial quiet-floor anomaly after several gain transitions, an **open settle/order confound** that must be ruled out before trusting the sweep's own ranking. A counterbalanced A/B confirmation tool (`--confirm`, running BOTH an A-first and a B-first alternating sequence in one invocation — a single alternating sequence alone would not rule out order effects — with a longer settle) has been built this update to test this directly — **not yet run live**. The MLS timing stimulus **has also now been run live** (§7d): it confirms the tone stimulus's lag ambiguity is real and fixed (verified offline: the tone stimulus shows 112 spurious high-correlation lags vs. 0 for MLS), but the 3 OFF-condition MLS trials show a genuine BIMODAL lag split (~102.5ms vs. ~134.4ms, an exact 512-sample/32.000ms separation) rather than one stable value — an offline audit of the existing captures (this update, no new hardware access) found a plausible, evidence-backed explanation for the LOW correlation magnitude (device-side spectral reshaping) but the bimodal lag split itself remains an open question with a leading, not-yet-directly-confirmed hypothesis (ALSA capture buffer-boundary quantization). A stimulus-blind filename bug (capture WAVs did not encode `--stimulus`, risking silent overwrites between tone and MLS runs) was found and fixed this update. **Priority change this update (§15): before any more gain/timing tuning, a direct regression-isolation experiment against the historical golden `7dd6b87` baseline (re-run in an already-existing, still-clean isolated worktree, on today's same hardware) is now the immediate next step** — it directly answers whether today's false self-interruption is a NeXa software/path regression or a shared hardware/environment/provider-state change that would also affect the old known-good implementation. A real, previously-undocumented dependency-isolation risk was found and fixed in the process: the golden worktree has no `PYTHONPATH` of its own, so naively running it under the shared `.venv` would silently execute TODAY's `nexa.voice`/`nexa.voice_tts` code, not `7dd6b87`'s — corrected and verified this session (read-only `--dry` check only, no hardware/network touched). Root cause still NOT proven (§15, §14).
+**Status:** **MAJOR RESULT (§15.9, real hardware, 2026-09-17): the regression-isolation gate ran — the dependency-isolated historical golden path (`7dd6b87`, `PYTHONPATH`-verified true historical NeXa source) ALSO shows false self-interruption today, alongside current. CASE 2.** This rules OUT a later NeXa Core/Memory/Recall software regression as the primary explanation (Core Recall was disabled in the current control; golden never had it). The golden log also contains a genuine false ASR transcription during operator silence (`[Tu es beau.]`) — direct proof this is real acoustic leakage reaching Gemini's own speech recognition, not merely a local VAD-threshold artifact. Mixer/device snapshots were identical before both runs (measured state only). The two paths' different Gemini models (`gemini-3.1-flash-live-preview` vs. `models/gemini-2.5-flash-native-audio-preview-12-2025`) cannot be the SOLE explanation, since both show the same failure class. **A major new lead was found auditing the current run's own diagnostics (§16): the reference feeder's bounded queue (`AecReferenceFeeder`, `asyncio.Queue(maxsize=24)`) overflowed, dropping 144 chunks — confirmed from source that the real speaker keeps playing normally while the XVF3800's far-end reference develops real content gaps during such an episode. The full source diff confirms the golden path has the IDENTICAL queue architecture** (structurally unchanged since `7dd6b87`) — so this is a strong, source-grounded shared-mechanism candidate. **Not the sole cause**: A2 (§2) showed false VAD with zero drops, so this is prioritized as an intermittent failure mode compounding an always-present baseline residual (§7/§7b), not a standalone explanation — consistent with the operator's own observation that some utterances were nearly perfect and others severely broken in the same session. Prior findings remain valid: AEC works but leaves a residual at every level tested (§7/§7b, level-dependent); software ×10 compensation for `AEC_FAR_EXTGAIN=-20dB` is refuted (§7b); a narrow gain sweep found `gain=0.5` as a candidate but with an open settle/order confound, now further de-prioritized behind the queue-overflow/shared-state investigation (§7c, §14); MLS timing work found a genuine bimodal ~102.5/~134.4ms lag split with an exact 512-sample separation, confirmed unrelated to the reference-queue mechanism (§7d, §16.2.7). Root cause still NOT proven (§15, §16).
 **Depends on:** R0080 (accepted `2b894e7`), R0071 (frozen baseline), R0052–R0056 (prior self-echo investigation), R0053 (gain-coherence defect, now further quantified)
 
 No Memory/ContextEngine/recall_context/Personality/Relationship/Learning/FTS/vector changes touched. No forced audio-architecture redesign. No Silero threshold tuning. No DSP register writes.
@@ -448,6 +448,15 @@ Every filename now encodes condition/gain/amplitude/stimulus/trial, e.g. `off_ga
 | Reference/acoustic timing mismatch | **UNRESOLVED** (§7d) |
 | False local VAD | **CONFIRMED** (§2) |
 | Core recall | **CLEARED** as a cause (§3); PASS on its own merits (§1) |
+| Regression-isolation gate (golden `7dd6b87` vs. current, today) | **CASE 2: BOTH FAIL** (§15.9) — software/path regression relative to golden NOT supported as primary explanation |
+| Core/Memory/Recall as regression cause | **DE-PRIORITIZED** (§15.9 — Core Recall disabled in current, never present in golden, both still fail) |
+| Mixer/device snapshot drift, golden vs. current | **NOT OBSERVED** (measured snapshot only, §15.9) |
+| Gemini model difference as sole explanation | **REFUTED** — both models show the same failure class (§15.9); a partial/severity contribution is not ruled out |
+| False ASR transcription during silence (golden log, `[Tu es beau.]`) | **CONFIRMED** — direct evidence of real acoustic leakage, not just a VAD-threshold artifact (§15.9) |
+| Reference queue overflow (current run) | **CONFIRMED** — 144 dropped chunks, `asyncio.Queue(maxsize=24)` overflow, real speaker unaffected while reference had gaps (§16) |
+| Golden path has the same queue architecture | **CONFIRMED from full source diff** — `AecReferenceFeeder`'s queue/producer/consumer mechanism is byte-for-byte unchanged since `7dd6b87` (§16.3) |
+| Queue overflow as sole root cause | **NOT SUPPORTED** — A2 had false VAD with `REF_DROPPED=0` (§16.4) |
+| Intermittent scheduling/state-margin problem | **LEADING CLASS OF HYPOTHESES** (§16.6) — not concluded |
 
 **R0081 is still NOT PASS.**
 
@@ -657,20 +666,162 @@ From BOTH runs: (1) the mixer/device snapshot from §15.4 taken immediately befo
 | Case | Golden `7dd6b87` | Current | Conclusion |
 |---|---|---|---|
 | **1** | CLEAN | FALSE SELF-INTERRUPT | Software/path regression **strongly** supported (caveat: §15.3's Gemini-model-string difference is a real, uneliminated confound — do not treat this as 100% code-isolated). Next: smallest commit/path delta between `7dd6b87` and today's simple path capable of affecting capture/VAD, AEC feeder, playback scheduling, Pipecat processor ordering, ALSA write behavior, or interruption propagation — a bisect/differential plan, not more gain tuning. |
-| **2** | FALSE SELF-INTERRUPT | FALSE SELF-INTERRUPT | A later NeXa Core/Memory/Recall software regression is **NOT** supported as the primary explanation (Core Recall was already disabled in the current run, and the golden path never had it at all). Something shared by both runs TODAY has changed or is variable — prioritize ALSA/device timing state, XVF3800 state, physical/acoustic conditions, USB scheduling/buffering, and (per §15.3) genuinely-shared dependency drift since `7dd6b87` was written, over a NeXa-code explanation. |
+| **2** ← **SELECTED, see §15.9** | FALSE SELF-INTERRUPT | FALSE SELF-INTERRUPT | A later NeXa Core/Memory/Recall software regression is **NOT** supported as the primary explanation (Core Recall was already disabled in the current run, and the golden path never had it at all). Something shared by both runs TODAY has changed or is variable — prioritize ALSA/device timing state, XVF3800 state, physical/acoustic conditions, USB scheduling/buffering, and (per §15.3) genuinely-shared dependency drift since `7dd6b87` was written, over a NeXa-code explanation. |
 | **3** | CLEAN | CLEAN | The current fault is intermittent/state-dependent — supports the stability-margin/timing/adaptation hypothesis already on record (§7b). **Do not declare it fixed from one clean run** — repeat enough silent-response trials to bound the intermittent rate before concluding anything. |
 | **4** | Either run invalid (setup/device/provider error, e.g. wrong device index, credential failure, crash) | — | Report INVALID; do not interpret. Re-run under corrected conditions. |
 
-### 15.9 What remains valid and untouched from §§1-14
+### 15.9 RESULT (2026-09-17, real hardware): CASE 2 — both golden and current fail today
 
-Not deleted, not reverted, temporarily secondary: AEC works but residual remains (§7, §7b); software ×10 compensation refuted (§7b); `gain=0.5` an unconfirmed candidate (§7c); MLS found ~102.5ms/~134.4ms bimodality with an exact 512-sample split, cause unresolved (§7d); counterbalanced `--confirm` ready but not yet run (§14); verbose ALSA query ready but not yet run (§14). This section inserts the regression-isolation experiment BEFORE more parameter tuning because it answers a higher-level causal question; §14's own two commands remain the next step once §15 has a result.
+The operator ran both procedures from §15.5/§15.6 back to back, same physical setup, mixer/device snapshot taken before each.
+
+**Golden `7dd6b87` (dependency-isolated via `PYTHONPATH`): FALSE SELF-INTERRUPT.** Not clean. The first long answer showed severe, repeated self-interruption (content delivered piece-by-piece, "extremely difficult to listen to" — operator's own words). One later spoken segment was temporarily perfect/uninterrupted. A later question tested in complete silence still self-interrupted. Behavior varied strongly between utterances within the SAME session — some periods nearly perfect, others severely broken.
+
+**Current (default gain, `--no-core-recall`, `--diagnostic-timeline --diagnostic-audio-levels`): FALSE SELF-INTERRUPT.** Also not clean — consistent with all prior R0081 evidence.
+
+**Mixer/device snapshot, immediately before each run — IDENTICAL in the supplied logs:**
+
+| Device | Control | Value |
+|---|---|---|
+| USB speaker (`UACDemoV10`, card 2) | `PCM` playback | 88 / 60% / -11.95dB |
+| reSpeaker (`Array`, card 3) | `PCM`,0 playback | 60 / 100% / 0.00dB |
+| reSpeaker | `PCM`,1 playback | 40 / 67% / -20.00dB |
+| reSpeaker | `Headset`,0 capture | 46 / 77% / -14.00dB |
+| reSpeaker | `Headset`,1 capture | 60 / 100% / 0.00dB |
+
+No mixer/device-index drift observed between the two back-to-back runs. **This is a narrower claim than "all hardware state is identical"** — only the measured mixer/device snapshot is; acoustic/thermal/USB-scheduling/XVF3800-internal state was not and could not be captured this way.
+
+**Recorded per instruction:**
+
+```
+Regression gate:                                CASE 2
+Golden historical source (7dd6b87) today:       FAIL
+Current today:                                  FAIL
+Core/Memory/Recall regression:                  DE-PRIORITIZED (not supported as primary cause)
+Mixer/device drift between back-to-back tests:  NOT OBSERVED (measured snapshot only)
+```
+
+**Gemini model difference (§15.3) is confirmed NOT the sole explanation** (not "zero influence" — just not sufficient alone): `gemini-3.1-flash-live-preview` (golden) and `models/gemini-2.5-flash-native-audio-preview-12-2025` (current) both exhibit the same CLASS of false self-interruption today. A model-level contribution to severity/timing cannot be ruled out from this evidence, but model choice alone cannot explain presence-vs-absence of the symptom, since both models show it.
+
+**Direct proof this is not merely a VAD-sensitivity artifact — a real false transcription.** The golden log, during the operator-silent long-answer test, contains a genuine false ASR transcription: `[Transcription:user] [Tu es beau.]` — French, mis-transcribed, produced with no real user speech present. This is materially stronger evidence than a VAD start/stop pair: actual acoustic content (almost certainly NeXa's own played-back voice, self-echo) reached Gemini's own speech recognition with enough fidelity to produce a plausible (if wrong) transcription — not just cross a local energy/confidence threshold.
+
+**Complete false-start/interruption sequence, from the supplied golden excerpt** (silent-operator segment starting after the 19:36:36.399 `Bot started speaking`): 6 distinct `User started speaking → Bot stopped speaking → Gemini interrupted` cycles are given explicitly, at 19:36:37.797, 40.556, 43.658, 46.477, 49.377, 51.977, with more beyond these ("and many more" — the complete count requires the full raw log, not yet supplied; see §16.5). **The 5 inter-cycle gaps in the given excerpt are strikingly regular**: 2.759s, 3.102s, 2.819s, 2.900s, 2.600s — mean ≈2.84s, range 2.6-3.1s. This regularity is noted as a real, computed observation (not asserted as necessarily causal) — a periodicity this tight is more consistent with a recurring scheduling/retry/recovery cadence than with random acoustic-threshold noise, though this report does not yet know which mechanism produces it.
+
+### 15.10 What remains valid and untouched from §§1-14
+
+Not deleted, not reverted, temporarily secondary: AEC works but residual remains (§7, §7b); software ×10 compensation refuted (§7b); `gain=0.5` an unconfirmed candidate (§7c); MLS found ~102.5ms/~134.4ms bimodality with an exact 512-sample split, cause unresolved (§7d); counterbalanced `--confirm` ready but not yet run (§14); verbose ALSA query ready but not yet run (§14, now also needed for §16). §16 (new) is inserted as the immediate next priority given the major new evidence in §15.10 — a reference-queue overflow found in the current run's own diagnostics (§16).
 
 ---
 
-## 16. Commit gate
+## 16. Reference queue overflow — source audit, golden/current structural comparison, and reconciliation with A2
 
-Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validated (and stays off by default). No fix is claimed or implemented — `gain=0.5` is a candidate, not a change. AEC is confirmed functioning at two signal levels but a substantial residual remains at every level tested; a clean, non-clipped test cleanly REFUTES blunt ×10 software compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB` (a real, negative result now, not an invalidated one). The gain sweep and MLS timing stimulus were both run live and produced real, material findings (§7c, §7d), each with its own explicitly-documented open confound rather than a premature conclusion.
+### 16.1 The signal
 
-**This update's own priority change**: no new gain/timing tuning was performed. Instead, a regression-isolation gate (§15) was inserted ahead of the still-open gain/timing work, to directly answer whether today's false self-interruption is a NeXa software/path regression or a shared hardware/environment/provider-state change — using the already-existing, still-clean isolated golden worktree (`7dd6b87`) preserved from R0071. Recovered the exact historical test procedure from source/logs (not memory), and found and fixed a real, previously-undocumented dependency-isolation risk (the golden worktree's `nexa` imports would otherwise silently resolve to today's code via the shared editable install) — verified via a read-only `--dry` check only, no hardware or network touched. No golden/current comparison run was executed this update (explicitly deferred to the operator, per instruction).
+The current control run's `AecReferenceFeeder` telemetry (`REF_QUEUE_DEPTH`/`REF_DROPPED`, `--diagnostic-audio-levels`) shows a clear overflow episode during assistant playback: depth `0 → 1 → 12 → 11 → 20 → 23 → 24` (hitting the queue's own bound), with `REF_DROPPED` climbing `3, 7, 17, 32, 55, 70, 89, 105, 113, 127, ... 144` before the queue drains back to depth 0, `REF_DROPPED` remaining fixed at 144 in later telemetry (as supplied). This is treated as a first-priority signal, not a minor diagnostic detail: it means the far-end reference path demonstrably failed to keep pace with outgoing playback for part of the run, and the real speaker output and the XVF3800's far-end reference cannot have remained sample-content-equivalent throughout that interval.
 
-Per this project's established practice for this exact situation: this update's changes (the R0081 report's new regression-isolation gate section, §15) are docs-only — no source file changed this update. The prior update's diagnostic script changes (stimulus-aware filenames, `--confirm`, `--post-settle-gap`/`quiet_before_rms`) remain committed from before, unchanged this round. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, Silero was not touched, production reference gain was not changed, and no Gemini/hardware call was made this update** — every action this update was either a read (git/source/log inspection) or a `--dry`/no-hardware/no-network verification.
+### 16.2 `AecReferenceFeeder` queue semantics — answered from source (`src/nexa/voice_tts/aec_reference.py`), not assumption
+
+**1. What is one "chunk"?** One chunk = the exact `bytes` payload of ONE `TTSAudioRawFrame.audio` — confirmed by `process_frame()`: `if isinstance(frame, TTSAudioRawFrame) and frame.audio: ... self._enqueue(pcm)`, no internal re-slicing. Tracing that frame's origin in the INSTALLED Pipecat source (`.venv/lib/python3.13/site-packages/pipecat/services/google/gemini_live/llm.py`, `_handle_msg_server_content`): `audio = inline_data.data; frame = TTSAudioRawFrame(audio=audio, sample_rate=self._sample_rate, num_channels=1)` — **one chunk is exactly one raw Gemini Live server message's audio payload**, whatever size Google's own server and the network delivery produce. There is no fixed-size slicing anywhere in this path. **Frame sizes are confirmed VARIABLE, size controlled server-side, not by NeXa's own code.**
+
+   The commonly-cited "20-40ms audio chunks" figure (R0030 §C2, `https://ai.google.dev/gemini-api/docs/live-api/best-practices`) is **Google's own recommendation for chunking INPUT audio sent TO Gemini** (mic → Gemini), explicitly labeled "Input chunk size" in that same report — it is **not** a documented or guaranteed figure for OUTPUT audio chunk size (Gemini → speaker), which is the side `AecReferenceFeeder` mirrors. Applying the input-side figure to the output side would be exactly the kind of unjustified assumption this audit was told to avoid — **not done here.**
+
+   The reference feed itself plays at `OUTPUT_SAMPLE_RATE_HZ = 24000` Hz (`AecReferenceFeeder(..., sample_rate=OUTPUT_SAMPLE_RATE_HZ, ...)` in `simple_conversation.py`), mono, S16_LE — confirmed from the same construction call site.
+
+**2. What happens at `DEFAULT_MAX_QUEUED_CHUNKS = 24`?** From `_enqueue()`:
+   ```python
+   def _enqueue(self, pcm: bytes) -> None:
+       try:
+           self._queue.put_nowait(pcm)
+       except asyncio.QueueFull:
+           # drop the oldest, keep the newest (freshest reference matters)
+           try:
+               self._queue.get_nowait()
+               self._queue.put_nowait(pcm)
+           except (asyncio.QueueEmpty, asyncio.QueueFull):
+               pass
+           self.chunks_dropped += 1
+   ```
+   **Drop OLDEST, keep newest** — confirmed directly, matches the code's own comment. Relative order of the remaining (surviving) chunks is preserved; the queue always holds the most recent ≤24 chunks. Net effect over a sustained overflow: the reference feed continuously skips forward, discarding older not-yet-played content, converging toward "catch up to the newest audio" rather than accumulating a fixed constant delay.
+
+**3. What consumer drains the queue, and what can make it slower than the producer?** `_run_writer()`: a single asyncio task loops `pcm = await self._queue.get()`, then `await loop.run_in_executor(None, self._sink.write, pcm)`. `_PcmSink.write()` does `self._proc.stdin.write(pcm); self._proc.stdin.flush()` into a **persistent, single** `aplay -D plug:respeaker` subprocess's stdin pipe. The blocking write happens in a threadpool executor (correct — does not block the asyncio loop itself), but the writer task can only pull its NEXT queue item once that executor call returns. `aplay` consumes its stdin pipe at real-time playback pace (bounded by ALSA + the OS pipe buffer, ~64KB typical) — so if `TTSAudioRawFrame`s ever arrive faster than real-time (a burst of buffered/delayed Gemini server messages delivered in a cluster, e.g. after network jitter or a scheduler/GC pause), the write-side cannot keep up, the bounded `asyncio.Queue` fills, and overflow/drop follows exactly as observed.
+
+**4. Is the REAL speaker exposed to the same buffering/backpressure? Confirmed: NO — they are independent.** `AecReferenceFeeder` is a TEE: `process_frame()` always ends with `await self.push_frame(frame, direction)`, unconditionally forwarding the SAME frame downstream toward the real output transport, **regardless of whether `_enqueue()` succeeded or silently dropped**. The real speaker's own playback path (Pipecat's standard output transport) is a **separate consumer of the same frames**, with its own independent buffering, **not gated by or coupled to `AecReferenceFeeder`'s queue state in any way**. This is the critical mechanism: **during an overflow episode, the real acoustic speaker keeps playing normally (no gap) while the XVF3800's far-end reference input is missing content** — the AEC's adaptive filter is fed a reference signal with real GAPS relative to what's actually being acoustically emitted, precisely the kind of reference/acoustic misalignment that degrades cancellation and lets genuine self-echo through to trip local VAD.
+
+**5. `REF_DROPPED = 144` in audio time — cannot be precisely or even order-of-magnitude-bounded from currently available evidence.** Because (a) chunk size is confirmed variable/server-controlled (§16.2.1), and (b) the only documented Gemini Live chunk-duration figure applies to the INPUT side, not output, **this report does not multiply 144 by a guessed constant.** A real number would require a new, narrow diagnostic addition (e.g. logging `len(pcm)` per enqueue, or accumulating dropped-byte totals alongside the existing `chunks_dropped` counter) — not built this pass, named as a candidate follow-up, not implemented unilaterally.
+
+**6. What does overflow produce: a gap, a permanent offset, catch-up, or something else?** Per §16.2.2's drop-oldest mechanism, repeated across 144 individual drop events, the net effect is a reference stream with **real, discontinuous GAPS** (missing segments) during the overflow interval, converging toward the newest audio — **not** a single fixed constant-offset delay. This distinction matters: an adaptive filter can often track and compensate for a fixed delay, but it cannot correlate against content that was never delivered at all — the skipped intervals are genuinely, unrecoverably missing information from the AEC's point of view.
+
+**7. Connection to the exact 512-sample / 32ms MLS bimodality (§7d) — NO link found; kept separate, per instruction.** `AecReferenceFeeder` has no fixed 512-sample (or any other fixed-size) write anywhere in its source — its writes are exactly whatever size each incoming `TTSAudioRawFrame` carries (§16.2.1, confirmed variable). The MLS bimodality was measured on the CAPTURE side (`arecord` via `r0081_direct_aec_diagnostic.py`, 16kHz), a completely separate code path from this WRITE-side reference feeder (24kHz). No evidence connects the two; they are **not** claimed to share a cause here. The capture-side ALSA period/buffer question (§7d Finding 2) remains open and is answered by §16.5's command, not by this analysis.
+
+### 16.3 Golden (`7dd6b87`) vs. current — same queue architecture, confirmed from the full diff
+
+`git diff 7dd6b87 HEAD -- src/nexa/voice_tts/aec_reference.py` (read in full this session): the **entire** diff is additive — a docstring block, two new imports (`audioop`, `time`), three new optional constructor params (`gain_source`, `on_diagnostic`, `diagnostic_interval_s`, all defaulting to `None`/inert), the `gain_source` scaling block inserted into `process_frame()` before the (unchanged) `self._enqueue(pcm)` call, and the new `_emit_diagnostic()` method (a pure read of `self._queue.qsize()`/`self.chunks_dropped` plus one `audioop.rms()` call — no sleeping, no I/O, does not alter enqueue/dequeue timing).
+
+**`DEFAULT_MAX_QUEUED_CHUNKS = 24`, the `asyncio.Queue(maxsize=...)` construction, `_enqueue()`'s drop-oldest logic, `_run_writer()`'s consumer loop, `_PcmSink`'s single-persistent-`aplay`-via-stdin-pipe mechanism, and `_start_sink`/lifecycle are ALL byte-for-byte unchanged between `7dd6b87` and current HEAD.** In today's current control run, `gain_source=None` (no `--coherent-reference-gain`), so that addition was fully inert too — the ONLY functional difference in play was `on_diagnostic` being wired (so the drops were visible at all).
+
+**Conclusion: the golden path almost certainly has the identical queue-overflow vulnerability.** Its own session log cannot show `REF_QUEUE_DEPTH`/`REF_DROPPED` (that telemetry didn't exist in `7dd6b87`, and the golden PROBE script — a separate file, `m2_6a_gemini_live_probe.py` — never wires an equivalent hook), but the underlying `AecReferenceFeeder.chunks_dropped` counter and the same bounded queue exist and would behave identically under the same producer-burst conditions. This is a structural finding, not a guess: the class doing the work is, for every mechanism relevant to overflow, textually identical.
+
+### 16.4 Reconciling with A2's zero-drop false VAD — queue overflow is NOT the sole root cause
+
+A2 (§2) showed `REF_DROPPED = 0`, queue depth mostly 0, and false local VAD STILL occurred. This is decisive: **queue overflow cannot be the sole root cause**, even though today's 144-drop episode is real and material. The evidence is consistent with:
+
+```
+baseline residual echo (confirmed, §7/§7b — AEC works but leaves a real residual at every level tested)
++ intermittent reference-queue/scheduling failure (confirmed today, NOT present in A2)
+= much worse self-interruption when both are present; baseline-only residual when the queue stays healthy
+```
+
+This directly fits the operator's own observation (§15.10): some utterances nearly perfect, others severely broken, in the SAME session/setup — exactly what an intermittent, state/scheduling-dependent SECOND failure mode layered on top of an always-present baseline residual would produce, rather than a simple deterministic "current code always wrong" explanation.
+
+### 16.5 What is still needed to correlate drops with false VAD timing — NOT yet determinable from what has been supplied
+
+The operator's summary gave the `REF_QUEUE_DEPTH`/`REF_DROPPED` progression and representative golden-log timestamps, but **not** the current run's own timestamped `LOCAL_VAD_START`/`INTERRUPTION_FRAME`/`MIC_RMS` lines interleaved with the `REF_QUEUE_DEPTH`/`REF_DROPPED` lines. Without that interleaving, this report **cannot** determine, and does not guess, which of the following holds:
+
+- **A.** Queue overflow is the initiating cause (false VAD begins during/after the drop episode, not before).
+- **B.** Queue overflow is itself a consequence of interruption/playback scheduling (e.g., a false interruption triggers rapid stop/restart traffic that itself bursts the producer).
+- **C.** Both are symptoms of a common scheduling problem (e.g., a CPU/executor stall affects frame delivery AND VAD processing simultaneously).
+
+**Needed next**: the full current-run terminal log (or at minimum every `REF_QUEUE_DEPTH`/`REF_DROPPED`/`LOCAL_VAD_START`/`INTERRUPTION_FRAME`/`MIC_RMS`/`BOT_AUDIO_STARTED`/`BOT_AUDIO_STOPPED` line, in original order with timestamps) from the file the operator already captured via `tee` in §15.6's command. This is not a request for a new live run — the run already happened; this is a request for its already-captured output.
+
+### 16.6 Shared-state hypotheses, prioritized (not concluded)
+
+Because true historical (`7dd6b87`, dependency-isolated) and current source both fail today while the measured mixer/device snapshot is equal, shared variables are prioritized over a NeXa-code-only explanation:
+
+1. ALSA scheduling/buffering / USB timing (§16.2.3's burst-delivery mechanism is a concrete, source-grounded candidate here).
+2. XVF3800 runtime/adaptation state.
+3. Physical/acoustic state (not measured by the mixer snapshot).
+4. CPU/executor scheduling/load (the same Pi runs both the Python process and, potentially, contends with other load).
+5. Shared third-party dependency/environment state (§15.3 — pipecat/google-genai versions are shared and identical; drift SINCE `7dd6b87` was written is not ruled out).
+6. Provider timing/audio chunk cadence — **a specific, named candidate this section adds**: R0071's own report already recorded a **known, unresolved, non-blocking issue**: *"occasional short playback/stream continuity stutter during longer assistant speech"* on the ACCEPTED baseline. Bursty/uneven `TTSAudioRawFrame` delivery from Gemini (§16.2.3) is a plausible SHARED mechanism for both that acoustic stutter AND today's reference-queue overflow — the same underlying phenomenon potentially explaining two previously-separate-looking symptoms. Not proven; flagged as the most concrete, source-grounded lead among the six.
+
+No root cause is concluded from this list — it is a priority order for further investigation, not a verdict.
+
+### 16.7 Next action
+
+**Do not ask for another free-form Gemini conversation yet.** Two things, in order:
+
+1. **Return the already-captured current-run log content needed for §16.5's correlation** — specifically the interleaved `REF_QUEUE_DEPTH`/`REF_DROPPED`/`LOCAL_VAD_START`/`INTERRUPTION_FRAME`/`MIC_RMS`/`BOT_AUDIO_STARTED`/`BOT_AUDIO_STOPPED` lines in original order with timestamps, from the log already saved via §15.6's `tee` command. No new hardware run needed for this.
+
+2. **The verbose ALSA setup query, already built and explained (§7d, §15) — run now, exact evidence needed stated explicitly first, per instruction:**
+
+   ```bash
+   arecord -D plug:respeaker \
+     -f S16_LE \
+     -r 16000 \
+     -c 1 \
+     --dump-hw-params \
+     -v \
+     -d 1 \
+     /dev/null
+   ```
+
+   **What this needs to show, and why**: the CAPTURE-side (not reference-write-side — see §16.2.7) `-v` output's actual negotiated `period_size` (in frames, at 16kHz). If that value is exactly 512 (or a divisor/multiple of it), it directly corroborates §7d's exact-512-sample/32.000ms bimodal MLS lag split as a genuine ALSA capture buffer-boundary quantization effect. If it is some other value, that specific link is refuted and the two findings (capture-side period size, reference-write-side queue overflow) stay documented as **separate, unconnected** issues, exactly as this section's §16.2.7 already concluded from source alone. This command does **not** bear on the queue-overflow finding itself (that is write-side, 24kHz, Gemini-server-chunked — a structurally different mechanism, already fully explained from source in §16.2) — it is being run now only because it was already prepared and answers a separate, still-open §7d question while the operator gathers the §16.5 log excerpt.
+
+---
+
+## 17. Commit gate
+
+Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validated (and stays off by default). No fix is claimed or implemented — `gain=0.5` is a candidate, not a change; the reference-queue overflow (§16) is a confirmed, material, source-grounded lead, not yet a proven root cause. AEC is confirmed functioning at two signal levels but a substantial residual remains at every level tested; a clean, non-clipped test cleanly REFUTES blunt ×10 software compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB`.
+
+**This update's major result**: the regression-isolation gate (§15) was RUN on real hardware — the dependency-isolated historical golden path (`7dd6b87`) also shows false self-interruption today (CASE 2), ruling out a later NeXa Core/Memory/Recall regression as the primary cause and including a genuine false ASR transcription during operator silence as direct proof of real acoustic leakage. Auditing the current run's own diagnostics found a confirmed reference-queue overflow (144 dropped chunks, §16) with a source-verified mechanism (real speaker unaffected, reference develops content gaps) and a source-confirmed identical queue architecture in the golden path — a strong shared-mechanism candidate, explicitly NOT claimed as the sole cause (A2's zero-drop false VAD rules that out, §16.4). No source file changed this update — the report's own analysis (§15.9-15.10, §16) is entirely derived from: reading `AecReferenceFeeder`'s current and `7dd6b87` source in full, reading the installed Pipecat `GeminiLiveLLMService` source for output-frame construction, re-checking R0030's own documented chunk-size fact for scope (input-only, not output — a real correction caught before overclaiming), and the operator-supplied hardware evidence. No new live run was performed this update.
+
+Per this project's established practice for this exact situation: this update's change (the R0081 report itself) is docs-only. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, Silero was not touched, production reference gain was not changed, and no new Gemini/hardware call was made this update** — every action this update was a read (source/git/log inspection).
