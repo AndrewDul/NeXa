@@ -32,6 +32,7 @@ from nexa.realtime.gemini.core_recall_tool import (  # noqa: E402
 )
 from nexa.realtime.gemini.simple_conversation import (  # noqa: E402
     _make_event_tap_class,
+    _make_mic_level_tap_class,
     _pipecat_imports,
     build_cloud_realtime_conversation_adapter,
 )
@@ -235,6 +236,294 @@ class TestConversationEventTap(unittest.IsolatedAsyncioTestCase):
             self.assertIs(router._turn.current, first_turn)  # noqa: SLF001
         finally:
             await self._teardown(runner, run_task)
+
+
+@unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+class TestDiagnosticTimeline(unittest.IsolatedAsyncioTestCase):
+    """R0081 §4/§5 -- the narrow, purely-additive diagnostic-timeline hook.
+    Same real Pipeline/PipelineWorker/ConversationRouter infrastructure as
+    ``TestConversationEventTap`` above, with ``on_diagnostic`` wired this
+    time."""
+
+    async def _build(self, *, on_diagnostic):
+        P = _pipecat_imports()
+        router, session = _fresh_router()
+        tap_cls = _make_event_tap_class(P)
+        tap = tap_cls(router=router, on_diagnostic=on_diagnostic)
+        pipeline = P["Pipeline"]([tap])
+        worker = P["PipelineWorker"](
+            pipeline,
+            params=P["PipelineParams"](audio_in_sample_rate=16000, audio_out_sample_rate=24000),
+            enable_rtvi=False,
+            idle_timeout_secs=None,
+        )
+        runner = P["WorkerRunner"]()
+        await runner.add_workers(worker)
+        run_task = asyncio.create_task(runner.run())
+        await asyncio.sleep(0.2)
+        return P, router, session, worker, runner, run_task
+
+    async def _teardown(self, runner, run_task) -> None:
+        await runner.end(reason="test done")
+        await asyncio.wait_for(run_task, timeout=5.0)
+
+    async def test_default_none_is_byte_for_byte_unchanged(self) -> None:
+        """No on_diagnostic at all -- _diag() must be a safe no-op, never
+        raise, never require the callback."""
+        P, router, session, worker, runner, run_task = await self._build(on_diagnostic=None)
+        try:
+            await worker.queue_frames(
+                [
+                    P["UserStartedSpeakingFrame"](),
+                    P["TranscriptionFrame"](
+                        text="hello", user_id="", timestamp="", finalized=True
+                    ),
+                    P["LLMFullResponseEndFrame"](),
+                ]
+            )
+            await asyncio.sleep(0.2)
+            self.assertEqual(len(session.history), 1)  # unaffected, no crash
+        finally:
+            await self._teardown(runner, run_task)
+
+    async def test_full_normal_turn_timeline_labels(self) -> None:
+        events: list[str] = []
+        P, router, session, worker, runner, run_task = await self._build(
+            on_diagnostic=events.append
+        )
+        try:
+            await worker.queue_frames(
+                [
+                    P["UserStartedSpeakingFrame"](),
+                    P["UserStoppedSpeakingFrame"](),
+                    P["TranscriptionFrame"](
+                        text="are there black holes", user_id="", timestamp="", finalized=True
+                    ),
+                    P["TTSStartedFrame"](),
+                    P["TTSTextFrame"](text="yes, there are", aggregated_by=""),
+                    P["TTSStoppedFrame"](),
+                    P["LLMFullResponseEndFrame"](),
+                ]
+            )
+            await asyncio.sleep(0.2)
+        finally:
+            await self._teardown(runner, run_task)
+
+        labels = [e.split(":", 1)[0] for e in events]
+        self.assertEqual(
+            labels,
+            [
+                "LOCAL_VAD_START",
+                "USER_TURN_START",
+                "LOCAL_VAD_STOP",
+                "USER_TRANSCRIPT",
+                "BOT_AUDIO_STARTED",
+                "BOT_AUDIO_STOPPED",
+                "USER_TURN_END",
+            ],
+        )
+        self.assertEqual(events[3], "USER_TRANSCRIPT:are there black holes")
+
+    async def test_interruption_timeline_includes_playback_stopped_and_new_turn(self) -> None:
+        events: list[str] = []
+        P, router, session, worker, runner, run_task = await self._build(
+            on_diagnostic=events.append
+        )
+        try:
+            await worker.queue_frames(
+                [
+                    P["UserStartedSpeakingFrame"](),
+                    P["TranscriptionFrame"](
+                        text="tell me about gravity", user_id="", timestamp="", finalized=True
+                    ),
+                    P["InterruptionFrame"](),
+                ]
+            )
+            await asyncio.sleep(0.2)
+        finally:
+            await self._teardown(runner, run_task)
+
+        self.assertIn("INTERRUPTION_FRAME", events)
+        self.assertIn("PLAYBACK_STOPPED", events)
+        # interruption closes the current turn AND opens a fresh one
+        self.assertEqual(events.count("USER_TURN_END"), 1)
+        self.assertEqual(events.count("USER_TURN_START"), 2)  # initial open + post-interrupt
+
+    async def test_non_final_transcript_never_diagnosed_as_user_transcript(self) -> None:
+        """Only a FINAL transcript is treated as 'the real user transcript'
+        -- a partial must never be printed/correlated as if it were one."""
+        events: list[str] = []
+        P, router, session, worker, runner, run_task = await self._build(
+            on_diagnostic=events.append
+        )
+        try:
+            await worker.queue_frames(
+                [
+                    P["TranscriptionFrame"](
+                        text="partial words", user_id="", timestamp="", finalized=False
+                    ),
+                ]
+            )
+            await asyncio.sleep(0.2)
+        finally:
+            await self._teardown(runner, run_task)
+
+        self.assertFalse(any(e.startswith("USER_TRANSCRIPT") for e in events))
+
+    async def test_diagnostic_hook_exception_never_breaks_the_pipeline(self) -> None:
+        def _exploding(label: str) -> None:
+            raise RuntimeError("diagnostic sink failed")
+
+        P, router, session, worker, runner, run_task = await self._build(
+            on_diagnostic=_exploding
+        )
+        try:
+            await worker.queue_frames(
+                [
+                    P["UserStartedSpeakingFrame"](),
+                    P["TranscriptionFrame"](
+                        text="still works", user_id="", timestamp="", finalized=True
+                    ),
+                    P["LLMFullResponseEndFrame"](),
+                ]
+            )
+            await asyncio.sleep(0.2)
+            self.assertEqual(len(session.history), 1)
+            self.assertEqual(session.history[0].content, "still works")
+        finally:
+            await self._teardown(runner, run_task)
+
+
+@unittest.skipUnless(_PIPECAT_AVAILABLE, "pipecat-ai not importable in this environment")
+class TestMicLevelTap(unittest.IsolatedAsyncioTestCase):
+    """R0081 §"ADD SIGNAL-LEVEL DIAGNOSTICS" -- the second, narrow
+    diagnostic FrameProcessor, exercised through a REAL
+    Pipeline/PipelineWorker, never a hand-rolled simulation."""
+
+    async def _build(self, *, on_diagnostic):
+        P = _pipecat_imports()
+        tap_cls = _make_mic_level_tap_class(P)
+        tap = tap_cls(on_diagnostic=on_diagnostic, diagnostic_interval_s=0.0)
+        pipeline = P["Pipeline"]([tap])
+        worker = P["PipelineWorker"](
+            pipeline,
+            params=P["PipelineParams"](audio_in_sample_rate=16000, audio_out_sample_rate=24000),
+            enable_rtvi=False,
+            idle_timeout_secs=None,
+        )
+        runner = P["WorkerRunner"]()
+        await runner.add_workers(worker)
+        run_task = asyncio.create_task(runner.run())
+        await asyncio.sleep(0.2)
+        return P, worker, runner, run_task
+
+    async def _teardown(self, runner, run_task) -> None:
+        await runner.end(reason="test done")
+        await asyncio.wait_for(run_task, timeout=5.0)
+
+    async def test_input_audio_frame_emits_mic_rms(self) -> None:
+        events: list[str] = []
+        P, worker, runner, run_task = await self._build(on_diagnostic=events.append)
+        try:
+            await worker.queue_frames(
+                [P["InputAudioRawFrame"](
+                    audio=b"\x10\x20" * 160, sample_rate=16000, num_channels=1
+                )]
+            )
+            await asyncio.sleep(0.2)
+        finally:
+            await self._teardown(runner, run_task)
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0].startswith("MIC_RMS:"))
+
+    async def test_non_input_audio_frames_never_emit(self) -> None:
+        events: list[str] = []
+        P, worker, runner, run_task = await self._build(on_diagnostic=events.append)
+        try:
+            await worker.queue_frames(
+                [P["TTSTextFrame"](text="hi", aggregated_by="")]
+            )
+            await asyncio.sleep(0.2)
+        finally:
+            await self._teardown(runner, run_task)
+        self.assertEqual(events, [])
+
+    async def test_diagnostic_exception_never_breaks_the_pipeline(self) -> None:
+        def _exploding(label: str) -> None:
+            raise RuntimeError("boom")
+
+        P, worker, runner, run_task = await self._build(on_diagnostic=_exploding)
+        try:
+            await worker.queue_frames(
+                [P["InputAudioRawFrame"](
+                    audio=b"\x01\x02" * 160, sample_rate=16000, num_channels=1
+                )]
+            )
+            await asyncio.sleep(0.2)  # must not raise / hang
+        finally:
+            await self._teardown(runner, run_task)
+
+
+class TestCoherentReferenceGainWiring(unittest.TestCase):
+    """R0081 §13/§B -- the opt-in AecReferenceFeeder gain-coherence fix.
+    The real hardware-device-opening path (dry=False) cannot run in this
+    environment, so this checks the actual SOURCE, the same
+    proven-sufficient discipline R0053's own
+    ``test_self_echo_probe_production_gain_parity.py`` established for
+    the sibling ``runtime.py`` wiring."""
+
+    def _source(self) -> str:
+        return (
+            SRC / "nexa" / "realtime" / "gemini" / "simple_conversation.py"
+        ).read_text(encoding="utf-8")
+
+    def test_default_is_false_preserving_r0071_behavior(self) -> None:
+        self.assertIn("coherent_reference_gain: bool = False", self._source())
+
+    def test_coherent_reference_gain_constructed_with_configured_card(self) -> None:
+        source = self._source()
+        self.assertIn("CoherentReferenceGain(card=cfg.output_alsa_mixer_card)", source)
+
+    def test_gain_source_bound_to_current_gain_when_enabled(self) -> None:
+        source = self._source()
+        self.assertIn("gain_source = reference_gain.current_gain", source)
+        self.assertIn("gain_source=gain_source", source)
+
+    def test_gain_source_defaults_to_none_in_the_feeder_construction(self) -> None:
+        """Not just the function param -- the value actually threaded
+        into AecReferenceFeeder() must default to None too."""
+        self.assertIn("gain_source = None", self._source())
+
+
+class TestDiagnosticAudioLevelsGating(unittest.TestCase):
+    """R0081 -- audio-level diagnostics (mic tap, reference RMS) require
+    BOTH a real on_diagnostic sink AND diagnostic_audio_levels=True;
+    neither alone is enough. Source-checked for the same reason as
+    TestCoherentReferenceGainWiring above (dry=False cannot run here)."""
+
+    def _source(self) -> str:
+        return (
+            SRC / "nexa" / "realtime" / "gemini" / "simple_conversation.py"
+        ).read_text(encoding="utf-8")
+
+    def test_default_is_false(self) -> None:
+        self.assertIn("diagnostic_audio_levels: bool = False", self._source())
+
+    def test_gating_requires_both_conditions(self) -> None:
+        self.assertIn(
+            "emit_audio_levels = on_diagnostic is not None and diagnostic_audio_levels",
+            self._source(),
+        )
+
+    def test_mic_tap_only_constructed_when_emit_audio_levels(self) -> None:
+        source = self._source()
+        self.assertIn("if emit_audio_levels:", source)
+        self.assertIn("mic_tap_cls = _make_mic_level_tap_class(P)", source)
+
+    def test_aec_feeder_diagnostic_gated_the_same_way(self) -> None:
+        self.assertIn(
+            "on_diagnostic=on_diagnostic if emit_audio_levels else None", self._source()
+        )
 
 
 if __name__ == "__main__":

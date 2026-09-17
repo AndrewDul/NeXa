@@ -944,6 +944,88 @@ class TestAecReferenceFeederGain(_FpHarness):
             await f.end()
 
 
+class TestAecReferenceFeederDiagnostics(_FpHarness):
+    """R0081 -- narrow, throttled, numeric-only reference-signal telemetry
+    (REF_RMS / REF_QUEUE_DEPTH / REF_DROPPED). Default ``on_diagnostic=None``
+    must remain byte-for-byte prior behavior -- ``TestAecReferenceFeeder``
+    above already covers and must keep passing unmodified (local voice's
+    own ``build_bargein_stack`` never passes this param, so it is
+    unaffected)."""
+
+    async def _feeder(self, *, on_diagnostic=None, diagnostic_interval_s=0.25, **kw):
+        health = AecReferenceHealth()
+        sinks: list[_FakeSink] = []
+
+        def factory():
+            s = _FakeSink(**kw)
+            sinks.append(s)
+            return s
+
+        f = AecReferenceFeeder(
+            aec_health=health,
+            sample_rate=16000,
+            sink_factory=factory,
+            on_diagnostic=on_diagnostic,
+            diagnostic_interval_s=diagnostic_interval_s,
+        )
+        self._instrument(f)
+        f.begin()
+        return f, health, sinks
+
+    async def test_default_none_never_calls_anything_and_stays_unscaled(self) -> None:
+        f, health, sinks = await self._feeder()
+        pcm = b"\x01\x02" * 160
+        await f.process_frame(TTSAudioRawFrame(pcm, 16000, 1), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.05)
+        self.assertEqual(sinks[0].written, pcm)
+        await f.end()
+
+    async def test_emits_numeric_rms_queue_depth_and_dropped_count(self) -> None:
+        events: list[str] = []
+        f, health, sinks = await self._feeder(on_diagnostic=events.append)
+        pcm = b"\x10\x20" * 160
+        await f.process_frame(TTSAudioRawFrame(pcm, 16000, 1), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.05)
+        await f.end()
+        self.assertEqual(len(events), 1)
+        self.assertIn("REF_RMS:", events[0])
+        self.assertIn("REF_QUEUE_DEPTH:", events[0])
+        self.assertIn("REF_DROPPED:", events[0])
+
+    async def test_never_logs_raw_pcm_bytes(self) -> None:
+        events: list[str] = []
+        f, health, sinks = await self._feeder(on_diagnostic=events.append)
+        pcm = b"\xAB\xCD" * 160
+        await f.process_frame(TTSAudioRawFrame(pcm, 16000, 1), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.05)
+        await f.end()
+        self.assertEqual(len(events), 1)
+        self.assertNotIn(pcm, events[0].encode("latin-1", errors="ignore"))
+
+    async def test_throttled_to_at_most_one_emission_per_interval(self) -> None:
+        events: list[str] = []
+        f, health, sinks = await self._feeder(
+            on_diagnostic=events.append, diagnostic_interval_s=10.0
+        )
+        pcm = b"\x01\x02" * 160
+        for _ in range(5):
+            await f.process_frame(TTSAudioRawFrame(pcm, 16000, 1), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.05)
+        await f.end()
+        self.assertEqual(len(events), 1)  # throttle window (10s) never elapsed
+
+    async def test_diagnostic_exception_never_breaks_the_tee(self) -> None:
+        def _exploding(label: str) -> None:
+            raise RuntimeError("diagnostic sink failed")
+
+        f, health, sinks = await self._feeder(on_diagnostic=_exploding)
+        pcm = b"\x07\x08" * 160
+        await f.process_frame(TTSAudioRawFrame(pcm, 16000, 1), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.05)
+        self.assertEqual(sinks[0].written, pcm)  # tee still worked
+        await f.end()
+
+
 async def _noop():
     return None
 

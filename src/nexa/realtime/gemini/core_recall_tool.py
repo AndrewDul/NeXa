@@ -208,7 +208,10 @@ class RecallExecutor:
 
 
 def make_recall_handler(
-    executor: RecallExecutor, *, timeout_secs: float = DEFAULT_RECALL_TIMEOUT_SECS
+    executor: RecallExecutor,
+    *,
+    timeout_secs: float = DEFAULT_RECALL_TIMEOUT_SECS,
+    on_diagnostic: Callable[[str], None] | None = None,
 ) -> Callable[[Any], Coroutine[Any, Any, None]]:
     """Builds the Pipecat ``FunctionCallHandler`` for ``recall_context``.
 
@@ -217,7 +220,18 @@ def make_recall_handler(
     or oversized query is a normal, expected "nothing useful to recall"
     case (folded to ``no_match``), not an adapter failure — bounded/
     validated entirely by ``RecallRequest.__post_init__`` itself, no
-    duplicated validation here."""
+    duplicated validation here.
+
+    ``on_diagnostic`` (R0081 §5, optional, default ``None``): called with
+    ``"TOOL_CALL_START"`` / ``"TOOL_CALL_END"`` markers bracketing the
+    actual ``executor.recall()`` await -- lets a diagnostic timeline
+    correlate a false-interruption event against "was a recall_context
+    round trip in flight" (R0081's own hypothesis: Gemini's model-turn
+    audio stream legitimately pauses during a blocking tool call, and
+    that pause -- not Core recall's own logic, which never touches any
+    interruption/VAD frame, see the module tests -- is the candidate
+    timing window worth correlating). Never called with query text or
+    recalled content -- markers only."""
 
     async def _handle_recall(params: Any) -> None:
         raw_query = params.arguments.get("query", "")
@@ -229,6 +243,11 @@ def make_recall_handler(
             )
             return
 
+        if on_diagnostic is not None:
+            try:
+                on_diagnostic("TOOL_CALL_START")
+            except Exception:  # noqa: BLE001 -- diagnostics must never break recall
+                logger.warning("core_recall_tool: on_diagnostic raised", exc_info=True)
         try:
             result = await executor.recall(request, timeout_secs=timeout_secs)
         except Exception:
@@ -237,6 +256,12 @@ def make_recall_handler(
                 exc_info=True,
             )
             result = RecallResult(outcome=RecallOutcome.UNAVAILABLE)
+        finally:
+            if on_diagnostic is not None:
+                try:
+                    on_diagnostic("TOOL_CALL_END")
+                except Exception:  # noqa: BLE001 -- diagnostics must never break recall
+                    logger.warning("core_recall_tool: on_diagnostic raised", exc_info=True)
 
         await params.result_callback(to_wire_response(result))
 
@@ -244,7 +269,11 @@ def make_recall_handler(
 
 
 def register_recall_tool(
-    llm: Any, executor: RecallExecutor, *, timeout_secs: float = DEFAULT_RECALL_TIMEOUT_SECS
+    llm: Any,
+    executor: RecallExecutor,
+    *,
+    timeout_secs: float = DEFAULT_RECALL_TIMEOUT_SECS,
+    on_diagnostic: Callable[[str], None] | None = None,
 ) -> None:
     """Registers ``recall_context`` on an already-constructed
     ``GeminiLiveLLMService``.
@@ -259,10 +288,13 @@ def register_recall_tool(
     ``GeminiLiveLLMService.register_function``'s own documented default)
     — implementation must still re-verify against the exact configured
     model before this is trusted in production (R0079's own §2
-    requirement; nothing in this module substitutes for that check)."""
+    requirement; nothing in this module substitutes for that check).
+
+    ``on_diagnostic`` (R0081 §5, optional): forwarded unchanged to
+    :func:`make_recall_handler`."""
     llm.register_function(
         RECALL_TOOL_NAME,
-        make_recall_handler(executor, timeout_secs=timeout_secs),
+        make_recall_handler(executor, timeout_secs=timeout_secs, on_diagnostic=on_diagnostic),
         cancel_on_interruption=True,
         timeout_secs=timeout_secs,
     )

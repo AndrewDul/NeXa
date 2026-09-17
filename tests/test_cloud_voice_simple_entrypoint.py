@@ -283,5 +283,42 @@ class TestPausedModelStringUnrelated(unittest.TestCase):
         self.assertNotIn("nexa.realtime.gemini.service", source)
 
 
+class TestInterruptionPrintDebounce(unittest.TestCase):
+    """R0081 §14: Pipecat's own broadcast_interruption() fans out an
+    upstream + downstream InterruptionFrame for ONE confirmed interruption
+    -- this dedupes the resulting duplicate terminal print, without
+    touching router/conversation state at all (that idempotency is proven
+    separately: CloudTurnAccumulator.on_interruption() is a plain,
+    already-idempotent flag set)."""
+
+    def test_two_rapid_interruption_events_print_once(self) -> None:
+        from nexa.realtime.provider import ProviderInterruptionEvent
+
+        printer = cloud_simple._make_event_printer()
+        with mock.patch("builtins.print") as mock_print:
+            printer(ProviderInterruptionEvent(source="native_pipecat"))
+            printer(ProviderInterruptionEvent(source="native_pipecat"))
+        interrupted_calls = [
+            c for c in mock_print.call_args_list if "interrupted" in str(c)
+        ]
+        self.assertEqual(len(interrupted_calls), 1)
+
+    def test_two_well_separated_interruptions_both_print(self) -> None:
+        from nexa.realtime.provider import ProviderInterruptionEvent
+
+        printer = cloud_simple._make_event_printer()
+        with mock.patch("builtins.print") as mock_print:
+            printer(ProviderInterruptionEvent(source="native_pipecat"))
+        import time as _time
+
+        _time.sleep(cloud_simple._INTERRUPTION_PRINT_DEBOUNCE_S + 0.05)
+        with mock.patch("builtins.print") as mock_print2:
+            printer(ProviderInterruptionEvent(source="native_pipecat"))
+        interrupted_1 = [c for c in mock_print.call_args_list if "interrupted" in str(c)]
+        interrupted_2 = [c for c in mock_print2.call_args_list if "interrupted" in str(c)]
+        self.assertEqual(len(interrupted_1), 1)
+        self.assertEqual(len(interrupted_2), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

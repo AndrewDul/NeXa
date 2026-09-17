@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -89,19 +90,83 @@ def parse_args() -> argparse.Namespace:
         "(no tool registered, no RecallExecutor). NOT YET live-hardware-"
         "verified end to end (R0080) -- keep this available for rapid rollback.",
     )
+    p.add_argument(
+        "--diagnostic-timeline", action="store_true",
+        help="R0081: print a narrow, timestamped event timeline "
+        "(LOCAL_VAD_START/STOP, BOT_AUDIO_STARTED/STOPPED, USER_TURN_START/END, "
+        "INTERRUPTION_FRAME, PLAYBACK_STOPPED, the final user transcript, and "
+        "TOOL_CALL_START/END when Core recall is enabled) to diagnose false "
+        "barge-in / self-echo. Purely additive observation -- never changes "
+        "routing, interruption, or turn logic. Off by default; never logs "
+        "Memory/recall content.",
+    )
+    p.add_argument(
+        "--diagnostic-audio-levels", action="store_true",
+        help="R0081: also print numeric-only mic/reference RMS + reference "
+        "queue depth/dropped-chunk telemetry (MIC_RMS, REF_RMS, "
+        "REF_QUEUE_DEPTH, REF_DROPPED), throttled, interleaved with "
+        "--diagnostic-timeline's event markers. Requires --diagnostic-timeline "
+        "(needs a sink to print into). Never logs/stores raw PCM. Inserts one "
+        "additional, purely-observational FrameProcessor into the pipeline "
+        "only when this flag is set -- off by default, pipeline shape "
+        "otherwise unchanged from R0071.",
+    )
+    p.add_argument(
+        "--coherent-reference-gain", action="store_true",
+        help="R0081 §13/§B: opt-in fix for a CONFIRMED real defect (R0053) "
+        "never applied to this path before -- the AEC far-end reference is "
+        "otherwise always unscaled, disconnected from the audible speaker's "
+        "own real ALSA mixer gain. NOT proven sufficient alone (R0054's own "
+        "erratum on the sibling pipeline it WAS tested against: reduced but "
+        "did not eliminate false self-barge-in). Off by default -- preserves "
+        "exact R0071/R0080 unscaled behavior; use this for A/B comparison.",
+    )
     return p.parse_args()
 
 
+#: R0081 §14: Pipecat's own broadcast_interruption() fans out an upstream +
+#: downstream InterruptionFrame instance per ONE confirmed interruption
+#: (see the tap's own InterruptionFrame comment) -- so, by design, TWO
+#: ProviderInterruptionEvents legitimately arrive back-to-back for one real
+#: interruption. This is DUPLICATE TELEMETRY, not a duplicate interruption
+#: authority: ConversationRouter.on_interruption() (via CloudTurnAccumulator)
+#: is already idempotent (a plain flag set, a no-op once already True) --
+#: unaffected by this debounce, which touches ONLY this print function.
+_INTERRUPTION_PRINT_DEBOUNCE_S = 0.1
+
+
 def _make_event_printer():
+    last_interruption_printed_at: list[float] = [-1.0]
+
     def on_event(event) -> None:
         if isinstance(event, UserTranscriptionEvent) and event.final:
             print(f'\nyou: "{event.text}"')
         elif isinstance(event, AssistantTranscriptionEvent):
             print(event.text, end="", flush=True)
         elif isinstance(event, ProviderInterruptionEvent):
-            print("\n  ✂ interrupted")
+            now = time.monotonic()
+            if now - last_interruption_printed_at[0] >= _INTERRUPTION_PRINT_DEBOUNCE_S:
+                print("\n  ✂ interrupted")
+            last_interruption_printed_at[0] = now
 
     return on_event
+
+
+def _make_diagnostic_timeline_printer():
+    """R0081 §4/§5 -- narrow, timestamped event timeline. ``label`` is
+    either a bare marker (``"LOCAL_VAD_START"``) or, for the one case that
+    legitimately carries text, ``"USER_TRANSCRIPT:<text>"`` -- the
+    operator's own spoken words, printed locally, only because this flag
+    was explicitly opted into. Never logs Memory/recall content: Core
+    recall's own diagnostic markers (``TOOL_CALL_START``/``TOOL_CALL_END``,
+    wired in ``main()`` below) are bare labels, never carrying the query
+    or the recalled facts."""
+    start = time.monotonic()
+
+    def on_diagnostic(label: str) -> None:
+        print(f"  ⏱ {time.monotonic() - start:8.3f}s  {label}")
+
+    return on_diagnostic
 
 
 def _print_core_recall_diagnostics(*, enabled: bool, executor: RecallExecutor | None) -> None:
@@ -137,10 +202,16 @@ async def main() -> None:
         recall_executor = RecallExecutor()
         await recall_executor.start()
 
+    # R0081 §4/§5: narrow, additive diagnostic timeline -- off by default,
+    # never affects construction/routing when the flag is not passed.
+    diagnostic = _make_diagnostic_timeline_printer() if args.diagnostic_timeline else None
+
     if args.dry:
         adapter = build_cloud_realtime_conversation_adapter(
             session=session, api_key="DRY-RUN-NO-KEY", snapshot=snapshot, dry=True,
-            recall_executor=recall_executor,
+            recall_executor=recall_executor, on_diagnostic=diagnostic,
+            diagnostic_audio_levels=args.diagnostic_audio_levels,
+            coherent_reference_gain=args.coherent_reference_gain,
         )
         print("dry mode: object graph constructed (router, Gemini service) -- "
               "no audio device, no Gemini connection.")
@@ -165,6 +236,8 @@ async def main() -> None:
     def _on_aec_change(active: bool) -> None:
         msg = "✓ AEC_REF_ACTIVE" if active else "✗ AEC REF DOWN"
         print(f"\n  {msg}")
+        if diagnostic is not None:
+            diagnostic("AEC_REF_ACTIVE" if active else "AEC_REF_DOWN")
 
     adapter = build_cloud_realtime_conversation_adapter(
         session=session,
@@ -176,8 +249,13 @@ async def main() -> None:
         on_aec_change=_on_aec_change,
         dry=False,
         recall_executor=recall_executor,
+        on_diagnostic=diagnostic,
+        diagnostic_audio_levels=args.diagnostic_audio_levels,
+        coherent_reference_gain=args.coherent_reference_gain,
     )
     _print_core_recall_diagnostics(enabled=args.core_recall, executor=recall_executor)
+    if args.coherent_reference_gain:
+        print("  ⚙ coherent-reference-gain ENABLED (R0081, opt-in A/B fix)")
 
     print("connecting to Gemini Live and opening the reSpeaker/USB-speaker "
           "hardware pipeline...")

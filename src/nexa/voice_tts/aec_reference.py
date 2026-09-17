@@ -43,7 +43,9 @@ prior unscaled behavior.
 from __future__ import annotations
 
 import asyncio
+import audioop  # same audioop-lts backport nexa.voice.aec_gain already depends on
 import subprocess
+import time
 from collections.abc import Callable
 
 from loguru import logger
@@ -109,6 +111,8 @@ class AecReferenceFeeder(FrameProcessor):
         max_queued_chunks: int = DEFAULT_MAX_QUEUED_CHUNKS,
         sink_factory: Callable[[], _PcmSink] | None = None,
         gain_source: Callable[[], float] | None = None,
+        on_diagnostic: Callable[[str], None] | None = None,
+        diagnostic_interval_s: float = 0.25,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -121,6 +125,16 @@ class AecReferenceFeeder(FrameProcessor):
         #: unscaled behavior; never required for correctness of the tee
         #: itself, only for the amplitude it carries.
         self._gain_source = gain_source
+        #: R0081 §"ADD SIGNAL-LEVEL DIAGNOSTICS" — optional, narrow,
+        #: purely-additive numeric-only signal telemetry (reference RMS,
+        #: queue depth, dropped-chunk count). ``None`` (default) is
+        #: byte-for-byte prior behavior; never logs/stores raw PCM,
+        #: never changes the frame path. Throttled to at most one emission
+        #: per ``diagnostic_interval_s`` so it never floods the terminal
+        #: even during continuous playback.
+        self._on_diagnostic = on_diagnostic
+        self._diagnostic_interval_s = diagnostic_interval_s
+        self._last_diagnostic_at = 0.0
         self._sink_factory = sink_factory or (
             lambda: _PcmSink(sample_rate=sample_rate, channels=channels, device=device)
         )
@@ -214,10 +228,31 @@ class AecReferenceFeeder(FrameProcessor):
                         "nexa.voice_tts: gain_source raised — feeding "
                         "unscaled reference PCM this frame"
                     )
+            self._emit_diagnostic(pcm)
             self._enqueue(pcm)
         elif isinstance(frame, (EndFrame, CancelFrame)):
             pass  # cleanup() handles teardown
         await self.push_frame(frame, direction)
+
+    def _emit_diagnostic(self, pcm: bytes) -> None:
+        """R0081 -- numeric-only, throttled reference-signal telemetry.
+        Never logs/stores raw PCM; a diagnostic failure never breaks the
+        reference tee (mirrors the gain_source exception discipline just
+        above)."""
+        if self._on_diagnostic is None:
+            return
+        now = time.monotonic()
+        if now - self._last_diagnostic_at < self._diagnostic_interval_s:
+            return
+        self._last_diagnostic_at = now
+        try:
+            rms = audioop.rms(pcm, 2)
+            self._on_diagnostic(
+                f"REF_RMS:{rms} REF_QUEUE_DEPTH:{self._queue.qsize()} "
+                f"REF_DROPPED:{self.chunks_dropped}"
+            )
+        except Exception:  # noqa: BLE001 -- diagnostics must never break the tee
+            logger.exception("nexa.voice_tts: on_diagnostic (reference) raised")
 
     def _enqueue(self, pcm: bytes) -> None:
         try:
