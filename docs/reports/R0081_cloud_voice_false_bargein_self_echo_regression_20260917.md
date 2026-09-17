@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-17
 **Type:** Diagnostic + narrow instrumentation + direct hardware audit (NOT a confirmed resolution)
-**Status:** Immediate failure mechanism CONFIRMED (local VAD false-fires on NeXa's own playback). Speaker volume and the R0053 gain-coherence fix are BOTH now ruled out as sufficient fixes, by direct live A/B/A2 evidence. AEC effectiveness is **CONFIRMED** at two independently measured signal levels and is **level-dependent** (§7b). A clean, non-clipped retest of +20dB software compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB` **REFUTES** the naive "invert it in software" hypothesis (§7b). The narrow gain sweep (0.25x-4.0x) built last update **has now been run live** (§7c): `gain=0.5` gave the LOWEST residual RMS of all six points (~30% lower than `gain=1.0`) — a real, material candidate — but the same run shows a suspicious first-trial quiet-floor anomaly after several gain transitions, an **open settle/order confound** that must be ruled out before trusting the sweep's own ranking. A counterbalanced A/B confirmation tool (`--confirm`, running BOTH an A-first and a B-first alternating sequence in one invocation — a single alternating sequence alone would not rule out order effects — with a longer settle) has been built this update to test this directly — **not yet run live**. The MLS timing stimulus **has also now been run live** (§7d): it confirms the tone stimulus's lag ambiguity is real and fixed (verified offline: the tone stimulus shows 112 spurious high-correlation lags vs. 0 for MLS), but the 3 OFF-condition MLS trials show a genuine BIMODAL lag split (~102.5ms vs. ~134.4ms, an exact 512-sample/32.000ms separation) rather than one stable value — an offline audit of the existing captures (this update, no new hardware access) found a plausible, evidence-backed explanation for the LOW correlation magnitude (device-side spectral reshaping) but the bimodal lag split itself remains an open question with a leading, not-yet-directly-confirmed hypothesis (ALSA capture buffer-boundary quantization). A stimulus-blind filename bug (capture WAVs did not encode `--stimulus`, risking silent overwrites between tone and MLS runs) was found and fixed this update. Root cause still NOT proven (§14).
+**Status:** Immediate failure mechanism CONFIRMED (local VAD false-fires on NeXa's own playback). Speaker volume and the R0053 gain-coherence fix are BOTH now ruled out as sufficient fixes, by direct live A/B/A2 evidence. AEC effectiveness is **CONFIRMED** at two independently measured signal levels and is **level-dependent** (§7b). A clean, non-clipped retest of +20dB software compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB` **REFUTES** the naive "invert it in software" hypothesis (§7b). The narrow gain sweep (0.25x-4.0x) built last update **has now been run live** (§7c): `gain=0.5` gave the LOWEST residual RMS of all six points (~30% lower than `gain=1.0`) — a real, material candidate — but the same run shows a suspicious first-trial quiet-floor anomaly after several gain transitions, an **open settle/order confound** that must be ruled out before trusting the sweep's own ranking. A counterbalanced A/B confirmation tool (`--confirm`, running BOTH an A-first and a B-first alternating sequence in one invocation — a single alternating sequence alone would not rule out order effects — with a longer settle) has been built this update to test this directly — **not yet run live**. The MLS timing stimulus **has also now been run live** (§7d): it confirms the tone stimulus's lag ambiguity is real and fixed (verified offline: the tone stimulus shows 112 spurious high-correlation lags vs. 0 for MLS), but the 3 OFF-condition MLS trials show a genuine BIMODAL lag split (~102.5ms vs. ~134.4ms, an exact 512-sample/32.000ms separation) rather than one stable value — an offline audit of the existing captures (this update, no new hardware access) found a plausible, evidence-backed explanation for the LOW correlation magnitude (device-side spectral reshaping) but the bimodal lag split itself remains an open question with a leading, not-yet-directly-confirmed hypothesis (ALSA capture buffer-boundary quantization). A stimulus-blind filename bug (capture WAVs did not encode `--stimulus`, risking silent overwrites between tone and MLS runs) was found and fixed this update. **Priority change this update (§15): before any more gain/timing tuning, a direct regression-isolation experiment against the historical golden `7dd6b87` baseline (re-run in an already-existing, still-clean isolated worktree, on today's same hardware) is now the immediate next step** — it directly answers whether today's false self-interruption is a NeXa software/path regression or a shared hardware/environment/provider-state change that would also affect the old known-good implementation. A real, previously-undocumented dependency-isolation risk was found and fixed in the process: the golden worktree has no `PYTHONPATH` of its own, so naively running it under the shared `.venv` would silently execute TODAY's `nexa.voice`/`nexa.voice_tts` code, not `7dd6b87`'s — corrected and verified this session (read-only `--dry` check only, no hardware/network touched). Root cause still NOT proven (§15, §14).
 **Depends on:** R0080 (accepted `2b894e7`), R0071 (frozen baseline), R0052–R0056 (prior self-echo investigation), R0053 (gain-coherence defect, now further quantified)
 
 No Memory/ContextEngine/recall_context/Personality/Relationship/Learning/FTS/vector changes touched. No forced audio-architecture redesign. No Silero threshold tuning. No DSP register writes.
@@ -502,9 +502,11 @@ pytest tests/ -q
 
 ---
 
-## 14. Next operator step — exactly what to run and return
+## 14. Gain sweep / timing follow-up — DEFERRED behind §15, not abandoned
 
-**Do not start with another free-form conversation test yet.** Two things, in this order:
+**This section's own two commands (`--confirm`, the verbose ALSA query) are NOT the immediate next step.** A higher-level causal question was raised after this section was written: **is any of this gain/timing work even addressing a software regression, or is the false self-interruption itself a NEW symptom relative to a historically clean, operator-confirmed baseline on today's same hardware?** §15 (new) answers that FIRST, via a direct regression-isolation experiment, before any more parameter tuning. Nothing below is deleted or retracted — it remains valid, ready-to-run evidence, just temporarily de-prioritized. Proceed to §15 for the operator's actual next action.
+
+**Do not start with another free-form conversation test yet.** Two things, in this order (once §15 clears):
 
 **1. Counterbalanced A/B gain confirmation (rule out the sweep's settle/order confound):**
 
@@ -545,6 +547,130 @@ No firmware write, no Silero tuning, no `CoherentReferenceGain` enable, no produ
 
 ---
 
-## 15. Commit gate
+## 15. Regression-isolation gate — THE IMMEDIATE NEXT STEP (inserted ahead of §14)
 
-Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validated (and stays off by default). No fix is claimed or implemented — `gain=0.5` is a candidate, not a change. AEC is confirmed functioning at two signal levels but a substantial residual remains at every level tested; a clean, non-clipped test cleanly REFUTES blunt ×10 software compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB` (a real, negative result now, not an invalidated one). The gain sweep and MLS timing stimulus were both run live this round and produced real, material findings (§7c, §7d), each with its own explicitly-documented open confound rather than a premature conclusion. Per this project's established practice for this exact situation: the diagnostic instrumentation and the deterministic AEC measurement script (extended this update with a stimulus-aware filename fix, a balanced `--confirm` A/B mode, and `--post-settle-gap`/`quiet_before_rms` reporting — built and offline-sanity-checked, `--confirm` not yet run against real hardware) are committed locally, clearly labeled as diagnostics only. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, Silero was not touched, and production reference gain was not changed** — every hardware interaction in this report and this update was a read (or, for the two live runs, a reused deterministic measurement identical in kind to prior authorized runs).
+**The operator's question:** *"Why did this work correctly before, and now self-interrupt again?"* R0071 recorded that the exact final accepted R0031/M2.6A revision (`7dd6b87`), re-run unmodified in an isolated worktree against **today's same hardware topology**, was clean — 10/10, zero self-interruption. Today's accepted simple cloud path (the same R0071-frozen baseline this whole R0081 investigation concerns) shows repeated false `LOCAL_VAD_START`/self-interruption on the same general hardware. Before any more gain/timing tuning, directly test: (A) a software regression relative to the known-good path, or (B) a current hardware/environment/provider-state change that would affect the OLD known-good implementation too.
+
+### 15.1 Phase 1 — the exact golden procedure, recovered from source (not reconstructed from memory)
+
+R0071's own report (`docs/reports/R0071_golden_voice_recovery_and_boundary_20260916.md`) names the commit and the qualitative result but does **not** itself contain the exact command or config table — that was recovered directly from two things preserved on this machine from R0071's own original run: the git history at `7dd6b87` and an **already-existing, still-present worktree** (`/home/devdul/Projects/NeXa_IkiGai_golden_m26a`, still checked out at `7dd6b87`, `git diff --stat` empty against that commit — confirmed clean, not reconstructed) containing the actual preserved session log (`r0031_golden_session.log`) from R0071's own original golden re-run.
+
+**Recovered, directly from the probe's own printed config header and source, not inferred:**
+
+| Field | Value |
+|---|---|
+| Script | `docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py` (at `7dd6b87`) |
+| Invocation | No flags = full live session (default `--voice` = `Sulafat`, confirmed `DEFAULT_VOICE = "Sulafat"` in source) |
+| Gemini model | `gemini-3.1-flash-live-preview` (hardcoded `MODEL` constant, **not** CLI-overridable) |
+| Voice | `Sulafat` ("Warm") |
+| `in_sample_rate` / `out_sample_rate` | 16000 / 24000 |
+| `input_device_name` / `output_device_name` | `respeaker` / `usb_speaker` |
+| `aec_reference_device` | `plug:respeaker` |
+| `server_vad` | disabled (local Silero is turn authority) — same architecture as today's accepted path |
+| VAD params | `confidence=0.7 start_secs=0.2 stop_secs=0.5 min_volume=0.6` (from the preserved log) |
+| Credential | `NEXA_GEMINI_API_KEY` env var, or read directly from `~/.config/nexa/secrets/gemini.env` if unset (script's own fallback, confirmed in source) |
+| Mixer state recording | **NOT built into the probe** — confirmed by source grep (`amixer`/`mixer`/`ALSA` all absent from the script). Must be captured separately, read-only, exactly as §6 already established. |
+| Exit | Ctrl+C (`KeyboardInterrupt` → exit 130) |
+
+**What "10/10 / 14s silent window" actually is:** the probe is a **free-form live conversation** (Ctrl+C to stop), not a scripted N-trial harness with a built-in pass/fail counter — confirmed directly from source (only `--dry`/`--lifecycle-smoke`/`--recompute`/`--voice`/`--note` flags exist; no trial-count or window-duration parameter). "10/10" and "14s" are the **operator's own qualitative tally and recollection** of that live session, not a script-measured metric. The preserved log's own `SESSION SUMMARY` (auto-printed at Ctrl+C) shows 9 reconstructed turns, 7 barge-in candidates, and the single longest uninterrupted bot-speaking stretch was **~16.6s** (17:23:57.852 → 17:24:14.423, no interruption during it) — consistent with, though not numerically identical to, "14s"; there is no evidence of self-interruption anywhere in the preserved log. This is recorded precisely so a future reader does not mistake "10/10" for an automated test result.
+
+### 15.2 Phase 2 — the isolated worktree already exists; a real dependency-isolation risk found and fixed
+
+**Do not create a new worktree — reuse the existing one.** `git worktree list` shows:
+
+```
+/home/devdul/Projects/NeXa_IkiGai              <main HEAD>  [main]
+/home/devdul/Projects/NeXa_IkiGai_golden_m26a  7dd6b87 (detached HEAD)
+```
+
+This is the exact worktree R0071 itself created and used. `git diff --stat` against `7dd6b87` inside it is empty (only an untracked results JSON and gitignored `__pycache__` dirs sit alongside it) — it is unmodified. No new worktree needed; nothing about the current repo's branch/index/working tree was touched to confirm this (read-only `git worktree list`/`git diff`/`git status` only).
+
+**A real, verified dependency-isolation risk, found this session, not previously documented anywhere:** the golden probe has NO `sys.path`/`PYTHONPATH` setup of its own — it imports `nexa.voice.aec`, `nexa.voice.config`, `nexa.voice.device`, `nexa.voice_tts.aec_reference` as plain package imports. `nexa` is installed **editable** in the shared main `.venv`, resolving to `/home/devdul/Projects/NeXa_IkiGai/src/nexa/__init__.py` — **today's current main tree, not the golden worktree's own historical copy** — confirmed directly: `.venv/bin/python3 -c "import nexa; print(nexa.__file__)"` prints the MAIN repo's path, not the worktree's. This means naively running the golden worktree's script with the shared `.venv` python would actually execute **today's** `AecReferenceFeeder`/`LocalAudioConfig` code, not `7dd6b87`'s — silently contaminating the exact subsystem under suspicion. `git diff 7dd6b87 HEAD -- src/nexa/voice/config.py src/nexa/voice_tts/aec_reference.py` confirms these files HAVE changed since (97 lines total: `config.py` gained the R0053 `output_alsa_mixer_card` field; `aec_reference.py` gained the R0053 gain-scaling mechanism and R0081's own `on_diagnostic` hooks) — additive/default-preserving on inspection, but there is no reason to rely on "probably fine" when a correct fix is simple. **Fix, verified working this session (via `--dry`, no hardware/network):**
+
+```bash
+PYTHONPATH=/home/devdul/Projects/NeXa_IkiGai_golden_m26a/src \
+  .venv/bin/python3 \
+  /home/devdul/Projects/NeXa_IkiGai_golden_m26a/docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py \
+  --dry
+```
+
+verified (this session) to print `settings_ok: True` and correctly resolve `nexa` from the golden worktree's own `src/` (`PYTHONPATH` entries are searched before the editable install's site-packages entry — confirmed empirically, not assumed: `import nexa; print(nexa.__file__)` under this exact `PYTHONPATH` prints the golden worktree's path). **`--dry` never opens a device or calls the network** — this verification did not touch hardware or Gemini, consistent with the instruction not to run hardware this pass. **Note this is a genuine improvement over R0071's own original golden re-run**: nothing in R0071's report confirms `PYTHONPATH` isolation was used originally, so its own "byte-identical modulo the gain mechanism" claim (§ "WHAT I VERIFIED") was reasoned from a static `git diff`, not confirmed live. Today's regression-isolation run, using the command above, IS rigorously isolated for NeXa's own code.
+
+### 15.3 Dependency-isolation status — stated explicitly, per instruction
+
+- **Third-party dependencies (`pipecat-ai`, `google-genai`, etc.): SHARED and IDENTICAL between golden and current.** Both runs use the same single `.venv` (confirmed: `pipecat-ai==1.8.1`, `google-genai==2.22.0` installed; the golden worktree's own `pyproject.toml` pins the identical `pipecat-ai[local]==1.8.1`). This does **NOT** isolate dependency drift *since `7dd6b87` was originally written* — if a `pip install -U`/environment change happened between then and now, both runs would share it identically, and this experiment cannot detect that as a separate variable. Named here, not silently assumed away.
+- **NeXa's own `src/nexa` code: NOW correctly isolated**, via the `PYTHONPATH` fix above (§15.2) — the golden run will execute the TRUE `7dd6b87` version of `AecReferenceFeeder`/`LocalAudioConfig`/etc., not today's.
+- **The Gemini MODEL itself differs, and this is NOT eliminable without editing the "unmodified" golden probe (which would defeat its purpose as a control).** Verified directly this session: the golden probe's `MODEL` constant is hardcoded `gemini-3.1-flash-live-preview` (no CLI override exists); the CURRENT accepted path's `GEMINI_MODEL` constant (`simple_conversation.py`) is `models/gemini-2.5-flash-native-audio-preview-12-2025` — confirmed via the current app's own `--dry` output. The current code's own comment states this was a **deliberate, evaluated choice** (R0080 §15, not an accidental drift) — but for THIS regression-isolation experiment specifically, it means a "Case 1" result (golden clean, current false-interrupt) cannot, by itself, fully rule out a Gemini-side model difference in server-VAD/interruption behavior as a contributing factor alongside (or instead of) a NeXa code regression. This is flagged explicitly in the decision table below rather than left implicit.
+
+### 15.4 Phase 3 — making the comparison fair
+
+Run both back to back, no intentional hardware/environment change between them: same physical speaker volume, speaker position, reSpeaker position, room, USB topology, mixer state, output device, input device. **Do not ask the operator to change any of these** — only observe/record.
+
+**Read-only mixer/device snapshot** (reuses exactly the read-only pattern already established in §6 — `amixer`/`aplay -l`/`arecord -l`, no `--values`/no write flag), recommended immediately before EACH run:
+
+```bash
+aplay -l; arecord -l
+amixer -c Array scontents
+amixer -c UACDemoV10 scontents
+```
+
+Return this output for both "immediately before golden" and "immediately before current" — if they differ, that is itself a finding (e.g. a mixer value drifted between the two runs, which would itself explain a result even absent any code difference).
+
+### 15.5 Required golden run — exact operator procedure
+
+```bash
+set -a; . ~/.config/nexa/secrets/gemini.env; set +a
+PYTHONPATH=/home/devdul/Projects/NeXa_IkiGai_golden_m26a/src \
+  .venv/bin/python3 \
+  /home/devdul/Projects/NeXa_IkiGai_golden_m26a/docs/research/m2_6_cloud_realtime_voice/m2_6a_gemini_live_probe.py \
+  2>&1 | tee /tmp/r0081_golden_rerun_$(date +%Y%m%dT%H%M%S).log
+```
+
+1. Ask a question that invites a sufficiently long spoken answer (R0071's own preserved session had multiple ~9-17s uninterrupted bot-speaking stretches organically — any question inviting a multi-sentence explanation is fine; there is no fixed scripted prompt to reuse, since none exists in the tooling — see §15.1).
+2. Remain completely silent while NeXa speaks.
+3. Observe whether ANY self-interruption/self-conversation occurs (NeXa stopping and restarting, or responding to herself, with no real speech from the operator).
+4. Perform at least one deliberate real interruption (speak over NeXa mid-response) to confirm genuine barge-in still works in this golden path.
+5. `Ctrl+C` to end the session — the probe prints its own `SESSION SUMMARY` and writes a results JSON under `docs/research/m2_6_cloud_realtime_voice/` inside the golden worktree.
+
+No cleanup is required — the worktree is a persistent, reusable asset (already reused once). If disk space needs reclaiming later, `git worktree remove /home/devdul/Projects/NeXa_IkiGai_golden_m26a` from the main repo would remove it, but this is optional and NOT requested here.
+
+### 15.6 Required current-runtime control — exact operator procedure
+
+Immediately after, same physical conditions, closest behaviorally-equivalent mode: default/unscaled reference gain (no `--coherent-reference-gain`, no candidate `gain=0.5` — that is §14's own still-open question, deliberately not mixed into this test), Core Recall disabled via `--no-core-recall` (source-verified this session: `recall_executor` defaults to `None`; both its call sites in `simple_conversation.py` are `if recall_executor is not None:` guards, so `None` skips them entirely without touching any audio/VAD/AEC/playback construction — corroborated by existing tests `test_no_recall_executor_is_byte_for_byte_unchanged`/`test_default_none_is_byte_for_byte_unchanged`). `--diagnostic-timeline --diagnostic-audio-levels` are included for comparable visibility to the golden log's own DEBUG-level output (the current app forces `loguru` to `WARNING` unconditionally, so without these flags almost nothing would print) — both are purely-observational per this report's own §4/§7 verification; `--diagnostic-audio-levels` does insert one small, read-only `_MicLevelTap` node into the pipeline (RMS-only, never mutates/drops/delays a frame) — named here rather than silently claimed as zero topology change:
+
+```bash
+.venv/bin/python apps/nexa_cloud_voice_simple.py \
+  --no-core-recall \
+  --diagnostic-timeline \
+  --diagnostic-audio-levels \
+  2>&1 | tee /tmp/r0081_current_control_$(date +%Y%m%dT%H%M%S).log
+```
+
+Same 5 operator actions as §15.5 (long response, silence, observe, deliberate interrupt, Ctrl+C).
+
+### 15.7 What to return
+
+From BOTH runs: (1) the mixer/device snapshot from §15.4 taken immediately before that run; (2) the full terminal output (the `tee`d log); (3) an explicit yes/no + timestamps for any self-interruption observed; (4) confirmation the deliberate interruption worked. From the golden run specifically: the auto-printed `SESSION SUMMARY`. From the current run specifically: the `INTERRUPTION_FRAME_*`/`LOCAL_VAD_START`/`BOT_AUDIO_STARTED` diagnostic-timeline lines.
+
+### 15.8 Decision table — interpret ONLY after both runs happen today
+
+| Case | Golden `7dd6b87` | Current | Conclusion |
+|---|---|---|---|
+| **1** | CLEAN | FALSE SELF-INTERRUPT | Software/path regression **strongly** supported (caveat: §15.3's Gemini-model-string difference is a real, uneliminated confound — do not treat this as 100% code-isolated). Next: smallest commit/path delta between `7dd6b87` and today's simple path capable of affecting capture/VAD, AEC feeder, playback scheduling, Pipecat processor ordering, ALSA write behavior, or interruption propagation — a bisect/differential plan, not more gain tuning. |
+| **2** | FALSE SELF-INTERRUPT | FALSE SELF-INTERRUPT | A later NeXa Core/Memory/Recall software regression is **NOT** supported as the primary explanation (Core Recall was already disabled in the current run, and the golden path never had it at all). Something shared by both runs TODAY has changed or is variable — prioritize ALSA/device timing state, XVF3800 state, physical/acoustic conditions, USB scheduling/buffering, and (per §15.3) genuinely-shared dependency drift since `7dd6b87` was written, over a NeXa-code explanation. |
+| **3** | CLEAN | CLEAN | The current fault is intermittent/state-dependent — supports the stability-margin/timing/adaptation hypothesis already on record (§7b). **Do not declare it fixed from one clean run** — repeat enough silent-response trials to bound the intermittent rate before concluding anything. |
+| **4** | Either run invalid (setup/device/provider error, e.g. wrong device index, credential failure, crash) | — | Report INVALID; do not interpret. Re-run under corrected conditions. |
+
+### 15.9 What remains valid and untouched from §§1-14
+
+Not deleted, not reverted, temporarily secondary: AEC works but residual remains (§7, §7b); software ×10 compensation refuted (§7b); `gain=0.5` an unconfirmed candidate (§7c); MLS found ~102.5ms/~134.4ms bimodality with an exact 512-sample split, cause unresolved (§7d); counterbalanced `--confirm` ready but not yet run (§14); verbose ALSA query ready but not yet run (§14). This section inserts the regression-isolation experiment BEFORE more parameter tuning because it answers a higher-level causal question; §14's own two commands remain the next step once §15 has a result.
+
+---
+
+## 16. Commit gate
+
+Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validated (and stays off by default). No fix is claimed or implemented — `gain=0.5` is a candidate, not a change. AEC is confirmed functioning at two signal levels but a substantial residual remains at every level tested; a clean, non-clipped test cleanly REFUTES blunt ×10 software compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB` (a real, negative result now, not an invalidated one). The gain sweep and MLS timing stimulus were both run live and produced real, material findings (§7c, §7d), each with its own explicitly-documented open confound rather than a premature conclusion.
+
+**This update's own priority change**: no new gain/timing tuning was performed. Instead, a regression-isolation gate (§15) was inserted ahead of the still-open gain/timing work, to directly answer whether today's false self-interruption is a NeXa software/path regression or a shared hardware/environment/provider-state change — using the already-existing, still-clean isolated golden worktree (`7dd6b87`) preserved from R0071. Recovered the exact historical test procedure from source/logs (not memory), and found and fixed a real, previously-undocumented dependency-isolation risk (the golden worktree's `nexa` imports would otherwise silently resolve to today's code via the shared editable install) — verified via a read-only `--dry` check only, no hardware or network touched. No golden/current comparison run was executed this update (explicitly deferred to the operator, per instruction).
+
+Per this project's established practice for this exact situation: this update's changes (the R0081 report's new regression-isolation gate section, §15) are docs-only — no source file changed this update. The prior update's diagnostic script changes (stimulus-aware filenames, `--confirm`, `--post-settle-gap`/`quiet_before_rms`) remain committed from before, unchanged this round. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, Silero was not touched, production reference gain was not changed, and no Gemini/hardware call was made this update** — every action this update was either a read (git/source/log inspection) or a `--dry`/no-hardware/no-network verification.
