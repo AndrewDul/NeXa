@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-17
 **Type:** Diagnostic + narrow instrumentation + direct hardware audit (NOT a confirmed resolution)
-**Status:** Immediate failure mechanism CONFIRMED (local VAD false-fires on NeXa's own playback). Speaker volume and the R0053 gain-coherence fix are BOTH now ruled out as sufficient fixes, by direct live A/B/A2 evidence. AEC effectiveness is **CONFIRMED** at two independently measured signal levels, and is **level-dependent** (§7b): ~16.7dB additional attenuation at high amplitude, ~3.86dB at low amplitude. A clean, non-clipped, apples-to-apples retest of +20dB software compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB` (§7b) shows it makes the residual **~4.4× WORSE** than the unscaled baseline, and even worse than reference OFF — the naive "invert the firmware's -20dB in software" hypothesis is **REFUTED**. A narrow gain-sweep tool (0.25x-4.0x around baseline) and an MLS-pseudonoise timing stimulus (replacing the periodic tones that produced ambiguous/boundary-saturated lag readings) have been built this update to test whether a smaller gain correction still helps and to get a reliable timing measurement, but **not yet run live**. Root cause still NOT proven (§14).
+**Status:** Immediate failure mechanism CONFIRMED (local VAD false-fires on NeXa's own playback). Speaker volume and the R0053 gain-coherence fix are BOTH now ruled out as sufficient fixes, by direct live A/B/A2 evidence. AEC effectiveness is **CONFIRMED** at two independently measured signal levels and is **level-dependent** (§7b). A clean, non-clipped retest of +20dB software compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB` **REFUTES** the naive "invert it in software" hypothesis (§7b). The narrow gain sweep (0.25x-4.0x) built last update **has now been run live** (§7c): `gain=0.5` gave the LOWEST residual RMS of all six points (~30% lower than `gain=1.0`) — a real, material candidate — but the same run shows a suspicious first-trial quiet-floor anomaly after several gain transitions, an **open settle/order confound** that must be ruled out before trusting the sweep's own ranking. A balanced A/B confirmation tool (`--confirm`, alternating order, longer settle) has been built this update to test this directly — **not yet run live**. The MLS timing stimulus **has also now been run live** (§7d): it confirms the tone stimulus's lag ambiguity is real and fixed (verified offline: the tone stimulus shows 112 spurious high-correlation lags vs. 0 for MLS), but the 3 OFF-condition MLS trials show a genuine BIMODAL lag split (~102.5ms vs. ~134.4ms, an exact 512-sample/32.000ms separation) rather than one stable value — an offline audit of the existing captures (this update, no new hardware access) found a plausible, evidence-backed explanation for the LOW correlation magnitude (device-side spectral reshaping) but the bimodal lag split itself remains an open question with a leading, not-yet-directly-confirmed hypothesis (ALSA capture buffer-boundary quantization). A stimulus-blind filename bug (capture WAVs did not encode `--stimulus`, risking silent overwrites between tone and MLS runs) was found and fixed this update. Root cause still NOT proven (§14).
 **Depends on:** R0080 (accepted `2b894e7`), R0071 (frozen baseline), R0052–R0056 (prior self-echo investigation), R0053 (gain-coherence defect, now further quantified)
 
 No Memory/ContextEngine/recall_context/Personality/Relationship/Learning/FTS/vector changes touched. No forced audio-architecture redesign. No Silero threshold tuning. No DSP register writes.
@@ -314,9 +314,101 @@ The operator re-ran the diagnostic at a single fixed, low `--amplitude 0.05` for
 
 At low amplitude the captured residual (mean 26.17) approaches the ~7 RMS room/system noise floor, so SNR/floor effects plausibly compress the apparent dB reduction — this is **not** interpreted here as the AEC becoming less effective, but the level dependency itself is worth documenting: **normal live Gemini speech produces false-VAD-adjacent `MIC_RMS` excursions ranging from the tens into the hundreds (§2), and the high-amplitude deterministic AEC residual is ALSO in the hundreds** — i.e. real playback segments plausibly sit at signal levels where the residual is large enough, in absolute terms, to cross local Silero's decision boundary, even though the *relative* (dB) cancellation at those levels is actually the AEC's best-measured performance so far. This continues to support the same picture as §7's original finding: **AEC works, but residual speech-shaped energy remains large enough in some real playback segments to trigger local Silero.**
 
-**Gain-near-baseline sweep — prepared, not yet run.** Before abandoning gain mismatch as a contributor entirely, the operator's instruction was to test whether the true optimum sits modestly around gain=1.0 rather than only checking the extremes (1.0 vs 10.0). `r0081_direct_aec_diagnostic.py` gained a `--sweep` mode this update: fixed points `off, 0.25×, 0.5×, 1.0×, 2.0×, 4.0×` (ascending, documented order — `gain=10.0` deliberately excluded, already shown far too strong), same fixed `--amplitude` (defaults to 0.05, safe across this whole range with zero clipping), 3 repeats per point by default, each point preceded by a `--sweep-settle` (default 1.0s) unmeasured warmup at its own gain so the AEC has time to reconverge before being measured — mitigating order/carryover effects between points run back to back in one process. A fixed ascending order was used rather than randomizing it, because the settle step (not trial order) is what actually re-establishes steady AEC state before each measured point; this rationale is documented directly in the script (`SWEEP_GAIN_POINTS`'s own comment). One invocation (`--sweep`) runs and reports the whole thing, including a final summary table naming the point with the lowest mean residual RMS. **Not yet executed live** — see §14 for the exact command.
+**Gain-near-baseline sweep — built last update, now RUN live.** Before abandoning gain mismatch as a contributor entirely, the operator's instruction was to test whether the true optimum sits modestly around gain=1.0 rather than only checking the extremes (1.0 vs 10.0). `r0081_direct_aec_diagnostic.py` gained a `--sweep` mode: fixed points `off, 0.25×, 0.5×, 1.0×, 2.0×, 4.0×` (ascending, documented order — `gain=10.0` deliberately excluded, already shown far too strong), same fixed `--amplitude` (defaults to 0.05, safe across this whole range with zero clipping), 3 repeats per point by default, each point preceded by a `--sweep-settle` (default 1.0s) unmeasured warmup at its own gain so the AEC has time to reconverge before being measured — mitigating order/carryover effects between points run back to back in one process. A fixed ascending order was used rather than randomizing it, because the settle step (not trial order) is what actually re-establishes steady AEC state before each measured point; this rationale is documented directly in the script (`SWEEP_GAIN_POINTS`'s own comment). One invocation (`--sweep`) runs and reports the whole thing, including a final summary table naming the point with the lowest mean residual RMS. **Real results and the settle/order confound they surfaced: §7c.**
 
-**Cross-correlation / timing stimulus fixed this update.** The operator flagged that `best_lag_ms` has jumped to values near the ±300ms search boundary (e.g. ≈-299ms) across trials, and that the periodic 500/1000/2000Hz tone stimulus has many equally-valid correlation peaks spaced by its own period — a bounded lag search can lock onto the wrong one, so `best_lag_ms` should **not** be used as strong timing evidence with that stimulus. This is now independently confirmed, not just theorized: an in-repo check this update computed the tone stimulus's own autocorrelation over a 0-50ms lag range and found **112 separate lags with correlation > 0.5** (i.e. many strong, ambiguous peaks) versus **0** for a newly added MLS (maximum-length-sequence) pseudonoise stimulus over the same range — a stark, direct demonstration of exactly the ambiguity the operator raised. `r0081_direct_aec_diagnostic.py` gained `--stimulus {tones,mls}` (default `tones`, unchanged behavior for existing commands): `mls` generates a deterministic 16-bit maximal-length Fibonacci LFSR chip sequence (period 65535 chips ≈4.09s at 16kHz; a documented, checkable, independently-verifiable tap set, not picked ad hoc), with a sharp, unambiguous single correlation peak. Per the operator's own instruction, this is offered as the way to **first establish a stable acoustic speaker→capture lag in reference-OFF mode across repeated trials** — only after that is stable should any reference-vs-acoustic-timing inference even be attempted, and even then this script still cannot expose XVF3800-internal reference-processing alignment (§7's own documented limitation, unchanged). **Not yet run live** — see §14.
+**Cross-correlation / timing stimulus fixed this update, now RUN live.** The operator flagged that `best_lag_ms` has jumped to values near the ±300ms search boundary (e.g. ≈-299ms) across trials, and that the periodic 500/1000/2000Hz tone stimulus has many equally-valid correlation peaks spaced by its own period — a bounded lag search can lock onto the wrong one, so `best_lag_ms` should **not** be used as strong timing evidence with that stimulus. This is now independently confirmed, not just theorized: an in-repo check computed the tone stimulus's own autocorrelation over a 0-50ms lag range and found **112 separate lags with correlation > 0.5** (i.e. many strong, ambiguous peaks) versus **0** for a newly added MLS (maximum-length-sequence) pseudonoise stimulus over the same range — a stark, direct demonstration of exactly the ambiguity the operator raised. `r0081_direct_aec_diagnostic.py` gained `--stimulus {tones,mls}` (default `tones`, unchanged behavior for existing commands): `mls` generates a deterministic 16-bit maximal-length Fibonacci LFSR chip sequence (period 65535 chips ≈4.09s at 16kHz; a documented, checkable, independently-verifiable tap set, not picked ad hoc), with a sharp, unambiguous single correlation peak. Per the operator's own instruction, this was offered as the way to **first establish a stable acoustic speaker→capture lag in reference-OFF mode across repeated trials**. **Real results and the offline follow-up audit: §7d.**
+
+---
+
+## 7c. Gain sweep — real results: gain=0.5 candidate found, but a settle/order confound is open
+
+The operator ran `--sweep` live (fixed conditions: amplitude=0.05, 3 repeats/point, 1.0s settle/point, same physical geometry throughout, **zero clipping at every point**):
+
+| Point | mic_window_rms mean |
+|---|---|
+| off | 38.43 |
+| gain=0.25 | 25.87 |
+| **gain=0.5** | **22.23 (lowest)** |
+| gain=1.0 | 31.70 |
+| gain=2.0 | 37.73 |
+| gain=4.0 | 68.97 |
+
+**Positive finding:** `gain=0.5` vs `gain=1.0` is `22.23` vs `31.70` RMS — **~30% lower residual, ~3.1dB lower**. This is now material, first-pass evidence that reference amplitude calibration near baseline (not just the already-refuted extreme ×10) may be a real contributor. **Not yet a production change** — see the confound below and §14.
+
+**Important possible confound — first-trial quiet-floor anomaly.** The sweep's own per-trial `quiet_before_rms` (room noise floor, measured during the pre-roll BEFORE that trial's own playback) shows a suspicious pattern after several gain transitions:
+
+| Point | trial1 quiet | trial2 quiet | trial3 quiet |
+|---|---|---|---|
+| gain=1.0 | 36.6 | 15.9 | 15.9 |
+| gain=2.0 | 26.8 | 16.2 | 16.4 |
+| gain=4.0 | 28.2 | 15.8 | 15.7 |
+
+Trial1 (immediately after that point's own settle step, at a NEWLY changed gain) is consistently elevated versus trials 2/3 at the SAME gain. This pattern was reported by the operator for the three points that follow an actual gain CHANGE from the immediately preceding point (1.0, 2.0, 4.0); it is not yet established whether off/0.25/0.5 show the same pattern (not reported).
+
+**This report does not guess which mechanism is responsible**, per explicit instruction. Candidate, non-exclusive possibilities, none confirmed:
+- the 1.0s `--sweep-settle` is insufficient for full AEC reconvergence after a gain change;
+- the first measured trial still contains transient AEC/DSP adaptation state;
+- acoustic reverberation/decay tail from the settle playback (or the transition into it) has not fully died out within the fixed 1.0s pre-roll;
+- another deterministic first-trial transition effect not yet identified.
+
+**A second, separate piece of evidence that the exact numerical optimum is not yet stable**: an earlier, independent amplitude=0.05/gain=1.0 repeat set (§7b) gave `mic_window_rms` mean **26.17**, while `gain=1.0`'s own point *inside this ascending sweep* gave **31.70** — a ~21% difference for nominally the identical condition, run at a different point in a different process invocation. **The exact numerical optimum is not yet stable enough to change production**, even setting the quiet-floor anomaly aside.
+
+**Fix, built this update, not yet run: `--confirm`.** A new balanced A/B mode was added specifically to remove ascending-order ambiguity: alternates `A,B,A,B,...` (default `A=gain0.5`, `B=gain1.0`, 3 cycles = ABABAB = 3 measured trials per gain, one trial per block — no silent trial-discarding), each block preceded by its own settle (default raised to **3.0s**, up from `--sweep`'s 1.0s, an evidence-based increase given the quiet-floor anomaly above) and an optional additional `--post-settle-gap` (silent pause, no playback, default 0.0/off) before that block's own measured trial. `quiet_before_rms` is now also included in every `REPEATABILITY SUMMARY`/`CONFIRM SUMMARY` block (previously only shown per-trial), and the final `CONFIRM SUMMARY` reports paired per-cycle differences plus how many of the N cycles each gain "won," specifically so a real, order-independent effect can be told apart from an artifact of the original ascending sweep. **Not yet run live** — see §14 for the exact command.
+
+**Decision criteria (unchanged from the operator's own instruction, restated for this update's record):** if `--confirm` shows `gain=0.5` reproducibly beating `gain=1.0` regardless of cycle order by a material margin, mark reference gain calibration a CONFIRMED CONTRIBUTOR and `gain=0.5` a LIVE CANDIDATE (still not a production default — would need a conversational opt-in test first). If the difference collapses under balanced order/settle control, the sweep was confounded and timing/residual characteristics remain the primary open question.
+
+---
+
+## 7d. MLS timing — real results: tone ambiguity confirmed fixed, but the OFF-condition lag is bimodal
+
+The operator ran `--condition off --stimulus mls --repeats 3` live:
+
+| Trial | lag | correlation | mic RMS |
+|---|---|---|---|
+| 1 | 134.50ms | 0.0726 | 432.1 |
+| 2 | 134.31ms | 0.0714 | 430.8 |
+| 3 | 102.50ms | 0.0638 | 431.7 |
+
+**Positive result:** trials 1 and 2 agree to within ~0.19ms — dramatically more coherent than any periodic-tone lag measurement produced so far (which jumped as far as the ±300ms search boundary). This is real, direct confirmation that the MLS stimulus fixes the ambiguity problem it was built to fix.
+
+**But trial 3 differs by ~32ms, and this report does not average 102.5 and 134.4ms into a single claimed physical delay.** Per the operator's own instruction, an offline audit of the three ALREADY-CAPTURED WAV files was performed this update — **no new hardware access, no new live capture** — reusing the exact same `signal.wav`/`mic.wav` pair (and the exact same `cross_correlate_pcm` call) each trial's own reported `best_lag_ms`/`normalized_correlation` came from, to first confirm the offline recomputation exactly reproduces the live numbers (it does, to the reported precision) before extracting a full correlation curve instead of just the single best lag.
+
+**Finding 1 — this is a genuine bimodal switch, not noise/jitter around one true peak.** The correlation value AT the "other" trial's peak lag is essentially at the noise floor in every case, not merely a weaker secondary peak:
+
+| Trial | corr @ ~102.5ms | corr @ ~134.4ms | trial's own best |
+|---|---|---|---|
+| 1 | 0.0030 (noise) | 0.0351 | 134.50ms / 0.0726 |
+| 2 | -0.0011 (noise) | 0.0220 | 134.31ms / 0.0714 |
+| 3 | 0.0638 (= its own peak) | -0.0062 (noise) | 102.50ms / 0.0638 |
+
+**Finding 2 — the separation between the two lags is EXACTLY 512 samples (32.000ms at 16kHz), not an approximate/noisy ~32ms.** This is a suspiciously round, exact integer sample count — consistent with (but, per the operator's explicit instruction, **not yet directly confirmed as**) an ALSA capture period/buffer-boundary quantization effect: this script's fixed `PRE_ROLL_S` (1.0s) `asyncio.sleep()` before playback begins is subject to ordinary OS scheduling jitter of a few milliseconds, and if `arecord`'s actual negotiated capture period for this device is (or divides evenly into) 512 samples, the true start-of-capture could land on either side of a period boundary from run to run, producing exactly this kind of one-period, all-or-nothing jump rather than a smoothly varying jitter. **This is a hypothesis, not a confirmed finding** — see §14 for the exact read-only command that would directly check this device's actual configured ALSA period size, which has not been run this update (would require opening the real capture device again, which this update's offline-only analysis deliberately avoided without further authorization).
+
+**Finding 3 — the low correlation magnitude (~0.06-0.07) has a plausible, evidence-backed explanation: device-side spectral reshaping, not a broken measurement.** An offline FFT-based spectral comparison (this update) between each trial's `signal.wav` (source) and `mic.wav` (capture) found:
+
+- Energy below 125Hz is reduced to ~0.0% in every capture (source has ~1.6%) — directly consistent with the already-confirmed `AEC_HPFONOFF=2` (125Hz high-pass, §6).
+- A substantial, and nearly IDENTICAL across all 3 trials, redistribution of energy: the source's 4-8kHz share (~50%) is roughly halved in the capture (~25%), while the capture's 1-4kHz share is roughly double the source's own share there. This spectral reshaping profile is consistent with the device's confirmed ASR-oriented beamforming/AEC processing (`AEC_ASROUTONOFF=1`, §6) — not raw passthrough.
+- Because this reshaping is nearly IDENTICAL across all 3 trials (regardless of which lag each trial locked onto), it does **not** explain the bimodal lag split — it is a separate, consistent characteristic of the capture path, and a genuine reason a raw linear cross-correlation against an unprocessed source would read low even when a real, consistent timing relationship exists underneath.
+
+**Answering the operator's specific audit questions directly:**
+- *Is the correlation operating on the correct aligned signal window?* — **Yes, confirmed.** The offline recomputation from the saved WAVs exactly reproduces the live-reported `best_lag_ms`/`normalized_correlation` for all 3 trials.
+- *Does beamforming/ASR processing strongly decorrelate broadband MLS?* — **Plausible and evidence-backed** (Finding 3) as the explanation for the low correlation MAGNITUDE specifically; not (on its own) an explanation for the bimodal LAG split, which is a separate phenomenon.
+- *Is the MLS bandwidth interacting with XVF3800 processing?* — Related to the above; the device's HPF and beamforming are broadband-aware, and the MLS's full-band (up to 8kHz Nyquist) content is measurably reshaped by them.
+- *Does the capture require whitening/normalized filtering before correlation?* — **Plausible, standard technique (GCC-PHAT / pre-whitened cross-correlation)** for making a lag estimate robust to a known source of spectral coloring like this. Not implemented this update (scope) — flagged as a concrete, well-defined candidate follow-up if a future pass needs a sharper lag estimate than raw linear cross-correlation gives here.
+- *Did one run experience a USB/ALSA scheduling offset? Is 102.5ms or 134.4ms a deterministic buffer-boundary difference?* — See Finding 2: the exact 512-sample separation is strong circumstantial support for this, but **not yet directly confirmed** against the device's real configured ALSA parameters (§14 has the read-only command to check this without guessing further).
+
+**Conclusion, restated exactly as instructed:** MLS removing the periodic-tone ambiguity is **SUPPORTED** (trials 1/2's sub-millisecond agreement, plus the offline 112-vs-0 autocorrelation comparison). A stable physical acoustic lag across all trials is **NOT YET CONFIRMED** (trial 3 is a genuine, non-noise outlier, not measurement error). A single canonical lag value (e.g. averaging 102.5 and 134.4) is **NOT YET JUSTIFIED**.
+
+---
+
+## 7e. Filename bug found and fixed: captures did not encode `--stimulus`
+
+The operator's live MLS run saved its 3 trials as `off_gain1_amp0.5_trial{1,2,3}_{signal,mic}.wav` — the SAME naming pattern earlier tone-stimulus runs also used (e.g. an earlier `on_gain1_amp0.5_trial*` tone run). Confirmed by inspecting file timestamps in `r0081_aec_captures/`: the diagnostic's default label was built from `condition`/`gain`/`amplitude` only — **`--stimulus` was never included**, so an MLS run at the same condition/gain/amplitude as a prior tone run would silently overwrite that prior run's WAV files. In this specific instance no actual prior file existed at that exact name (verified: no overwrite occurred this time), but the bug is real and would bite the next time the same condition/gain/amplitude combination is used with a different `--stimulus`.
+
+**Fixed, this update, diagnostics-only, no production code touched:**
+- Every mode's default label now includes `--stimulus` (`_run_single`: `{condition}_gain{gain}_amp{amplitude}_{stimulus}`; `_run_sweep`: `sweep_{point}_amp{amplitude}_{stimulus}`; the new `_run_confirm`: `confirm_{A|B}{cycle}_gain{gain}_amp{amplitude}_{stimulus}`).
+- `run_condition()`'s saved-file trial suffix (`_trial{N}`) is now ALWAYS appended, even for `repeats=1` (previously omitted for single-trial runs, which combined with the missing `stimulus` field was the other half of the collision risk).
+
+Every filename now encodes condition/gain/amplitude/stimulus/trial, e.g. `off_gain1.0_amp0.5_mls_trial1_mic.wav`.
 
 ---
 
@@ -331,7 +423,7 @@ At low amplitude the captured residual (mean 26.17) approaches the ~7 RMS room/s
 | Priority | Item | Status |
 |---|---|---|
 | A | reSpeaker/XVF3800 capture endpoint (raw vs. AEC-processed) | **RESOLVED** by direct evidence (§6): USB descriptor terminal typing (`0x0405` Echo-Canceling Speakerphone, both directions) + `AEC_ASROUTONOFF=1` (beamformed/processed output, confirmed by direct DSP register read) both independently confirm the capture stream IS the processed output, not raw per-mic residuals. |
-| B | Far-end reference correctness (gain, timing, format) | **Gain**: firmware `AEC_FAR_EXTGAIN=-20dB` confirmed (§6); AEC confirmed functioning at two signal levels, level-dependent (§7, §7b); a clean, non-clipped ×10 (+20dB) compensation test **REFUTES** the blunt "invert the firmware gain in software" hypothesis — residual gets ~4.4× WORSE, worse even than reference OFF (§7b). A narrow sweep (0.25x-4.0x) around baseline is built to check whether a smaller correction still helps — **NOT YET RUN**. **Timing**: relative reference/playback alignment remains **UNRESOLVED** — the tone stimulus's own lag readings are now confirmed ambiguous (112 spurious high-correlation lags in 0-50ms vs. 0 for the new MLS stimulus, §7b); an MLS-based OFF-condition repeatability run is the prescribed next step, **NOT YET RUN**. |
+| B | Far-end reference correctness (gain, timing, format) | **Gain**: firmware `AEC_FAR_EXTGAIN=-20dB` confirmed (§6); AEC confirmed functioning at two signal levels, level-dependent (§7, §7b); a clean, non-clipped ×10 (+20dB) compensation test **REFUTES** the blunt "invert the firmware gain in software" hypothesis (§7b). A narrow sweep (0.25x-4.0x) found `gain=0.5` as the lowest-residual point (~30% better than gain=1.0, §7c) — **MATERIAL BUT UNCONFIRMED**, an open settle/order confound must be ruled out first (`--confirm` built, not yet run). **Timing**: relative reference/playback alignment remains **UNRESOLVED** — MLS confirmed fixing the tone stimulus's lag ambiguity, but the 3 OFF-condition MLS trials show a genuine bimodal lag split (~102.5ms vs ~134.4ms, exact 512-sample separation, §7d) with a leading but unconfirmed buffer-boundary hypothesis. |
 | C | Two independent ALSA playback paths (timing drift) | Still not measured; deprioritized relative to B given B's much more direct, quantified evidence. |
 | D | XVF3800 hardware/DSP configuration | **Largely resolved** by §6's direct register reads: AEC not bypassed, converged, 1 far-end/4 mics configured, HPF/emphasis normal, PCD disabled (reason unclear), RT60 inconclusive from a single idle read. |
 | E | Silero sensitivity/thresholds | Still deliberately last, still not attempted — the ~0.7-0.9s sustained false-VAD duration remains far too long to be a small-threshold artifact, and the new firmware-level evidence gives a much more specific, better-targeted lead than blind VAD tuning ever would. |
@@ -348,8 +440,12 @@ At low amplitude the captured residual (mean 26.17) approaches the ~7 RMS room/s
 | Software ×10 compensation | **REFUTED** — makes residual ~4.4× WORSE than gain=1.0, worse than OFF too (§7b, clean non-clipped retest) |
 | `CoherentReferenceGain` | **NOT VALIDATED** — made things worse live (§2 condition B); stays off by default |
 | Speaker volume alone | **NOT SUFFICIENT** — A2's lower volume did not materially reduce false episodes (§2) |
-| Gain near baseline (0.25x-4.0x sweep) | **TO MEASURE** — `--sweep` built this update, not yet run live (§7b, §14) |
-| Reference/playback timing | **UNRESOLVED** — tone-stimulus lag readings confirmed ambiguous; MLS stimulus built to fix this, not yet run live (§7b, §14) |
+| `gain=0.5` candidate | **STRONGLY SUPPORTED BY FIRST SWEEP** — lowest of 6 points, ~30%/~3.1dB better than gain=1.0 (§7c) |
+| `gain=0.5` production setting | **NOT YET APPROVED** — settle/order confound must be ruled out first (§7c, §14) |
+| Gain-order/settle confound | **OPEN** — first-trial quiet-floor anomaly after gain transitions, mechanism not yet identified (§7c) |
+| MLS timing stimulus | **WORKING / better than tones** — trials 1/2 agree to ~0.19ms; tone stimulus independently confirmed ambiguous (112 vs 0 spurious peaks) (§7d) |
+| Physical acoustic lag | **NOT YET STABLE 3/3** — bimodal (2× ~134.4ms, 1× ~102.5ms), exact 512-sample/32.000ms split (§7d) |
+| Reference/acoustic timing mismatch | **UNRESOLVED** (§7d) |
 | False local VAD | **CONFIRMED** (§2) |
 | Core recall | **CLEARED** as a cause (§3); PASS on its own merits (§1) |
 
@@ -367,7 +463,8 @@ No interruption-while-speaking suppression, no VAD disabling, no blanket mic mut
 
 - `src/nexa/realtime/gemini/simple_conversation.py` — direction/sibling/vad_active-aware `InterruptionFrame` diagnostics (§4); `_vad_active` bookkeeping.
 - `tests/test_simple_cloud_conversation.py` — `TestInterruptionDirectionTelemetry` (6 new); corrected the one pre-existing assertion that expected a bare `"INTERRUPTION_FRAME"` label; fixed one test's reliance on same-batch queue ordering (the `SystemFrame`-priority finding, §4) with explicit sequential awaits.
-- `docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py` — the deterministic, non-conversational AEC measurement script (§7). Built and executed live (§7); extended with `amplitude`/`clip_stats`/gain-chain diagnostics and `--repeats` mean/min/max reporting (§7a); this update adds `--sweep` (automated narrow gain sweep, off/0.25x/0.5x/1.0x/2.0x/4.0x, with settle/warmup per point) and `--stimulus {tones,mls}` (a deterministic 16-bit maximal-length-sequence pseudonoise alternative to the periodic tones, fixing the lag-ambiguity the operator's own evidence surfaced) (§7b). This standalone research script is intentionally not part of the pytest suite (consistent with the pre-existing `m2_6b4m_self_echo_probe.py`'s own precedent) — verified via `py_compile`/`ruff check` (both clean) plus targeted offline sanity checks of the new logic (MLS determinism/period-guard, argparse default resolution for `--sweep`, and an autocorrelation comparison directly confirming the tones-vs-MLS ambiguity claim: 112 spurious high-correlation lags for tones vs. 0 for MLS over a 0-50ms window) — no hardware required for any of these, so they don't stand in for a live run.
+- `docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py` — the deterministic, non-conversational AEC measurement script. Previously gained `amplitude`/`clip_stats`/gain-chain diagnostics, `--repeats`, `--sweep`, `--stimulus {tones,mls}` (§7a, §7b). This update: (1) fixes the filename bug (§7e) — every mode's default label now includes `--stimulus`, and the saved-file trial suffix is now always appended, even for single-trial runs; (2) adds `--confirm` (balanced A/B alternating-order gain confirmation, default gain0.5 vs gain1.0, configurable cycles/settle/post-settle-gap) to test the sweep's own `gain=0.5` finding for an order/carryover confound (§7c); (3) adds `--post-settle-gap` (shared by `--sweep`/`--confirm`, default 0.0/off) and `quiet_before_rms` reporting in every `REPEATABILITY SUMMARY`/`CONFIRM SUMMARY` block. Verified via `py_compile`/`ruff check` (both clean) plus targeted offline sanity checks (argparse mutual-exclusivity and default resolution for `--confirm`, filename-label construction). This standalone research script remains intentionally outside the pytest suite (consistent with `m2_6b4m_self_echo_probe.py`'s own precedent).
+- `/tmp/.../scratchpad/r0081_mls_peak_audit.py` (session scratchpad, NOT part of the repo, not committed) — offline-only analysis of the 3 already-captured MLS OFF-condition WAVs: full correlation curve/peak-picking (§7d Finding 1) and FFT-based spectral-band comparison (§7d Finding 3). No hardware access; read-only against existing capture files.
 
 Everything from the prior update (`--diagnostic-timeline`, `--diagnostic-audio-levels`, `--coherent-reference-gain`, the interruption-print debounce, the `AecReferenceFeeder`/`_MicLevelTap` signal-level diagnostics) is unchanged in this update except for the correction above.
 
@@ -396,35 +493,38 @@ pytest tests/ -q
 | Direct, deterministic AEC measurement (§7, §7b) | **RUN, repeatedly, at two levels** — AEC effectiveness confirmed and level-dependent; ×10 compensation cleanly REFUTED (non-clipped, apples-to-apples) |
 | OFF/ON repeatability (≥3 runs each) | **RUN** (§7b, both the amplitude=0.5 and amplitude=0.05 sets) |
 | Non-clipped +20dB gain-compensation retest | **RUN** (§7b) — result: REFUTED, makes residual worse |
-| Narrow gain sweep (0.25x-4.0x around baseline) | **NOT YET RUN** — `--sweep` built this update (§7b, §14) |
-| MLS timing stimulus, OFF-condition repeatability | **NOT YET RUN** — `--stimulus mls` built this update (§7b, §14) |
+| Narrow gain sweep (0.25x-4.0x around baseline) | **RUN** (§7c) — `gain=0.5` lowest of 6 points, but settle/order confound open |
+| MLS timing stimulus, OFF-condition repeatability | **RUN** (§7d) — tone ambiguity confirmed fixed; physical lag bimodal, not yet stable 3/3 |
+| Balanced A/B gain confirmation (`--confirm`) | **NOT YET RUN** — built this update (§7c, §14) |
+| ALSA period-size / buffer-boundary check | **NOT YET RUN** — read-only command identified, not yet executed (§7d, §14) |
 
-**R0081 still does not pass.** AEC is confirmed working, is level-dependent, and leaves a substantial, speech-magnitude-consistent residual at every level tested; a blunt ×10 software compensation for `AEC_FAR_EXTGAIN=-20dB` is now cleanly refuted (not just unproven). Whether a smaller gain correction helps, and what the true reference/acoustic timing relationship is, remain open — the tools to measure both were built this update but not yet run live.
+**R0081 still does not pass.** AEC is confirmed working, is level-dependent, and leaves a substantial, speech-magnitude-consistent residual at every level tested; a blunt ×10 software compensation for `AEC_FAR_EXTGAIN=-20dB` is cleanly refuted. A narrower gain candidate (`gain=0.5`) and a real MLS-based timing improvement both emerged this round, but each has its own open confound (settle/order for the gain sweep; a bimodal, not-yet-stable lag for timing) that must be resolved before either can inform a production decision.
 
 ---
 
 ## 14. Next operator step — exactly what to run and return
 
-**Do not start with another free-form conversation test yet.** Two things, in this order — both now automated in the script itself (one invocation each, not many manual commands):
+**Do not start with another free-form conversation test yet.** Two things, in this order:
 
-**1. Narrow gain sweep around baseline:**
-
-```bash
-python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --sweep
-```
-
-Runs `off, 0.25×, 0.5×, 1.0×, 2.0×, 4.0×` in that fixed order, 3 repeats each, at a fixed `--amplitude 0.05` (safe across the whole range — the script will flag loudly if any trial clips anyway), with a 1s settle/warmup before each point. Ends with a `SWEEP SUMMARY` naming the point with the lowest mean residual RMS. **Return the full output**, especially the final `SWEEP SUMMARY` table and every `reference_clipped_pct` line (all must read 0.00%).
-
-- If the minimum sits at or near `gain=1.0` and BOTH lower and higher gains are worse: reference amplitude mismatch is unlikely to be the primary remaining cause — move to timing/alignment as the leading hypothesis (item 2 below).
-- If a modest gain such as `0.5` or `2.0` gives a reproducible, material improvement: gain calibration remains a live contributor and should be quantified further before touching production code.
-
-**2. Establish a stable OFF-condition acoustic lag using the new non-ambiguous MLS stimulus:**
+**1. Balanced A/B gain confirmation (rule out the sweep's settle/order confound):**
 
 ```bash
-python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition off --stimulus mls --repeats 3
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --confirm
 ```
 
-**Return** the `REPEATABILITY SUMMARY` block, specifically `best_lag_ms` (mean/min/max) and `normalized_correlation` (mean/min/max). Do not draw an ON-condition timing conclusion yet — establish OFF-condition stability first, exactly as instructed; a follow-up `--condition on --stimulus mls --repeats 3` is the natural next step once OFF is stable, but is not being requested yet.
+Alternates `gain=0.5` (A) vs `gain=1.0` (B), ABABAB (3 cycles = 3 measured trials per gain), fixed `--amplitude 0.05`, a longer 3.0s settle before each block (up from the sweep's 1.0s). Ends with a `CONFIRM SUMMARY`: per-gain mean/min/max RMS, per-gain `quiet_before_rms` mean/min/max, paired per-cycle differences, and how many cycles each gain "won." **Return the full output**, especially the `CONFIRM SUMMARY` and every `quiet_before_rms` line per trial (watch specifically for the same first-trial-elevated pattern seen in the sweep).
+
+- If `gain=0.5` beats `gain=1.0` in every (or nearly every) cycle by a material margin: reference gain calibration is a CONFIRMED CONTRIBUTOR, `gain=0.5` becomes a LIVE CANDIDATE (still not a production default — a conversational opt-in test would come next, not an unreviewed default change).
+- If the result is mixed or reverses under balanced order: the original sweep was confounded — de-prioritize gain calibration and treat timing/residual characteristics as primary.
+- If `quiet_before_rms` is STILL elevated on first trials despite the longer 3.0s settle: re-run with `--confirm --post-settle-gap 0.5` (or similar) to test whether an explicit silent gap (as opposed to more settle-with-playback) is what's actually needed — report which one clears the anomaly, if either does.
+
+**2. Directly confirm (or refute) the ALSA buffer-boundary timing hypothesis (§7d Finding 2).** This is a READ-ONLY hardware-parameter query — it opens the capture device briefly (1 second) to negotiate and print its parameters, the same category of action already performed throughout this investigation, but is NOT something this update ran unilaterally:
+
+```bash
+arecord -D plug:respeaker -f S16_LE -r 16000 -c 1 --dump-hw-params -d 1 /dev/null
+```
+
+**Return** the full stderr output, specifically the negotiated `period_size`/`buffer_size` (in frames). If `period_size` is 512 (or a divisor/multiple of it), that directly corroborates the exact-512-sample bimodal split found in §7d as a genuine ALSA buffer-boundary quantization effect rather than a coincidence.
 
 **3. Optional, if convenient:** a repeat of the `--diagnostic-timeline` conversational run (A1-style, no `--coherent-reference-gain`) so the direction/sibling/`vad_active`-aware `INTERRUPTION_FRAME_*` labels (§4) can be read directly, to confirm or refute the "delayed Gemini-acknowledgement" theory for the unpaired interruptions:
 
@@ -434,10 +534,10 @@ python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py -
 
 **Return** the printed `INTERRUPTION_FRAME_*` lines (direction/sibling/vad_active/awaiting_assistant) in order, with timestamps.
 
-No firmware write, no Silero tuning, no `CoherentReferenceGain` enable, and no free-form live-conversation acceptance run should happen until items 1-2 above give a clear read on the remaining gain-near-baseline and timing questions.
+No firmware write, no Silero tuning, no `CoherentReferenceGain` enable, no production gain change, and no free-form live-conversation acceptance run should happen until items 1-2 above give a clear read on the settle/order confound and the buffer-boundary hypothesis.
 
 ---
 
 ## 15. Commit gate
 
-Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validated (and stays off by default). No fix is claimed or implemented. AEC is confirmed functioning at two signal levels but a substantial residual remains at every level tested; a clean, non-clipped test cleanly REFUTES blunt ×10 software compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB` (a real, negative result now, not an invalidated one). Per this project's established practice for this exact situation: the diagnostic instrumentation (direction-aware interruption telemetry, tested against a real Pipecat pipeline) and the deterministic AEC measurement script (built, executed live repeatedly at two levels, and extended this update with an automated narrow gain sweep and a non-ambiguous MLS timing stimulus — both built and offline-sanity-checked, neither yet run against real hardware) are committed locally, clearly labeled as diagnostics only. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, and Silero was not touched** — every hardware interaction in this report was a read.
+Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validated (and stays off by default). No fix is claimed or implemented — `gain=0.5` is a candidate, not a change. AEC is confirmed functioning at two signal levels but a substantial residual remains at every level tested; a clean, non-clipped test cleanly REFUTES blunt ×10 software compensation for the firmware's confirmed `AEC_FAR_EXTGAIN=-20dB` (a real, negative result now, not an invalidated one). The gain sweep and MLS timing stimulus were both run live this round and produced real, material findings (§7c, §7d), each with its own explicitly-documented open confound rather than a premature conclusion. Per this project's established practice for this exact situation: the diagnostic instrumentation and the deterministic AEC measurement script (extended this update with a stimulus-aware filename fix, a balanced `--confirm` A/B mode, and `--post-settle-gap`/`quiet_before_rms` reporting — built and offline-sanity-checked, `--confirm` not yet run against real hardware) are committed locally, clearly labeled as diagnostics only. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, Silero was not touched, and production reference gain was not changed** — every hardware interaction in this report and this update was a read (or, for the two live runs, a reused deterministic measurement identical in kind to prior authorized runs).

@@ -43,10 +43,40 @@ cannot answer on its own:
        retested cleanly at ``--amplitude 0.05`` (no clipping) and found to
        make the residual **dramatically WORSE** (~4.4× larger than
        gain=1.0, worse even than reference OFF). The blunt "invert the
-       firmware's -20dB" hypothesis is **REFUTED**. ``--sweep`` (new this
-       revision) tests smaller, more plausible gains (0.25x-4.0x) around
-       the accepted baseline to see whether a MODEST correction still
-       helps before that avenue is abandoned entirely.
+       firmware's -20dB" hypothesis is **REFUTED**. ``--sweep`` then found
+       a real, material candidate near baseline: **gain=0.5 gave the
+       LOWEST residual RMS of the six sweep points** (~30% lower than
+       gain=1.0) — but the same run showed a suspicious elevated
+       ``quiet_before_rms`` on several points' FIRST trial only (recovering
+       by the 2nd/3rd trial at that same gain), an open confound that
+       could inflate or distort the sweep's own comparison. ``--confirm``
+       (new this revision) runs a balanced, alternating A/B sequence
+       (default gain=0.5 vs gain=1.0, longer settle, optional post-settle
+       gap) specifically to test whether gain=0.5's advantage survives
+       order/carryover control — **not yet run live**.
+
+    E. Timing: an offline audit of the 3 already-captured OFF-condition
+       MLS WAVs (this revision, no new hardware access) found the 3
+       trials' ``best_lag_ms`` values are genuinely BIMODAL (2 trials at
+       ~134.4ms, 1 trial at ~102.5ms — an EXACT 512-sample/32.000ms
+       separation, with essentially zero correlation at the "other"
+       trial's peak lag in every case, not just a weaker secondary peak)
+       — not simple noise/jitter around one true value. The correlation
+       magnitude is also uniformly low (~0.06-0.07) across all 3 trials;
+       an offline spectral comparison (this revision) shows the capture
+       is heavily reshaped relative to the source (high-pass consistent
+       with the confirmed ``AEC_HPFONOFF`` 125Hz filter, plus a shift of
+       energy out of 4-8kHz into 1-4kHz, nearly IDENTICAL across all 3
+       trials) — a plausible, evidence-backed explanation for the low
+       correlation MAGNITUDE specifically (the device's own ASR-oriented
+       processing measurably decorrelates a raw broadband source from its
+       processed capture), while the exact-512-sample BIMODAL LAG split is
+       a separate, still-open question, with a leading (not yet directly
+       confirmed) hypothesis: an ALSA capture period/buffer-boundary
+       quantization effect. See R0081's report for the full writeup and
+       the exact read-only command that would directly confirm or refute
+       the buffer-boundary hypothesis against this device's real
+       configured ALSA parameters.
 
 ## What `best_lag_ms`/`normalized_correlation` actually measure (read this
 ## before interpreting a result)
@@ -173,6 +203,20 @@ already defines (R0053's own system audit).
     # best_lag_ms docstring section above)
     python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
         --condition off --stimulus mls --repeats 3
+
+    # balanced A/B confirmation: gain=0.5 (the sweep's lowest-residual
+    # point) vs gain=1.0 (today's production default), alternating
+    # ABABAB (3 cycles = 3 measured trials per gain), with a longer
+    # settle (3s vs --sweep's 1.0s) to test whether the sweep's own
+    # gain=0.5 advantage survives order/carryover control
+    python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --confirm
+
+    # same, plus an explicit post-settle silent gap -- opt in if a
+    # settle point's first measured trial keeps showing an elevated
+    # quiet_before_rms versus its own later trials (see this module's
+    # own docstring section E and run_condition()'s own docstring)
+    python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
+        --confirm --post-settle-gap 0.5
 
 Run ``--condition off`` then ``--condition on`` back to back (same
 physical speaker volume, same room, same mic position) for a directly
@@ -537,25 +581,39 @@ async def run_condition(
     label: str,
     stimulus: str = "tones",
     settle_s: float = 0.0,
+    post_settle_gap_s: float = 0.0,
 ) -> list[dict]:
     """Run ``repeats`` trials of ONE (feed_reference, gain) condition:
-    an optional settle/warmup, then the measured repeat loop, printing a
-    RESULT block per trial and a REPEATABILITY SUMMARY when repeats > 1.
+    an optional settle/warmup, an optional silent gap, then the measured
+    repeat loop, printing a RESULT block per trial and a REPEATABILITY
+    SUMMARY when repeats > 1.
 
     Extracted from the original single-condition ``main()`` body so
-    ``--sweep`` can call this once per sweep point without duplicating
-    the printing/aggregation logic (both single-run and sweep modes now
-    produce output in exactly this same format).
+    ``--sweep``/``--confirm`` can call this once per point/block without
+    duplicating the printing/aggregation logic (single-run, sweep, and
+    confirm modes all produce output in exactly this same format).
 
-    ``settle_s`` (new, for --sweep): if > 0, plays the speaker signal
-    (and, if ``feed_reference``, the reference at ``gain``) for this many
-    seconds BEFORE the measured trials, without capturing/measuring
-    anything -- gives the XVF3800's adaptive filter time to reconverge to
-    a NEWLY changed reference gain before the first measured trial,
-    mitigating carryover from whatever condition ran immediately before
-    this one in the same process (see SWEEP_GAIN_POINTS's own comment for
-    why a fixed order plus this settle step was chosen over randomizing
-    trial order)."""
+    ``settle_s``: if > 0, plays the speaker signal (and, if
+    ``feed_reference``, the reference at ``gain``) for this many seconds
+    BEFORE the measured trials, without capturing/measuring anything --
+    gives the XVF3800's adaptive filter time to reconverge to a NEWLY
+    changed reference gain before the first measured trial, mitigating
+    carryover from whatever condition ran immediately before this one in
+    the same process (see SWEEP_GAIN_POINTS's own comment for why a
+    fixed order plus this settle step was chosen over randomizing trial
+    order).
+
+    ``post_settle_gap_s`` (new): if > 0, an ADDITIONAL silent pause (no
+    playback at all, on either device) inserted after the settle step and
+    before the first measured trial's own pre-roll/capture begins. Added
+    per R0081's own live evidence: the first measured trial after a
+    settle at a NEWLY changed gain sometimes showed an elevated
+    ``quiet_before_rms`` (room floor) relative to the 2nd/3rd trials at
+    the SAME gain, consistent with (among other untested possibilities --
+    this script does not assume which) acoustic reverberation or AEC
+    adaptation residue from the settle step not having fully decayed
+    within the fixed 1.0s pre-roll alone. Zero by default -- opt-in,
+    never changes existing --sweep behavior unless explicitly passed."""
     if settle_s > 0.0:
         print(f"  (settling {settle_s:g}s at gain="
               f"{gain if feed_reference else 'n/a'} before measuring, to let the AEC "
@@ -566,6 +624,11 @@ async def run_condition(
             settle_ref = apply_gain(settle_signal, gain)
             settle_tasks.append(asyncio.create_task(play_pcm(settle_ref, device=REFERENCE_DEVICE)))
         await asyncio.gather(*settle_tasks)
+
+    if post_settle_gap_s > 0.0:
+        print(f"  (post-settle silent gap: {post_settle_gap_s:g}s, no playback on either "
+              f"device, before the first measured trial's own pre-roll...)")
+        await asyncio.sleep(post_settle_gap_s)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     results: list[dict] = []
@@ -581,7 +644,15 @@ async def run_condition(
         )
         results.append(result)
 
-        trial_label = label if repeats == 1 else f"{label}_trial{i + 1}"
+        # R0081 -- ALWAYS suffix with the trial number (even for repeats=1),
+        # not just when repeats > 1: a prior version omitted this suffix for
+        # single-trial runs, which combined with the stimulus NOT being in
+        # the label either meant a tones run and an mls run at the same
+        # condition/gain/amplitude silently overwrote each other's WAVs.
+        # `label` itself is now always built to include the stimulus (see
+        # _run_single/_run_sweep/_run_confirm) so together these make every
+        # saved filename encode condition/gain/amplitude/stimulus/trial.
+        trial_label = f"{label}_trial{i + 1}"
         signal_path = OUT_DIR / f"{trial_label}_signal.wav"
         mic_path = OUT_DIR / f"{trial_label}_mic.wav"
         _write_wav(signal_path, result["signal_pcm"], sample_rate=SAMPLE_RATE)
@@ -638,12 +709,19 @@ async def run_condition(
         peak_values = [r["mic_window_peak"] for r in results]
         corr_values = [r["correlation"]["normalized_correlation"] for r in results]
         lag_values = [r["correlation"]["best_lag_ms"] for r in results]
+        quiet_values = [r["quiet_before_rms"] for r in results]
         clip_pcts = [r["reference_clipped_percent"] for r in results] if feed_reference else []
 
         print()
         print(f"  REPEATABILITY SUMMARY ({repeats} trials, "
               f"{'on' if feed_reference else 'off'}, "
               f"gain={gain if feed_reference else 'n/a'}, amplitude={amplitude})")
+        # R0081 -- quiet_before_rms per trial is ALWAYS printed above in each
+        # trial's own RESULT block; also summarized here (new) because live
+        # evidence showed it sometimes elevated specifically on a settle
+        # point's first trial -- worth seeing at a glance, not just having
+        # to scroll back through individual trial blocks.
+        print(f"    quiet_before_rms        : {_mean_min_max(quiet_values)}")
         print(f"    mic_window_rms          : {_mean_min_max(rms_values)}")
         print(f"    mic_window_peak         : {_mean_min_max([float(v) for v in peak_values])}")
         print(f"    attenuation_db          : {_mean_min_max(atten_values)}")
@@ -727,25 +805,71 @@ def parse_args() -> argparse.Namespace:
         "(default 1.0s).",
     )
     p.add_argument(
+        "--confirm", action="store_true",
+        help="Run a balanced, order-controlled A/B confirmation between two specific gains "
+        "(default 0.5 vs 1.0 -- --sweep's own two lowest-residual points), alternating "
+        "A,B,A,B,... (--confirm-cycles pairs, default 3 -- i.e. 3 A trials + 3 B trials, "
+        "each its own single measured trial after its own settle+gap) instead of one "
+        "ascending block per gain, to rule out order/carryover confounds. Ignores "
+        "--condition/--gain/--sweep. Defaults --amplitude to 0.05 if not explicitly given.",
+    )
+    p.add_argument(
+        "--confirm-gain-a", type=float, default=0.5,
+        help="Gain for the 'A' side of --confirm (default 0.5 -- the sweep's lowest-residual "
+        "point).",
+    )
+    p.add_argument(
+        "--confirm-gain-b", type=float, default=1.0,
+        help="Gain for the 'B' side of --confirm (default 1.0 -- today's production default, "
+        "gain_source=None).",
+    )
+    p.add_argument(
+        "--confirm-cycles", type=int, default=3,
+        help="Number of A,B pairs to alternate in --confirm (default 3 -- ABABAB, i.e. 3 "
+        "measured trials per gain, matching the requested 'at least 3 measured trials per "
+        "condition' protocol).",
+    )
+    p.add_argument(
+        "--confirm-settle", type=float, default=3.0,
+        help="Seconds of unmeasured playback at EACH block's own gain before its one "
+        "measured trial, in --confirm (default 3.0s -- raised from --sweep's 1.0s default "
+        "per R0081's own instruction, since the sweep's first-trial-after-a-gain-change "
+        "quiet-floor anomaly suggests 1.0s may not always be enough to reconverge/settle).",
+    )
+    p.add_argument(
+        "--post-settle-gap", type=float, default=0.0,
+        help="Seconds of ADDITIONAL silence (no playback at all) after the settle step and "
+        "before the first measured trial's own pre-roll, for --sweep or --confirm. Default "
+        "0.0 (off, unchanged prior behavior) -- opt in (e.g. 0.5) if a settle point's first "
+        "measured trial keeps showing an elevated quiet_before_rms versus its own later "
+        "trials, to test whether that is a simple decay-time effect.",
+    )
+    p.add_argument(
         "--label", default=None,
-        help="Optional label for the saved WAV files (default: derived from --condition/--gain, "
-        "ignored with --sweep which labels each point itself).",
+        help="Optional label for the saved WAV files (default: derived from "
+        "--condition/--gain/--amplitude/--stimulus, ignored with --sweep/--confirm which "
+        "label each point/block themselves).",
     )
     args = p.parse_args()
 
+    if args.sweep and args.confirm:
+        p.error("--sweep and --confirm are mutually exclusive")
     if args.repeats is None:
         args.repeats = 3 if args.sweep else 1
     if args.amplitude is None:
-        args.amplitude = 0.05 if args.sweep else 0.5
-    if not args.sweep and args.condition is None:
-        p.error("--condition is required unless --sweep is passed")
+        args.amplitude = 0.05 if (args.sweep or args.confirm) else 0.5
+    if not args.sweep and not args.confirm and args.condition is None:
+        p.error("--condition is required unless --sweep or --confirm is passed")
 
     return args
 
 
 async def _run_single(args: argparse.Namespace) -> int:
     feed_reference = args.condition == "on"
-    label = args.label or f"{args.condition}_gain{args.gain:g}_amp{args.amplitude:g}"
+    label = (
+        args.label
+        or f"{args.condition}_gain{args.gain:g}_amp{args.amplitude:g}_{args.stimulus}"
+    )
 
     print(f"NeXa R0081 — direct AEC reference/capture diagnostic ({args.condition})")
     print(f"  capture device: {CAPTURE_DEVICE}")
@@ -801,9 +925,10 @@ async def _run_sweep(args: argparse.Namespace) -> int:
             amplitude=args.amplitude,
             duration_s=args.duration,
             repeats=args.repeats,
-            label=f"sweep_{point_label}",
+            label=f"sweep_{point_label}_amp{args.amplitude:g}_{args.stimulus}",
             stimulus=args.stimulus,
             settle_s=args.sweep_settle,
+            post_settle_gap_s=args.post_settle_gap,
         )
         rms_mean = sum(r["mic_window_rms"] for r in results) / len(results)
         clip_pct_max = max((r["reference_clipped_percent"] for r in results), default=0.0)
@@ -827,10 +952,100 @@ async def _run_sweep(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _run_confirm(args: argparse.Namespace) -> int:
+    a_gain, b_gain = args.confirm_gain_a, args.confirm_gain_b
+    sequence: list[tuple[str, float]] = []
+    for _ in range(args.confirm_cycles):
+        sequence.append(("A", a_gain))
+        sequence.append(("B", b_gain))
+
+    print(f"NeXa R0081 — balanced A/B gain confirmation (A=gain{a_gain:g} vs B=gain{b_gain:g})")
+    print(f"  fixed amplitude={args.amplitude} (same acoustic stimulus for every block)")
+    print(f"  sequence: {''.join(letter for letter, _ in sequence)} "
+          f"({args.confirm_cycles} cycles, {len(sequence)} blocks total, "
+          f"1 measured trial per block -- >= {args.confirm_cycles} trials per gain)")
+    print(f"  settle before each block: {args.confirm_settle}s  "
+          f"post-settle silent gap: {args.post_settle_gap}s  stimulus: {args.stimulus}")
+    print("  order rationale: alternating A/B (not one ascending block per gain, unlike "
+          "--sweep) specifically to rule out order/carryover confounds -- if A beats B (or "
+          "vice versa) by a consistent, material margin regardless of WHICH cycle each "
+          "occurrence falls in, that is much stronger evidence than a single ascending pass.")
+    print()
+
+    per_letter_results: dict[str, list[dict]] = {"A": [], "B": []}
+    for i, (letter, gain) in enumerate(sequence):
+        cycle = i // 2 + 1
+        print(f"=== confirm block {i + 1}/{len(sequence)}: {letter} (gain={gain:g}, "
+              f"cycle {cycle}/{args.confirm_cycles}) ===")
+        results = await run_condition(
+            feed_reference=True,
+            gain=gain,
+            amplitude=args.amplitude,
+            duration_s=args.duration,
+            repeats=1,
+            label=f"confirm_{letter}{cycle}_gain{gain:g}_amp{args.amplitude:g}_{args.stimulus}",
+            stimulus=args.stimulus,
+            settle_s=args.confirm_settle,
+            post_settle_gap_s=args.post_settle_gap,
+        )
+        per_letter_results[letter].extend(results)
+        print()
+
+    a_results = per_letter_results["A"]
+    b_results = per_letter_results["B"]
+    a_rms = [r["mic_window_rms"] for r in a_results]
+    b_rms = [r["mic_window_rms"] for r in b_results]
+    a_quiet = [r["quiet_before_rms"] for r in a_results]
+    b_quiet = [r["quiet_before_rms"] for r in b_results]
+    a_clip = max((r["reference_clipped_percent"] for r in a_results), default=0.0)
+    b_clip = max((r["reference_clipped_percent"] for r in b_results), default=0.0)
+
+    print("=== CONFIRM SUMMARY ===")
+    print(f"  A (gain={a_gain:g}) mic_window_rms  : {_mean_min_max(a_rms)}")
+    print(f"  B (gain={b_gain:g}) mic_window_rms  : {_mean_min_max(b_rms)}")
+    print(f"  A quiet_before_rms               : {_mean_min_max(a_quiet)}")
+    print(f"  B quiet_before_rms               : {_mean_min_max(b_quiet)}")
+    print(f"  A max reference_clipped_percent  : {a_clip}%")
+    print(f"  B max reference_clipped_percent  : {b_clip}%")
+    if a_clip > 0 or b_clip > 0:
+        print("  *** at least one block was CLIPPED -- do not use this run as gain evidence. ***")
+
+    print()
+    print("  paired differences per cycle (A_rms - B_rms; negative = A lower/better):")
+    for cycle in range(args.confirm_cycles):
+        if cycle < len(a_rms) and cycle < len(b_rms):
+            diff = a_rms[cycle] - b_rms[cycle]
+            print(f"    cycle {cycle + 1}: A={a_rms[cycle]:.2f}  B={b_rms[cycle]:.2f}  "
+                  f"diff={diff:+.2f}")
+
+    if a_rms and b_rms:
+        a_mean = sum(a_rms) / len(a_rms)
+        b_mean = sum(b_rms) / len(b_rms)
+        a_wins = sum(1 for i in range(min(len(a_rms), len(b_rms))) if a_rms[i] < b_rms[i])
+        n_pairs = min(len(a_rms), len(b_rms))
+        print()
+        print(f"  A beat B in {a_wins}/{n_pairs} cycles (A mean={a_mean:.2f}, B mean={b_mean:.2f})")
+        if a_wins == n_pairs and a_mean < b_mean:
+            print("  -> A was lower in EVERY cycle, regardless of order: consistent with a "
+                  "real effect, not an ordering artifact. Still NOT sufficient on its own to "
+                  "change production default -- see this script's own docstring / R0081 "
+                  "report for what else is required first.")
+        elif a_wins == 0 and a_mean > b_mean:
+            print("  -> B was lower in EVERY cycle: the original sweep's gain=0.5 advantage "
+                  "did not reproduce under balanced order/settle control -- treat the first "
+                  "sweep as confounded and de-prioritize gain calibration versus timing.")
+        else:
+            print("  -> mixed result (neither gain won every cycle) -- inconclusive from this "
+                  "run alone; report both sequences rather than picking a favored side.")
+    return 0
+
+
 async def main() -> int:
     args = parse_args()
     if args.sweep:
         return await _run_sweep(args)
+    if args.confirm:
+        return await _run_confirm(args)
     return await _run_single(args)
 
 
