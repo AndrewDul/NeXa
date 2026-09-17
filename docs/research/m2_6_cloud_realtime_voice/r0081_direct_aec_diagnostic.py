@@ -17,35 +17,36 @@ instruction.
 R0081's live diagnostic-timeline evidence proved false local VAD onsets
 occur on NeXa's own played-back speech, independent of volume level and
 independent of the (never-before-applied-here) R0053 gain-coherence fix.
-This script isolates the ONE remaining, hardware-level question that
-conversational evidence cannot answer on its own:
+This script isolates the hardware-level questions conversational evidence
+cannot answer on its own:
 
-    A. Is the "respeaker" ALSA capture endpoint
-       (``nexa.voice.config.LocalAudioConfig.input_device_name``, the
-       SAME endpoint the production pipeline's local Silero VAD analyzes)
-       actually being reduced by the XVF3800's onboard AEC when a
-       far-end reference is fed to ``plug:respeaker`` — or is the
-       "AEC hardware capability" this project has only ever
-       *documented as an unverified observation*
-       (``docs/architecture/M2_1_LOCAL_AUDIO_VAD_ARCHITECTURE.md`` §9)
-       not actually reducing residual echo on this specific capture path?
+    A. Is the "respeaker" ALSA capture endpoint actually being reduced by
+       the XVF3800's onboard AEC when a far-end reference is fed to
+       ``plug:respeaker``? **RESOLVED, CONFIRMED YES** (§ results below,
+       and R0081's report §7/§7b) — OFF→ON gives real, reproducible,
+       double-digit-percent RMS reduction at multiple signal levels.
 
-    B. What is the approximate playback→capture and
-       reference→capture lag, as far as this simple measurement can see it?
+    B. What is the approximate playback→capture and reference→capture
+       lag? **STILL UNRESOLVED.** The original tone stimulus is periodic
+       and produced ambiguous/boundary-saturated ``best_lag_ms`` values —
+       see the dedicated docstring section below and ``--stimulus mls``,
+       added this revision specifically to fix this.
 
     C. Quantify: capture RMS with reference OFF vs ON, attenuation in dB,
-       and the cross-correlation peak/lag between the fed reference and
-       the captured residual.
+       cross-correlation peak/lag. Done, repeatedly, at two signal levels
+       (§ below) — AEC effectiveness is confirmed but level-dependent.
 
-    D. Test the accepted baseline (``gain_source`` equivalent to
-       ``None``, i.e. an unscaled 1.0x reference — exactly what
-       ``simple_conversation.py`` feeds today) FIRST. ``--gain`` lets a
-       SECOND, separate run repeat the measurement with an explicit
-       linear gain applied to the reference (the same
-       ``nexa.voice.aec_gain.apply_gain`` production code, not a
-       reimplementation) to see whether R0053's gain-coherence mechanism
-       measurably changes cancellation on ITS OWN, isolated from a live
-       Gemini conversation's non-deterministic response timing/content.
+    D. Does scaling the reference (R0053's gain-coherence idea, or a
+       direct compensation for the firmware's confirmed ``AEC_FAR_EXTGAIN
+       = -20dB``) help? A naive ×10 (+20dB) compensation was **tested
+       twice**: once invalidated by clipping (prior revision), then
+       retested cleanly at ``--amplitude 0.05`` (no clipping) and found to
+       make the residual **dramatically WORSE** (~4.4× larger than
+       gain=1.0, worse even than reference OFF). The blunt "invert the
+       firmware's -20dB" hypothesis is **REFUTED**. ``--sweep`` (new this
+       revision) tests smaller, more plausible gains (0.25x-4.0x) around
+       the accepted baseline to see whether a MODEST correction still
+       helps before that avenue is abandoned entirely.
 
 ## What `best_lag_ms`/`normalized_correlation` actually measure (read this
 ## before interpreting a result)
@@ -76,21 +77,37 @@ capture a "before AEC" and "after AEC" pair from this device as currently
 configured. Only the net effect (the post-processing residual) is
 observable this way.
 
+**Update (this revision): periodic-tone stimulus ambiguity, confirmed
+live.** The original 500/1000/2000Hz tone stimulus is periodic within
+each of its three segments; a periodic signal has MANY equally-valid
+correlation peaks spaced by its own period, and a bounded lag search can
+lock onto the WRONG one — exactly what live operator evidence showed
+(``best_lag_ms`` jumping to values near the ±300ms search boundary, e.g.
+approximately -299ms, a textbook signature of the search saturating at
+its own boundary rather than finding a genuine acoustic delay).
+``--stimulus mls`` (new, this revision) replaces the tone sequence with a
+deterministic 16-bit maximum-length-sequence broadband pseudonoise chip
+stream, whose autocorrelation is a single sharp peak with low sidelobes —
+see ``_mls16_bits``'s own docstring. **Prefer ``--stimulus mls`` for ANY
+claim about ``best_lag_ms``**; the default ``tones`` stimulus remains
+fine for RMS/attenuation-only comparisons (e.g. ``--sweep``), where
+periodicity does not matter.
+
 ## Method
 
-Deterministic test signal (a short sequence of pure tones, generated in
-Python — no external fixture file, no speech, nothing that could be
-mistaken for a real utterance): played to the REAL physical speaker
-(``plug:usb_speaker``) while simultaneously capturing from
-``plug:respeaker`` (the SAME endpoint production VAD analyzes). In the
-"reference ON" condition, the identical PCM is ALSO fed to
-``plug:respeaker``'s *playback* direction at the same time (exactly what
-``AecReferenceFeeder`` does in production) — a standard USB Audio Class
-device exposes independent playback and capture directions over the same
-USB interface, so playing a reference INTO ``plug:respeaker`` while
-simultaneously recording FROM ``plug:respeaker`` is the same duplex
-pattern the accepted production pipeline already relies on
-(``AecReferenceFeeder`` writes to ``plug:respeaker`` while
+Deterministic test signal (either a short sequence of pure tones, or an
+MLS pseudonoise chip stream — see ``--stimulus`` — generated in Python,
+no external fixture file, no speech, nothing that could be mistaken for a
+real utterance): played to the REAL physical speaker (``plug:usb_speaker``)
+while simultaneously capturing from ``plug:respeaker`` (the SAME endpoint
+production VAD analyzes). In the "reference ON" condition, the identical
+PCM is ALSO fed to ``plug:respeaker``'s *playback* direction at the same
+time (exactly what ``AecReferenceFeeder`` does in production) — a
+standard USB Audio Class device exposes independent playback and capture
+directions over the same USB interface, so playing a reference INTO
+``plug:respeaker`` while simultaneously recording FROM ``plug:respeaker``
+is the same duplex pattern the accepted production pipeline already
+relies on (``AecReferenceFeeder`` writes to ``plug:respeaker`` while
 ``LocalAudioTransport`` reads from it for VAD/STT).
 
 Capture starts BEFORE playback (a fixed pre-roll) so the analysis window
@@ -135,10 +152,27 @@ already defines (R0053's own system audit).
     # case already uses safely -- the script prints
     # reference_clipped_samples/percent every run so clipping is never
     # silent; only trust this comparison if that percent is 0 for every
-    # trial. This is the corrected version of the earlier --gain 10.0 run,
-    # which used the default amplitude=0.5 and very likely clipped.
+    # trial. Live result (this amplitude, non-clipped): gain=10.0 makes
+    # the residual ~4.4x WORSE than gain=1.0 -- the naive "invert the
+    # firmware's -20dB" hypothesis is REFUTED, do not repeat this exact
+    # test expecting a different answer.
     python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
         --condition on --gain 10.0 --amplitude 0.05 --repeats 3
+
+    # narrow gain sweep around baseline (off, 0.25x, 0.5x, 1.0x, 2.0x,
+    # 4.0x), fixed amplitude=0.05 (safe across this whole range, no
+    # clipping), 3 repeats per point, automated in ONE invocation instead
+    # of many manual commands -- see --sweep's own help text and
+    # run_condition()/​_run_sweep() for the settle/order rationale
+    python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --sweep
+
+    # timing-only stimulus (MLS pseudonoise instead of periodic tones) --
+    # establish a STABLE acoustic speaker->capture lag in reference-OFF
+    # mode FIRST, repeatably, before ever drawing an ON-condition timing
+    # conclusion (the tone stimulus is not reliable for this -- see the
+    # best_lag_ms docstring section above)
+    python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
+        --condition off --stimulus mls --repeats 3
 
 Run ``--condition off`` then ``--condition on`` back to back (same
 physical speaker volume, same room, same mic position) for a directly
@@ -185,6 +219,23 @@ TAIL_MARGIN_S = 1.0
 
 OUT_DIR = Path(__file__).resolve().parent / "r0081_aec_captures"
 
+#: The fixed, documented order and gain values for --sweep, per R0081's
+#: explicit instruction: OFF, then 0.25x/0.5x/1.0x/2.0x/4.0x, ascending.
+#: Fixed (not randomized) because each point gets its own settle/warmup
+#: at ITS gain immediately before measurement (see run_condition), which
+#: is what actually re-establishes steady AEC state -- a residual "memory"
+#: from the previous point would only affect the discarded settle window,
+#: not the measured trials, so a simple documented fixed order is
+#: sufficient without adding randomization complexity.
+SWEEP_GAIN_POINTS: list[tuple[str, bool, float | None]] = [
+    ("off", False, None),
+    ("gain0.25", True, 0.25),
+    ("gain0.5", True, 0.5),
+    ("gain1.0", True, 1.0),
+    ("gain2.0", True, 2.0),
+    ("gain4.0", True, 4.0),
+]
+
 
 #: The int16 PCM saturation ceiling/floor `audioop.mul` clips to --
 #: confirmed directly (not assumed): `audioop.mul(pack('<h', 30000), 2,
@@ -203,17 +254,22 @@ def build_test_signal(
     avoid clicks. Nothing here could be mistaken for recorded human
     speech -- no privacy concern, fully reproducible.
 
-    ``amplitude`` (R0081, new): peak amplitude as a fraction of full
-    scale (0.0-1.0), default 0.5 (unchanged from the original script).
-    Lower this when testing a large ``--gain`` (see ``run_trial``'s own
-    clip-detection diagnostic and this module's docstring) -- e.g.
-    ``amplitude=0.05`` leaves headroom for a full, undistorted ×10
-    (+20dB) reference boost without saturating int16 (0.05 * 10 = 0.5,
-    the same peak the DEFAULT unboosted signal already uses safely).
-    The digital signal fed to the physical speaker is generated at this
-    SAME amplitude in every condition (off/on/on+gain) for one run, so
-    the real acoustic stimulus stays comparable across a same-amplitude
-    A/B pair -- only ``--gain`` changes what's fed to the reference."""
+    Periodic within each tone segment -- fine for RMS/attenuation
+    comparisons, NOT reliable for best_lag_ms claims (see this module's
+    own docstring section on this; use ``build_mls_signal``/
+    ``--stimulus mls`` for timing instead).
+
+    ``amplitude``: peak amplitude as a fraction of full scale (0.0-1.0),
+    default 0.5 (unchanged from the original script). Lower this when
+    testing a large ``--gain`` (see ``run_trial``'s own clip-detection
+    diagnostic and this module's docstring) -- e.g. ``amplitude=0.05``
+    leaves headroom for a full, undistorted ×10 (+20dB) reference boost
+    without saturating int16 (0.05 * 10 = 0.5, the same peak the DEFAULT
+    unboosted signal already uses safely). The digital signal fed to the
+    physical speaker is generated at this SAME amplitude in every
+    condition (off/on/on+gain) for one run, so the real acoustic stimulus
+    stays comparable across a same-amplitude A/B pair -- only ``--gain``
+    changes what's fed to the reference."""
     tones_hz = (500.0, 1000.0, 2000.0)
     n_total = int(duration_s * sample_rate)
     n_per_tone = n_total // len(tones_hz)
@@ -230,6 +286,91 @@ def build_test_signal(
             value = int(amp * 32767 * math.sin(2 * math.pi * tone_hz * t))
             samples.append(value)
     return samples.tobytes()
+
+
+#: 16-bit maximal-length Fibonacci LFSR (period 2**16-1 = 65535 chips),
+#: taps 16/14/13/11 (feedback polynomial x^16+x^14+x^13+x^11+1) -- the
+#: standard, independently-verifiable example from Wikipedia's "Linear-
+#: feedback shift register" article, used here (rather than a tap set
+#: picked ad hoc for this script) because its maximal-length property is
+#: well established and checkable. Fixed non-zero seed makes the sequence
+#: fully reproducible run to run -- any nonzero seed produces the same
+#: cycle, just a different starting phase, which does not matter here.
+_MLS16_SEED = 0xACE1
+_MLS16_PERIOD = 65535  # 2**16 - 1
+
+
+def _mls16_bits(n_bits: int) -> list[int]:
+    """R0081 (new) -- deterministic broadband pseudonoise chip sequence
+    (list of 0/1), used as a timing-diagnostic stimulus alternative to
+    the original periodic 3-tone signal. A periodic tone has many
+    equally-valid correlation peaks spaced by its own period, which can
+    make a bounded lag search lock onto the WRONG cycle -- exactly what
+    R0081's operator observed (best_lag_ms jumping to values near the
+    search boundary). An MLS's own autocorrelation is a single sharp peak
+    near zero lag with low, flat sidelobes elsewhere, so
+    cross_correlate_pcm's bounded search has a much better chance of
+    locking onto the TRUE acoustic delay instead of a spurious tone-period
+    alias.
+
+    ``n_bits`` must stay at or below ``_MLS16_PERIOD`` (65535) so a single
+    capture window never wraps around and reintroduces the sequence's own
+    periodicity -- raises ``ValueError`` rather than silently truncating
+    or wrapping, since a caller relying on a longer, non-periodic window
+    would otherwise get a silently invalid timing measurement."""
+    if n_bits > _MLS16_PERIOD:
+        raise ValueError(
+            f"n_bits={n_bits} exceeds the MLS period ({_MLS16_PERIOD}) -- a single "
+            "capture window would wrap around and reintroduce periodicity, defeating "
+            "the point of this stimulus. Lower --duration (max ~4.09s at 16kHz)."
+        )
+    lfsr = _MLS16_SEED
+    bits = []
+    for _ in range(n_bits):
+        bits.append(lfsr & 1)
+        fb = ((lfsr >> 0) ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) & 1
+        lfsr = (lfsr >> 1) | (fb << 15)
+    return bits
+
+
+def build_mls_signal(
+    *, duration_s: float = 3.0, sample_rate: int = SAMPLE_RATE, amplitude: float = 0.5
+) -> bytes:
+    """Deterministic broadband pseudonoise (16-bit MLS, one chip per
+    sample) -- see ``_mls16_bits`` for why this exists. Same fade-in/out
+    and amplitude convention as ``build_test_signal`` so the two are
+    drop-in alternatives wherever ``run_trial``/``build_signal`` is used.
+    A short 5ms fade suffices here (broadband signal, not a discrete
+    tone) -- avoids only the hard on/off click at the very start/end."""
+    n_total = int(duration_s * sample_rate)
+    bits = _mls16_bits(n_total)
+    fade_n = max(1, int(0.005 * sample_rate))
+    samples = array.array("h")
+    for i, bit in enumerate(bits):
+        amp = amplitude
+        if i < fade_n:
+            amp *= i / fade_n
+        elif i > n_total - fade_n:
+            amp *= (n_total - i) / fade_n
+        value = int(amp * 32767 * (1 if bit else -1))
+        samples.append(value)
+    return samples.tobytes()
+
+
+def build_signal(
+    stimulus: str, *, duration_s: float, amplitude: float, sample_rate: int = SAMPLE_RATE
+) -> bytes:
+    """Dispatch to the requested deterministic stimulus generator. See
+    this module's docstring for when to use which."""
+    if stimulus == "tones":
+        return build_test_signal(
+            duration_s=duration_s, sample_rate=sample_rate, amplitude=amplitude
+        )
+    if stimulus == "mls":
+        return build_mls_signal(
+            duration_s=duration_s, sample_rate=sample_rate, amplitude=amplitude
+        )
+    raise ValueError(f"unknown stimulus: {stimulus!r}")
 
 
 def clip_stats(pcm: bytes) -> dict:
@@ -282,9 +423,12 @@ async def capture_pcm(*, duration_s: float, device: str = CAPTURE_DEVICE,
 
 
 async def run_trial(
-    *, feed_reference: bool, gain: float, signal_duration_s: float, amplitude: float = 0.5
+    *, feed_reference: bool, gain: float, signal_duration_s: float, amplitude: float = 0.5,
+    stimulus: str = "tones",
 ) -> dict:
-    signal_pcm = build_test_signal(duration_s=signal_duration_s, amplitude=amplitude)
+    signal_pcm = build_signal(
+        stimulus, duration_s=signal_duration_s, amplitude=amplitude
+    )
     total_capture_s = PRE_ROLL_S + signal_duration_s + TAIL_MARGIN_S
 
     capture_task = asyncio.create_task(capture_pcm(duration_s=total_capture_s))
@@ -342,6 +486,7 @@ async def run_trial(
         "feed_reference": feed_reference,
         "gain": gain if feed_reference else None,
         "amplitude": amplitude,
+        "stimulus": stimulus,
         "signal_pcm": signal_pcm,
         "mic_window": mic_window,
         "captured_full": captured,
@@ -375,51 +520,6 @@ def _attenuation_db(reference_rms: float, mic_rms: float) -> str:
     return f"{value:.2f} dB (mic relative to fed reference)"
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    p.add_argument(
-        "--condition", choices=["off", "on"], required=True,
-        help="'off': nothing fed to plug:respeaker (reference OFF, upper-bound leakage). "
-        "'on': the same deterministic signal is ALSO fed to plug:respeaker as a far-end "
-        "reference (exactly what AecReferenceFeeder does in production).",
-    )
-    p.add_argument(
-        "--gain", type=float, default=1.0,
-        help="Linear gain applied to the reference PCM before feeding it (only meaningful "
-        "with --condition on). Default 1.0 = unscaled = exactly today's accepted "
-        "simple_conversation.py behavior (gain_source=None). Test the default FIRST. "
-        "A large gain WILL clip unless --amplitude is lowered correspondingly -- this "
-        "script always reports reference_clipped_percent so clipping is never silent; "
-        "if it is non-zero, the run's attenuation/correlation numbers are NOT valid "
-        "evidence about the gain hypothesis (see this module's own docstring).",
-    )
-    p.add_argument(
-        "--amplitude", type=float, default=0.5,
-        help="Peak amplitude of the test tone as a fraction of full scale (default 0.5, "
-        "the original script's fixed value). Lower this for a large --gain to keep the "
-        "post-gain reference within int16 range without clipping -- e.g. --gain 10.0 "
-        "needs --amplitude <= 0.05 for zero clipping headroom to the exact ceiling "
-        "(0.05 * 10.0 = 0.5, the same peak the default unboosted case already uses).",
-    )
-    p.add_argument(
-        "--duration", type=float, default=3.0,
-        help="Test signal duration in seconds (default 3.0).",
-    )
-    p.add_argument(
-        "--repeats", type=int, default=1,
-        help="Run the trial this many times back to back (same condition/gain/amplitude) "
-        "and report mean/min/max across the repeats, not just a single sample. "
-        "Recommended >= 3 before treating small differences as diagnostic.",
-    )
-    p.add_argument(
-        "--label", default=None,
-        help="Optional label for the saved WAV files (default: derived from --condition/--gain).",
-    )
-    return p.parse_args()
-
-
 def _mean_min_max(values: list[float]) -> str:
     if not values:
         return "n/a"
@@ -427,42 +527,65 @@ def _mean_min_max(values: list[float]) -> str:
     return f"mean={mean:.2f} min={min(values):.2f} max={max(values):.2f} (n={len(values)})"
 
 
-async def main() -> int:
-    args = parse_args()
-    label = args.label or f"{args.condition}_gain{args.gain:g}_amp{args.amplitude:g}"
-    feed_reference = args.condition == "on"
+async def run_condition(
+    *,
+    feed_reference: bool,
+    gain: float,
+    amplitude: float,
+    duration_s: float,
+    repeats: int,
+    label: str,
+    stimulus: str = "tones",
+    settle_s: float = 0.0,
+) -> list[dict]:
+    """Run ``repeats`` trials of ONE (feed_reference, gain) condition:
+    an optional settle/warmup, then the measured repeat loop, printing a
+    RESULT block per trial and a REPEATABILITY SUMMARY when repeats > 1.
 
-    print(f"NeXa R0081 — direct AEC reference/capture diagnostic ({args.condition})")
-    print(f"  capture device: {CAPTURE_DEVICE}")
-    print(f"  speaker device: {SPEAKER_DEVICE}")
-    if feed_reference:
-        print(f"  reference device: {REFERENCE_DEVICE}  gain={args.gain}  "
-              f"amplitude={args.amplitude}")
-    print(f"  signal duration: {args.duration}s  pre-roll: {PRE_ROLL_S}s  "
-          f"tail margin: {TAIL_MARGIN_S}s  repeats: {args.repeats}")
-    print("  playing deterministic tone sequence (500/1000/2000 Hz) -- no speech, "
-          "no privacy concern...")
+    Extracted from the original single-condition ``main()`` body so
+    ``--sweep`` can call this once per sweep point without duplicating
+    the printing/aggregation logic (both single-run and sweep modes now
+    produce output in exactly this same format).
+
+    ``settle_s`` (new, for --sweep): if > 0, plays the speaker signal
+    (and, if ``feed_reference``, the reference at ``gain``) for this many
+    seconds BEFORE the measured trials, without capturing/measuring
+    anything -- gives the XVF3800's adaptive filter time to reconverge to
+    a NEWLY changed reference gain before the first measured trial,
+    mitigating carryover from whatever condition ran immediately before
+    this one in the same process (see SWEEP_GAIN_POINTS's own comment for
+    why a fixed order plus this settle step was chosen over randomizing
+    trial order)."""
+    if settle_s > 0.0:
+        print(f"  (settling {settle_s:g}s at gain="
+              f"{gain if feed_reference else 'n/a'} before measuring, to let the AEC "
+              f"reconverge to this condition...)")
+        settle_signal = build_signal(stimulus, duration_s=settle_s, amplitude=amplitude)
+        settle_tasks = [asyncio.create_task(play_pcm(settle_signal, device=SPEAKER_DEVICE))]
+        if feed_reference:
+            settle_ref = apply_gain(settle_signal, gain)
+            settle_tasks.append(asyncio.create_task(play_pcm(settle_ref, device=REFERENCE_DEVICE)))
+        await asyncio.gather(*settle_tasks)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    results = []
-    for i in range(args.repeats):
-        if args.repeats > 1:
-            print(f"\n  -- trial {i + 1}/{args.repeats} --")
+    results: list[dict] = []
+    for i in range(repeats):
+        if repeats > 1:
+            print(f"\n  -- trial {i + 1}/{repeats} --")
         result = await run_trial(
             feed_reference=feed_reference,
-            gain=args.gain,
-            signal_duration_s=args.duration,
-            amplitude=args.amplitude,
+            gain=gain,
+            signal_duration_s=duration_s,
+            amplitude=amplitude,
+            stimulus=stimulus,
         )
         results.append(result)
 
-        trial_label = label if args.repeats == 1 else f"{label}_trial{i + 1}"
+        trial_label = label if repeats == 1 else f"{label}_trial{i + 1}"
         signal_path = OUT_DIR / f"{trial_label}_signal.wav"
         mic_path = OUT_DIR / f"{trial_label}_mic.wav"
         _write_wav(signal_path, result["signal_pcm"], sample_rate=SAMPLE_RATE)
         _write_wav(mic_path, result["mic_window"], sample_rate=SAMPLE_RATE)
-        result["_signal_path"] = signal_path
-        result["_mic_path"] = mic_path
 
         # Reference RMS for the attenuation calc: use the ACTUAL post-gain
         # reference sent to plug:respeaker when one was fed (more precise
@@ -499,7 +622,7 @@ async def main() -> int:
         print(f"    saved: {signal_path}")
         print(f"    saved: {mic_path}")
 
-    if args.repeats > 1:
+    if repeats > 1:
         atten_values = [
             v
             for r in results
@@ -518,8 +641,9 @@ async def main() -> int:
         clip_pcts = [r["reference_clipped_percent"] for r in results] if feed_reference else []
 
         print()
-        print(f"  REPEATABILITY SUMMARY ({args.repeats} trials, {args.condition}, "
-              f"gain={args.gain}, amplitude={args.amplitude})")
+        print(f"  REPEATABILITY SUMMARY ({repeats} trials, "
+              f"{'on' if feed_reference else 'off'}, "
+              f"gain={gain if feed_reference else 'n/a'}, amplitude={amplitude})")
         print(f"    mic_window_rms          : {_mean_min_max(rms_values)}")
         print(f"    mic_window_peak         : {_mean_min_max([float(v) for v in peak_values])}")
         print(f"    attenuation_db          : {_mean_min_max(atten_values)}")
@@ -531,12 +655,183 @@ async def main() -> int:
                 print("    *** at least one trial in this repeat set was CLIPPED -- "
                       "do not use this set as gain-compensation evidence. ***")
 
+    return results
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--condition", choices=["off", "on"], default=None,
+        help="Required unless --sweep is passed. 'off': nothing fed to plug:respeaker "
+        "(reference OFF, upper-bound leakage). 'on': the same deterministic signal is ALSO "
+        "fed to plug:respeaker as a far-end reference (exactly what AecReferenceFeeder does "
+        "in production).",
+    )
+    p.add_argument(
+        "--gain", type=float, default=1.0,
+        help="Linear gain applied to the reference PCM before feeding it (only meaningful "
+        "with --condition on; ignored with --sweep, which uses its own fixed gain list). "
+        "Default 1.0 = unscaled = exactly today's accepted simple_conversation.py behavior "
+        "(gain_source=None). Test the default FIRST. A large gain WILL clip unless "
+        "--amplitude is lowered correspondingly -- this script always reports "
+        "reference_clipped_percent so clipping is never silent; if it is non-zero, the run's "
+        "attenuation/correlation numbers are NOT valid evidence about the gain hypothesis "
+        "(see this module's own docstring). Live, non-clipped result: gain=10.0 makes the "
+        "residual dramatically WORSE than gain=1.0 -- the naive +20dB-compensation "
+        "hypothesis is REFUTED; use --sweep to test smaller, more plausible gains instead.",
+    )
+    p.add_argument(
+        "--amplitude", type=float, default=None,
+        help="Peak amplitude of the test tone as a fraction of full scale. Default 0.5 in "
+        "normal mode (the original script's fixed value), or 0.05 automatically with "
+        "--sweep (safe across the whole 0.25x-4.0x sweep range without clipping). Lower this "
+        "for a large --gain to keep the post-gain reference within int16 range -- e.g. "
+        "--gain 10.0 needs --amplitude <= 0.05 for zero clipping headroom to the ceiling "
+        "(0.05 * 10.0 = 0.5, the same peak the default unboosted case already uses).",
+    )
+    p.add_argument(
+        "--duration", type=float, default=3.0,
+        help="Test signal duration in seconds (default 3.0). With --stimulus mls, must stay "
+        "under ~4.09s (65535 chips / 16kHz) or the sequence wraps and reintroduces "
+        "periodicity -- raises an error rather than silently producing an invalid stimulus.",
+    )
+    p.add_argument(
+        "--repeats", type=int, default=None,
+        help="Run the trial this many times back to back (same condition/gain/amplitude) "
+        "and report mean/min/max across the repeats, not just a single sample. Default 1 in "
+        "normal mode, or 3 automatically with --sweep. Recommended >= 3 before treating "
+        "small differences as diagnostic.",
+    )
+    p.add_argument(
+        "--stimulus", choices=["tones", "mls"], default="tones",
+        help="'tones' (default): the original periodic 500/1000/2000Hz sequence -- fine for "
+        "level/RMS/attenuation comparisons (e.g. --sweep) but its periodicity can bias "
+        "best_lag_ms (see this module's docstring). 'mls': deterministic 16-bit "
+        "maximum-length-sequence broadband pseudonoise with a sharp, unambiguous "
+        "autocorrelation peak -- use this for timing/lag measurements, especially "
+        "--condition off repeatability runs establishing the acoustic speaker->capture delay.",
+    )
+    p.add_argument(
+        "--sweep", action="store_true",
+        help="Run the fixed narrow gain sweep (off, 0.25x, 0.5x, 1.0x, 2.0x, 4.0x) at a "
+        "single fixed --amplitude in ONE invocation, automating the operator's requested "
+        "protocol instead of many manual commands. Ignores --condition/--gain. Defaults "
+        "--repeats to 3 and --amplitude to 0.05 if not explicitly given.",
+    )
+    p.add_argument(
+        "--sweep-settle", type=float, default=1.0,
+        help="Seconds of unmeasured playback at each sweep point's OWN gain immediately "
+        "before its measured trials, to let the AEC reconverge -- only used with --sweep "
+        "(default 1.0s).",
+    )
+    p.add_argument(
+        "--label", default=None,
+        help="Optional label for the saved WAV files (default: derived from --condition/--gain, "
+        "ignored with --sweep which labels each point itself).",
+    )
+    args = p.parse_args()
+
+    if args.repeats is None:
+        args.repeats = 3 if args.sweep else 1
+    if args.amplitude is None:
+        args.amplitude = 0.05 if args.sweep else 0.5
+    if not args.sweep and args.condition is None:
+        p.error("--condition is required unless --sweep is passed")
+
+    return args
+
+
+async def _run_single(args: argparse.Namespace) -> int:
+    feed_reference = args.condition == "on"
+    label = args.label or f"{args.condition}_gain{args.gain:g}_amp{args.amplitude:g}"
+
+    print(f"NeXa R0081 — direct AEC reference/capture diagnostic ({args.condition})")
+    print(f"  capture device: {CAPTURE_DEVICE}")
+    print(f"  speaker device: {SPEAKER_DEVICE}")
+    if feed_reference:
+        print(f"  reference device: {REFERENCE_DEVICE}  gain={args.gain}  "
+              f"amplitude={args.amplitude}")
+    print(f"  signal duration: {args.duration}s  pre-roll: {PRE_ROLL_S}s  "
+          f"tail margin: {TAIL_MARGIN_S}s  repeats: {args.repeats}  stimulus: {args.stimulus}")
+    stimulus_desc = (
+        "MLS pseudonoise" if args.stimulus == "mls" else "tone sequence (500/1000/2000 Hz)"
+    )
+    print(f"  playing deterministic {stimulus_desc} -- no speech, no privacy concern...")
+
+    await run_condition(
+        feed_reference=feed_reference,
+        gain=args.gain,
+        amplitude=args.amplitude,
+        duration_s=args.duration,
+        repeats=args.repeats,
+        label=label,
+        stimulus=args.stimulus,
+    )
+
     print()
     print("Run the OTHER --condition (off vs on) with the SAME physical volume/room/mic "
           "position for a directly comparable pair. See this script's own module "
           "docstring for the full protocol, including the --amplitude guidance for a "
-          "non-clipped high-gain test.")
+          "non-clipped high-gain test, --sweep for a narrow gain sweep, and --stimulus mls "
+          "for timing/lag measurements.")
     return 0
+
+
+async def _run_sweep(args: argparse.Namespace) -> int:
+    print("NeXa R0081 — narrow reference-gain sweep around baseline (gain=1.0)")
+    print(f"  fixed amplitude={args.amplitude} (same acoustic stimulus for every point)")
+    print(f"  points, in order: {', '.join(p[0] for p in SWEEP_GAIN_POINTS)}")
+    print(f"  repeats per point: {args.repeats}  settle before each point: "
+          f"{args.sweep_settle}s  stimulus: {args.stimulus}")
+    print("  order rationale: fixed ascending order (not randomized) -- each point gets its "
+          "own settle/warmup at the NEW gain immediately before its measured trials, which "
+          "is what actually re-establishes steady AEC state regardless of what the previous "
+          "point was; a fixed order keeps the run fully reproducible. See SWEEP_GAIN_POINTS's "
+          "own comment in this script for the full rationale.")
+    print()
+
+    sweep_means: list[tuple[str, float, float]] = []
+    for point_label, feed_reference, gain in SWEEP_GAIN_POINTS:
+        print(f"=== sweep point: {point_label} ===")
+        results = await run_condition(
+            feed_reference=feed_reference,
+            gain=gain if gain is not None else 1.0,
+            amplitude=args.amplitude,
+            duration_s=args.duration,
+            repeats=args.repeats,
+            label=f"sweep_{point_label}",
+            stimulus=args.stimulus,
+            settle_s=args.sweep_settle,
+        )
+        rms_mean = sum(r["mic_window_rms"] for r in results) / len(results)
+        clip_pct_max = max((r["reference_clipped_percent"] for r in results), default=0.0)
+        sweep_means.append((point_label, rms_mean, clip_pct_max))
+        print()
+
+    print("=== SWEEP SUMMARY (mic_window_rms mean per point, ascending gain order) ===")
+    best_label = min(sweep_means, key=lambda x: x[1])[0]
+    for point_label, rms_mean, clip_pct_max in sweep_means:
+        marker = "  <-- lowest residual" if point_label == best_label else ""
+        clip_note = f"  (max clipped {clip_pct_max}%!)" if clip_pct_max > 0 else ""
+        print(f"  {point_label:>10s} : mic_window_rms mean = {rms_mean:.2f}{marker}{clip_note}")
+    print()
+    print("Interpretation: if the minimum sits at or near gain=1.0 (unscaled, today's "
+          "production default) and BOTH lower and higher gains are worse, reference "
+          "amplitude mismatch is unlikely to be the primary remaining cause of the "
+          "residual -- move to timing/alignment as the leading hypothesis (--stimulus mls). "
+          "If a modest gain such as 0.5 or 2.0 gives a reproducible, material improvement, "
+          "gain calibration remains a live contributor and should be quantified further "
+          "before touching production code.")
+    return 0
+
+
+async def main() -> int:
+    args = parse_args()
+    if args.sweep:
+        return await _run_sweep(args)
+    return await _run_single(args)
 
 
 if __name__ == "__main__":
