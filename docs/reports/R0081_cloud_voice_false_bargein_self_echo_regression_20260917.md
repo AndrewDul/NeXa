@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-17
 **Type:** Diagnostic + narrow instrumentation + direct hardware audit (NOT a confirmed resolution)
-**Status:** Immediate failure mechanism CONFIRMED (local VAD false-fires on NeXa's own playback). Speaker volume and the R0053 gain-coherence fix are BOTH now ruled out as sufficient fixes, by direct live A/B/A2 evidence. A NEW, more specific, hardware-firmware-level lead was found by direct XVF3800 register query: a confirmed **-20dB internal far-end reference gain** baked into the DSP firmware, never compensated for by NeXa's software, which sends the reference unscaled. Root cause still NOT proven — the next required step is a direct, deterministic (non-conversational) AEC measurement this report built but did not execute (audible playback requires the operator's live presence/consent).
+**Status:** Immediate failure mechanism CONFIRMED (local VAD false-fires on NeXa's own playback). Speaker volume and the R0053 gain-coherence fix are BOTH now ruled out as sufficient fixes, by direct live A/B/A2 evidence. A hardware-firmware-level lead (a confirmed **-20dB internal far-end reference gain**, `AEC_FAR_EXTGAIN`, baked into the XVF3800 DSP firmware) has now been **directly, deterministically measured** (§7): reference OFF→ON gives a real, reproducible **~7.97dB of additional attenuation** (AEC is genuinely functioning), but a substantial residual (~RMS 300) remains, and a first attempt to test +20dB software compensation for the firmware gain (`--gain 10.0`) is **INVALID** — a clipping audit (§7a) shows it was almost certainly heavily saturated at the default test amplitude, so it proves nothing about the compensation hypothesis either way. Root cause still NOT proven — a corrected, non-clipped gain-compensation test and an OFF/ON repeatability pass are the next required steps (§14).
 **Depends on:** R0080 (accepted `2b894e7`), R0071 (frozen baseline), R0052–R0056 (prior self-echo investigation), R0053 (gain-coherence defect, now further quantified)
 
 No Memory/ContextEngine/recall_context/Personality/Relationship/Learning/FTS/vector changes touched. No forced audio-architecture redesign. No Silero threshold tuning. No DSP register writes.
@@ -219,7 +219,7 @@ NeXa's software (`AecReferenceFeeder`, `gain_source=None` by default) feeds the 
 
 ---
 
-## 7. Deterministic direct AEC measurement — built, NOT executed
+## 7. Deterministic direct AEC measurement — EXECUTED live, real results in
 
 `docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py` (new). No Gemini, no LLM, no Pipecat pipeline, no recorded human speech — reuses `cross_correlate_pcm`/`_rms`/`_peak`/`_write_wav` from the existing R0052/R0053 probe (imported, not reimplemented) and `nexa.voice.aec_gain.apply_gain` (the same production code, not a reimplementation).
 
@@ -243,7 +243,49 @@ python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py -
 
 Reports: quiet-room RMS floor, fed-signal RMS, captured RMS during playback, an ERLE-like attenuation figure in dB (explicitly labeled as such, not a certified AEC measurement), and the reference↔capture cross-correlation peak/lag. Saves WAV pairs for offline inspection.
 
-**Why this was not executed by this report**: it produces real, audible sound through the operator's physical speaker. Unlike the silent USB register reads in §6, this is a perceptible, real-world side effect in the operator's own space — this report treats that as requiring the operator's live presence/awareness, consistent with the explicit instruction to hand off exact commands rather than run a live audio test unilaterally. **Recommended sequence for the operator**: `--condition off`, then `--condition on`, back to back, same physical volume/room/mic position as A1; repeat 3× per condition if practical (single-sample acoustic measurements vary). Optionally follow with `--condition on --gain 10.0` to test §6's compensation hypothesis directly, deterministically, before ever considering a software change.
+### Real results (operator-executed, same physical volume/room/mic position, back to back)
+
+| Metric | OFF | ON, gain=1.0 | ON, gain=10.0 |
+|---|---|---|---|
+| `quiet_before_rms` | 7.3 | 7.6 | 7.9 |
+| `signal_rms` (fed to speaker) | 11428.8 | 11428.8 | 11428.8 |
+| `mic_window_rms` (captured) | **771.6** | **308.3** | 300.9 |
+| `mic_window_peak` | 2123 | 1179 | 972 |
+| attenuation (ERLE-like) | -23.41 dB | -31.38 dB | -31.59 dB |
+| `best_lag_ms` | 108.5 | 173.38 | 141.44 |
+| `normalized_correlation` | 0.4353 | 0.5302 | 0.4811 |
+
+**Conclusion 1 — AEC is definitely functioning (CONFIRMED):** OFF→ON is a **~2.50× reduction in captured RMS** (771.6 → 308.3) and **~7.97dB of additional attenuation** (-23.41 → -31.38dB). This directly confirms the far-end reference reaches the XVF3800 and the AEC measurably suppresses leakage — AEC is not doing nothing. This materially narrows the problem: it is no longer "maybe AEC isn't working," it demonstrably is. The open question is why a substantial residual (~RMS 300) remains after cancellation.
+
+**Conclusion 2 — gain×10 did NOT show a material further improvement, but see §7a: this comparison is likely invalid, not just small.** ON gain=1.0 → ON gain=10.0 moved `mic_window_rms` only 308.3 → 300.9 (~2.4% reduction, ~0.21dB) — nowhere near what a valid +20dB linear reference boost compensating a firmware -20dB attenuation would be expected to show if that hypothesis were both correct and being tested cleanly. **This result must NOT be used to clear or confirm the `AEC_FAR_EXTGAIN` hypothesis either way** until §7a's clipping concern is resolved.
+
+**Finding 3 — timing (`best_lag_ms`) remains a serious but not yet resolved candidate**, and must NOT be over-interpreted: OFF=108.50ms, ON=173.38ms, ON×10=141.44ms are three different values, but `cross_correlate_pcm` always correlates the **original, un-gained source tone** (`signal_pcm`, what's fed to the physical speaker) against the **captured, post-processing residual** (`mic_window`) — never against the actual post-gain reference bytes sent to `plug:respeaker` (see the diagnostic script's own updated module docstring, added this turn, for the full explanation). For the OFF condition this is a reasonably direct measure of the acoustic-only path delay (speaker → air → mic, no cancellation). For the ON conditions, the *residual* being correlated has already been reshaped by whatever cancellation occurred — a shifted lag reflects the correlation search locking onto a different, attenuated, reshaped waveform, **not a literal change in AEC processing delay**. This script also cannot separately measure (2) reference-feed-write → XVF3800 internal processing/capture alignment, or (3) the far-end-reference vs. real-acoustic-echo relative timing error the AEC's own adaptive filter sees internally — the USB descriptor audit (§6) confirms this device exposes exactly ONE capture stream, already ASR/beamformed (`AEC_ASROUTONOFF=1`); there is no standard-ALSA way to capture a "before AEC" and "after AEC" pair simultaneously from this device as currently configured. Only the net residual is observable this way. **Reference/playback relative timing remains UNRESOLVED**, not ruled in or out.
+
+**Connection to the live false-VAD data (§2):** live quiet-period `MIC_RMS ≈ 5–10` is consistent with this deterministic test's own quiet floor (`quiet_before_rms ≈ 7.3–7.9`). The deterministic AEC-ON residual (`mic_window_rms ≈ 300–308`) is of a magnitude **consistent with** (not numerically equivalent to — a synthetic 3-tone sequence and real speech are different signals) the residual speech-shaped `MIC_RMS` excursions observed around false-VAD episodes in §2 (`74, 99, 82, 299, 334, 48, 96`). This is supportive circumstantial evidence, not proof that this exact residual is what trips Silero — but it is no longer an unexplained coincidence of magnitude either.
+
+---
+
+## 7a. Clipping audit of the `--gain 10.0` result — the gain=10 comparison is INVALID as run
+
+**Instruction that triggered this audit, and why it matters:** on an S16_LE PCM path, `apply_gain()` (`nexa.voice.aec_gain.apply_gain`, reused unmodified by this script) uses `audioop.mul(pcm, 2, gain)`. A direct Python test in this session confirms this **saturates at the int16 boundary, it does not wrap**:
+
+```python
+>>> import audioop, struct
+>>> audioop.mul(struct.pack('<4h', 30000, -30000, 5000, -5000), 2, 10.0)
+(32767, -32768, 32767, -32768)
+```
+
+The diagnostic script's `build_test_signal()` generated its tone sequence at a fixed peak amplitude of **0.5** (i.e. peak ≈ 0.5 × 32767 ≈ **16383**) in every condition run so far, including the `--gain 10.0` trial. A ×10 gain on a signal peaking at ~16383 would need to represent values up to **~163,835** — roughly **5×** past the int16 ceiling of 32767. Any sample whose original magnitude exceeds `32767/10 ≈ 3277` (i.e. `|sin| > 0.2`, true for roughly **~87% of a sine cycle's duration** away from its zero-crossings) saturates to exactly ±32767/±32768 after gain. **The gain=10.0 reference signal actually sent to `plug:respeaker` was, in all likelihood, heavily and continuously clipped — not a clean +20dB boost, but something close to a square wave.**
+
+**Consequence:** the "gain×10 did not materially improve cancellation" result (Conclusion 2 above) is **not valid evidence about whether compensating `AEC_FAR_EXTGAIN=-20dB` in software would help**. A heavily clipped reference signal is harmonically distorted (introduces energy at frequencies the AEC's adaptive filter was never modeling) and is not a faithful +20dB-scaled copy of the original tone sequence — the AEC has no reason to cancel it well, clipped or not, so this result cannot confirm OR refute the firmware-gain hypothesis. **This gain=10.0 run is marked INVALID for that purpose.**
+
+**Fix, implemented this turn, not yet re-run:** `r0081_direct_aec_diagnostic.py` gained:
+- `build_test_signal(..., amplitude: float = 0.5)` — the peak amplitude is now a parameter instead of a hardcoded constant, so it can be lowered to leave headroom for a given `--gain`.
+- `clip_stats(pcm) -> dict` — counts int16 samples landing exactly on the ±32767/±32768 saturation boundary (the exact signature `audioop.mul` produces on this signal; a genuine unclipped sine essentially never lands on that precise integer by chance) and reports `n_clipped`/`pct_clipped`.
+- `run_trial()` now separately tracks and returns `speaker_pcm` (never gain-adjusted — the real acoustic stimulus stays IDENTICAL across `--gain` values for a fixed `--amplitude`, which is what makes an off/on/on+gain comparison meaningful at all), `reference_pre_gain_rms/peak` (= the speaker signal, what `apply_gain()` receives), `reference_post_gain_rms/peak` (what is ACTUALLY sent to `plug:respeaker`), and `reference_clipped_samples`/`reference_clipped_percent`.
+- `main()` now prints all of the above for every run (not just gain≠1 ones), and prints an explicit `*** WARNING: post-gain reference is CLIPPED ***` line whenever `reference_clipped_percent > 0`, plus a `--repeats N` option that runs the trial N times and reports mean/min/max across the set (`_mean_min_max`) — implementing the operator's requested OFF/ON repeatability protocol in the script itself rather than by hand.
+
+**No firmware write was made or is authorized.** `AEC_FAR_EXTGAIN=-20dB` remains a hardware-confirmed FACT (§6); whether compensating for it in software measurably helps remains UNRESOLVED, pending a corrected, non-clipped retest (§14).
 
 ---
 
@@ -258,10 +300,27 @@ Reports: quiet-room RMS floor, fed-signal RMS, captured RMS during playback, an 
 | Priority | Item | Status |
 |---|---|---|
 | A | reSpeaker/XVF3800 capture endpoint (raw vs. AEC-processed) | **RESOLVED** by direct evidence (§6): USB descriptor terminal typing (`0x0405` Echo-Canceling Speakerphone, both directions) + `AEC_ASROUTONOFF=1` (beamformed/processed output, confirmed by direct DSP register read) both independently confirm the capture stream IS the processed output, not raw per-mic residuals. |
-| B | Far-end reference correctness (gain, timing, format) | **New, more specific evidence**: firmware `AEC_FAR_EXTGAIN=-20dB`, confirmed by direct register read, corroborating R0053's ALSA-level finding via an independent method. This is now the leading hypothesis (§6). Not yet measured in isolation (§7, built, not executed). |
+| B | Far-end reference correctness (gain, timing, format) | **Gain**: firmware `AEC_FAR_EXTGAIN=-20dB` confirmed (§6); AEC confirmed functioning, OFF→ON = ~7.97dB additional attenuation (§7); whether +20dB software compensation helps is **UNRESOLVED** — the only attempt so far (`--gain 10.0`) is invalidated by likely clipping (§7a), pending a corrected low-amplitude retest. **Timing**: relative reference/playback alignment remains **UNRESOLVED** — this device's single, already-processed capture stream cannot directly expose it (§7 Finding 3). |
 | C | Two independent ALSA playback paths (timing drift) | Still not measured; deprioritized relative to B given B's much more direct, quantified evidence. |
 | D | XVF3800 hardware/DSP configuration | **Largely resolved** by §6's direct register reads: AEC not bypassed, converged, 1 far-end/4 mics configured, HPF/emphasis normal, PCD disabled (reason unclear), RT60 inconclusive from a single idle read. |
 | E | Silero sensitivity/thresholds | Still deliberately last, still not attempted — the ~0.7-0.9s sustained false-VAD duration remains far too long to be a small-threshold artifact, and the new firmware-level evidence gives a much more specific, better-targeted lead than blind VAD tuning ever would. |
+
+### 9a. R0081 status summary table
+
+| Item | Status |
+|---|---|
+| Direct AEC reference effectiveness | **CONFIRMED** (§7) |
+| Reference OFF→ON improvement | **~7.97dB** additional attenuation (§7) |
+| Residual echo after AEC | **CONFIRMED** present (~RMS 300-308) (§7) |
+| `AEC_FAR_EXTGAIN=-20dB` | **HARDWARE-CONFIRMED FACT** (§6, direct register read) |
+| +20dB compensation effectiveness | **UNRESOLVED** — current `--gain 10.0` test possibly/likely clipped (§7a) |
+| Reference/playback relative timing | **UNRESOLVED** (§7 Finding 3) |
+| False local VAD | **CONFIRMED** (§2) |
+| Core recall | **CLEARED** as a cause (§3); PASS on its own merits (§1) |
+| `CoherentReferenceGain` | **NOT VALIDATED** — made things worse live (§2 condition B); stays off by default |
+| Speaker volume alone | **NOT SUFFICIENT** — A2's lower volume did not materially reduce false episodes (§2) |
+
+**R0081 is still NOT PASS.**
 
 ---
 
@@ -275,7 +334,7 @@ No interruption-while-speaking suppression, no VAD disabling, no blanket mic mut
 
 - `src/nexa/realtime/gemini/simple_conversation.py` — direction/sibling/vad_active-aware `InterruptionFrame` diagnostics (§4); `_vad_active` bookkeeping.
 - `tests/test_simple_cloud_conversation.py` — `TestInterruptionDirectionTelemetry` (6 new); corrected the one pre-existing assertion that expected a bare `"INTERRUPTION_FRAME"` label; fixed one test's reliance on same-batch queue ordering (the `SystemFrame`-priority finding, §4) with explicit sequential awaits.
-- `docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py` (new) — the deterministic, non-conversational AEC measurement script (§7), built, not executed.
+- `docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py` — the deterministic, non-conversational AEC measurement script (§7). Built and executed live this update (real results in §7); further extended this update with the `amplitude`/`clip_stats`/gain-chain diagnostics and `--repeats` mean/min/max reporting (§7a), addressing the clipping concern the operator's own results surfaced. This standalone research script is intentionally not part of the pytest suite (consistent with the pre-existing `m2_6b4m_self_echo_probe.py`'s own precedent) — verified via `py_compile`/`ruff check` only, both clean.
 
 Everything from the prior update (`--diagnostic-timeline`, `--diagnostic-audio-levels`, `--coherent-reference-gain`, the interruption-print debounce, the `AecReferenceFeeder`/`_MicLevelTap` signal-level diagnostics) is unchanged in this update except for the correction above.
 
@@ -301,28 +360,47 @@ pytest tests/ -q
 | Real barge-in (5/5) | Not separately re-verified this round; mechanism itself unchanged |
 | Core recall | **PASS** (unchanged, §1) |
 | PL/EN | Not run |
-| Direct, deterministic AEC measurement (§7) | **NOT RUN** — built, requires the operator's live presence for audible playback |
+| Direct, deterministic AEC measurement (§7) | **RUN** — AEC effectiveness confirmed (~7.97dB), residual echo confirmed present; gain-compensation sub-test invalidated by likely clipping (§7a), pending retest |
+| OFF/ON repeatability (≥3 runs each) | **NOT YET RUN** — script now supports `--repeats`, not yet exercised live |
+| Non-clipped +20dB gain-compensation retest | **NOT YET RUN** — script now supports low-`--amplitude` + `--gain 10.0`, not yet exercised live |
 
-**R0081 still does not pass.** A specific, hardware-confirmed, quantified candidate mechanism (§6's firmware `AEC_FAR_EXTGAIN=-20dB`) is now available for direct, deterministic testing (§7) before any software change is considered.
+**R0081 still does not pass.** AEC is confirmed working but leaves a substantial, speech-magnitude-consistent residual; whether the firmware's `AEC_FAR_EXTGAIN=-20dB` is the cause of that residual is still unproven — the one attempt to test compensation for it was invalidated by clipping, not by a clean negative result.
 
 ---
 
 ## 14. Next operator step — exactly what to run and return
 
-**Do not start with another free-form conversation test.** First, the deterministic measurement:
+**Do not start with another free-form conversation test yet.** Three things, in this order:
+
+**1. OFF/ON repeatability (3× each, same physical volume/room/mic position as before):**
 
 ```bash
-python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition off
-python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition on
-python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition on --gain 10.0
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition off --repeats 3
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition on --repeats 3
 ```
 
-Same physical volume/room/mic position as the A1 run, back to back. **Return**: the full printed `RESULT` block from each of the three runs (quiet_before_rms, signal_rms, mic_window_rms, mic_window_peak, attenuation, cross-correlation lag/correlation) — no audio files need to be sent, the printed numbers are sufficient for the next analysis pass.
+Each prints a `REPEATABILITY SUMMARY` block (mean/min/max for `mic_window_rms`, `mic_window_peak`, `attenuation_db`, `normalized_correlation`, `best_lag_ms`). **Return both summary blocks.**
 
-Separately, if convenient: a repeat of the `--diagnostic-timeline` conversational run (A1-style, no `--coherent-reference-gain`) so the new direction/sibling/`vad_active`-aware `INTERRUPTION_FRAME_*` labels (§4) can be read directly, to confirm or refute the "delayed Gemini-acknowledgement" theory for the unpaired interruptions.
+**2. A corrected, non-clipped +20dB gain-compensation test.** Lower `--amplitude` so the post-gain reference has real headroom instead of saturating — the script now prints `reference_clipped_samples`/`reference_clipped_percent` on every run, so clipping will never again be silent:
+
+```bash
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --condition on --gain 10.0 --amplitude 0.05 --repeats 3
+```
+
+**Return** the full `RESULT` block(s) and the `REPEATABILITY SUMMARY`, specifically including `reference_clipped_samples`/`reference_clipped_percent` for every trial (must be 0, or the result is invalid again) and `reference_post_gain_rms`/`peak`. If `--amplitude 0.05` still shows any clipping, stop and report that rather than lowering it further unilaterally.
+
+**3. Separately, if convenient:** a repeat of the `--diagnostic-timeline` conversational run (A1-style, no `--coherent-reference-gain`) so the new direction/sibling/`vad_active`-aware `INTERRUPTION_FRAME_*` labels (§4) can be read directly, to confirm or refute the "delayed Gemini-acknowledgement" theory for the unpaired interruptions:
+
+```bash
+.venv/bin/python apps/nexa_cloud_voice_simple.py --diagnostic-timeline --diagnostic-audio-levels
+```
+
+**Return** the printed `INTERRUPTION_FRAME_*` lines (direction/sibling/vad_active/awaiting_assistant) in order, with timestamps.
+
+No firmware write, no Silero tuning, and no free-form live-conversation acceptance run should happen until items 1-2 above give a clean (non-clipped, repeatable) reading on the gain-compensation hypothesis.
 
 ---
 
 ## 15. Commit gate
 
-Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validated (and stays off by default). No fix is claimed. Per this project's established practice for this exact situation: the diagnostic instrumentation (direction-aware interruption telemetry, tested against a real Pipecat pipeline) and the new deterministic AEC measurement script (built, not yet run) are committed locally, clearly labeled as diagnostics only. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system** — every hardware interaction in this report was a read.
+Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validated (and stays off by default). No fix is claimed. AEC is confirmed functioning but a substantial residual remains, and the one attempt to test firmware-gain compensation is invalidated by clipping rather than settled either way. Per this project's established practice for this exact situation: the diagnostic instrumentation (direction-aware interruption telemetry, tested against a real Pipecat pipeline) and the deterministic AEC measurement script (built, executed live, and extended this update with clipping/gain-chain diagnostics and repeatability support) are committed locally, clearly labeled as diagnostics only. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system** — every hardware interaction in this report was a read.
