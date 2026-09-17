@@ -3,28 +3,38 @@
 Short operational truth. Keep this file current after every meaningful task.
 Runtime / test evidence outranks anything else in this repo.
 
-## Current checkpoint — R0074, 2026-09-16
+## Current checkpoint — R0076, 2026-09-17
 
-**M3.2 Memory Foundation = PASS / COMPLETE.** The NeXa Memory Platform:
-one canonical local `MemoryService` authority (`nexa.core.memory`) for
-every current/future NeXa subsystem (LiFeOS, NeXa Teacher, Projects,
-Goals, Routines, Health, Finance, device/home/robot state) — domain
-systems own semantics within their own `namespace`; Memory owns
-persistence, provenance, privacy, lifecycle, retrieval. SQLite-backed
-(`MemoryRecord`/`MemoryEvidence`/`MemoryRelation`, XDG application-data
-location, component-aware schema versioning), no vector DB, no automatic
-conversation-to-memory extraction. Prerequisite: `CloudEligibility`
-relocated from `nexa.realtime.privacy` to `nexa.core.privacy` (Core no
-longer depends on the realtime layer; old import path re-exports,
-unbroken). 78 new tests PASS; full suite 1264 passed / 7 skipped / 1
-known pre-existing unrelated failure (paused R0068-R0070
-`scheduled_aec_reference` field, still untouched). See
-`docs/reports/R0073_m3_2_memory_foundation_design_20260916.md` (design,
-3 revisions), `docs/reports/R0074_m3_2_memory_foundation_implementation_20260916.md`.
+**M3.3 Context Engine + Knowledge Awareness = PASS / COMPLETE (foundation
+only, not yet wired into any runtime path).** `nexa.core.context.ContextEngine`
+— one canonical selection/composition/retrieval orchestrator, reading
+Identity (M3.1), Memory (M3.2), and `ConversationSession` without owning
+any of them. Knowledge Awareness (`KnowledgeDescriptor`, live-queried via
+one bounded `namespace_summary()` SQL aggregate — never a second cached
+store) lets NeXa represent "loaded now" vs. "known to exist elsewhere" vs.
+"don't know" (`UNKNOWN`) vs. "checked, found nothing" (`NO_MATCH`) vs.
+"known but unreachable"/"permission needed" as genuinely distinct,
+type-enforced states. Teacher/LiFeOS/Projects domains work through the one
+generic `MemoryRetriever` with zero domain-specific engine code, verified
+by test, not asserted. `RETRACTED` memory is structurally excluded (no
+`statuses` field exists on the retrieval contract at all). Cloud
+projection (`nexa.realtime.context_projection.to_cloud_snapshot`) lives
+outside Core and reuses the existing M3.1/M3.2 privacy filtering
+unmodified — `nexa.core` still has zero imports from `nexa.realtime`
+(the pre-existing M3.2 full-tree test still passes). 91 new tests PASS;
+full suite 1355 passed / 7 skipped / 1 known pre-existing unrelated
+failure (paused R0068-R0070 `scheduled_aec_reference` field, still
+untouched). **Not wired into any production path** — no app entrypoint
+calls `ContextEngine` yet; the accepted cloud voice pipeline (R0071) was
+not touched. See `docs/decisions/ADR-0006_context_engine_knowledge_awareness_boundary.md`,
+`docs/reports/R0075_m3_3_context_engine_knowledge_awareness_design_20260916.md`
+(design, 3 revisions),
+`docs/reports/R0076_m3_3_context_engine_knowledge_awareness_implementation_20260917.md`.
 
-**Project priority: M3.3 Context Engine — proposed next, not started.**
-Decides which memories matter for a given turn and produces the
-provider/local context projection; gated on review.
+**Project priority: M3.4 Personality + Relationship — proposed next, not
+started.** Alternatively, a scoped runtime-wiring follow-up (Context
+Engine into `bootstrap.py` / cloud snapshot builder) is available; not
+started either way, gated on review.
 
 **Cloud realtime conversation baseline = ACCEPTED / FROZEN** (R0071,
 unchanged this checkpoint, not the active task). M2.6B dual-pipeline path
@@ -33,7 +43,7 @@ remains PAUSED, unchanged. See
 
 ---
 
-- **Last verified:** 2026-09-16 (R0074 — M3.2 Memory Foundation)
+- **Last verified:** 2026-09-17 (R0076 — M3.3 Context Engine + Knowledge Awareness)
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)

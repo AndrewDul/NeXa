@@ -1848,15 +1848,31 @@ depends on the realtime/provider layer. Design:
 `docs/reports/R0073_m3_2_memory_foundation_design_20260916.md` (3
 revisions). Implementation: `docs/reports/R0074_m3_2_memory_foundation_implementation_20260916.md`.
 
-### M3.3 — Context Engine
+### M3.3 — Context Engine + Knowledge Awareness
 
-**STATUS: proposed next, not started, gated on review.** Decides what
-NeXa needs to know *now* and produces provider/local context projections
-— supersedes the earlier "M3 — Robust Context" framing below (turn-to-turn/
-session context, coherent/bounded/observable, clear separation between
-transient context, chat history, and long-term memory). Reads from Memory
-(M3.2) via its bounded/paginated retrieval methods, including the generic
-`cloud_eligibility` filter; never itself becomes a second memory store.
+**STATUS: COMPLETE — foundation only, not yet wired into any runtime path**
+(R0076, 2026-09-17). Supersedes the earlier "M3 — Robust Context" framing
+below. `nexa.core.context.ContextEngine`: one canonical selection/
+composition/retrieval orchestrator over Identity (M3.1), Memory (M3.2),
+and `ConversationSession` — never a second memory store, never provider-
+specific. Knowledge Awareness (`KnowledgeDescriptor`, live-queried, never
+cached into a duplicate store) distinguishes "loaded now" /
+"known to exist elsewhere" / "don't know" (`UNKNOWN`) / "checked, found
+nothing" (`NO_MATCH`) / "known but unreachable or permission-gated" as
+type-enforced states, preventing the collapse of these into
+indistinguishable silence. Teacher/LiFeOS/Projects domains work through
+one generic `MemoryRetriever` with zero domain-specific engine code
+(verified by test). `RETRACTED` memory is structurally unreachable through
+the retrieval contract. Cloud projection
+(`nexa.realtime.context_projection.to_cloud_snapshot`) lives outside Core,
+reusing existing M3.1/M3.2 privacy filtering unmodified —
+`nexa.core -> never nexa.realtime` still holds. **Not wired into
+`bootstrap.py` or the accepted cloud voice path (R0071, untouched)** —
+that is deliberately deferred follow-up work, not part of this milestone.
+See ADR-0006 (`docs/decisions/ADR-0006_context_engine_knowledge_awareness_boundary.md`),
+design: `docs/reports/R0075_m3_3_context_engine_knowledge_awareness_design_20260916.md`
+(3 revisions), implementation:
+`docs/reports/R0076_m3_3_context_engine_knowledge_awareness_implementation_20260917.md`.
 
 ### M3.4 — Personality + Relationship
 

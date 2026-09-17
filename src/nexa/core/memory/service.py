@@ -29,6 +29,7 @@ from .models import (
     MemoryRelation,
     MemoryStatus,
     MemoryWriteTrigger,
+    NamespaceSummary,
     Page,
     RelationStatus,
     RememberResult,
@@ -298,3 +299,6 @@ class MemoryService:
 
     def related_to(self, memory_id: str, **kwargs) -> tuple[MemoryRelation, ...]:
         return self._repo.related_to(memory_id, **kwargs)
+
+    def namespace_summary(self, *, limit: int) -> tuple[NamespaceSummary, ...]:
+        return self._repo.namespace_summary(limit=limit)

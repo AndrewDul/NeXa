@@ -361,5 +361,86 @@ class TestHardDeleteFkBehavior(_RepoTestCase):
         self.assertEqual(c_after.content, "C")
 
 
+class TestNamespaceSummary(_RepoTestCase):
+    """R0075 §0A / §7: Knowledge Awareness discovery must be one bounded
+    SQL aggregate, never N+1, never load record content/payload."""
+
+    def test_bounded_by_limit(self) -> None:
+        for i in range(10):
+            self.repo.insert_record(_rec(namespace=f"ns{i}", content=f"x{i}"))
+        self.conn.commit()
+        summaries = self.repo.namespace_summary(limit=3)
+        self.assertEqual(len(summaries), 3)
+
+    def test_ordered_most_recent_first(self) -> None:
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        self.repo.insert_record(_rec(namespace="old.ns", when=base))
+        self.repo.insert_record(_rec(namespace="new.ns", when=base + timedelta(days=1)))
+        self.conn.commit()
+        summaries = self.repo.namespace_summary(limit=10)
+        self.assertEqual(summaries[0].namespace, "new.ns")
+        self.assertEqual(summaries[1].namespace, "old.ns")
+
+    def test_record_count_and_freshest_correct(self) -> None:
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        self.repo.insert_record(_rec(namespace="ns", when=base))
+        self.repo.insert_record(_rec(namespace="ns", when=base + timedelta(hours=1)))
+        self.repo.insert_record(_rec(namespace="ns", when=base + timedelta(hours=2)))
+        self.conn.commit()
+        summary = self.repo.namespace_summary(limit=10)[0]
+        self.assertEqual(summary.namespace, "ns")
+        self.assertEqual(summary.record_count, 3)
+        self.assertEqual(summary.freshest, base + timedelta(hours=2))
+
+    def test_mixed_eligibility_collapses_to_most_restrictive(self) -> None:
+        self.repo.insert_record(
+            _rec(namespace="mixed.ns", cloud_eligibility=CloudEligibility.CLOUD_SAFE)
+        )
+        self.repo.insert_record(
+            _rec(namespace="mixed.ns", cloud_eligibility=CloudEligibility.LOCAL_ONLY)
+        )
+        self.conn.commit()
+        summary = self.repo.namespace_summary(limit=10)[0]
+        self.assertEqual(summary.cloud_eligibility, CloudEligibility.LOCAL_ONLY)
+
+    def test_only_active_records_counted(self) -> None:
+        self.repo.insert_record(_rec(namespace="ns", status=MemoryStatus.ACTIVE))
+        self.repo.insert_record(_rec(namespace="ns", status=MemoryStatus.RETRACTED))
+        self.repo.insert_record(_rec(namespace="ns", status=MemoryStatus.SUPERSEDED))
+        self.conn.commit()
+        summary = self.repo.namespace_summary(limit=10)[0]
+        self.assertEqual(summary.record_count, 1)
+
+    def test_exactly_one_sql_statement_no_n_plus_1(self) -> None:
+        for i in range(15):
+            self.repo.insert_record(_rec(namespace=f"ns{i}", content=f"x{i}"))
+        self.conn.commit()
+        statements: list[str] = []
+        self.conn.set_trace_callback(lambda sql: statements.append(sql))
+        try:
+            self.repo.namespace_summary(limit=5)
+        finally:
+            self.conn.set_trace_callback(None)
+        self.assertEqual(len(statements), 1, "namespace_summary must be exactly one SQL statement")
+
+    def test_never_selects_content_or_payload(self) -> None:
+        self.repo.insert_record(_rec(namespace="ns", content="SECRET CONTENT SHOULD NOT LEAK"))
+        self.conn.commit()
+        statements: list[str] = []
+        self.conn.set_trace_callback(lambda sql: statements.append(sql))
+        try:
+            self.repo.namespace_summary(limit=5)
+        finally:
+            self.conn.set_trace_callback(None)
+        sql_text = statements[0].lower()
+        self.assertNotIn("m.content", sql_text)
+        self.assertNotIn(" content,", sql_text)
+        self.assertNotIn("payload_json", sql_text)
+
+    def test_limit_still_validated(self) -> None:
+        with self.assertRaises(MemoryValidationError):
+            self.repo.namespace_summary(limit=99999)
+
+
 if __name__ == "__main__":
     unittest.main()

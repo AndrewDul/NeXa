@@ -15,7 +15,11 @@ SRC = REPO_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from nexa.core.privacy import CloudEligibility, filter_cloud_safe  # noqa: E402
+from nexa.core.privacy import (  # noqa: E402
+    CloudEligibility,
+    filter_cloud_safe,
+    most_restrictive_cloud_eligibility,
+)
 from nexa.realtime.privacy import CloudEligibility as ReexportedCloudEligibility  # noqa: E402
 from nexa.realtime.privacy import filter_cloud_safe as reexported_filter_cloud_safe  # noqa: E402
 
@@ -30,6 +34,57 @@ class TestCanonicalLocation(unittest.TestCase):
     def test_filter_cloud_safe_works_from_canonical_location(self) -> None:
         facts = [("safe", CloudEligibility.CLOUD_SAFE), ("not safe", CloudEligibility.LOCAL_ONLY)]
         self.assertEqual(filter_cloud_safe(facts), ("safe",))
+
+
+class TestMostRestrictiveCloudEligibility(unittest.TestCase):
+    def test_local_only_wins_over_everything(self) -> None:
+        self.assertEqual(
+            most_restrictive_cloud_eligibility(
+                [CloudEligibility.CLOUD_SAFE, CloudEligibility.LOCAL_ONLY,
+                 CloudEligibility.CLOUD_WITH_USER_APPROVAL]
+            ),
+            CloudEligibility.LOCAL_ONLY,
+        )
+
+    def test_approval_wins_over_safe(self) -> None:
+        self.assertEqual(
+            most_restrictive_cloud_eligibility(
+                [CloudEligibility.CLOUD_SAFE, CloudEligibility.CLOUD_WITH_USER_APPROVAL]
+            ),
+            CloudEligibility.CLOUD_WITH_USER_APPROVAL,
+        )
+
+    def test_all_safe_stays_safe(self) -> None:
+        self.assertEqual(
+            most_restrictive_cloud_eligibility(
+                [CloudEligibility.CLOUD_SAFE, CloudEligibility.CLOUD_SAFE]
+            ),
+            CloudEligibility.CLOUD_SAFE,
+        )
+
+    def test_single_value(self) -> None:
+        self.assertEqual(
+            most_restrictive_cloud_eligibility([CloudEligibility.CLOUD_WITH_USER_APPROVAL]),
+            CloudEligibility.CLOUD_WITH_USER_APPROVAL,
+        )
+
+    def test_empty_input_is_conservatively_local_only(self) -> None:
+        self.assertEqual(most_restrictive_cloud_eligibility([]), CloudEligibility.LOCAL_ONLY)
+
+    def test_never_relies_on_enum_declaration_order(self) -> None:
+        """Precedence is an explicit map, not member-declaration order --
+        this test would still pass even if CloudEligibility's members were
+        declared in a different order in the source file."""
+        members_in_declared_order = list(CloudEligibility)
+        self.assertNotEqual(
+            most_restrictive_cloud_eligibility(members_in_declared_order),
+            members_in_declared_order[-1],
+            "must not accidentally depend on declaration order",
+        )
+        self.assertEqual(
+            most_restrictive_cloud_eligibility(members_in_declared_order),
+            CloudEligibility.LOCAL_ONLY,
+        )
 
 
 class TestReexportCompatibility(unittest.TestCase):

@@ -183,6 +183,21 @@ class RememberResult:
     was_new_memory: bool
 
 
+@dataclass(frozen=True, slots=True)
+class NamespaceSummary:
+    """Cheap, bounded, ACTIVE-only knowledge-awareness metadata for one
+    namespace — never the underlying record content (R0075). Produced by
+    :meth:`~nexa.core.memory.repository.MemoryRepository.namespace_summary`,
+    one bounded SQL aggregate, no N+1, no ``content``/``payload_json``
+    crossing into Python. ``cloud_eligibility`` is already collapsed via
+    :func:`~nexa.core.privacy.most_restrictive_cloud_eligibility`."""
+
+    namespace: str
+    record_count: int
+    freshest: datetime
+    cloud_eligibility: CloudEligibility
+
+
 T = TypeVar("T")
 
 

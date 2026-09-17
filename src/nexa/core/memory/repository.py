@@ -14,7 +14,7 @@ import sqlite3
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 
-from ..privacy import CloudEligibility
+from ..privacy import CloudEligibility, most_restrictive_cloud_eligibility
 from ..storage.sqlite import bootstrap_component
 from .models import (
     MemoryCategory,
@@ -23,6 +23,7 @@ from .models import (
     MemoryRecord,
     MemoryRelation,
     MemoryStatus,
+    NamespaceSummary,
     Page,
     RelationStatus,
 )
@@ -484,3 +485,59 @@ class MemoryRepository:
             (*params, limit),
         ).fetchall()
         return tuple(_row_to_relation(r) for r in rows)
+
+    def namespace_summary(self, *, limit: int) -> tuple[NamespaceSummary, ...]:
+        """Knowledge Awareness metadata (R0075 §7/§0A): the top ``limit``
+        ACTIVE namespaces by recency, each with a record count, freshest
+        ``updated_at``, and an already-collapsed most-restrictive
+        ``cloud_eligibility`` — ONE bounded SQL statement (a CTE that
+        selects the top namespaces first, then aggregates only within
+        them), never a full unbounded ``GROUP BY`` over every namespace in
+        the table, never ``content``/``payload_json``, never one query per
+        namespace."""
+        validate_limit(limit)
+        rows = self._conn.execute(
+            """
+            WITH top_namespaces AS (
+                SELECT namespace, MAX(updated_at) AS freshest
+                FROM memory_records
+                WHERE status = ?
+                GROUP BY namespace
+                ORDER BY freshest DESC, namespace ASC
+                LIMIT ?
+            )
+            SELECT m.namespace AS namespace, m.cloud_eligibility AS cloud_eligibility,
+                   COUNT(*) AS record_count, MAX(m.updated_at) AS freshest,
+                   t.freshest AS namespace_freshest
+            FROM memory_records AS m
+            JOIN top_namespaces AS t ON t.namespace = m.namespace
+            WHERE m.status = ?
+            GROUP BY m.namespace, m.cloud_eligibility
+            ORDER BY t.freshest DESC, m.namespace ASC
+            """,
+            (MemoryStatus.ACTIVE.value, limit, MemoryStatus.ACTIVE.value),
+        ).fetchall()
+
+        by_namespace: dict[str, list[sqlite3.Row]] = {}
+        order: list[str] = []
+        for row in rows:
+            ns = row["namespace"]
+            if ns not in by_namespace:
+                by_namespace[ns] = []
+                order.append(ns)
+            by_namespace[ns].append(row)
+
+        summaries = []
+        for ns in order:
+            group = by_namespace[ns]
+            summaries.append(
+                NamespaceSummary(
+                    namespace=ns,
+                    record_count=sum(r["record_count"] for r in group),
+                    freshest=_parse_iso(group[0]["namespace_freshest"]),
+                    cloud_eligibility=most_restrictive_cloud_eligibility(
+                        CloudEligibility(r["cloud_eligibility"]) for r in group
+                    ),
+                )
+            )
+        return tuple(summaries)

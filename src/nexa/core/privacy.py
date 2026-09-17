@@ -53,3 +53,32 @@ def filter_cloud_safe(facts: Iterable[tuple[str, CloudEligibility]]) -> tuple[st
     produced the fact, not to this filter.
     """
     return tuple(text for text, eligibility in facts if eligibility is CloudEligibility.CLOUD_SAFE)
+
+
+#: Explicit conservative precedence -- "more restrictive wins". Never rely on
+#: enum declaration order or string ordering to decide this (R0075 §12/§9):
+#: a silent reordering of the enum body must never change this ranking.
+_RESTRICTIVENESS = {
+    CloudEligibility.CLOUD_SAFE: 0,
+    CloudEligibility.CLOUD_WITH_USER_APPROVAL: 1,
+    CloudEligibility.LOCAL_ONLY: 2,
+}
+
+
+def most_restrictive_cloud_eligibility(values: Iterable[CloudEligibility]) -> CloudEligibility:
+    """The most restrictive of ``values``, by the explicit precedence
+    ``LOCAL_ONLY > CLOUD_WITH_USER_APPROVAL > CLOUD_SAFE``.
+
+    Used to derive an aggregate eligibility for a *group* of facts/records
+    (e.g. a Knowledge Awareness descriptor summarising a whole namespace,
+    R0075) from the individual eligibilities of what it summarises — even
+    the *existence* of a domain can be sensitive, so the aggregate must be
+    at least as restrictive as its most restrictive member.
+
+    An empty ``values`` conservatively returns ``LOCAL_ONLY`` — absence of
+    information is never treated as permission to share.
+    """
+    values = tuple(values)
+    if not values:
+        return CloudEligibility.LOCAL_ONLY
+    return max(values, key=lambda v: _RESTRICTIVENESS[v])
