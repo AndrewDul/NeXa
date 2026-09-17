@@ -43,9 +43,9 @@ instruction:
    canonical size bound for a comparable concern) as its default rather
    than inventing a new number; an oversized current turn raises
    `ContextBuildError`, never silently truncated.
-6. **170 new tests** across 5 files (below), all passing on first
-   green run after fixing 3 real bugs found by testing against actual
-   objects (not mocks) — see "Bugs found and fixed."
+6. **91 new/changed tests** across 6 files (below), all passing after
+   fixing 3 real bugs found by testing against actual objects (not
+   mocks) — see "Bugs found and fixed."
 7. Full regression suite, `ruff`, `py_compile`, `git diff --check`.
 8. This report, ADR-0006, `CURRENT_STATE.md`/`ROADMAP.md` updates.
 

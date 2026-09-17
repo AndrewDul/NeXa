@@ -3,38 +3,56 @@
 Short operational truth. Keep this file current after every meaningful task.
 Runtime / test evidence outranks anything else in this repo.
 
-## Current checkpoint — R0076, 2026-09-17
+## Current checkpoint — R0077, 2026-09-17
 
-**M3.3 Context Engine + Knowledge Awareness = PASS / COMPLETE (foundation
-only, not yet wired into any runtime path).** `nexa.core.context.ContextEngine`
-— one canonical selection/composition/retrieval orchestrator, reading
-Identity (M3.1), Memory (M3.2), and `ConversationSession` without owning
-any of them. Knowledge Awareness (`KnowledgeDescriptor`, live-queried via
-one bounded `namespace_summary()` SQL aggregate — never a second cached
-store) lets NeXa represent "loaded now" vs. "known to exist elsewhere" vs.
-"don't know" (`UNKNOWN`) vs. "checked, found nothing" (`NO_MATCH`) vs.
-"known but unreachable"/"permission needed" as genuinely distinct,
-type-enforced states. Teacher/LiFeOS/Projects domains work through the one
-generic `MemoryRetriever` with zero domain-specific engine code, verified
-by test, not asserted. `RETRACTED` memory is structurally excluded (no
-`statuses` field exists on the retrieval contract at all). Cloud
-projection (`nexa.realtime.context_projection.to_cloud_snapshot`) lives
-outside Core and reuses the existing M3.1/M3.2 privacy filtering
-unmodified — `nexa.core` still has zero imports from `nexa.realtime`
-(the pre-existing M3.2 full-tree test still passes). 91 new tests PASS;
-full suite 1355 passed / 7 skipped / 1 known pre-existing unrelated
+**M3.3 Context Engine + Knowledge Awareness: foundation = COMPLETE (R0076);
+runtime integration = LOCAL WIRED, CLOUD AUDITED-NOT-WIRED (R0077).**
+`nexa.core.context.ContextEngine` — one canonical selection/composition/
+retrieval orchestrator over Identity (M3.1), Memory (M3.2), and
+`ConversationSession`, never owning any of them.
+
+**Local typed path (`apps/nexa_chat.py`): WIRED and exercised.**
+`derive_context_request()` turns a real user turn into lexical
+`subject_hints` (no hardcoded domain mapping, e.g. `"python"` naturally
+matches namespace `teacher.python` through generic substring matching,
+never an `if "python": ...`) — proven by real tests: NeXa-project recall
+and Teacher-skill recall both work from natural phrasing with **no**
+explicit `domain_hint`, unrelated domains stay excluded, identity/current-
+turn/history are never duplicated, `LOCAL_ONLY` memory may be used
+locally, dynamic mid-session knowledge is usable the very next turn (no
+restart), and a Context Engine failure degrades safely (logged, never
+crashes, history stays intact). One real end-to-end turn was exercised
+against live Ollama. Context Engine's own overhead: ~1.4ms average
+(250 records / 50 namespaces) — negligible next to any model call.
+
+**Cloud realtime path: audited, adapter built + fully tested, NOT wired.**
+The accepted, frozen simplified cloud voice path
+(`apps/nexa_cloud_voice_simple.py` / `nexa.realtime.gemini.simple_conversation`,
+R0071) builds its one `CloudContextSnapshot` **before any conversation
+turn exists** — confirmed by direct source read, not assumption.
+`ContextEngine` structurally requires a current turn, so wiring it into
+that exact call site would be a proven no-op (verified: byte-identical
+output). Per instruction, this is reported as the correct outcome of the
+audit — `apps/nexa_cloud_voice_simple.py` and `simple_conversation.py`
+remain **completely untouched**, zero lines changed. No real-hardware
+voice acceptance was attempted this checkpoint (no hardware in this
+environment) — not claimed.
+
+Knowledge Awareness distinctions (`UNKNOWN`/`NO_MATCH`/`UNAVAILABLE`/
+`PERMISSION_REQUIRED`), `RETRACTED` exclusion, and the
+`nexa.core -> never nexa.realtime` invariant all remain unchanged and
+re-verified. 44 new/changed tests (72 total across touched files) PASS;
+full suite 1399 passed / 7 skipped / 1 known pre-existing unrelated
 failure (paused R0068-R0070 `scheduled_aec_reference` field, still
-untouched). **Not wired into any production path** — no app entrypoint
-calls `ContextEngine` yet; the accepted cloud voice pipeline (R0071) was
-not touched. See `docs/decisions/ADR-0006_context_engine_knowledge_awareness_boundary.md`,
+untouched). See
+`docs/reports/R0077_m3_3_runtime_integration_20260917.md`,
+`docs/decisions/ADR-0006_context_engine_knowledge_awareness_boundary.md`,
 `docs/reports/R0075_m3_3_context_engine_knowledge_awareness_design_20260916.md`
 (design, 3 revisions),
 `docs/reports/R0076_m3_3_context_engine_knowledge_awareness_implementation_20260917.md`.
 
 **Project priority: M3.4 Personality + Relationship — proposed next, not
-started.** Alternatively, a scoped runtime-wiring follow-up (Context
-Engine into `bootstrap.py` / cloud snapshot builder) is available; not
-started either way, gated on review.
+started.**
 
 **Cloud realtime conversation baseline = ACCEPTED / FROZEN** (R0071,
 unchanged this checkpoint, not the active task). M2.6B dual-pipeline path
@@ -43,7 +61,7 @@ remains PAUSED, unchanged. See
 
 ---
 
-- **Last verified:** 2026-09-17 (R0076 — M3.3 Context Engine + Knowledge Awareness)
+- **Last verified:** 2026-09-17 (R0077 — M3.3 runtime integration: local wired, cloud audited-not-wired)
 - **Repository:** `AndrewDul/NeXa` (`https://github.com/AndrewDul/NeXa.git`)
 - **Local workspace:** `/home/devdul/Projects/NeXa_IkiGai`
 - **Branch:** `main` — see `git log -1` for the current hash (not pushed)

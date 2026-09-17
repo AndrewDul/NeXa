@@ -7,6 +7,7 @@ by :class:`~nexa.core.context.models.ContextBudget`.
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 
 from ...conversation.turn import ConversationTurn, Role
@@ -54,6 +55,7 @@ class ContextEngine:
         self._retrievers_by_kind = {r.source_kind: r for r in retrievers}
 
     def build_context(self, request: ContextRequest) -> CurrentTurnContext:
+        build_start = time.monotonic()
         budget = request.budget or ContextBudget()
         current_turn, conversation_window = self._mandatory_turns(request, budget)
 
@@ -62,7 +64,9 @@ class ContextEngine:
             f"temporal={request.temporal_intent.value}"
         )
 
+        discovery_start = time.monotonic()
         all_descriptors = self._discover(request)
+        discovery_ms = (time.monotonic() - discovery_start) * 1000
         capped_descriptors = all_descriptors[: budget.max_knowledge_references]
         omitted_descriptor_count = max(0, len(all_descriptors) - len(capped_descriptors))
 
@@ -73,6 +77,9 @@ class ContextEngine:
                 candidate_descriptor_ids=tuple(d.id for d in all_descriptors),
                 budget_used={"items": 0, "content_chars": 0, "rounds": 0},
                 omitted_descriptor_count=omitted_descriptor_count,
+                discovery_ms=discovery_ms,
+                retrieval_ms=0.0,
+                total_ms=(time.monotonic() - build_start) * 1000,
             )
             return CurrentTurnContext(
                 identity=self._identity,
@@ -94,9 +101,11 @@ class ContextEngine:
                 for i, hint in enumerate(hints)
             )
 
+        retrieval_start = time.monotonic()
         selected_items, retrieval_attempts, retrieval_gaps, rounds = self._retrieve(
             capped_descriptors, request, budget
         )
+        retrieval_ms = (time.monotonic() - retrieval_start) * 1000
         knowledge_gaps.extend(retrieval_gaps)
 
         selected_items.sort(key=lambda i: (i.freshness or _MIN_DATETIME, i.source_id), reverse=True)
@@ -118,6 +127,9 @@ class ContextEngine:
             conflict_ids=tuple(c.id for c in conflicts),
             gap_ids=tuple(g.id for g in knowledge_gaps),
             omitted_descriptor_count=omitted_descriptor_count,
+            discovery_ms=discovery_ms,
+            retrieval_ms=retrieval_ms,
+            total_ms=(time.monotonic() - build_start) * 1000,
         )
 
         return CurrentTurnContext(

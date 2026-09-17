@@ -217,6 +217,12 @@ class ContextBuildTrace:
     conflict_ids: tuple[str, ...] = field(default_factory=tuple)
     gap_ids: tuple[str, ...] = field(default_factory=tuple)
     omitted_descriptor_count: int = 0
+    #: Lightweight latency observability (R0077 §17) -- wall-clock
+    #: milliseconds for each pipeline phase, never raw content. No
+    #: telemetry framework: a few time.monotonic() calls in ContextEngine.
+    discovery_ms: float = 0.0
+    retrieval_ms: float = 0.0
+    total_ms: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

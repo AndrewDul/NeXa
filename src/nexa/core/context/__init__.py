@@ -10,6 +10,7 @@ lives outside Core, in ``nexa.realtime.context_projection``.
 
 from __future__ import annotations
 
+from .derivation import derive_context_request, derive_subject_hints
 from .engine import ContextBuildError, ContextEngine
 from .memory_retriever import MemoryRetriever
 from .models import (
@@ -37,6 +38,8 @@ from .retrieval import ContextRetriever, RetrievalNotSupportedError, RetrievalQu
 __all__ = [
     "ContextEngine",
     "ContextBuildError",
+    "derive_context_request",
+    "derive_subject_hints",
     "ContextRetriever",
     "RetrievalNotSupportedError",
     "RetrievalQuery",

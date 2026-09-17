@@ -1850,29 +1850,46 @@ revisions). Implementation: `docs/reports/R0074_m3_2_memory_foundation_implement
 
 ### M3.3 — Context Engine + Knowledge Awareness
 
-**STATUS: COMPLETE — foundation only, not yet wired into any runtime path**
-(R0076, 2026-09-17). Supersedes the earlier "M3 — Robust Context" framing
-below. `nexa.core.context.ContextEngine`: one canonical selection/
-composition/retrieval orchestrator over Identity (M3.1), Memory (M3.2),
-and `ConversationSession` — never a second memory store, never provider-
-specific. Knowledge Awareness (`KnowledgeDescriptor`, live-queried, never
-cached into a duplicate store) distinguishes "loaded now" /
-"known to exist elsewhere" / "don't know" (`UNKNOWN`) / "checked, found
-nothing" (`NO_MATCH`) / "known but unreachable or permission-gated" as
-type-enforced states, preventing the collapse of these into
-indistinguishable silence. Teacher/LiFeOS/Projects domains work through
-one generic `MemoryRetriever` with zero domain-specific engine code
-(verified by test). `RETRACTED` memory is structurally unreachable through
-the retrieval contract. Cloud projection
-(`nexa.realtime.context_projection.to_cloud_snapshot`) lives outside Core,
-reusing existing M3.1/M3.2 privacy filtering unmodified —
-`nexa.core -> never nexa.realtime` still holds. **Not wired into
-`bootstrap.py` or the accepted cloud voice path (R0071, untouched)** —
-that is deliberately deferred follow-up work, not part of this milestone.
+**STATUS: foundation COMPLETE (R0076); runtime integration LOCAL WIRED,
+CLOUD AUDITED-NOT-WIRED (R0077, 2026-09-17).** Supersedes the earlier
+"M3 — Robust Context" framing below. `nexa.core.context.ContextEngine`:
+one canonical selection/composition/retrieval orchestrator over Identity
+(M3.1), Memory (M3.2), and `ConversationSession` — never a second memory
+store, never provider-specific. Knowledge Awareness (`KnowledgeDescriptor`,
+live-queried, never cached into a duplicate store) distinguishes "loaded
+now" / "known to exist elsewhere" / "don't know" (`UNKNOWN`) / "checked,
+found nothing" (`NO_MATCH`) / "known but unreachable or permission-gated"
+as type-enforced states. Teacher/LiFeOS/Projects domains work through one
+generic `MemoryRetriever` with zero domain-specific engine code (verified
+by test). `RETRACTED` memory is structurally unreachable through the
+retrieval contract. `nexa.core -> never nexa.realtime` still holds.
+
+**Local typed path (`apps/nexa_chat.py`) is wired and exercised**:
+`nexa.core.context.derivation.derive_context_request()` turns a real user
+turn into lexical hints (no hardcoded domain mapping — generic substring
+matching against real namespace strings); natural NeXa-project and
+Teacher-skill recall both proven to work with no explicit `domain_hint`;
+identity/current-turn/history never duplicated; dynamic mid-session
+knowledge usable next turn with no restart; Context Engine failures
+degrade safely (logged, never crash). One real turn exercised against
+live Ollama; isolated engine overhead measured at ~1.4ms (250 records/50
+namespaces) — negligible next to any model call.
+
+**Cloud realtime path: audited, adapter built and fully tested, but NOT
+wired.** The accepted, frozen simplified cloud voice path (R0071) builds
+its one `CloudContextSnapshot` before any conversation turn exists
+(confirmed by source read) — `ContextEngine` structurally requires a
+current turn, so wiring in there would be a proven no-op (verified
+byte-identical). `apps/nexa_cloud_voice_simple.py` and
+`nexa.realtime.gemini.simple_conversation` remain completely untouched.
+No real-hardware voice acceptance was attempted (no hardware available in
+this environment) — not claimed as performed.
+
 See ADR-0006 (`docs/decisions/ADR-0006_context_engine_knowledge_awareness_boundary.md`),
 design: `docs/reports/R0075_m3_3_context_engine_knowledge_awareness_design_20260916.md`
-(3 revisions), implementation:
-`docs/reports/R0076_m3_3_context_engine_knowledge_awareness_implementation_20260917.md`.
+(3 revisions), foundation implementation:
+`docs/reports/R0076_m3_3_context_engine_knowledge_awareness_implementation_20260917.md`,
+runtime integration: `docs/reports/R0077_m3_3_runtime_integration_20260917.md`.
 
 ### M3.4 — Personality + Relationship
 

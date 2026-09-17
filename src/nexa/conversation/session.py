@@ -19,8 +19,9 @@ model replied, nothing else.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
@@ -92,9 +93,16 @@ class ConversationSession:
     def history(self) -> tuple[ConversationTurn, ...]:
         return tuple(self._history)
 
-    def build_context(self) -> ConversationContext:
+    def build_context(self, *, system_prompt_override: str | None = None) -> ConversationContext:
+        """``system_prompt_override`` (M3.3, R0077): render with a
+        different system-prompt string for THIS call only — never stored
+        on the session. Used to append a bounded Context Engine addendum
+        (see ``nexa.conversation.context_projection``) without touching
+        ``self.system_prompt`` (identity/persona composed once in
+        ``bootstrap.py``, unchanged) or duplicating anything already
+        rendered from ``self._history`` below."""
         return ConversationContext.build(
-            self.system_prompt,
+            system_prompt_override if system_prompt_override is not None else self.system_prompt,
             self._history,
             max_turns=self.max_turns,
             max_chars=self.max_chars,
@@ -206,6 +214,7 @@ class ConversationSession:
         cancel_token: CancelToken | None = None,
         response_mode: ResponseMode = ResponseMode.TEXT,
         response_language: str | None = None,
+        context_provider: Callable[[ConversationSession], str | None] | None = None,
     ) -> AsyncIterator[str]:
         """``response_mode`` (M2.4B.3.3) is a transient presentation hint —
         ``VOICE`` adds one constant "speak conversationally" system message
@@ -220,14 +229,54 @@ class ConversationSession:
         wire-level only — never stored in history.
 
         ``TEXT`` + no ``response_language`` is byte-for-byte the pre-B.3.3
-        path."""
+        path.
+
+        ``context_provider`` (M3.3, R0077) — an optional callable invoked
+        with ``self`` immediately AFTER the current user turn is appended
+        below (so it may safely assume ``self.history[-1]`` is the current
+        USER turn) and BEFORE the provider is called. Returns an optional
+        extra system-prompt string appended for THIS turn only — never
+        stored, never persisted. A plain callable, not a Context Engine
+        import: ``nexa.core.context`` already depends on
+        ``ConversationSession``, so importing it back here would be
+        circular; this keeps ``ConversationSession`` exactly what it
+        already is (the canonical transcript authority) with one small,
+        optional hook, not a new dependency. Only honored on the
+        non-``provider_window`` path (the local typed-chat path this was
+        built for) — the KV-cache ``provider_window`` path (M2.5B.2,
+        voice) is unaffected, unchanged, not wired in R0077.
+
+        Fails safe, not loud: if ``context_provider`` raises, the turn
+        proceeds without extra context (logged, never silent) — a Context
+        Engine/Memory problem must never crash the conversation or leave
+        ``self._history`` in a partial state."""
         self._history.append(ConversationTurn(role=Role.USER, content=user_text))
         self._response_languages.append(response_language)
 
         if self.provider_window is not None:
             messages = self._render_provider_window(response_mode)
         else:
-            context = self.build_context()
+            extra_system_context: str | None = None
+            if context_provider is not None:
+                start = time.monotonic()
+                try:
+                    extra_system_context = context_provider(self)
+                except Exception:
+                    logger.warning(
+                        "nexa.conversation: context_provider raised for this turn -- "
+                        "continuing WITHOUT extra context (fail-safe by design, R0077)",
+                        exc_info=True,
+                    )
+                else:
+                    logger.debug(
+                        "nexa.conversation: context_provider took %.1fms",
+                        (time.monotonic() - start) * 1000,
+                    )
+            system_prompt_override = (
+                self.system_prompt if extra_system_context is None
+                else f"{self.system_prompt}\n\n{extra_system_context}"
+            )
+            context = self.build_context(system_prompt_override=system_prompt_override)
             messages = context.to_provider_messages(response_mode=response_mode)
 
         raw_stream = self.provider.generate(messages, self.options, cancel_token=cancel_token)

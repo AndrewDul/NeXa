@@ -283,5 +283,74 @@ class TestResponseLanguageMirroring(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("Respond to this message", turn.content)
 
 
+class TestContextProviderHook(unittest.IsolatedAsyncioTestCase):
+    """M3.3 (R0077) — the ``context_provider`` hook on ``send()``, tested
+    in isolation from any real Context Engine (see
+    ``tests/test_conversation_context_projection.py`` for the full
+    integration)."""
+
+    async def test_default_is_byte_identical_to_pre_r0077(self) -> None:
+        provider = FakeModelProvider([["ok"]])
+        session = ConversationSession(provider=provider, system_prompt=SYSTEM_PROMPT)
+
+        await _drain(session.send("hello"))
+
+        self.assertEqual(provider.calls[0][0].content, SYSTEM_PROMPT)
+
+    async def test_context_provider_receives_session_after_turn_appended(self) -> None:
+        observed: list[str] = []
+
+        def _provider(session: ConversationSession) -> str | None:
+            observed.append(session.history[-1].content)
+            return None
+
+        provider = FakeModelProvider([["ok"]])
+        session = ConversationSession(provider=provider, system_prompt=SYSTEM_PROMPT)
+
+        await _drain(session.send("hello", context_provider=_provider))
+
+        self.assertEqual(observed, ["hello"])
+
+    async def test_context_provider_addendum_appended_to_system_prompt(self) -> None:
+        provider = FakeModelProvider([["ok"]])
+        session = ConversationSession(provider=provider, system_prompt=SYSTEM_PROMPT)
+
+        await _drain(session.send("hello", context_provider=lambda s: "extra context block"))
+
+        self.assertIn(SYSTEM_PROMPT, provider.calls[0][0].content)
+        self.assertIn("extra context block", provider.calls[0][0].content)
+
+    async def test_context_provider_none_return_leaves_prompt_unchanged(self) -> None:
+        provider = FakeModelProvider([["ok"]])
+        session = ConversationSession(provider=provider, system_prompt=SYSTEM_PROMPT)
+
+        await _drain(session.send("hello", context_provider=lambda s: None))
+
+        self.assertEqual(provider.calls[0][0].content, SYSTEM_PROMPT)
+
+    async def test_context_provider_exception_does_not_crash_or_corrupt_history(self) -> None:
+        def _broken(session: ConversationSession) -> str | None:
+            raise RuntimeError("boom")
+
+        provider = FakeModelProvider([["ok"]])
+        session = ConversationSession(provider=provider, system_prompt=SYSTEM_PROMPT)
+
+        result = await _drain(session.send("hello", context_provider=_broken))
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(len(session.history), 2)
+        self.assertEqual(provider.calls[0][0].content, SYSTEM_PROMPT)
+
+    async def test_extra_context_never_stored_in_history(self) -> None:
+        provider = FakeModelProvider([["ok"]])
+        session = ConversationSession(provider=provider, system_prompt=SYSTEM_PROMPT)
+
+        await _drain(session.send("hello", context_provider=lambda s: "SECRET-ADDENDUM"))
+
+        for turn in session.history:
+            self.assertNotIn("SECRET-ADDENDUM", turn.content)
+        self.assertNotIn("SECRET-ADDENDUM", session.system_prompt)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -30,7 +30,10 @@ from nexa.core.memory.service import MemoryService  # noqa: E402
 from nexa.core.privacy import CloudEligibility  # noqa: E402
 from nexa.core.storage.sqlite import connect  # noqa: E402
 from nexa.providers.base import GenerationOptions  # noqa: E402
-from nexa.realtime.context_projection import to_cloud_snapshot  # noqa: E402
+from nexa.realtime.context_projection import (  # noqa: E402
+    make_cloud_snapshot_builder,
+    to_cloud_snapshot,
+)
 from nexa.realtime.snapshot import CloudContextSnapshot, build_cloud_context_snapshot  # noqa: E402
 
 
@@ -178,6 +181,122 @@ class TestEquivalenceWithDirectCall(unittest.TestCase):
             tmp.cleanup()
 
         self.assertEqual(direct.system_instruction, via_projection.system_instruction)
+
+
+class _CloudBuilderTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.conn = connect(Path(self._tmp.name) / "core.sqlite3")
+        self.service = MemoryService(MemoryRepository(self.conn))
+        self.retriever = MemoryRetriever(self.service)
+        self.identity = load_identity()
+        self.engine = ContextEngine(identity=self.identity, retrievers=(self.retriever,))
+        self.builder = make_cloud_snapshot_builder(self.engine)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self._tmp.cleanup()
+
+    def _remember(self, content: str, eligibility: CloudEligibility) -> None:
+        self.service.remember(
+            MemoryWriteTrigger.EXPLICIT_REMEMBER_REQUEST,
+            namespace="projects.nexa", category=MemoryCategory.EPISODE,
+            record_type="decision", content=content,
+            provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT, cloud_eligibility=eligibility,
+        )
+
+
+class TestMakeCloudSnapshotBuilder(_CloudBuilderTestCase):
+    def test_matches_router_seam_call_signature(self) -> None:
+        """R0077 §9: the builder must be callable exactly the way
+        ConversationRouter.__init__'s snapshot_builder parameter calls it:
+        snapshot_builder(session, *, language_preference=None,
+        policy_name="", active_provider_name="")."""
+        session = ConversationSession(
+            provider=None, system_prompt="x", options=GenerationOptions()
+        )
+        snapshot = self.builder(
+            session, language_preference=None, policy_name="cloud_preferred",
+            active_provider_name="cloud",
+        )
+        self.assertIsInstance(snapshot, CloudContextSnapshot)
+
+    def test_empty_history_is_byte_identical_to_unwired_behavior(self) -> None:
+        """R0077 §9 audited finding: the accepted simplified cloud path
+        builds its snapshot before any turn exists -- this MUST be a
+        complete no-op there."""
+        self._remember("would be included if a turn existed", CloudEligibility.CLOUD_SAFE)
+        session = ConversationSession(
+            provider=None, system_prompt="x", options=GenerationOptions()
+        )
+        via_builder = self.builder(
+            session, policy_name="cloud_preferred", active_provider_name="cloud"
+        )
+        direct = build_cloud_context_snapshot(
+            session, policy_name="cloud_preferred", active_provider_name="cloud"
+        )
+        self.assertEqual(via_builder.system_instruction, direct.system_instruction)
+
+    def test_with_current_turn_cloud_safe_crosses(self) -> None:
+        self._remember("Cloud-safe project fact.", CloudEligibility.CLOUD_SAFE)
+        session = ConversationSession(
+            provider=None, system_prompt="x", options=GenerationOptions()
+        )
+        turn = ConversationTurn(role=Role.USER, content="What did we decide about NeXa?")
+        session._history.append(turn)
+        snapshot = self.builder(
+            session, policy_name="cloud_preferred", active_provider_name="cloud"
+        )
+        self.assertIn("Cloud-safe project fact.", snapshot.system_instruction)
+
+    def test_with_current_turn_local_only_never_crosses(self) -> None:
+        self._remember("LOCAL-SECRET-MUST-NOT-CROSS", CloudEligibility.LOCAL_ONLY)
+        session = ConversationSession(
+            provider=None, system_prompt="x", options=GenerationOptions()
+        )
+        turn = ConversationTurn(role=Role.USER, content="What did we decide about NeXa?")
+        session._history.append(turn)
+        snapshot = self.builder(
+            session, policy_name="cloud_preferred", active_provider_name="cloud"
+        )
+        self.assertNotIn("LOCAL-SECRET-MUST-NOT-CROSS", snapshot.system_instruction)
+
+    def test_context_build_failure_falls_back_to_plain_snapshot(self) -> None:
+        class _BrokenEngine:
+            def build_context(self, request):
+                raise RuntimeError("simulated failure")
+
+        broken_builder = make_cloud_snapshot_builder(_BrokenEngine())
+        session = ConversationSession(
+            provider=None, system_prompt="x", options=GenerationOptions()
+        )
+        session._history.append(ConversationTurn(role=Role.USER, content="hi"))
+        # must not raise -- falls back to the plain snapshot
+        snapshot = broken_builder(
+            session, policy_name="cloud_preferred", active_provider_name="cloud"
+        )
+        self.assertIsInstance(snapshot, CloudContextSnapshot)
+
+
+class TestAccpetedCloudPathNotModified(unittest.TestCase):
+    """R0077 §9/§18/§22: the accepted, frozen simplified cloud voice path
+    must remain byte-for-byte untouched -- audited finding: it builds its
+    one snapshot before any turn exists, so Context Engine wiring there
+    would be a structural no-op; this is proven, not assumed."""
+
+    def test_simple_conversation_module_unchanged_construction(self) -> None:
+        source = (
+            SRC / "nexa" / "realtime" / "gemini" / "simple_conversation.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("router = ConversationRouter(session, policy=policy)", source)
+
+    def test_app_entrypoint_still_calls_plain_snapshot_builder(self) -> None:
+        source = (
+            REPO_ROOT / "apps" / "nexa_cloud_voice_simple.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("build_cloud_context_snapshot(", source)
+        self.assertNotIn("make_cloud_snapshot_builder", source)
+        self.assertNotIn("ContextEngine", source)
 
 
 if __name__ == "__main__":

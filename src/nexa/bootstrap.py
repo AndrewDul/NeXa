@@ -22,17 +22,31 @@ M3.1 adds NeXa's Identity root (ADR-0005) to `system_prompt`, composed
 ahead of the existing persona — additive, not a replacement. Identity
 states what NeXa is (stable, immutable); persona stays the conversation
 style layer (how NeXa speaks) — see `nexa.core.identity` / ADR-0005 D2.
+
+M3.3 (R0077) adds `build_default_context_runtime()` — the composition
+root for the long-lived Context Engine objects (SQLite connection,
+`MemoryService`, `ContextEngine`). Deliberately a SEPARATE, opt-in
+function from `build_default_session()`: forcing every existing caller of
+`build_default_session()` (voice probes, tests) to also open a database
+connection would be an unwanted side-effect expansion. A caller that
+wants Context Engine participation (e.g. `apps/nexa_chat.py`) calls both
+and composes them itself — this file is still the one place that decides
+how pieces are assembled, it just offers two, not one, opt-in bundles.
 """
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from dataclasses import dataclass, replace
 
 from .config import load_persona, local_provider_settings_from_env
 from .conversation.response_mode import ResponseMode
 from .conversation.session import ConversationSession
+from .core.context import ContextEngine, MemoryRetriever
 from .core.identity import load_identity, render_identity_instruction
+from .core.memory.service import MemoryService
+from .core.storage.sqlite import connect
 from .providers.ollama import LocalModelProvider
 
 
@@ -51,6 +65,38 @@ def build_default_session() -> ConversationSession:
         provider=provider,
         system_prompt=system_prompt,
         options=persona.options,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextRuntime:
+    """The long-lived objects one process needs for Context Engine
+    participation (R0077 §15) — three named references, no behavior of
+    its own, constructed ONCE at application lifetime. NOT a `NeXaCore`
+    god-object: `MemoryService` stays the memory authority,
+    `ContextEngine` stays selection/orchestration only; this dataclass
+    only avoids reconstructing the SQLite connection/retriever/engine on
+    every turn. Call `connection.close()` at process shutdown."""
+
+    connection: sqlite3.Connection
+    memory_service: MemoryService
+    context_engine: ContextEngine
+
+
+def build_default_context_runtime() -> ContextRuntime:
+    """Opens the default local NeXa Core database
+    (`nexa.core.storage.sqlite.default_db_path()`) and wires
+    `MemoryService` -> `MemoryRetriever` -> `ContextEngine`, reusing the
+    SAME identity `load_identity()` already loads for
+    `build_default_session()` (a cheap, deterministic, pure read — calling
+    it twice is not "two identities", just two equal reads)."""
+    connection = connect()
+    memory_service = MemoryService.from_connection(connection)
+    retriever = MemoryRetriever(memory_service)
+    identity = load_identity()
+    engine = ContextEngine(identity=identity, retrievers=(retriever,))
+    return ContextRuntime(
+        connection=connection, memory_service=memory_service, context_engine=engine
     )
 
 
