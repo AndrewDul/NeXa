@@ -256,6 +256,7 @@ import asyncio
 import math
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -642,10 +643,17 @@ async def run_continuous(
         c_start = start_byte + i * segment_bytes_per_cycle
         c_end = c_start + segment_bytes_per_cycle
         window = captured[c_start:c_end]
+        # R0081 -- explicit, unambiguous field names, per instruction: the
+        # previous "elapsed_playback_s" was actually the cycle's START
+        # offset, not the elapsed time once that cycle's own measurement
+        # had completed -- easy to misread as "elapsed time for this
+        # cycle" when it is really "when this cycle began." cycle_start_s/
+        # cycle_end_s name exactly what they are; PCM slicing itself is
+        # unchanged (c_start/c_end above), only the reported field names.
         cycles_data.append({
             "cycle": i + 1,
-            "source_offset_s": round(i * cycle_s, 2),
-            "elapsed_playback_s": round(i * cycle_s, 2),
+            "cycle_start_s": round(i * cycle_s, 2),
+            "cycle_end_s": round((i + 1) * cycle_s, 2),
             "cumulative_reference_exposure_s": round((i + 1) * cycle_s, 2),
             "mic_window_rms": round(_rms(window), 1),
             "mic_window_peak": _peak(window),
@@ -1402,7 +1410,17 @@ async def _run_track_continuous(args: argparse.Namespace) -> int:
     cycles = args.track_continuous_cycles
     total_s = cycle_s * cycles
 
+    # R0081 -- one run id per invocation (real UTC timestamp, not random --
+    # deterministic/sortable, matches the convention this whole
+    # investigation already uses for saved evidence), so a second
+    # --track-continuous run can never silently overwrite the first run's
+    # raw signal/mic WAV pair. Both files from ONE invocation share this
+    # SAME id. Printed prominently so the operator can associate terminal
+    # output with the saved WAV pair.
+    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
     print("NeXa R0081 — continuous-stream fixed-gain adaptation diagnostic")
+    print(f"  run id: {run_id}")
     print(f"  gain={args.track_gain:g} (fixed, no switching)  amplitude={args.amplitude}  "
           f"stimulus={args.stimulus}")
     print(f"  {cycles} cycles x {cycle_s:g}s = {total_s:g}s continuous playback/reference  "
@@ -1418,7 +1436,10 @@ async def _run_track_continuous(args: argparse.Namespace) -> int:
     )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    label = f"track_continuous_gain{args.track_gain:g}_amp{args.amplitude:g}_{args.stimulus}"
+    label = (
+        f"track_continuous_{run_id}_gain{args.track_gain:g}_amp{args.amplitude:g}_"
+        f"{args.stimulus}"
+    )
     signal_path = OUT_DIR / f"{label}_signal.wav"
     mic_path = OUT_DIR / f"{label}_mic.wav"
     _write_wav(signal_path, result["full_signal"], sample_rate=SAMPLE_RATE)
@@ -1430,11 +1451,10 @@ async def _run_track_continuous(args: argparse.Namespace) -> int:
     if result["reference_clipped_percent"] > 0:
         print("  *** WARNING: reference is CLIPPED -- this run is not valid evidence. ***")
     print()
-    print(f"  {'cycle':>5}  {'src_offset_s':>12}  {'elapsed_s':>10}  {'cum_ref_s':>10}  "
+    print(f"  {'cycle':>5}  {'start_s':>8}  {'end_s':>8}  {'cum_ref_s':>10}  "
           f"{'mic_rms':>8}  {'mic_peak':>9}")
     for c in result["cycles_data"]:
-        print(f"  {c['cycle']:>5}  {c['source_offset_s']:>12.2f}  "
-              f"{c['elapsed_playback_s']:>10.2f}  "
+        print(f"  {c['cycle']:>5}  {c['cycle_start_s']:>8.2f}  {c['cycle_end_s']:>8.2f}  "
               f"{c['cumulative_reference_exposure_s']:>10.2f}  "
               f"{c['mic_window_rms']:>8.1f}  {c['mic_window_peak']:>9}")
 
@@ -1453,8 +1473,9 @@ async def _run_track_continuous(args: argparse.Namespace) -> int:
               f"max mic_window_rms : {max(rms_values):.2f}")
 
     print()
-    print(f"  saved: {signal_path}")
-    print(f"  saved: {mic_path}")
+    print(f"  run id {run_id} -- saved:")
+    print(f"    {signal_path}")
+    print(f"    {mic_path}")
     print()
     print("Interpretation: a progressive cycle-to-cycle decrease supports continuous-"
           "exposure/AEC-adaptation (do not yet claim which internal XVF3800 algorithm). A "
