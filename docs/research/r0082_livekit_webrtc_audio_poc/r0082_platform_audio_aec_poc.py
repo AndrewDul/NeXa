@@ -75,18 +75,26 @@ never ``nexa.*``, ``pipecat.*``, ``google.*``, or ``loguru``.
 
 ## Usage (see R0082's own report for the full protocol; do not run this
 ## against real hardware without reading R0082-A's device-enumeration
-## findings first -- device SELECTION uses a NAME substring match, not a
-## hardcoded index, because R0082-A found `AudioDeviceInfo.id` is EMPTY
-## on this Linux/PipeWire backend, contrary to the SDK's own docstring
-## claim that `id` is generally preferred and stable)
-
-    <isolated-venv>/bin/python3 \\
-        docs/research/r0082_livekit_webrtc_audio_poc/r0082_platform_audio_aec_poc.py \\
-        --aec on --duration 30 --stimulus tones
+## findings first -- device SELECTION resolves by an EXACT case-
+## insensitive name match first, falling back to a substring match only
+## if no exact match exists -- never a hardcoded index. R0082-A found
+## `AudioDeviceInfo.id` is EMPTY on the `PlatformAudio`/PipeWire backend
+## (not used by this script). R0082-B's first real hardware attempt found
+## the raw reSpeaker hw device ("reSpeaker XVF3800 4-Mic Array: USB Audio
+## (hw:3,0)") rejects 48kHz capture, while the ALSA `respeaker` plug alias
+## (a `type plug` wrapper around the SAME physical device, defined in
+## `/etc/asound.conf`) accepts 48kHz via ALSA's own rate conversion --
+## exact-match selection is required because both names contain the
+## substring "respeaker" and are NOT interchangeable. The default
+## ``--input-name`` below now targets the alias exactly.
 
     <isolated-venv>/bin/python3 \\
         docs/research/r0082_livekit_webrtc_audio_poc/r0082_platform_audio_aec_poc.py \\
         --aec off --duration 30 --stimulus tones
+
+    <isolated-venv>/bin/python3 \\
+        docs/research/r0082_livekit_webrtc_audio_poc/r0082_platform_audio_aec_poc.py \\
+        --aec on --duration 30 --stimulus tones
 
 Run ``--aec off`` then ``--aec on`` back to back, same physical volume/
 room/device positions, for a directly comparable A/B pair -- exactly the
@@ -123,10 +131,11 @@ from r0082_audio_utils import (  # noqa: E402  (local, stdlib-only)
 )
 
 try:
+    import sounddevice as sd
     from livekit import rtc
 except ModuleNotFoundError as e:  # pragma: no cover -- environment-dependent, by design
     print(
-        "ERROR: `livekit` is not importable in this Python environment.\n"
+        "ERROR: `livekit`/`sounddevice` is not importable in this Python environment.\n"
         "This script deliberately does NOT run in NeXa's own .venv -- see this "
         "module's own docstring and R0082-A's report for the exact isolated-venv "
         f"install command. ({e})",
@@ -142,31 +151,46 @@ TAIL_S = 1.0
 
 OUT_DIR = Path(__file__).resolve().parent / "r0082_aec_captures"
 
-#: R0082-A: real device names observed on THIS hardware via
-#: `MediaDevices.list_input_devices()`/`list_output_devices()` (PipeWire's
-#: own PulseAudio-compatible naming). Used as a case-insensitive substring
-#: match against each enumerated device's own `name` field at RUNTIME --
-#: never a hardcoded index -- because a fresh enumeration is the only way
-#: to get a name/index pairing that's actually valid for THIS run (index
-#: alone is not guaranteed stable across reconnects/reboots, exactly the
-#: same class of problem /etc/asound.conf's own comment already documents
-#: for the OLD ALSA path).
-DEFAULT_INPUT_NAME_SUBSTRING = "reSpeaker"
+#: R0082-B (this round): the first real hardware attempt found the RAW
+#: reSpeaker hw device ("reSpeaker XVF3800 4-Mic Array: USB Audio
+#: (hw:3,0)") rejects 48kHz capture (`paInvalidSampleRate`, confirmed via
+#: `sd.check_input_settings` -- 16kHz mono/stereo PASS, 48kHz mono/stereo
+#: FAIL). The ALSA `plug:respeaker` alias defined in `/etc/asound.conf`
+#: (a `type plug` wrapper around that SAME physical hw device) DOES accept
+#: 48kHz mono/stereo (confirmed via the same capability probe) -- ALSA's
+#: own `plug` layer rate-converts 48kHz<->16kHz transparently below
+#: PortAudio, before `MediaDevices` (which performs NO resampling of its
+#: own -- confirmed from its installed source) ever sees the stream. The
+#: default below now targets that exact alias name, not the raw hw
+#: device, so the WebRTC APM stays at one uniform 48kHz on both the
+#: forward (capture) and reverse (render) path.
+DEFAULT_INPUT_NAME_SUBSTRING = "respeaker"
 DEFAULT_OUTPUT_NAME_SUBSTRING = "UACDemoV1.0"
 
 
-def _find_device_index(devices: list[dict], name_substring: str, *, role: str) -> int:
-    """Resolve a device `index` by case-insensitive NAME substring match
-    against a freshly-enumerated device list -- never a hardcoded index.
-    Prefers a device whose name starts with "default: " (PipeWire's own
-    marker for the currently-configured default sink/source) if more than
-    one match exists, since that is the one actually wired to the real
-    hardware by the system's own audio-server configuration."""
-    matches = [d for d in devices if name_substring.lower() in str(d.get("name", "")).lower()]
+def _find_device_index(devices: list[dict], name: str, *, role: str) -> int:
+    """Resolve a device `index` by NAME -- never a hardcoded index.
+
+    Tries an EXACT case-insensitive full-name match FIRST. This matters
+    because the ALSA plug alias "respeaker" and the raw hw device
+    "reSpeaker XVF3800 4-Mic Array: USB Audio (hw:3,0)" both contain the
+    substring "respeaker" (case-insensitively) -- a plain substring search
+    cannot distinguish "select the alias" from "select the raw device",
+    and R0082-B's first hardware attempt found they are NOT
+    interchangeable (the raw device rejects 48kHz; the alias accepts it).
+    Only falls back to case-insensitive SUBSTRING matching (preferring a
+    "default: "-prefixed entry when ambiguous -- PipeWire's own
+    convention, seen via `PlatformAudio`, not `MediaDevices`) when no
+    exact match exists."""
+    exact = [d for d in devices if str(d.get("name", "")).lower() == name.lower()]
+    if exact:
+        return int(exact[0]["index"])
+
+    matches = [d for d in devices if name.lower() in str(d.get("name", "")).lower()]
     if not matches:
         names = [d.get("name") for d in devices]
         raise SystemExit(
-            f"No {role} device name contains {name_substring!r}. "
+            f"No {role} device name contains {name!r}. "
             f"Enumerated {role} devices: {names}"
         )
     default_matches = [d for d in matches if str(d.get("name", "")).startswith("default:")]
@@ -255,10 +279,33 @@ async def run_poc(*, aec: bool, duration_s: float, stimulus: str, amplitude: flo
     print(f"  output device (index={output_idx}): "
           f"{next(d['name'] for d in output_devices if d['index'] == output_idx)!r}")
 
-    input_capture = media.open_input(
-        enable_aec=aec, noise_suppression=False, high_pass_filter=False,
-        auto_gain_control=False, input_device=input_idx,
-    )
+    # R0082-B -- the first real hardware attempt raised a bare
+    # `sounddevice.PortAudioError` here (raw hw device rejecting 48kHz)
+    # followed by a confusing secondary `FfiHandle.__del__` AssertionError
+    # during garbage collection of the `AudioSource`/`AudioProcessingModule`
+    # objects `open_input()` had already constructed internally before the
+    # `sd.InputStream(...)` call failed. Those objects are created and go
+    # out of scope entirely INSIDE the installed SDK's own `open_input()`,
+    # before returning anything to this script -- there is no handle here
+    # to explicitly dispose/close for this failure path (audited, not
+    # assumed). What IS in this script's control is giving a clear,
+    # correctly-attributed error instead of a raw traceback plus unrelated-
+    # looking assertion noise.
+    try:
+        input_capture = media.open_input(
+            enable_aec=aec, noise_suppression=False, high_pass_filter=False,
+            auto_gain_control=False, input_device=input_idx,
+        )
+    except sd.PortAudioError as e:
+        raise SystemExit(
+            f"Failed to open input device (index={input_idx}) at {SAMPLE_RATE}Hz: {e}\n"
+            "This is a device sample-rate/capability failure, not an AEC/LiveKit/"
+            "WebRTC failure. Run a safe sd.check_input_settings() probe (no "
+            "playback) across the candidate devices/rates before retrying -- "
+            "see R0082's report for the exact matrix and the fix that resolved "
+            "this for the reSpeaker (the raw hw device rejects 48kHz; the ALSA "
+            "`respeaker` plug alias accepts it via rate conversion)."
+        ) from e
     output_player = media.open_output(output_device=output_idx)
 
     # Build the full deterministic signal ONCE (reused builder, R0081).

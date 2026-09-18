@@ -451,6 +451,187 @@ so the new `r0082_audio_utils.py` has zero external dependencies at all
 (not even `numpy`), for the strongest possible isolation guarantee, and so
 the PoC's dependency surface is fully stated in one place.
 
+## 12c. Second real hardware attempt: reached devices, FAILED before playback — sample-rate mismatch
+
+With the isolation fix (§12a) applied, the operator's next real command
+(`--aec off --duration 30 --stimulus tones`) **reached real hardware for
+the first time** — device enumeration and selection both succeeded and
+printed the correct real devices:
+
+```
+input:  index=1  'reSpeaker XVF3800 4-Mic Array: USB Audio (hw:3,0)'
+output: index=0  'UACDemoV1.0: USB Audio (hw:2,0)'
+```
+
+`MediaDevices.open_input()` then failed:
+
+```
+sounddevice.PortAudioError: Error opening InputStream: Invalid sample rate [PaErrorCode -9997]
+```
+
+A secondary `FfiHandle.__del__` `AssertionError` followed during garbage
+collection (audited in §12e — a consequence of the primary failure, not
+an independent defect).
+
+### Classification
+
+```
+LiveKit import/API                PASS
+aarch64 compatibility             PASS
+device enumeration                PASS
+physical reSpeaker detection      PASS
+physical USB speaker detection    PASS
+
+raw reSpeaker hw:3,0 @ 48kHz      FAILS TO OPEN
+WebRTC AEC effectiveness          NOT YET TESTED
+R0082-B hardware A/B              NOT YET RUN
+```
+
+This is **not** an AEC failure, LiveKit failure, WebRTC failure, or
+speaker failure. No deterministic playback/AEC measurement occurred.
+
+## 12d. Safe capability probe (no playback) — confirms the ALSA plug-alias hypothesis
+
+`/etc/asound.conf` defines the `respeaker` PCM as an ALSA `type plug`
+wrapper around the physical XVF3800 device (`hw:3,0`) — a `plug` PCM
+performs transparent rate/format conversion. §5.2's own enumeration had
+already shown the raw hw device and the `respeaker` alias both report
+`default_samplerate=16000.0` via PortAudio, but a `default_samplerate`
+field reflects the *preferred* rate, not the full set of rates a device
+can be *opened* at — so this needed a real, non-streaming capability
+check, not an assumption.
+
+Using `sounddevice.check_input_settings()` / `check_output_settings()`
+(validates a proposed stream configuration against the backend without
+opening a stream — no playback, no capture) against a fresh enumeration
+(device indices confirmed stable across this and the prior round: input
+device index=1 raw hw, index=3 alias; output device index=0):
+
+```
+INPUT
+
+raw hw reSpeaker (index=1, "reSpeaker XVF3800 4-Mic Array: USB Audio (hw:3,0)")
+  16k mono    PASS
+  16k stereo  PASS
+  48k mono    FAIL -- PortAudioError: Invalid sample rate [PaErrorCode -9997]
+  48k stereo  FAIL -- PortAudioError: Invalid sample rate [PaErrorCode -9997]
+
+ALSA plug "respeaker" (index=3, exact alias name)
+  16k mono    PASS
+  16k stereo  PASS
+  48k mono    PASS
+  48k stereo  PASS
+
+OUTPUT
+
+UACDemoV1.0 (index=0, "UACDemoV1.0: USB Audio (hw:2,0)")
+  48k mono    PASS
+  48k stereo  PASS
+```
+
+**Confirmed:** the raw hw device is hardware-limited to 16kHz; the ALSA
+`plug:respeaker` alias accepts 48kHz because ALSA's own `plug` layer
+rate-converts below PortAudio. The output device (UACDemoV1.0) already
+accepts 48kHz natively — no alias needed there.
+
+### `media_devices.py` source audit — answers to all 5 questions, none assumed
+
+Read directly from the installed
+`livekit/rtc/media_devices.py` (`MediaDevices.open_input`/`open_output`,
+`OutputPlayer._callback`):
+
+1. **How is `input_sample_rate` used for the physical PortAudio
+   InputStream?** Passed directly, unmodified, as `samplerate=self._in_sr`
+   to `sd.InputStream(...)`. No negotiation, clamping, or fallback —
+   if the chosen device index cannot supply that literal rate, PortAudio
+   raises immediately at stream construction (exactly what was observed).
+2. **What sample rate is supplied to the `AudioProcessingModule`?** Every
+   captured frame is constructed as `AudioFrame(..., sample_rate=self._in_sr,
+   ...)` before `apm.process_stream(frame)`; every rendered frame fed to
+   the reverse stream is constructed as `AudioFrame(render_chunk.tobytes(),
+   self._sample_rate, 1, FRAME_SAMPLES)` (`self._sample_rate` = the
+   `OutputPlayer`'s own configured rate, `self._out_sr` from
+   `MediaDevices`) before `apm.process_reverse_stream(render_frame)`.
+   `apm.py`'s own `process_stream`/`process_reverse_stream` each pass the
+   frame's own `sample_rate` field independently to the native FFI call
+   per direction.
+3. **May input and reverse/render streams have different physical sample
+   rates?** At the Python API level, `MediaDevices(input_sample_rate=A,
+   output_sample_rate=B)` allows setting them independently, and each
+   is threaded to its own stream/APM calls without reconciliation. Since
+   the PoC sets both to the SAME value (48000), this is moot for R0082 —
+   whether the native WebRTC APM binding tolerates genuinely different
+   forward/reverse rates was not tested (not needed; flagged as an open,
+   unexercised question, not resolved).
+4. **Does `MediaDevices` perform any internal resampling?** No —
+   confirmed by reading every line between the `sd.InputStream`/
+   `sd.OutputStream` callbacks and their respective `AudioFrame`
+   constructions: raw PCM bytes flow through unchanged. Any rate
+   conversion must happen below PortAudio (i.e., in ALSA, as confirmed
+   in §12d's capability probe for the `respeaker` alias) or not at all.
+5. **Does the APM accept 16kHz capture with 48kHz render directly, or
+   expect one common processing rate?** Not resolved by this module's
+   source alone (per point 3) — moot for this PoC's own fix, since
+   keeping `input_sample_rate=output_sample_rate=48000` (achieved by
+   selecting the `respeaker` alias for input, §12e) avoids the question
+   entirely rather than answering it.
+
+## 12e. Fix applied — exact-match device selection targets the ALSA alias, uniform 48kHz preserved
+
+Per the capability-probe result (§12d), the smallest correct fix keeps
+`MediaDevices(input_sample_rate=48000, output_sample_rate=48000)`
+unchanged (so the WebRTC APM stays at one uniform 48kHz on both forward
+and reverse paths, avoiding a new resampling/alignment confound) and
+changes ONLY input-device *resolution*:
+
+- **Selection semantics fixed** in `_find_device_index()`: now tries an
+  EXACT case-insensitive full-name match first, falling back to substring
+  matching (previous behavior, `"default: "`-prefix preferred if
+  ambiguous) only when no exact match exists. This was necessary because
+  a plain substring search for `"respeaker"` matches BOTH the alias
+  (`"respeaker"`, exact) AND the raw hw device
+  (`"reSpeaker XVF3800 4-Mic Array: USB Audio (hw:3,0)"`, substring
+  only) — the two are not interchangeable (§12d), so exact-match-first
+  is required to deterministically prefer the alias when its exact name
+  is requested.
+- **`DEFAULT_INPUT_NAME_SUBSTRING` changed from `"reSpeaker"` to
+  `"respeaker"`** (the literal ALSA alias name) so the script's own
+  default — not just an explicit `--input-name` override — resolves
+  correctly without requiring the operator to always pass the flag.
+  `DEFAULT_OUTPUT_NAME_SUBSTRING` (`"UACDemoV1.0"`) is unchanged — its
+  only match was already unambiguous and already 48kHz-capable.
+- **Clearer error path added**: `media.open_input()` is now wrapped to
+  catch `sounddevice.PortAudioError` specifically and re-raise as a
+  `SystemExit` with a message that correctly attributes the failure to
+  a device sample-rate/capability mismatch (not AEC/LiveKit/WebRTC), and
+  points at the capability-probe methodology (§12d) for diagnosis.
+
+## 12f. `FfiHandle.__del__` `AssertionError` — audited, not a distraction, no further fix warranted
+
+`FfiHandle.dispose()` (installed `livekit/rtc/_ffi_client.py`) calls the
+native `livekit_ffi_drop_handle` and asserts the drop succeeded; `__del__`
+calls `dispose()`. Traced the object lifecycle: inside
+`MediaDevices.open_input()`, the `AudioSource` and (when any processing
+flag is enabled) `AudioProcessingModule` — both FFI-handle-backed — are
+constructed as **local variables inside `open_input()` itself**, before
+`sd.InputStream(...)` is ever called. When `sd.InputStream(...)` raised
+`PortAudioError`, `open_input()`'s stack frame unwound without returning
+anything to this PoC's own code, and CPython's refcounting GC collected
+those now-unreferenced local objects essentially immediately — triggering
+`FfiHandle.__del__` → `dispose()` on handles associated with an
+input-stream setup that never completed, hence the assertion.
+
+**Conclusion: no explicit dispose/close fix belongs in the R0082 PoC for
+this specific symptom.** The objects that fail to clean up are created
+and destroyed entirely *inside* the installed third-party SDK's own
+`open_input()` method, before it returns anything to this script — there
+is no reference in the PoC's own scope to explicitly dispose. The
+`except sd.PortAudioError` handler added in §12e (which produces a clear,
+correctly-attributed diagnostic instead of a raw traceback) is the
+appropriate and sufficient response available at this layer; this was
+deliberately not allowed to distract from fixing the primary sample-rate
+failure.
+
 ## 13. Test methodology (for the not-yet-run R0082-B hardware test)
 
 - `--aec off` then `--aec on`, back to back, same physical volume/room/
@@ -582,22 +763,48 @@ it was caught, diagnosed, and fixed entirely offline, before any device
 access was attempted. The fix has been validated against all 9 items
 requested (§12a) in the actual isolated R0082 venv.
 
+**Second real hardware attempt (with the isolation fix applied):**
+device enumeration and selection reached real hardware and succeeded
+(§12c). `open_input()` then **FAILED BEFORE PLAYBACK** because the raw
+reSpeaker hw device (`hw:3,0`) rejects 48kHz capture
+(`PaErrorCode -9997`).
+
+**Root cause of this attempt:** physical capture-endpoint sample-rate
+mismatch — the raw ALSA hw device is hardware-limited to 16kHz; the
+`MediaDevices` API performs no resampling of its own (§12d), so it
+requires a device that can natively (or via a lower-layer wrapper) supply
+the literal rate requested (48000). Confirmed, not an AEC/LiveKit/WebRTC/
+speaker failure (classification table, §12c).
+
+**Fix applied (§12e):** device-selection semantics now resolve an exact
+case-insensitive name match before falling back to substring matching,
+and the script's default input target now points at the ALSA
+`respeaker` plug alias (`/etc/asound.conf`'s own `type plug` wrapper
+around the same physical device), which a safe, non-streaming capability
+probe (§12d) confirmed accepts 48kHz mono/stereo — preserving one uniform
+48kHz `MediaDevices`/WebRTC-APM processing rate on both the forward and
+reverse path, with no new resampling logic added to the PoC itself.
+
 **AEC effectiveness: NOT YET TESTED.** No verdict is given for R0082-B or
 for R0082 overall — this still awaits the operator's real hardware test,
-now with the corrected, dependency-isolated PoC script, run only after
-this report's review.
+now with the corrected device-selection PoC script, run only after this
+report's review.
 
 ## 19. Minimal command for the first real R0082 hardware test (NOT run by this session)
 
 ```bash
 /tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/r0082_livekit_probe_venv/bin/python3 \
-    docs/research/r0082_livekit_webrtc_audio_poc/r0082_platform_audio_aec_poc.py \
-    --aec off --duration 30 --stimulus tones
+  docs/research/r0082_livekit_webrtc_audio_poc/r0082_platform_audio_aec_poc.py \
+  --aec off --duration 30 --stimulus tones \
+  --input-name respeaker
 ```
 
 Run with the isolated probe venv's Python (§4's install command), **not**
-NeXa's own `.venv`. Operator should monitor CPU/RAM (e.g. `top` in a second
-terminal) during the run per §13. **Do not run `--aec on` yet** — that
-command is intentionally withheld until this `--aec off` run is confirmed
-to open the real devices and complete successfully. This has intentionally
+NeXa's own `.venv`. `--input-name respeaker` selects the ALSA plug alias
+by exact name (§12e) — this now also matches the script's own new
+default, but is passed explicitly for clarity given this round's finding.
+Operator should monitor CPU/RAM (e.g. `top` in a second terminal) during
+the run per §13. **Do not run `--aec on` yet** — that command is
+intentionally withheld until this `--aec off` run is confirmed to open
+the real devices and complete successfully. This has intentionally
 **not** been run by this session.
