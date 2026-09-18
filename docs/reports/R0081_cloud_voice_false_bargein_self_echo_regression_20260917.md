@@ -2,7 +2,13 @@
 
 **Date:** 2026-09-17
 **Type:** Diagnostic + narrow instrumentation + direct hardware audit (NOT a confirmed resolution)
-**Status:** **MAJOR RESULT (§15.9, real hardware, 2026-09-17): the regression-isolation gate ran — the dependency-isolated historical golden path (`7dd6b87`, `PYTHONPATH`-verified true historical NeXa source) ALSO shows false self-interruption today, alongside current. CASE 2.** This rules OUT a later NeXa Core/Memory/Recall software regression as the primary explanation (Core Recall was disabled in the current control; golden never had it). The golden log also contains a genuine false ASR transcription during operator silence (`[Tu es beau.]`) — strong direct evidence of speech-like acoustic leakage reaching Gemini's own speech recognition (not merely a local VAD-threshold artifact), highly consistent with self-echo in context though not, alone, absolute proof of provenance. Mixer/device snapshots were identical before both runs (measured state only). The two paths' different Gemini models (`gemini-3.1-flash-live-preview` vs. `models/gemini-2.5-flash-native-audio-preview-12-2025`) cannot be the SOLE explanation, since both show the same failure class. **A major new lead was found auditing the current run's own diagnostics (§16): the reference feeder's bounded queue (`AecReferenceFeeder`, `asyncio.Queue(maxsize=24)`) overflowed once, dropping 144 chunks — confirmed from source that the speaker path continues independently of reference-enqueue success (NOT proven to play perfectly — R0071's own known playback stutter is a plausible connection) while the XVF3800's far-end reference develops real content gaps during such an episode. Machine-derived timeline correlation (§16.5, using the already-captured current-run log) confirms: queue growth precedes the first false VAD in that answer by 10.6s, the first drop precedes it by 9.5s (ruling out "the first false interruption caused the initial overflow" for that specific episode, though not proving overflow caused the VAD either), and only 2 of the session's 9 false interruptions are temporally associated with the (single, non-recurring) overflow episode — the other 7 occurred with a fully healthy, zero-drop queue, matching A2's own pattern.** The full source diff confirms the golden path has the IDENTICAL queue architecture (structurally unchanged since `7dd6b87`, though NOT measured to have actually overflowed during that specific golden session) — a strong, source-grounded shared-mechanism candidate, explicitly not the sole cause. Working model: baseline residual echo (always present, §7/§7b) + an intermittent reference-queue/scheduling failure (confirmed today) + possibly AEC adaptation/recovery effects, combining to varying degrees per utterance — consistent with the operator's own observation that some answers were nearly perfect and others severely broken in the same session. Prior findings remain valid: AEC works but leaves a residual at every level tested (§7/§7b, level-dependent); software ×10 compensation for `AEC_FAR_EXTGAIN=-20dB` is refuted (§7b); a narrow gain sweep found `gain=0.5` as a candidate but with an open settle/order confound, now further de-prioritized behind the queue-overflow/shared-state investigation (§7c, §14); MLS timing work found a genuine bimodal ~102.5/~134.4ms lag split with an exact 512-sample separation, confirmed unrelated to the reference-queue mechanism (§7d, §16.2.7). Root cause still NOT proven (§15, §16).
+**Status (updated 2026-09-18):** **MAJOR RESULT (§15.9, real hardware): the regression-isolation gate ran — the dependency-isolated historical golden path (`7dd6b87`) ALSO shows false self-interruption today, alongside current. CASE 2** — a later NeXa Core/Memory/Recall software regression is NOT the primary explanation. The golden log's `[Tu es beau.]` false transcription during silence is strong direct evidence of speech-like acoustic leakage (not, alone, proof of provenance). Mixer/device snapshots were identical before both runs. Different Gemini models on each path cannot be the SOLE explanation (both fail).
+
+**Reference-queue overflow (§16), confirmed and now fully correlated against the already-captured current-run log (§16.5):** one episode, 144 dropped chunks (`AecReferenceFeeder`, `asyncio.Queue(maxsize=24)`); the speaker path continues independently of reference-enqueue success (NOT proven to play perfectly — R0071's own known playback stutter is a plausible connection). Queue growth precedes the first false VAD in that answer by 10.6s, the first drop by 9.5s (refutes "the first interruption caused the initial overflow" for that episode — does NOT refute overflow as a later contributing factor, does not prove overflow caused the VAD). Only 2 of 9 proxy-classified false events (co-occurring `BOT_AUDIO_STOPPED`, not transcript-verified ground truth) are temporally associated with the single, non-recurring overflow episode — the other 7 occurred with a healthy, zero-drop queue, confirming baseline residual echo alone is sufficient for the symptom; overflow is not necessary for it. Golden has the identical queue architecture (byte-for-byte since `7dd6b87`) — a strong shared-mechanism candidate, not measured to have actually overflowed during golden's own session.
+
+**ALSA capture query result (§16.7, real hardware, 2026-09-18): the active-period explanation for §7d's exact 512-sample/32.000ms MLS lag split is REFUTED** — actual negotiated `period_size=2000`/`buffer_size=8000` frames, neither divides evenly by 512; a source scope-check of the diagnostic script found no application-level 512-sample block either. The MLS bimodality itself remains a real, reproduced observation — its source is now UNRESOLVED, not invalidated. A new, unrelated ALSA fact: `plug:respeaker`'s mono capture is a 50/50 route mix of the device's 2 (ASR-beamformed) hardware channels — a plausible contributor to the already-documented spectral-reshaping finding (§7d), not claimed to cause the lag split.
+
+Working model: baseline residual echo (always present, §7/§7b) + an intermittent reference-queue/scheduling failure (confirmed once today) + possibly AEC adaptation/recovery effects, combining to varying degrees per utterance. `gain=0.5` remains an unconfirmed candidate (§7c) pending the counterbalanced `--confirm` run — now the single recommended next hardware step (§16.8), since the 512-sample lead produced no new testable candidate. Root cause still NOT proven.
 **Depends on:** R0080 (accepted `2b894e7`), R0071 (frozen baseline), R0052–R0056 (prior self-echo investigation), R0053 (gain-coherence defect, now further quantified)
 
 No Memory/ContextEngine/recall_context/Personality/Relationship/Learning/FTS/vector changes touched. No forced audio-architecture redesign. No Silero threshold tuning. No DSP register writes.
@@ -381,7 +387,7 @@ The operator ran `--condition off --stimulus mls --repeats 3` live:
 | 2 | -0.0011 (noise) | 0.0220 | 134.31ms / 0.0714 |
 | 3 | 0.0638 (= its own peak) | -0.0062 (noise) | 102.50ms / 0.0638 |
 
-**Finding 2 — the separation between the two lags is EXACTLY 512 samples (32.000ms at 16kHz), not an approximate/noisy ~32ms.** This is a suspiciously round, exact integer sample count — consistent with (but, per the operator's explicit instruction, **not yet directly confirmed as**) an ALSA capture period/buffer-boundary quantization effect: this script's fixed `PRE_ROLL_S` (1.0s) `asyncio.sleep()` before playback begins is subject to ordinary OS scheduling jitter of a few milliseconds, and if `arecord`'s actual negotiated capture period for this device is (or divides evenly into) 512 samples, the true start-of-capture could land on either side of a period boundary from run to run, producing exactly this kind of one-period, all-or-nothing jump rather than a smoothly varying jitter. **This is a hypothesis, not a confirmed finding.** A prior version of this report proposed `arecord ... --dump-hw-params -d 1` alone as the way to check this — that command only reports the device's PRE-CONFIGURED hardware-parameter **capability/range space** (what values the driver CAN offer), not the **actual configured/negotiated PCM setup** for a real capture. A range that happens to contain 512 does not by itself prove the active period size IS 512. The corrected command (`-v`/`--verbose` added, §14) is needed to see the actual negotiated setup — not run this update (would require opening the real capture device again, which this update's offline-only analysis deliberately avoided without further authorization).
+**Finding 2 — the separation between the two lags is EXACTLY 512 samples (32.000ms at 16kHz), not an approximate/noisy ~32ms.** This is a suspiciously round, exact integer sample count. **UPDATE (§16.7, real hardware, 2026-09-18): the specific "active ALSA capture period/buffer-boundary" explanation for this has been directly tested and REFUTED** — the actual negotiated `plug:respeaker` capture setup is `period_size=2000` frames / `buffer_size=8000` frames (125ms/500ms), neither of which divides evenly by 512 (`2000/512=3.90625`, `8000/512=15.625`). A source-level scope check of the diagnostic script and its helpers (§16.7) found no application-level 512-sample (or 1024/2048-byte) fixed block anywhere in the capture/analysis path either. **The 512-sample MLS bimodality itself remains a real, reproduced observation — its source is UNRESOLVED, not invalidated**; the specific buffer-boundary hypothesis is the part that is refuted. See §16.7 for the full command output and scope-check audit.
 
 **Finding 3 — the low correlation magnitude (~0.06-0.07) has a plausible, evidence-backed explanation: device-side spectral reshaping, not a broken measurement.** An offline FFT-based spectral comparison (this update) between each trial's `signal.wav` (source) and `mic.wav` (capture) found:
 
@@ -444,8 +450,9 @@ Every filename now encodes condition/gain/amplitude/stimulus/trial, e.g. `off_ga
 | `gain=0.5` production setting | **NOT YET APPROVED** — settle/order confound must be ruled out first (§7c, §14) |
 | Gain-order/settle confound | **OPEN** — first-trial quiet-floor anomaly after gain transitions, mechanism not yet identified (§7c) |
 | MLS timing stimulus | **WORKING / better than tones** — trials 1/2 agree to ~0.19ms; tone stimulus independently confirmed ambiguous (112 vs 0 spurious peaks) (§7d) |
-| Physical acoustic lag | **NOT YET STABLE 3/3** — bimodal (2× ~134.4ms, 1× ~102.5ms), exact 512-sample/32.000ms split (§7d) |
-| Reference/acoustic timing mismatch | **UNRESOLVED** (§7d) |
+| Physical acoustic lag | **NOT YET STABLE 3/3** — bimodal (2× ~134.4ms, 1× ~102.5ms), exact 512-sample/32.000ms split — REAL OBSERVATION, source UNRESOLVED (§7d, §16.7) |
+| 512-sample split caused by active ALSA capture period/buffer | **REFUTED** — actual negotiated `period_size=2000`/`buffer_size=8000`, neither divides evenly by 512; no app-level 512 block found in source either (§16.7) |
+| Reference/acoustic timing mismatch | **UNRESOLVED** (§7d, §16.7) |
 | False local VAD | **CONFIRMED** (§2) |
 | Core recall | **CLEARED** as a cause (§3); PASS on its own merits (§1) |
 | Regression-isolation gate (golden `7dd6b87` vs. current, today) | **CASE 2: BOTH FAIL** (§15.9) — software/path regression relative to golden NOT supported as primary explanation |
@@ -457,9 +464,9 @@ Every filename now encodes condition/gain/amplitude/stimulus/trial, e.g. `off_ga
 | Overflow precedes first false VAD in that answer | **CONFIRMED** — queue growth by 10.6s, first drop by 9.5s (§16.5.1) |
 | First false interruption caused the initial overflow | **REFUTED for that episode** — overflow demonstrably began before any false VAD in that answer (§16.5.1) |
 | Golden path has the same queue architecture | **CONFIRMED from full source diff** — byte-for-byte unchanged since `7dd6b87`; golden actually overflowing during its own session is NOT measured (§16.3) |
-| Queue overflow as sole root cause | **REFUTED by A2** — false VAD with `REF_DROPPED=0` (§16.4), and by this session itself: 7 of 9 false interruptions occurred with a healthy, zero-drop queue (§16.5.5) |
-| Queue overflow as aggravating contributor | **STRONGLY SUPPORTED, causality not fully proven** — temporally associated with the session's most severe cluster (2/9 false interruptions), not its overall rate (§16.5.5) |
-| Baseline residual echo | **CONFIRMED** as the dominant contributor by count this session (7/9 false interruptions, healthy queue) (§7/§7b, §16.5.5) |
+| Queue overflow as sole root cause | **REFUTED by A2** — false VAD with `REF_DROPPED=0` (§16.4), and by this session itself: 7 of 9 proxy-classified false events occurred with a healthy, zero-drop queue (§16.5.5) |
+| Queue overflow as aggravating contributor | **STRONGLY SUPPORTED, causality not fully proven** — temporally associated with the session's most severe cluster (2 of 9 proxy-classified false events), not its overall rate (§16.5.5) |
+| Baseline residual echo | **CONFIRMED sufficient for false VAD even when the reference queue is healthy — reference overflow is NOT necessary for the symptom** (§7/§7b, §16.5.5) |
 | Intermittent scheduling/state-margin problem | **LEADING CLASS OF HYPOTHESES** (§16.6) — working model, not concluded root cause |
 
 **R0081 is still NOT PASS.**
@@ -712,7 +719,7 @@ Mixer/device drift between back-to-back tests:  NOT OBSERVED (measured snapshot 
 
 ### 15.10 What remains valid and untouched from §§1-14
 
-Not deleted, not reverted, temporarily secondary: AEC works but residual remains (§7, §7b); software ×10 compensation refuted (§7b); `gain=0.5` an unconfirmed candidate (§7c); MLS found ~102.5ms/~134.4ms bimodality with an exact 512-sample split, cause unresolved (§7d); counterbalanced `--confirm` ready but not yet run (§14); verbose ALSA query ready but not yet run (§14, now also needed for §16). §16 (new) is inserted as the immediate next priority given the major new evidence in §15.10 — a reference-queue overflow found in the current run's own diagnostics (§16).
+Not deleted, not reverted, temporarily secondary: AEC works but residual remains (§7, §7b); software ×10 compensation refuted (§7b); `gain=0.5` an unconfirmed candidate awaiting counterbalanced confirmation (§7c, §16.8); MLS found ~102.5ms/~134.4ms bimodality with an exact 512-sample split — the active-ALSA-period explanation for the split is now REFUTED, source still unresolved (§7d, §16.7). §16 (new) is inserted as the immediate next priority given the major new evidence in §15.9-15.10 — a reference-queue overflow found in the current run's own diagnostics.
 
 ---
 
@@ -817,7 +824,7 @@ second false VAD follows queue-drain by:    29.257 - 28.687 =  0.570 s
 
 No evidence in this log distinguishes between these; this report does not choose among them.
 
-**16.5.4 Full-session classification: separating true operator turns from false starts.** No `USER_TRANSCRIPT:` line appears anywhere in this 844-line log (final transcripts never printed this session) — transcript content cannot be used as the discriminator. Instead, this audit uses a source-grounded proxy: whether a `LOCAL_VAD_START` has a **co-occurring `BOT_AUDIO_STOPPED`** (within ~0.001-0.002s) — if the bot's own audio-stopped event fires at the same instant, the bot demonstrably had audio in flight being interrupted (consistent with false self-interruption during active playback); if not, the bot was not actively producing audio at that moment (consistent with a genuine new user turn, most plausibly a real question during an actual silence). This is not a transcript-based judgment call — it is a direct read of which events the log itself shows as simultaneous.
+**16.5.4 Full-session classification: separating true operator turns from false starts — a PROXY, not ground truth.** No `USER_TRANSCRIPT:` line appears anywhere in this 844-line log (final transcripts never printed this session) — transcript content cannot be used as the discriminator. Instead, this audit uses a source-grounded proxy: whether a `LOCAL_VAD_START` has a **co-occurring `BOT_AUDIO_STOPPED`** (within ~0.001-0.002s) — if the bot's own audio-stopped event fires at the same instant, the bot demonstrably had audio in flight being interrupted (consistent with false self-interruption during active playback); if not, the bot was not actively producing audio at that moment (consistent with a genuine new user turn, most plausibly a real question during an actual silence). **This proxy's own input signal is demonstrably incomplete**: only 2 `BOT_AUDIO_STARTED` events appear in the entire session (§16.5.6) against 14 `BOT_AUDIO_STOPPED` events — the session's very first bot response has no logged `BOT_AUDIO_STARTED` at all. The classification below is therefore reported as **events classified as likely false / likely real using this proxy**, not as an exact, independently-verified ground-truth count — it should not be used to claim precise causal weighting on its own.
 
 All 14 `LOCAL_VAD_START` events in the session, classified this way:
 
@@ -838,11 +845,13 @@ All 14 `LOCAL_VAD_START` events in the session, classified this way:
 | 122.444s | No | REAL |
 | 127.923s | Yes (127.924s) | FALSE |
 
-**9 false self-interruptions, 5 real operator turns**, in a ~130s session.
+**9 events classified as likely false, 5 classified as likely real, using co-occurring `BOT_AUDIO_STOPPED` as the proxy**, in a ~130s session.
 
-**16.5.5 Quantitative reconciliation — only 2 of 9 false interruptions are temporally associated with the overflow episode.** `REF_DROPPED` was checked across the ENTIRE session (every distinct value that appears): `0, 3, 7, 17, 32, 55, 70, 89, 105, 113, 127, 144` — **it never exceeds 144 anywhere else in the ~130s log**, and `REF_QUEUE_DEPTH` reads `0` at every one of the 7 LATER false-interruption timestamps (34.698s-127.923s), directly checked against the nearest surrounding `REF_RMS` telemetry line for each. **This means 7 of the session's 9 false interruptions (78%) occurred with a perfectly healthy, non-overflowing reference queue — matching A2's own zero-drop false-VAD pattern exactly.** Only the FIRST 2 false interruptions (25.618s, 29.257s — the pair the operator described as "extremely difficult to listen to") are temporally associated with the single, non-recurring overflow episode. This sharpens §16.4's reconciliation: baseline residual echo alone is sufficient to explain the majority of false interruptions BY COUNT in this session; the one queue-overflow episode is associated with (not proven to cause) what the operator described as the most severe cluster, not the session's overall false-interruption rate.
+**16.5.5 Quantitative reconciliation — only 2 of the 9 proxy-classified false events are temporally associated with the overflow episode.** `REF_DROPPED` was checked across the ENTIRE session (every distinct value that appears): `0, 3, 7, 17, 32, 55, 70, 89, 105, 113, 127, 144` — **it never exceeds 144 anywhere else in the ~130s log**, and `REF_QUEUE_DEPTH` reads `0` at every one of the 7 LATER proxy-classified-false timestamps (34.698s-127.923s), directly checked against the nearest surrounding `REF_RMS` telemetry line for each. Only the FIRST 2 (25.618s, 29.257s — the pair the operator described as "extremely difficult to listen to") are temporally associated with the single, non-recurring overflow episode.
 
-**Secondary note**: no `BOT_AUDIO_STARTED` event appears anywhere before 8.459s (when `REF_RMS` telemetry first shows non-zero activity), despite the assistant clearly having started responding by then — the session's very first `BOT_AUDIO_STARTED` is effectively missing from this log (only two `BOT_AUDIO_STARTED` events appear in the whole 130s session, at 42.764s and 129.723s, against 14 `BOT_AUDIO_STOPPED` events). Not investigated further this pass; flagged as a data-quality anomaly worth a future look, not incorporated into any conclusion above.
+**Precisely stated conclusion** (narrower than a "dominant contributor by count" claim, since the 9/5 split is a proxy, not ground truth): **baseline residual echo is confirmed sufficient for false VAD to occur even when the reference queue is healthy — reference-queue overflow is NOT necessary for the symptom.** The queue-overflow episode is associated with (not proven to cause) the specific cluster the operator described as the most severe listening experience — it is not required to explain the session's false interruptions in general, most of which (by this proxy) occurred with a healthy queue.
+
+**16.5.6 Secondary note (the incompleteness referenced by §16.5.4's proxy caveat)**: no `BOT_AUDIO_STARTED` event appears anywhere before 8.459s (when `REF_RMS` telemetry first shows non-zero activity), despite the assistant clearly having started responding by then — the session's very first `BOT_AUDIO_STARTED` is effectively missing from this log (only two `BOT_AUDIO_STARTED` events appear in the whole 130s session, at 42.764s and 129.723s, against 14 `BOT_AUDIO_STOPPED` events). Not investigated further this pass; flagged as a data-quality anomaly worth a future look, not incorporated into any conclusion above.
 
 ### 16.6 Shared-state hypotheses, prioritized (not concluded)
 
@@ -857,22 +866,61 @@ Because true historical (`7dd6b87`, dependency-isolated) and current source both
 
 No root cause is concluded from this list — it is a priority order for further investigation, not a verdict.
 
-### 16.7 Next action
+### 16.7 ALSA capture query RESULT (real hardware, 2026-09-18): active-period hypothesis REFUTED for this negotiated setup
 
-The current-run log correlation (§16.5) is now complete from the already-captured file — no further log excerpt is needed. **Do not ask for another free-form Gemini conversation yet.** Exactly one operator command is needed next: the verbose ALSA setup query, already built and explained.
+The operator ran the read-only verbose query:
 
 ```bash
-arecord -D plug:respeaker \
-  -f S16_LE \
-  -r 16000 \
-  -c 1 \
-  --dump-hw-params \
-  -v \
-  -d 1 \
-  /dev/null
+arecord -D plug:respeaker -f S16_LE -r 16000 -c 1 --dump-hw-params -v -d 1 /dev/null
 ```
 
-**What this needs to show, and why**: the CAPTURE-side (not reference-write-side — see §16.2.7) `-v` output's actual negotiated `period_size` (in frames, at 16kHz). If that value is exactly 512 (or a divisor/multiple of it), it directly corroborates §7d's exact-512-sample/32.000ms bimodal MLS lag split as a genuine ALSA capture buffer-boundary quantization effect. If it is some other value, that specific link is refuted and the two findings (capture-side period size, reference-write-side queue overflow) stay documented as **separate, unconnected** issues, exactly as §16.2.7 already concluded from source alone. This command does **not** bear on the queue-overflow finding (that is write-side, 24kHz, Gemini-server-chunked — a structurally different mechanism, already fully explained from source in §16.2) — it answers a separate, still-open §7d question.
+**Actual negotiated `plug:respeaker` capture setup:**
+
+```
+stream          : CAPTURE
+access          : RW_INTERLEAVED
+format          : S16_LE
+channels        : 1
+rate            : 16000 (exact)
+buffer_size     : 8000
+period_size     : 2000
+period_time     : 125000 us
+avail_min       : 2000
+start_threshold : 1
+stop_threshold  : 8000
+```
+
+**Actual physical slave** (`hw:CARD=Array`): `channels: 2`, `rate: 16000`, `buffer_size: 8000`, `period_size: 2000`, `period_time: 125000 us`, `avail_min: 2000` — the `plug:` layer's own negotiated period/buffer match the hardware slave's exactly (no `plug`-level rate/period mismatch to account for).
+
+**Conclusion — REFUTED, not merely "not confirmed," per instruction**: `2000` (period_size) and `8000` (buffer_size) do **not** divide evenly by 512 — `2000 / 512 = 3.90625`, `8000 / 512 = 15.625`. **The specific hypothesis "the exact 512-sample/32ms MLS split is directly caused by the active ALSA capture period/buffer boundary" is REFUTED for this negotiated capture setup.** This does **not** mean the MLS bimodality itself is invalidated — §7d's measurement (2 trials at ~134.4ms, 1 at ~102.5ms, an exact 512-sample separation) stands as a real, reproduced observation; only this one specific explanation for its SOURCE has been tested and ruled out.
+
+**Scope check performed before finalizing this conclusion, per instruction — searched source rather than assumed:** audited `docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py` (the script that produced the MLS measurement) and its reused helpers in `m2_6b4m_self_echo_probe.py` for any application-level fixed block size:
+
+- `capture_pcm()` invokes `arecord -q -t raw -f S16_LE -r 16000 -c 1 -D plug:respeaker -d <duration>` — **same device, same 16kHz/S16_LE/mono configuration** as the query above, and passes **no** explicit `--period-size`/`--buffer-size` (so it was subject to the exact same ALSA-negotiated defaults just measured).
+- `_run_subprocess()` reads the captured PCM via `await proc.communicate()` — reads the **entire** subprocess stdout to EOF in one call; no fixed-size chunked read, no 1024/2048-byte read loop, at the Python level.
+- `run_trial()`'s only slicing constants are `PRE_ROLL_S=1.0`/`TAIL_MARGIN_S=1.0` (whole seconds, not a fixed sample-block size).
+- `cross_correlate_pcm()` (in `m2_6b4m_self_echo_probe.py`, reused not reimplemented) operates on the whole PCM arrays via numpy slicing by lag, not by any fixed 512/1024/2048-sample block.
+- Full-file grep of both files for `512`, `1024`, `2048` found **zero** matches referring to any capture/read/chunk size (the only `512`/`period` matches in the diagnostic script are in its own docstring discussing this exact still-open question, and the MLS generator's own `_MLS16_PERIOD = 65535`, unrelated).
+
+**No 512-sample (or 1024/2048-byte, or 32ms-derived) application-level block exists anywhere in this capture/analysis path.** Recorded exactly as instructed:
+
+```
+exact 512-sample MLS split:  REAL OBSERVATION
+source:                      UNRESOLVED
+ALSA active-period explanation: REFUTED
+```
+
+**New ALSA fact, read-only, not causally linked to the 32ms split**: the query's `plug` conversion reports `Route conversion PCM: 0 <- 0*0.5 + 1*0.5` — the mono `plug:respeaker` capture is a 50/50 mix of the physical device's 2 raw capture channels, not a single untouched hardware channel. Per §6's own already-established `AEC_ASROUTONOFF=1` finding ("each channel is associated with a beam from the beamformer"), these 2 channels are two DIFFERENT ASR-processed beamformer beams, not e.g. left/right stereo mic pickup — a fact not previously stated this precisely in `docs/architecture/M2_1_LOCAL_AUDIO_VAD_ARCHITECTURE.md` (which records only "2 channels (stereo)"). This is noted as a plausible contributing factor to the spectral reshaping/correlation-magnitude finding already documented in §7d Finding 3 (the application is not observing one untouched physical channel) — **it is explicitly NOT claimed to cause the 32ms lag split itself**, per instruction.
+
+### 16.8 Next action
+
+**Do not spend another live test chasing the 512-sample value** — the specific active-ALSA-period hypothesis is refuted, and this offline audit produced no new concrete testable candidate for its source. The next highest-value hardware experiment is the already-built, genuinely counterbalanced gain confirmation (§15.2's finding that `gain=0.5` showed the lowest residual in the first, ascending, potentially-confounded sweep — §7c — still needs order-independent confirmation before it can be called anything more than a candidate):
+
+```bash
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --confirm
+```
+
+If the counterbalanced confirmation reproduces a material `gain=0.5` advantage in **BOTH** the A-first and B-first sequences (§7c's own win-count logic), mark reference gain calibration a CONFIRMED CONTRIBUTOR and `gain=0.5` a live conversational candidate — **not a production default yet**, a candidate for a subsequent, separately-scoped conversational opt-in test. If the result is mixed or reverses under counterbalancing, the original sweep was confounded and gain calibration is de-prioritized relative to the timing/scheduling investigation (§16).
 
 ---
 
@@ -882,4 +930,6 @@ Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validate
 
 **This update's own correction and completion**: the previous update's §16.5 incorrectly claimed the current run's interleaved timestamped log had not been supplied. It had — the log from §15.6's own `tee` command was already on disk (`/tmp/r0081_current_control_20260917T193834.log`). Analyzed it offline this update (no new hardware/Gemini run): confirmed the operator's own summarized queue-growth/drop-count numbers exactly against the raw log, computed the precedence timing (queue growth precedes the first false VAD in that answer by 10.6s; the first drop by 9.5s — ruling out "the first interruption caused the overflow" for that episode, not proving the reverse), and classified all 14 `LOCAL_VAD_START` events session-wide (via a co-occurring-`BOT_AUDIO_STOPPED` proxy, since no `USER_TRANSCRIPT` line exists anywhere in this log) into 9 false / 5 real. Found that only 2 of the 9 false interruptions are temporally associated with the single, non-recurring overflow episode — `REF_DROPPED` never exceeds 144 for the rest of the ~130s session, and the other 7 false interruptions all occur with `REF_QUEUE_DEPTH=0`, matching A2's own zero-drop pattern exactly. Two wording corrections applied throughout, per explicit instruction: the speaker-path claim is now scoped to what source actually proves (continues independently of reference-enqueue success — not a claim the speaker plays perfectly, given R0071's own known stutter issue), and the `[Tu es beau.]` false-transcription claim no longer asserts absolute provenance (strong evidence of acoustic leakage highly consistent with self-echo, not mathematical proof the leaked content was NeXa's own voice). The pipe-buffer-size speculation was removed from the causal argument (not needed to establish the overflow mechanism). No source file changed this update.
 
-Per this project's established practice for this exact situation: this update's change (the R0081 report itself) is docs-only. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, Silero was not touched, production reference gain was not changed, and no new Gemini/hardware call was made this update** — every action this update was a read (source/git/log inspection).
+**This update (2026-09-18)**: incorporated the operator's real-hardware result from the already-prepared, read-only verbose ALSA query (§16.7) — the active-ALSA-capture-period explanation for §7d's exact 512-sample MLS lag split is REFUTED (actual `period_size=2000`/`buffer_size=8000`, neither divides by 512), stated as a refutation, not weakened to "not confirmed," per instruction; the MLS bimodality itself remains a real, unresolved-source observation. A source scope-check of `r0081_direct_aec_diagnostic.py` and its reused helpers found no application-level 512/1024/2048-sized block anywhere in the capture/analysis path. Documented the new, read-only `plug:respeaker` mono route-mix fact (50/50 of 2 ASR-beamformed hardware channels) without claiming it causes the lag split. Corrected two prior overclaims per explicit instruction: (1) the queue-overflow-precedes-false-VAD finding now explicitly states it does NOT refute overflow as a later contributing factor, only the specific "first interruption caused the initial overflow" claim; (2) the 9-false/5-real session classification is now labeled throughout as a `BOT_AUDIO_STOPPED`-co-occurrence PROXY (with its own input signal confirmed incomplete), not ground truth, and "dominant contributor by count" was replaced with the narrower "baseline residual echo is confirmed sufficient for false VAD even when the queue is healthy; overflow is not necessary for the symptom." §16.8 now names the counterbalanced `--confirm` run as the single next recommended hardware step, since the 512-sample lead produced no new testable candidate.
+
+Per this project's established practice for this exact situation: this update's change (the R0081 report itself) is docs-only. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, Silero was not touched, production reference gain was not changed, and no Gemini conversation was run this update** — the one real-hardware action this update incorporates (the ALSA query) was read-only, already explained before being run, and performed by the operator, not initiated unilaterally.
