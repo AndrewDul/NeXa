@@ -223,6 +223,13 @@ already defines (R0053's own system audit).
     python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
         --confirm --post-settle-gap 0.5
 
+    # same-gain exposure/time tracking (gain switching REMOVED entirely) --
+    # built after a --confirm run showed a much larger between-sequence
+    # residual change than the gain effect being tested; isolates elapsed
+    # time / cumulative reference exposure from any gain-order interaction
+    python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
+        --track --track-gain 1.0 --track-trials 8 --post-settle-gap 0.5
+
 Run ``--condition off`` then ``--condition on`` back to back (same
 physical speaker volume, same room, same mic position) for a directly
 comparable pair. Repeat 3x per condition recommended — real acoustic
@@ -238,6 +245,7 @@ import array
 import asyncio
 import math
 import sys
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -853,21 +861,45 @@ def parse_args() -> argparse.Namespace:
         "trials, to test whether that is a simple decay-time effect.",
     )
     p.add_argument(
+        "--track", action="store_true",
+        help="R0081 -- same-GAIN repeated trials (default gain=1.0, --track-trials repeats, "
+        "each its own settle+gap+measured-trial cycle), with gain switching REMOVED "
+        "entirely. Built after --confirm's own counterbalanced run showed a much larger "
+        "between-sequence residual change (~35-41%%) than the gain effect it was testing -- "
+        "this isolates elapsed time / cumulative reference exposure from any gain-order "
+        "interaction. Reports trial/elapsed-time/cumulative-reference-exposure alongside "
+        "quiet_before_rms/mic_window_rms/mic_window_peak/clipping for each trial, plus a "
+        "first-half vs second-half mean comparison. Ignores --condition/--gain/--sweep/"
+        "--confirm. Defaults --amplitude to 0.05 if not explicitly given.",
+    )
+    p.add_argument(
+        "--track-gain", type=float, default=1.0,
+        help="The single, fixed gain used for every trial in --track (default 1.0 -- "
+        "today's production default).",
+    )
+    p.add_argument(
+        "--track-trials", type=int, default=8,
+        help="Number of same-gain trials in --track (default 8 -- at the default "
+        "--confirm-settle/--duration/--post-settle-gap this is roughly 8 x ~8.5s ~= 68s of "
+        "bounded hardware time, enough to see a trend without an open-ended run).",
+    )
+    p.add_argument(
         "--label", default=None,
         help="Optional label for the saved WAV files (default: derived from "
-        "--condition/--gain/--amplitude/--stimulus, ignored with --sweep/--confirm which "
-        "label each point/block themselves).",
+        "--condition/--gain/--amplitude/--stimulus, ignored with --sweep/--confirm/--track "
+        "which label each point/block/trial themselves).",
     )
     args = p.parse_args()
 
-    if args.sweep and args.confirm:
-        p.error("--sweep and --confirm are mutually exclusive")
+    exclusive_modes = [args.sweep, args.confirm, args.track]
+    if sum(1 for m in exclusive_modes if m) > 1:
+        p.error("--sweep, --confirm, and --track are mutually exclusive")
     if args.repeats is None:
         args.repeats = 3 if args.sweep else 1
     if args.amplitude is None:
-        args.amplitude = 0.05 if (args.sweep or args.confirm) else 0.5
-    if not args.sweep and not args.confirm and args.condition is None:
-        p.error("--condition is required unless --sweep or --confirm is passed")
+        args.amplitude = 0.05 if (args.sweep or args.confirm or args.track) else 0.5
+    if not any(exclusive_modes) and args.condition is None:
+        p.error("--condition is required unless --sweep, --confirm, or --track is passed")
 
     return args
 
@@ -1135,12 +1167,100 @@ async def _run_confirm(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _run_track(args: argparse.Namespace) -> int:
+    """R0081 -- same-gain repeated trials, gain switching REMOVED entirely,
+    to isolate elapsed time / cumulative reference exposure from the
+    gain-order effect the --confirm run surfaced (its own counterbalanced
+    A-first/B-first sequences showed a ~35-41% residual CHANGE between
+    the first and second half of the run -- far larger than the gain
+    effect being tested -- while quiet_before_rms stayed essentially flat
+    and speaker_pcm/clipping stayed identical throughout). This does not
+    choose between AEC warm-up/adaptation, retained state across repeated
+    reference exposure, or another time-dependent mechanism -- it only
+    reports the trial-by-trial numbers needed to distinguish a monotonic
+    trend (supports warm-up/adaptation) from a non-monotonic jump pattern
+    (supports intermittent timing/state) from a flat trend (supports the
+    earlier difference being a switching/order interaction instead)."""
+    gain = args.track_gain
+    n = args.track_trials
+    start_t = time.monotonic()
+    cumulative_ref_s = 0.0
+
+    print(f"NeXa R0081 — same-gain exposure/time tracking (gain={gain:g}, {n} trials)")
+    print(f"  fixed amplitude={args.amplitude}  settle before EACH trial={args.confirm_settle}s  "
+          f"post-settle gap={args.post_settle_gap}s  stimulus={args.stimulus}")
+    print("  gain switching REMOVED entirely -- isolates elapsed time/cumulative reference "
+          "exposure from the gain-order effect found in --confirm.")
+    print()
+
+    rows: list[dict] = []
+    for i in range(n):
+        print(f"=== trial {i + 1}/{n} (gain={gain:g}) ===")
+        results = await run_condition(
+            feed_reference=True,
+            gain=gain,
+            amplitude=args.amplitude,
+            duration_s=args.duration,
+            repeats=1,
+            label=f"track_gain{gain:g}_trial{i + 1}_amp{args.amplitude:g}_{args.stimulus}",
+            stimulus=args.stimulus,
+            settle_s=args.confirm_settle,
+            post_settle_gap_s=args.post_settle_gap,
+        )
+        result = results[0]
+        elapsed_s = time.monotonic() - start_t
+        # Cumulative reference exposure: every trial in --track feeds the
+        # reference during BOTH its own settle step and its own measured
+        # signal (feed_reference=True throughout) -- both durations are
+        # fixed/known, so this is computed deterministically rather than
+        # measured, exactly like --confirm's own already-verified protocol.
+        cumulative_ref_s += args.confirm_settle + args.duration
+        rows.append({
+            "trial": i + 1,
+            "elapsed_s": round(elapsed_s, 1),
+            "cumulative_ref_s": round(cumulative_ref_s, 1),
+            "quiet_before_rms": result["quiet_before_rms"],
+            "mic_window_rms": result["mic_window_rms"],
+            "mic_window_peak": result["mic_window_peak"],
+            "reference_clipped_percent": result["reference_clipped_percent"],
+        })
+        print()
+
+    print("=== TRACK SUMMARY (elapsed time / cumulative reference exposure vs residual) ===")
+    print(f"  {'trial':>5}  {'elapsed_s':>10}  {'cum_ref_s':>10}  {'quiet_rms':>10}  "
+          f"{'mic_rms':>8}  {'mic_peak':>9}  {'clip_%':>7}")
+    for r in rows:
+        print(f"  {r['trial']:>5}  {r['elapsed_s']:>10.1f}  {r['cumulative_ref_s']:>10.1f}  "
+              f"{r['quiet_before_rms']:>10.1f}  {r['mic_window_rms']:>8.1f}  "
+              f"{r['mic_window_peak']:>9}  {r['reference_clipped_percent']:>7.2f}")
+
+    if rows:
+        half = max(1, len(rows) // 2)
+        first_half, second_half = rows[:half], rows[half:]
+        fh_mean = sum(r["mic_window_rms"] for r in first_half) / len(first_half)
+        print()
+        print(f"  first-half ({len(first_half)} trials) mean mic_window_rms  : {fh_mean:.2f}")
+        if second_half:
+            sh_mean = sum(r["mic_window_rms"] for r in second_half) / len(second_half)
+            print(f"  second-half ({len(second_half)} trials) mean mic_window_rms : {sh_mean:.2f}")
+
+    print()
+    print("Interpretation: a monotonic downward trend across trial/elapsed-time/cumulative-"
+          "exposure supports AEC warm-up/adaptation. A non-monotonic up/down pattern with no "
+          "clear trend supports intermittent timing/state instead. A flat trend (no material "
+          "change trial to trial) supports the earlier --confirm sequence difference having "
+          "been a switching/order interaction rather than a pure exposure/warm-up effect.")
+    return 0
+
+
 async def main() -> int:
     args = parse_args()
     if args.sweep:
         return await _run_sweep(args)
     if args.confirm:
         return await _run_confirm(args)
+    if args.track:
+        return await _run_track(args)
     return await _run_single(args)
 
 

@@ -8,7 +8,9 @@
 
 **ALSA capture query result (§16.7, real hardware, 2026-09-18): the active-period explanation for §7d's exact 512-sample/32.000ms MLS lag split is REFUTED** — actual negotiated `period_size=2000`/`buffer_size=8000` frames, neither divides evenly by 512; a source scope-check of the diagnostic script found no application-level 512-sample block either. The MLS bimodality itself remains a real, reproduced observation — its source is now UNRESOLVED, not invalidated. A new, unrelated ALSA fact: `plug:respeaker`'s mono capture is a 50/50 route mix of the device's 2 (ASR-beamformed) hardware channels — a plausible contributor to the already-documented spectral-reshaping finding (§7d), not claimed to cause the lag split.
 
-Working model: baseline residual echo (always present, §7/§7b) + an intermittent reference-queue/scheduling failure (confirmed once today) + possibly AEC adaptation/recovery effects, combining to varying degrees per utterance. `gain=0.5` remains an unconfirmed candidate (§7c) pending the counterbalanced `--confirm` run — now the single recommended next hardware step (§16.8), since the 512-sample lead produced no new testable candidate. Root cause still NOT proven.
+**Counterbalanced gain confirmation RESULT (§16.9, real hardware, 2026-09-18): `gain=0.5` does NOT reproduce — REJECTED/de-prioritized.** `gain1.0` beat `gain0.5` 3/3 in the A-first sequence and lost only 1/3 in the B-first sequence; combined, `gain0.5` is ~6.36%/~0.54dB WORSE than `gain1.0`. The original sweep's ~30% advantage was an artifact of its own (now-superseded) confounded design. Production `gain=1.0` stays unchanged; no Gemini/conversational gain=0.5 test is warranted from this evidence. **A far larger, unanticipated finding**: residual dropped ~35-41% between the run's first half (sequence 1) and second half (sequence 2) — 30.10→19.40 (gain0.5), 29.23→17.30 (gain1.0) — while quiet floor and acoustic stimulus stayed essentially fixed. An offline lifecycle audit (§16.10) found nothing in software explains this (uniform subprocess-recreation pattern, no explicit AEC reset anywhere); the leading candidates are XVF3800 adaptive-filter warm-up/convergence, retained cross-exposure state, or another time-dependent mechanism — not chosen among without more evidence. A new script mode, `--track` (§16.11), was built to isolate this from gain switching entirely — the single recommended next hardware step (§16.12).
+
+Working model: baseline residual echo (always present, §7/§7b) + an intermittent reference-queue/scheduling failure (confirmed once today, §16) + a newly-found, larger elapsed-time/exposure-dependent residual-stability effect (§16.9-16.10) + possibly AEC adaptation/recovery effects, combining to varying degrees per utterance. AEC/state stability is now a HIGHER-priority open question than gain calibration. Root cause still NOT proven.
 **Depends on:** R0080 (accepted `2b894e7`), R0071 (frozen baseline), R0052–R0056 (prior self-echo investigation), R0053 (gain-coherence defect, now further quantified)
 
 No Memory/ContextEngine/recall_context/Personality/Relationship/Learning/FTS/vector changes touched. No forced audio-architecture redesign. No Silero threshold tuning. No DSP register writes.
@@ -446,9 +448,14 @@ Every filename now encodes condition/gain/amplitude/stimulus/trial, e.g. `off_ga
 | Software ×10 compensation | **REFUTED** — makes residual ~4.4× WORSE than gain=1.0, worse than OFF too (§7b, clean non-clipped retest) |
 | `CoherentReferenceGain` | **NOT VALIDATED** — made things worse live (§2 condition B); stays off by default |
 | Speaker volume alone | **NOT SUFFICIENT** — A2's lower volume did not materially reduce false episodes (§2) |
-| `gain=0.5` candidate | **STRONGLY SUPPORTED BY FIRST SWEEP** — lowest of 6 points, ~30%/~3.1dB better than gain=1.0 (§7c) |
-| `gain=0.5` production setting | **NOT YET APPROVED** — settle/order confound must be ruled out first (§7c, §14) |
-| Gain-order/settle confound | **OPEN** — first-trial quiet-floor anomaly after gain transitions, mechanism not yet identified (§7c) |
+| `gain=0.5` improvement | **FAILED REPLICATION under counterbalanced confirmation** — 3/3 loss in A-first sequence, 1/3 win in B-first; combined ~6.36%/~0.54dB WORSE than gain=1.0 (§16.9) |
+| `gain=0.5` live conversational candidate | **REJECTED / DE-PRIORITIZED** (§16.9) |
+| Production `gain=1.0` | **KEEP UNCHANGED** — no evidence supports a change; not claimed globally optimal, only that this confirmation found no improvement from 0.5 (§16.9) |
+| Reference gain mismatch as primary root cause | **NOT SUPPORTED** by current evidence (§16.9) |
+| Gain-order/settle confound (original sweep) | **RESOLVED — explains the sweep's apparent advantage**, which did not reproduce under counterbalancing (§7c, §16.9) |
+| AEC residual stability across one fixed physical setup | **NOT STABLE** — confirmed ~35-41% residual drop between the confirmation run's first and second half, with quiet floor and stimulus held fixed (§16.9) |
+| Sequence/time effect vs. gain effect | **Sequence/time effect is FAR LARGER** (~35-41%) than the gain effect under test (~6%) (§16.9) |
+| Cause of the sequence/time effect | **OPEN** — AEC warm-up/adaptation, retained cross-exposure state, and another time-dependent mechanism are candidates; not chosen among (§16.10) |
 | MLS timing stimulus | **WORKING / better than tones** — trials 1/2 agree to ~0.19ms; tone stimulus independently confirmed ambiguous (112 vs 0 spurious peaks) (§7d) |
 | Physical acoustic lag | **NOT YET STABLE 3/3** — bimodal (2× ~134.4ms, 1× ~102.5ms), exact 512-sample/32.000ms split — REAL OBSERVATION, source UNRESOLVED (§7d, §16.7) |
 | 512-sample split caused by active ALSA capture period/buffer | **REFUTED** — actual negotiated `period_size=2000`/`buffer_size=8000`, neither divides evenly by 512; no app-level 512 block found in source either (§16.7) |
@@ -912,15 +919,123 @@ ALSA active-period explanation: REFUTED
 
 **New ALSA fact, read-only, not causally linked to the 32ms split**: the query's `plug` conversion reports `Route conversion PCM: 0 <- 0*0.5 + 1*0.5` — the mono `plug:respeaker` capture is a 50/50 mix of the physical device's 2 raw capture channels, not a single untouched hardware channel. Per §6's own already-established `AEC_ASROUTONOFF=1` finding ("each channel is associated with a beam from the beamformer"), these 2 channels are two DIFFERENT ASR-processed beamformer beams, not e.g. left/right stereo mic pickup — a fact not previously stated this precisely in `docs/architecture/M2_1_LOCAL_AUDIO_VAD_ARCHITECTURE.md` (which records only "2 channels (stereo)"). This is noted as a plausible contributing factor to the spectral reshaping/correlation-magnitude finding already documented in §7d Finding 3 (the application is not observing one untouched physical channel) — **it is explicitly NOT claimed to cause the 32ms lag split itself**, per instruction.
 
-### 16.8 Next action
+### 16.8 Next action taken (2026-09-18) — this recommendation was executed; result in §16.9
 
-**Do not spend another live test chasing the 512-sample value** — the specific active-ALSA-period hypothesis is refuted, and this offline audit produced no new concrete testable candidate for its source. The next highest-value hardware experiment is the already-built, genuinely counterbalanced gain confirmation (§15.2's finding that `gain=0.5` showed the lowest residual in the first, ascending, potentially-confounded sweep — §7c — still needs order-independent confirmation before it can be called anything more than a candidate):
+**Do not spend another live test chasing the 512-sample value** — the specific active-ALSA-period hypothesis is refuted, and this offline audit produced no new concrete testable candidate for its source. The next highest-value hardware experiment was the already-built, genuinely counterbalanced gain confirmation (§7c's `gain=0.5` sweep finding still needed order-independent confirmation before it could be called anything more than a candidate). The operator ran it, with the additional `--post-settle-gap 0.5` opt-in:
 
 ```bash
-python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py --confirm
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
+  --confirm \
+  --post-settle-gap 0.5
 ```
 
-If the counterbalanced confirmation reproduces a material `gain=0.5` advantage in **BOTH** the A-first and B-first sequences (§7c's own win-count logic), mark reference gain calibration a CONFIRMED CONTRIBUTOR and `gain=0.5` a live conversational candidate — **not a production default yet**, a candidate for a subsequent, separately-scoped conversational opt-in test. If the result is mixed or reverses under counterbalancing, the original sweep was confounded and gain calibration is de-prioritized relative to the timing/scheduling investigation (§16).
+Real result and interpretation: §16.9. A much larger, unanticipated finding — a strong sequence/time effect exceeding the gain effect under test — required an offline lifecycle audit (§16.10) and a new script mode (§16.11) before recommending the next hardware step (§16.12).
+
+---
+
+## 16.9 Counterbalanced gain confirmation RESULT: `gain=0.5` NOT confirmed; a far larger sequence/time effect found
+
+**Protocol, exactly as run**: A=gain 0.5, B=gain 1.0, amplitude=0.05, settle before EVERY block=3.0s, post-settle silence=0.5s, 0% clipping everywhere, quiet-floor ~7 RMS throughout. Sequence 1 = ABABAB, sequence 2 = BABABA (3 cycles each, per §7c's own counterbalancing design).
+
+**A-first sequence:**
+
+| | cycle1 | cycle2 | cycle3 | mean |
+|---|---|---|---|---|
+| gain0.5 (A) | 30.8 | 30.5 | 29.0 | 30.10 |
+| gain1.0 (B) | 30.2 | 29.0 | 28.5 | 29.23 |
+| A−B | +0.60 | +1.50 | +0.50 | |
+
+`gain1.0` beat `gain0.5` in **3/3 cycles** in this sequence.
+
+**B-first sequence:**
+
+| | cycle1 | cycle2 | cycle3 | mean |
+|---|---|---|---|---|
+| gain1.0 (B) | 23.2 | 14.3 | 14.4 | 17.30 |
+| gain0.5 (A) | 21.6 | 20.6 | 16.0 | 19.40 |
+| A−B | −1.60 | +6.30 | +1.60 | |
+
+`gain0.5` beat `gain1.0` in only **1/3 cycles** in this sequence.
+
+**Combined**: `gain0.5` mean = 24.75, `gain1.0` mean = 23.27 — `gain0.5` residual is **~6.36% / ~0.54dB higher (worse)** than `gain1.0` in the pooled data. All figures verified exactly by independent recomputation this update (percentage/dB conversions match to the reported precision).
+
+**Primary conclusion, per §15.2's own decision criteria**: the original ascending sweep's apparent ~30% `gain=0.5` advantage (§7c) **does NOT reproduce** under the counterbalanced/long-settle/post-gap protocol — `gain1.0` won 3/3 in one sequence and lost 2/3 in the other, a mixed/reversed result, not a consistent order-independent win for either gain.
+
+```
+gain=0.5 as preferred calibration        NOT CONFIRMED
+gain=0.5 live conversational candidate   REJECTED / DE-PRIORITIZED
+production gain=1.0                      KEEP UNCHANGED
+reference gain mismatch as primary cause NOT SUPPORTED by current evidence
+```
+
+**Precisely scoped, per instruction**: this does **not** prove `gain=1.0` is mathematically optimal globally — only that this controlled confirmation found no evidence that changing production gain from 1.0 to 0.5 improves cancellation, and the earlier sweep's apparent advantage failed replication. No Gemini/conversational gain=0.5 test was run or is recommended from this evidence.
+
+**The far more important finding — a large sequence/time effect, exceeding the gain effect under test:**
+
+| | gain0.5 mean | gain1.0 mean |
+|---|---|---|
+| Sequence 1 (first half, earlier in the run) | 30.10 | 29.23 |
+| Sequence 2 (second half, later in the run) | 19.40 | 17.30 |
+| Change | −35.5% / −3.82dB | −40.8% / −4.56dB |
+
+While: quiet floor stayed essentially flat (A group 7.20→7.20; B group 7.27→7.03), speaker PCM was identical throughout (1142.5 RMS / 1638 peak, fixed amplitude), and clipping was 0% everywhere. **This between-sequence residual drop (~35-41%) is far larger than the ~6% gain0.5-vs-gain1.0 difference this run was designed to measure**, and it cannot be explained by room noise (quiet floor did not materially change) or by acoustic stimulus changes (identical throughout). This is recorded as a **major new lead**, not attributed to any single mechanism without further evidence (§16.10).
+
+**Note on stimulus, per instruction**: this run used `--stimulus tones` (the default) — `best_lag_ms`/correlation values from it are known-unreliable (periodic-tone ambiguity, §7d) and are **not** used anywhere in this section's or §16.10's conclusions. Only RMS/peak/quiet-floor measurements are used for the state analysis here.
+
+---
+
+## 16.10 Offline lifecycle/chronology audit — answered from source, before proposing a next hardware step
+
+Performed before recommending any further hardware run, per instruction. All of the following is read directly from `r0081_direct_aec_diagnostic.py`'s own source (`run_trial`, `run_condition`, `play_pcm`/`_run_subprocess`), not assumed.
+
+**1-2. Wall-clock time and cumulative reference exposure per block (computed, not measured — the script's own durations are fixed/deterministic).** Each `--confirm` block = settle (3.0s, speaker+reference concurrent) + post-settle gap (0.5s, silent) + one measured trial (capture runs a fixed `PRE_ROLL_S(1.0) + duration_s(3.0) + TAIL_MARGIN_S(1.0) = 5.0s`, dominating the trial's own wall time) ≈ **8.5s per block** (plus small, unmeasured subprocess-spawn overhead). Reference PCM is fed to `plug:respeaker` during BOTH the block's settle (3.0s) and its own trial playback (3.0s) — **6.0s of reference exposure per block**, regardless of A or B. Reconstructed, block-by-block, in chronological run order:
+
+| Block | Sequence | Gain | `mic_window_rms` | Cumulative ref. exposure (s) | Approx. elapsed (s) |
+|---|---|---|---|---|---|
+| 1 | 1 (A-first) | A (0.5) | 30.8 | 6 | ~4 |
+| 2 | 1 | B (1.0) | 30.2 | 12 | ~13 |
+| 3 | 1 | A | 30.5 | 18 | ~21 |
+| 4 | 1 | B | 29.0 | 24 | ~30 |
+| 5 | 1 | A | 29.0 | 30 | ~38 |
+| 6 | 1 | B | 28.5 | 36 | ~47 |
+| 7 | 2 (B-first) | B | 23.2 | 42 | ~55 |
+| 8 | 2 | A | 21.6 | 48 | ~64 |
+| 9 | 2 | B | 14.3 | 54 | ~72 |
+| 10 | 2 | A | 20.6 | 60 | ~81 |
+| 11 | 2 | B | 14.4 | 66 | ~89 |
+| 12 | 2 | A | 16.0 | 72 | ~98 |
+
+The overall envelope trends from ~30 (block 1) down to ~14-16 (blocks 9-12) as elapsed time/cumulative exposure increases, but **not perfectly monotonically** — block 9→10 rises (14.3→20.6) and block 11→12 rises again (14.4→16.0). A real downward trend with real non-monotonic noise, not a clean curve either way.
+
+**3. `aplay`/`arecord` subprocess recreation — CONFIRMED, uniform across every block, unlike production.** `play_pcm()` spawns a **brand-new** `aplay` process via `asyncio.create_subprocess_exec` on **every single call** — once for the speaker and once for the reference, for BOTH the settle step and the measured trial, in every block. `capture_pcm()` likewise spawns a fresh `arecord` per trial. There is **no persistent `aplay`/`arecord` process anywhere in this diagnostic script** — a fundamentally different lifecycle from production's `AecReferenceFeeder`, which uses exactly ONE persistent `aplay` for the whole session (§16.2). This pattern is **uniform** across all 12 blocks (settle and trial alike) — it does not itself differ between early and late blocks, so it cannot by itself explain WHY the residual changed over the run, but it does mean the reference ALSA stream was opened and closed roughly 24 times (2 per block: settle + trial) over the course of this one `--confirm` run.
+
+**4. Whether hardware AEC state persists across those process recreations — NOT determinable from software source.** This is a hardware/firmware question this audit cannot answer by reading Python. It is plausible (many embedded AEC implementations run their adaptive filter in onboard DSP firmware, independent of the host-side ALSA stream lifecycle, so coefficients could in principle survive a stream close/reopen) but this is **not confirmed** — recorded as a genuine open question, not assumed either way.
+
+**5. Nothing is explicitly reset between sequence 1 and sequence 2.** `_run_confirm()` calls `_run_confirm_sequence()` for seq1 then seq2 back to back, with no settle/pause/reset step at the sequence boundary beyond block 7's own normal 3.0s settle (same as every other block). Confirmed by direct source read: no `xvf_host.py` invocation, no ALSA mixer write, no device close/reopen beyond the per-block `aplay`/`arecord` pattern already described in item 3, anywhere in this script.
+
+**6. Sequence-boundary consecutive-B exposure — CONFIRMED, a real design asymmetry.** Sequence 1 ends with block 6 (B, gain=1.0); sequence 2 begins with block 7 (B, gain=1.0) — **two consecutive gain=1.0 blocks** (12.0s of continuous gain=1.0 reference exposure with no intervening gain=0.5 block) occur exactly at the sequence boundary. This does not undermine the overall counterbalancing (6 A blocks and 6 B blocks total, evenly split which sequence goes first), but it is a real, identifiable structural asymmetry at the transition point, distinct from the smoothly alternating pattern within each sequence.
+
+**7-8. No difference in subprocess-creation pattern between blocks; no explicit AEC reset found anywhere.** Confirmed by the same source read as items 3 and 5 — the mechanism is uniform throughout, and this script (like every other tool built in this investigation) never writes to any XVF3800 register or ALSA mixer control.
+
+**Conclusion of this audit**: nothing in software explains WHY the residual dropped ~35-41% between sequence 1 and sequence 2 — the mechanism, if real and reproducible, is most consistent with something happening in the XVF3800 hardware itself (adaptive-filter convergence, retained internal state, or another time-dependent physical/acoustic factor) rather than anything this script's own Python-level logic does differently over time (which is uniform block to block). This audit does not choose among AEC warm-up/adaptation, retained cross-exposure state, or another time-dependent mechanism — see §16.11 for the next experiment designed to distinguish between them.
+
+## 16.11 New script mode built: `--track` — same-gain exposure/time tracking, gain switching removed
+
+Per instruction, this was NOT implemented before completing the offline audit above. `r0081_direct_aec_diagnostic.py` gains `--track` (mutually exclusive with `--sweep`/`--confirm`, same `--amplitude`-defaults-to-0.05 convention): runs `--track-trials` (default 8) trials at a single, fixed `--track-gain` (default 1.0 — today's production default), each its own settle (`--confirm-settle`, default 3.0s, reused) + optional post-settle gap (`--post-settle-gap`, reused) + one measured trial — **gain switching removed entirely**, isolating elapsed time and cumulative reference exposure from the gain-order interaction `--confirm` surfaced. Reports, per trial: trial number, elapsed wall-clock time (real, measured via `time.monotonic()`), cumulative reference-exposure seconds (computed deterministically from the fixed settle/duration, same convention as §16.10's own table), `quiet_before_rms`, `mic_window_rms`, `mic_window_peak`, and clipping percent — plus a first-half-vs-second-half mean comparison. At the defaults (8 trials × ~8.5s/trial), this is a bounded ~68s hardware run, not open-ended. Verified offline this update: `py_compile`/`ruff check` clean, argparse mutual-exclusivity and default resolution confirmed, and a full stubbed end-to-end run (fake `run_condition` simulating a monotonic trend) confirmed the cumulative-exposure arithmetic and summary output are correct — no hardware touched for any of this verification.
+
+This design distinguishes:
+- **A. Simple monotonic warm-up/adaptation** — residual trends steadily down with trial/elapsed time/cumulative exposure.
+- **B. Gain/order switching artifact** — residual stays flat/stable now that gain switching is removed (would suggest the `--confirm` sequence difference was a switching interaction, not a pure exposure effect).
+- **C. Non-monotonic/intermittent state changes** — residual jumps up and down with no clear trend.
+
+## 16.12 Next action
+
+```bash
+python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
+  --track --track-gain 1.0 --track-trials 8 --post-settle-gap 0.5
+```
+
+**Return the full output**, especially the `TRACK SUMMARY` table and the first-half/second-half means. This does not use Gemini and does not touch production code, DSP registers, or Silero. If residual monotonically improves with exposure, AEC warm-up/adaptation becomes strongly supported over the alternatives. If it stays flat, the earlier sequence difference was more likely a switching/order interaction. If it jumps non-monotonically, intermittent timing/state becomes the leading explanation.
 
 ---
 
@@ -932,4 +1047,6 @@ Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validate
 
 **This update (2026-09-18)**: incorporated the operator's real-hardware result from the already-prepared, read-only verbose ALSA query (§16.7) — the active-ALSA-capture-period explanation for §7d's exact 512-sample MLS lag split is REFUTED (actual `period_size=2000`/`buffer_size=8000`, neither divides by 512), stated as a refutation, not weakened to "not confirmed," per instruction; the MLS bimodality itself remains a real, unresolved-source observation. A source scope-check of `r0081_direct_aec_diagnostic.py` and its reused helpers found no application-level 512/1024/2048-sized block anywhere in the capture/analysis path. Documented the new, read-only `plug:respeaker` mono route-mix fact (50/50 of 2 ASR-beamformed hardware channels) without claiming it causes the lag split. Corrected two prior overclaims per explicit instruction: (1) the queue-overflow-precedes-false-VAD finding now explicitly states it does NOT refute overflow as a later contributing factor, only the specific "first interruption caused the initial overflow" claim; (2) the 9-false/5-real session classification is now labeled throughout as a `BOT_AUDIO_STOPPED`-co-occurrence PROXY (with its own input signal confirmed incomplete), not ground truth, and "dominant contributor by count" was replaced with the narrower "baseline residual echo is confirmed sufficient for false VAD even when the queue is healthy; overflow is not necessary for the symptom." §16.8 now names the counterbalanced `--confirm` run as the single next recommended hardware step, since the 512-sample lead produced no new testable candidate.
 
-Per this project's established practice for this exact situation: this update's change (the R0081 report itself) is docs-only. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, Silero was not touched, production reference gain was not changed, and no Gemini conversation was run this update** — the one real-hardware action this update incorporates (the ALSA query) was read-only, already explained before being run, and performed by the operator, not initiated unilaterally.
+**This update (2026-09-18, continued)**: incorporated the operator's real-hardware counterbalanced gain confirmation result (`--confirm --post-settle-gap 0.5`, §16.9) — `gain=0.5` FAILED replication (3/3 loss in A-first, 1/3 win in B-first; combined ~6.36%/~0.54dB worse than gain=1.0), rejecting it as a live conversational candidate and keeping production `gain=1.0` unchanged, without claiming `gain=1.0` is proven globally optimal. Found and prioritized a much larger, unanticipated finding: a ~35-41% residual drop between the run's first and second half with quiet floor and acoustic stimulus held fixed — performed the requested offline lifecycle audit BEFORE proposing any new hardware step (§16.10: confirmed every `aplay`/`arecord` subprocess is freshly spawned per settle/trial with no persistence anywhere in this script, unlike production; confirmed no explicit AEC reset exists anywhere in source; confirmed whether XVF3800 hardware state survives ALSA stream re-opens is not determinable from software alone; found a real sequence-boundary asymmetry — two consecutive gain=1.0 blocks at the seq1→seq2 transition; built a chronological cumulative-reference-exposure table). Built `--track` (§16.11, new script mode, `py_compile`/`ruff check` clean, argparse and a full stubbed end-to-end run verified offline, no hardware touched) — same-gain repeated trials with gain switching removed entirely, to isolate elapsed time/exposure from the gain-order interaction. No production code touched.
+
+Per this project's established practice for this exact situation: this update's changes are the R0081 report plus the new `--track` diagnostic mode (`docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py`) — no `src/`/`apps/`/`tests/` file touched. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, Silero was not touched, production reference gain was not changed, and no Gemini conversation was run this update** — the real-hardware actions this update incorporates (the counterbalanced `--confirm` run) were already explained before being run and performed by the operator, not initiated unilaterally; `--track` itself was built and offline-verified only, not yet run against hardware.
