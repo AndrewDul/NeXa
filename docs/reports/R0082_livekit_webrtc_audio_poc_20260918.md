@@ -3023,3 +3023,398 @@ this round** — it is the recommended next step only, per instruction.
   XVF3800 settings, PipeWire defaults, system mixer, or LiveKit server
   configuration were touched this round. No hardware test was run. No
   DSP writes were made.
+
+# R0082-E — offline production-equivalent Silero VAD analysis
+
+## 64. Purpose
+
+Would NeXa's CURRENT, frozen production Silero/VAD/interruption
+configuration classify any part of the four already-recorded R0082-D
+self-echo mic captures as user speech? **No new hardware test, no
+speaker playback, no Gemini, no real barge-in, no NeXa conversation run
+this round** — this is offline analysis of existing evidence only.
+
+## 65. Exact production Silero/VAD/interruption configuration (audited from source, not memory)
+
+A dedicated read-only audit of the actual repository source (not
+generic Silero defaults, not memory) found:
+
+- **Package/model**: NeXa uses Pipecat's own
+  `pipecat.audio.vad.silero.SileroVADAnalyzer` directly — no custom
+  wrapper. `src/nexa/voice/runtime.py:23,509-511`. The underlying model
+  is the ONNX file bundled inside the installed `pipecat-ai` 1.8.1
+  wheel (`pipecat/audio/vad/data/silero_vad.onnx`, confirmed sha256
+  `597d30b3ec076608d059477bb14cfeffdf951bf5cae370d38f65d33bbfe82004`,
+  2,327,524 bytes), inference via `onnxruntime.InferenceSession`
+  (`silero.py:54-58`), CPU execution provider forced. No separate
+  `silero-vad` PyPI package is used; no PyTorch dependency.
+- **Sample rate**: Silero itself supports only 8000 or 16000 Hz
+  (`silero.py:61,93,184-187`). Production feeds it **16000 Hz mono**
+  (`LocalAudioConfig.sample_rate=16000`, `src/nexa/voice/config.py:63-64`,
+  passed straight through, `runtime.py:509-510`).
+- **Preprocessing/resampling**: **none, in Python.** The physical
+  reSpeaker's own native capture rate is already 16 kHz
+  (`config.py:38-42`'s own docstring); the only conversion actually
+  performed is stereo→mono downmix, done inside ALSA's own `plug:` PCM
+  plugin, not by any NeXa or Python code. No `resampy`/`soxr` call site
+  exists anywhere in the frozen local M2.5B path.
+- **Frame size**: 512 samples = 32ms at 16kHz (`silero.py:191-197`,
+  `vad_analyzer.py:159-160`).
+- **Thresholds actually configured** (not library defaults assumed):
+  `DEFAULT_VAD_PARAMS = VADParams(stop_secs=1.0)`
+  (`src/nexa/voice/runtime.py:87`), used UNMODIFIED by the real
+  entrypoint (`apps/nexa_bilingual_voice_probe.py` constructs
+  `VoiceRuntime` without passing `vad_params`). Everything else is
+  Pipecat's own library default (`vad_analyzer.py:25-28`):
+  **`confidence=0.7`, `start_secs=0.2`, `stop_secs=1.0` (NeXa's own
+  override, from a documented calibration sweep,
+  `runtime.py:56-86`), `min_volume=0.6`**.
+- **Single threshold, not separate start/stop**: `confidence` gates
+  both directions symmetrically; only the DURATION windows differ
+  (`vad_analyzer.py:211`).
+- **Hysteresis/state machine**: 4 states
+  QUIET→STARTING→SPEAKING→STOPPING→QUIET (`vad_analyzer.py:213-246`).
+  A frame counts as "speaking" iff **`silero_confidence >= 0.7 AND
+  smoothed_volume >= 0.6`** — a two-gate AND condition, not confidence
+  alone. `_vad_start_frames = round(0.2/(512/16000)) = 6` frames
+  (192ms) of consecutive speaking frames confirms `SPEAKING` (this is
+  the real trigger point for `VADUserStartedSpeakingFrame`).
+  `_vad_stop_frames = round(1.0/(512/16000)) = 31` frames (~992ms) of
+  consecutive non-speaking frames confirms `QUIET` again. A brief dip
+  during `STOPPING` cancels the pending stop rather than restarting
+  from `QUIET` (`vad_analyzer.py:220-222`).
+- **Volume**: `AudioVolumeTracker` (`pipecat.audio.volume`) — rolling
+  400ms window, ITU-R BS.1770 integrated loudness via the REAL
+  `loudness` package (v0.2.0, a standalone pybind11 binding, confirmed
+  installed and importable with zero `loguru`/`pipecat`/`nexa`
+  side-imports), normalized `(LUFS-(-110))/((-10)-(-110))` clamped to
+  [0,1] (`pipecat/audio/utils.py:147-187`), then exponentially smoothed
+  (factor=0.2, `vad_analyzer.py:87,176,208-209`).
+- **Silero's own recurrent state**: resets every
+  `_MODEL_RESET_STATES_TIME=5.0` seconds of **wall-clock** time in the
+  real code (`silero.py:23,214-220`) — a memory-growth mitigation,
+  unrelated to speech boundaries. Reproduced here via AUDIO-TIME
+  bookkeeping instead of `time.time()` (documented substitution, §66 —
+  batch offline processing would otherwise never trigger this reset if
+  run faster than real time; in a live continuous capture wall-clock
+  and audio time advance together, so this is a faithful reproduction
+  of the INTENDED behavior, not a threshold/logic change).
+- **Speech padding**: not in Silero/Pipecat at all — NeXa implements a
+  separate 500ms pre-roll ring buffer downstream in
+  `nexa.stt.utterance_buffer.UtteranceBuffer` (`PRE_ROLL_MS=500`),
+  seeded on `VADUserStartedSpeakingFrame`. Not exercised by this round
+  (out of scope — this round tests whether that frame fires at all,
+  not what happens to STT after it does).
+- **NeXa's own confirm-hold layer** (Level 3, §66):
+  `nexa.voice.interruption.InterruptionStateMachine`
+  (`IDLE/RESPONDING/INTERRUPT_CANDIDATE/INTERRUPTING`), sitting
+  immediately after `VADProcessor` in the real pipeline
+  (`runtime.py:519-521`). `DEFAULT_CONFIRM_HOLD_SECS=0.3`
+  (`interruption.py:44`), not overridden anywhere in the real wiring
+  (`src/nexa/voice_tts/bargein_wiring.py:145-150`). A candidate
+  confirms only if it holds ≥0.3s with no intervening
+  `VADUserStoppedSpeakingFrame` (`interruption.py:211-232`). Total
+  speech-onset→confirmed budget ≈ 0.2s (Silero start_secs) + 0.3s
+  (NeXa hold) ≈ 0.5s.
+- **Explicitly out of scope, documented, not modeled**:
+  `BargeInController`'s separate `AecReferenceHealth.barge_in_safe`
+  gate (`bargein.py:326-340`) — a precondition specific to the CURRENT
+  production XVF3800/`AecReferenceFeeder` hardware AEC path (R0028),
+  unrelated to the audio content itself and unrelated to the
+  PlatformAudio/WebRTC path R0082 is evaluating as a potential
+  replacement. Level 3 below answers "would `InterruptionStateMachine`
+  confirm an interrupt candidate from this audio", not "would the FULL
+  current `BargeInController`, including its XVF3800-specific safety
+  gate, admit it" — a stated scope boundary.
+- **One config, confirmed current**: `DEFAULT_VAD_PARAMS` is the single
+  live production config, reused byte-for-byte by every M2.5-era
+  hardware spike. The M2.6 CLOUD (Gemini Live) pipeline uses a
+  DIFFERENT `stop_secs=0.5` in a separate `GeminiVoiceRuntime` — not
+  the frozen local M2.5B path this round targets, and unaffected by it.
+
+## 66. Preprocessing path and harness design
+
+```
+R0082-D mic capture (48000Hz mono S16_LE, LiveKit/WebRTC's own internal
+  rate — NOT the same signal path as reSpeaker's own native ALSA
+  capture)
+  -> stage 1 (plain system python3, scipy.signal.resample_poly,
+     exact 1/3 ratio, anti-aliasing lowpass included — a real,
+     necessary adaptation because THIS evidence happens to be captured
+     at 48kHz via the R0082 LiveKit pipeline, unlike production's own
+     already-16kHz-native reSpeaker path; NOT a per-run
+     normalization/loudness adjustment)
+  -> 16000Hz mono S16_LE canonical Silero input
+  -> stage 2 (NeXa's own .venv python3 — deliberately chosen here,
+     unlike the LiveKit PoC scripts, because it has the EXACT
+     `onnxruntime`+`loudness` versions production itself uses;
+     numerical fidelity, not a violation of R0082's hardware-script
+     isolation discipline, which doesn't apply to this offline,
+     non-hardware analysis)
+  -> Level 1: SileroOnnxModel (verbatim reproduction of
+     pipecat.audio.vad.silero's ONNX wrapper, same bundled model file,
+     not imported from pipecat directly)
+  -> Level 2: VADAnalyzer state machine (verbatim reproduction of
+     pipecat.audio.vad.vad_analyzer's exact algorithm/constants)
+  -> Level 3: nexa.voice.interruption.InterruptionStateMachine — the
+     REAL production class, loaded via
+     importlib.util.spec_from_file_location directly from
+     src/nexa/voice/interruption.py, bypassing nexa/voice/__init__.py's
+     own import chain (which pulls in pipecat/loguru via bargein.py)
+     entirely. Confirmed this round to have ZERO imports beyond
+     dataclasses/enum. Genuine production code reuse, not a
+     reimplementation.
+```
+
+New file: `docs/research/r0082_livekit_webrtc_audio_poc/
+r0082e_silero_offline_analysis.py`. No new package installed anywhere
+— stage 1 uses plain system `python3`'s existing `scipy`; stage 2 uses
+NeXa's own `.venv`'s existing `onnxruntime`+`loudness`. `py_compile`,
+`ruff`, `git diff --check` all clean.
+
+**A safety check, not just a claim**: `load_interruption_state_machine_class()`
+explicitly asserts, after loading, that no `nexa.voice`/`pipecat`/
+`loguru` module appears in `sys.modules` (excluding the standalone
+loaded module itself) — verified this round; the script would raise
+`SystemExit` rather than silently proceed if isolation were ever broken.
+No audio device is opened anywhere in this script — `onnxruntime.
+InferenceSession` and `loudness.integrated_loudness` are both pure
+numerical calls with no hardware access, and `InterruptionStateMachine`
+itself has no I/O of any kind (documented in its own module docstring:
+"No audio, no Pipecat, no I/O, no timers of its own").
+
+**A real bug found and fixed while building this**: the ONNX model's
+raw output shape is `(1, 1)`, not scalar — pipecat's own
+`voice_confidence()` returns `out[0]` (shape `(1,)`) un-converted;
+calling `float()` directly on that 1-element array raised `TypeError`
+under the installed numpy version. Fixed by indexing one level further
+(`out[0][0]`), confirmed via direct introspection of the ONNX session's
+real output shape before assuming the fix, not guessed.
+
+## 67. File verification (re-confirmed)
+
+All four canonical mic WAV SHA256 hashes re-verified this round,
+matching R0082-D's own recorded values exactly (no drift):
+`A1_OFF=dd4bbfd9...b75196`, `B1_ON=fef4e9bd...ed47d04`,
+`B2_ON=dc79b724...9f5f9799`, `A2_OFF=8596fbda...4a0eb39`. The extra,
+unlisted `20260918T145123Z` run remains excluded and untouched, not
+resampled, not analyzed — flagged again for transparency.
+
+## 68. Per-run results
+
+```
+     run  aec  max_prob  frames>thr(0.7)  starts  confirmed
+  A1_OFF  OFF    0.4932                0       0          0
+   B1_ON   ON    0.3204                0       0          0
+   B2_ON   ON    0.7684                3       0          0
+  A2_OFF  OFF    0.2533                0       0          0
+```
+
+Full per-run statistics:
+
+```
+         max_prob  mean_prob   p95    p99   frames_above_thr / total
+A1_OFF     0.4932     0.0132  0.0459  0.3065        0 / 787
+B1_ON      0.3204     0.0088  0.0294  0.1551        0 / 787
+B2_ON      0.7684     0.0120  0.0252  0.2673        3 / 787
+A2_OFF     0.2533     0.0089  0.0351  0.1589        0 / 787
+```
+
+**Level 1 (raw probability)**: only B2_ON ever exceeds the production
+confidence threshold (0.7), and only barely (max 0.7684), for 3 out of
+787 frames (0.38%). All four runs' mean/p95 probabilities sit far below
+threshold. **Level 2 (production VAD state machine)**: zero
+`VADUserStartedSpeakingFrame`-equivalent events in all four runs — the
+state machine never left `QUIET` in any recording. **Level 3
+(production-relevant interruption event)**: zero
+`InterruptionStateMachine` `INTERRUPT_CONFIRMED` events, zero rejected
+candidates (there were no candidates to reject), in all four runs.
+
+### 68a. Why B2's 3 above-threshold frames did not trigger anything
+
+Inspected directly from the timeline CSV (`B2_ON_timeline.csv`):
+
+```
+timestamp_s  region  silero_prob  vad_state  speech_start_event
+14.048       speech  0.74689      QUIET      0
+14.080       speech  0.76840      QUIET      0
+14.112       speech  0.74646      QUIET      0
+14.144       speech  0.63886      QUIET      0
+```
+
+`vad_state` stays `QUIET` through all three above-threshold frames —
+confirming the volume gate (`smoothed_volume >= 0.6`) was NOT
+simultaneously satisfied on at least the first of them, since the state
+machine enters `STARTING` on the VERY FIRST frame where BOTH conditions
+hold. Independently, even ignoring the volume gate entirely, 3
+consecutive above-threshold frames (96ms) falls short of the 6-frame
+(192ms) `VAD_START_FRAMES` debounce requirement — a second, independent
+reason this did not (and structurally could not have) produced a
+`VADUserStartedSpeakingFrame`.
+
+## 69. Special region inspection
+
+**t≈6-7s (R0082-D's flagged shared transient region)**, inspected as
+natural-file-time t=6.5-8.5s (a generous window covering all four
+runs' own per-run lag estimates against the stimulus-relative t=6-7s
+region, per §59c's low-confidence lag caveat):
+
+```
+A1_OFF: max_prob_in_window=0.4286  frames_above_threshold=0
+B1_ON:  max_prob_in_window=0.3204  frames_above_threshold=0
+B2_ON:  max_prob_in_window=0.2823  frames_above_threshold=0
+A2_OFF: max_prob_in_window=0.1795  frames_above_threshold=0
+```
+
+**The large RMS energy transient R0082-D found shared across 3 of 4
+runs at this timestamp did NOT produce elevated Silero speech
+probability in any of the four runs.** This directly answers R0082-D's
+own §61 "not proven until Silero is run" question for this specific
+event: the energy peak is **not** speech-like to Silero, in any of the
+four conditions.
+
+**A1's anomalous pre-roll transient (t=0.0-1.0s)**, the large
+startup-transient RMS spike R0082-D found (§59e):
+
+```
+A1_OFF pre-roll: max_prob=0.3364  frames_above_threshold=0 / 32
+```
+
+Also well below threshold. The strongest RMS peaks elsewhere in B1/B2/A2
+(already fully covered by the per-run Level-1 statistics above, which
+found the global max across the ENTIRE recording, not just the flagged
+regions) never exceed the volume+confidence AND-gate for the sustained
+duration needed to register as a state-machine transition anywhere in
+any of the four files.
+
+## 70. Comparison: OFF vs. ON
+
+With zero false speech starts in all four conditions, there is no false
+positive COUNT to compare between OFF and ON — the comparison is
+necessarily null at the confirmed-event level. At the raw-probability
+level (Level 1), no clean OFF/ON separation is visible either: max
+probability across the four runs is A1_OFF=0.493, B1_ON=0.320,
+B2_ON=0.768, A2_OFF=0.253 — the single highest max-probability run is
+B2 (ON), not either OFF run. This is consistent with, not contradictory
+to, R0082-D's own §59f/§59i finding of no consistent OFF/ON pattern in
+RMS or band power — the same absence of a clean AEC-driven signal shows
+up here too, at a level (Silero probability) that matters more directly
+for the production question.
+
+## 71. Updated evidence classifications
+
+```
+1.  Production Silero configuration was identified exactly.        CONFIRMED
+2.  Offline preprocessing matches production numerically.          SUPPORTED
+     (Level 1/2 algorithms + loudness/onnxruntime bindings are
+     verbatim/genuine production code; the 48kHz->16kHz resample
+     step itself is a necessary adaptation NOT present in production's
+     own already-16kHz-native path, documented explicitly, §66)
+3.  A1 produces raw Silero speech-like probabilities.               NOT PROVEN
+     (max 0.493, below the 0.7 production threshold throughout)
+4.  B1 produces raw Silero speech-like probabilities.                NOT PROVEN
+     (max 0.320)
+5.  B2 produces raw Silero speech-like probabilities.               HYPOTHESIS
+     (briefly exceeds 0.7 for 3/787 frames -- above threshold in the
+     narrowest sense, but never satisfies the debounce+volume gates)
+6.  A2 produces raw Silero speech-like probabilities.                NOT PROVEN
+     (max 0.253, the lowest of all four)
+7.  A1 would produce a production-equivalent false speech start.     REFUTED
+8.  B1 would produce a production-equivalent false speech start.     REFUTED
+9.  B2 would produce a production-equivalent false speech start.     REFUTED
+     (§68a -- fails both the volume gate and the 6-frame debounce)
+10. A2 would produce a production-equivalent false speech start.     REFUTED
+11. AEC ON reduces Silero false positives.                          NOT PROVEN
+     (zero false positives in EITHER condition -- nothing to reduce)
+12. AEC OFF produces more Silero false positives.                    REFUTED
+     (the single highest raw probability was an ON run, B2)
+13. The t~6-7s residual is speech-like to Silero.                    REFUTED
+     (§69 -- max probability in that window, all four runs, is well
+     below threshold)
+14. Existing captured self-echo is sufficient to reproduce the
+    historical self-interruption mechanism.                          NOT PROVEN
+     (this round found no false-trigger case AT ALL to examine
+     further -- see §72 CASE 1)
+15. Current evidence proves NeXa self-interruption is fixed.         NOT PROVEN
+     (CASE 1 outcome, §72 -- absence of a false trigger on THIS
+     specific offline non-speech-user scenario, via THIS specific
+     PlatformAudio/WebRTC audio path, does not by itself prove the
+     original production mechanism -- which used a DIFFERENT
+     architecture, the XVF3800/AecReferenceFeeder path -- is fixed)
+```
+
+## 72. Decision: CASE 1 — offline false-trigger NOT OBSERVED
+
+Per the decision logic in the brief: **all four WAVs produced 0
+production-equivalent false speech starts.** Classification:
+
+```
+offline Silero false-trigger on these captures = NOT OBSERVED
+```
+
+**This is explicitly NOT a claim that the complete self-interruption
+bug is fixed.** Several real differences remain between this offline
+capture-based test and NeXa's actual live production failure mode:
+
+- **Different hardware/software AEC path entirely.** This whole R0082
+  investigation exists because the ORIGINAL self-interruption bug was
+  observed on the CURRENT production path (XVF3800 hardware AEC +
+  manual `AecReferenceFeeder`, R0081). R0082-D's captures come from the
+  PlatformAudio/WebRTC/LiveKit path being evaluated as a POTENTIAL
+  replacement — a genuinely different audio pipeline. A clean result
+  here says nothing directly about whether the CURRENT production
+  XVF3800 path's own residual would also pass this same Silero test —
+  that was never tested in R0082 at all (R0081 measured raw residual
+  energy on that path, never ran Silero against it).
+- **Different, and louder/more idealized, stimulus.** The R0082-D
+  speech stimulus was Piper-synthesized, not a real recorded NeXa TTS
+  reply on the live pipeline's own audio chain, and played at a
+  single fixed volume/position — real production speech content,
+  timing, and prosody vary.
+- **Live timing/state differences not modeled.** `AecReferenceHealth.
+  barge_in_safe` (§65's stated scope boundary), real `ConversationSession`
+  behavior, real STT/LLM concurrency load on the same CPU, and the real
+  Pipecat pipeline's own frame-queue/backpressure behavior under live
+  conditions are all absent from this offline batch analysis.
+- **Provider/event-interaction differences.** A live session has
+  Gemini/LLM generation, TTS streaming, and real-time frame delivery
+  all interleaved — none of that concurrency exists in this offline,
+  single-threaded batch script.
+
+**Recommended next step (per the brief's CASE 1 branch): the smallest
+live integration test** — NOT a further offline analysis, and NOT yet a
+production migration decision. Conceptually: connect the REAL
+`SileroVADAnalyzer`+`VADProcessor`+`BargeInController`+
+`InterruptionStateMachine` stack (the actual production classes, live,
+not this round's faithful-but-offline reproduction) to the
+PlatformAudio/LiveKit audio path in a minimal live session — no Gemini,
+no full `ConversationSession` — and confirm live, in real time, that
+the same clean (zero-false-trigger) result holds under actual live
+timing/concurrency, before considering any production architecture
+decision. **This step is NOT designed or executed this round** — it is
+the recommended direction only.
+
+## 73. Limitations
+
+- Offline, batch, single-threaded reproduction — not a live pipeline
+  test (§72's own stated limitation, central to why CASE 1's result is
+  not treated as proof the bug is fixed).
+- The 48kHz→16kHz resample step is a necessary adaptation specific to
+  R0082-D's LiveKit-captured evidence, not itself part of production's
+  own (already 16kHz-native) audio chain — a defensible, standard,
+  anti-aliased polyphase resample, but not literally byte-identical to
+  what production's ALSA `plug:` layer would have produced from the
+  SAME acoustic event captured directly by the reSpeaker at its native
+  rate.
+- Only 4 runs, 2 per AEC condition — the OFF/ON comparison in §70 is
+  observational, not statistically powered.
+- `AecReferenceHealth.barge_in_safe` and all downstream
+  `ConversationSession`/STT/LLM/TTS behavior are explicitly out of
+  scope (§65), by design, not by oversight.
+- The Piper-synthesized stimulus is not identical to real production
+  TTS output on the live pipeline's own voice.
+- No production code, NeXa Core, Gemini, Pipecat, Silero PRODUCTION
+  integration, `BargeInController`, `AecReferenceFeeder`, XVF3800
+  settings, PipeWire defaults, system mixer, or LiveKit server
+  configuration were touched this round. No hardware test was run. No
+  DSP writes were made.
