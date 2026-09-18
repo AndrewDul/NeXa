@@ -486,22 +486,49 @@ def clip_stats(pcm: bytes) -> dict:
     }
 
 
-async def _run_subprocess(cmd: list[str], *, input_bytes: bytes | None = None) -> bytes:
+async def _run_subprocess(
+    cmd: list[str], *, input_bytes: bytes | None = None, timing_sink: dict | None = None
+) -> bytes:
+    """R0081 -- ``timing_sink`` (optional, default ``None`` = zero behavior
+    change for every pre-existing caller): when given a dict, records
+    ``subprocess_created_ns``/``communicate_begin_ns``/``process_return_ns``
+    (``time.monotonic_ns()``) and ``pid`` around the EXISTING subprocess
+    lifecycle -- no new sleeps, no change to the command, PCM, or
+    ``communicate()`` call itself. Host/process-level observation only;
+    never claimed as exact DAC sample timing (see ``run_continuous``'s own
+    docstring)."""
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdin=asyncio.subprocess.PIPE if input_bytes is not None else asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
+    if timing_sink is not None:
+        timing_sink["subprocess_created_ns"] = time.monotonic_ns()
+        timing_sink["pid"] = proc.pid
+    if timing_sink is not None:
+        timing_sink["communicate_begin_ns"] = time.monotonic_ns()
     stdout, _ = await proc.communicate(input=input_bytes)
+    if timing_sink is not None:
+        timing_sink["process_return_ns"] = time.monotonic_ns()
     return stdout or b""
 
 
-async def play_pcm(pcm: bytes, *, device: str, sample_rate: int = SAMPLE_RATE) -> None:
+async def play_pcm(
+    pcm: bytes, *, device: str, sample_rate: int = SAMPLE_RATE, timing_sink: dict | None = None
+) -> None:
+    """``timing_sink``: see ``_run_subprocess``'s own docstring. Note
+    ``task_requested_ns`` is deliberately NOT set here -- it is recorded
+    by the CALLER (``run_continuous``) at its own ``asyncio.create_task()``
+    call site, so it measures "when did we ask asyncio to schedule this,"
+    genuinely distinct from "when did this coroutine's body actually start
+    running" (an ``asyncio`` scheduling-latency gap, not zero by
+    construction, worth keeping separate rather than conflating the two)."""
     await _run_subprocess(
         ["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(sample_rate),
          "-c", "1", "-D", device, "-"],
         input_bytes=pcm,
+        timing_sink=timing_sink,
     )
 
 
@@ -614,7 +641,31 @@ async def run_continuous(
     plays it start-to-finish as a single uninterrupted stream, slicing
     the ONE resulting continuous capture into per-cycle windows OFFLINE
     afterward -- only the initial stream startup (before the first
-    cycle) is outside the continuously-measured exposure."""
+    cycle) is outside the continuously-measured exposure.
+
+    R0081 -- diagnostics-only host-level timing instrumentation, added
+    after the first two real runs showed a large, non-monotonic in-stream
+    residual oscillation not explained by stream recreation or gain: the
+    speaker (``plug:usb_speaker``) and reference (``plug:respeaker``) are
+    two ENTIRELY SEPARATE USB Audio Class devices (confirmed,
+    ``/etc/asound.conf``: different `hw:CARD=` targets), each
+    conventionally self-clocked from its own onboard oscillator (USB Audio
+    Class devices generate their own sample clock; nothing in this
+    system's ALSA configuration exposes or configures a shared/
+    synchronized clock between them) -- and `plug:usb_speaker` additionally
+    performs an ALSA-automatic 16kHz -> 48kHz rate conversion (documented,
+    ``nexa.voice.config.LocalAudioConfig``'s own docstring: "the reSpeaker
+    is 16 kHz stereo; the UACDemoV1.0 is 48 kHz stereo"), while
+    `plug:respeaker` needs none. This does NOT change the PCM, the stream
+    topology, or introduce any new sleep -- it records
+    ``time.monotonic_ns()`` at 4 points per playback subprocess
+    (``task_requested_ns`` at this function's own ``asyncio.create_task()``
+    call, ``subprocess_created_ns``/``communicate_begin_ns``/
+    ``process_return_ns`` inside the EXISTING subprocess lifecycle) via
+    the optional ``timing_sink`` parameter threaded through
+    ``play_pcm``/``_run_subprocess`` (default ``None`` elsewhere --
+    zero behavior change for every other caller). These are HOST/PROCESS-
+    LEVEL observations only -- never claimed as exact DAC sample timing."""
     segment_bytes_per_cycle = int(cycle_s * SAMPLE_RATE) * 2
     full_signal = build_continuous_signal(
         stimulus, cycle_s=cycle_s, cycles=cycles, amplitude=amplitude
@@ -626,13 +677,76 @@ async def run_continuous(
     await asyncio.sleep(PRE_ROLL_S)
 
     ref_pcm = apply_gain(full_signal, gain)
-    play_tasks = [
-        asyncio.create_task(play_pcm(full_signal, device=SPEAKER_DEVICE)),
-        asyncio.create_task(play_pcm(ref_pcm, device=REFERENCE_DEVICE)),
-    ]
+    speaker_timing: dict = {}
+    reference_timing: dict = {}
+    speaker_timing["task_requested_ns"] = time.monotonic_ns()
+    speaker_task = asyncio.create_task(
+        play_pcm(full_signal, device=SPEAKER_DEVICE, timing_sink=speaker_timing)
+    )
+    reference_timing["task_requested_ns"] = time.monotonic_ns()
+    reference_task = asyncio.create_task(
+        play_pcm(ref_pcm, device=REFERENCE_DEVICE, timing_sink=reference_timing)
+    )
+    play_tasks = [speaker_task, reference_task]
     await asyncio.gather(*play_tasks)
 
     captured = await capture_task
+
+    # R0081 -- derive the requested skew/duration metrics from the raw
+    # timestamps above. All *_ms values are host-observed, not certified
+    # hardware timing -- labeled precisely in the returned dict's own
+    # field names, and printed with the same caveat in _run_track_continuous.
+    def _elapsed_ms(t: dict) -> float | None:
+        if "communicate_begin_ns" in t and "process_return_ns" in t:
+            return (t["process_return_ns"] - t["communicate_begin_ns"]) / 1e6
+        return None
+
+    speaker_elapsed_ms = _elapsed_ms(speaker_timing)
+    reference_elapsed_ms = _elapsed_ms(reference_timing)
+    timing_summary = {
+        "speaker": speaker_timing,
+        "reference": reference_timing,
+        "speaker_process_elapsed_ms": (
+            round(speaker_elapsed_ms, 3) if speaker_elapsed_ms is not None else None
+        ),
+        "reference_process_elapsed_ms": (
+            round(reference_elapsed_ms, 3) if reference_elapsed_ms is not None else None
+        ),
+        "process_start_skew_ms": (
+            round(
+                abs(speaker_timing["subprocess_created_ns"]
+                    - reference_timing["subprocess_created_ns"]) / 1e6, 3
+            )
+            if "subprocess_created_ns" in speaker_timing
+            and "subprocess_created_ns" in reference_timing
+            else None
+        ),
+        "process_finish_skew_ms": (
+            round(
+                abs(speaker_timing["process_return_ns"]
+                    - reference_timing["process_return_ns"]) / 1e6, 3
+            )
+            if "process_return_ns" in speaker_timing
+            and "process_return_ns" in reference_timing
+            else None
+        ),
+    }
+    if speaker_elapsed_ms is not None and reference_elapsed_ms is not None:
+        duration_diff_ms = speaker_elapsed_ms - reference_elapsed_ms
+        timing_summary["elapsed_duration_difference_ms"] = round(duration_diff_ms, 3)
+        # R0081 -- "host-observed effective duration mismatch," explicitly
+        # NOT certified hardware oscillator ppm (per instruction): the
+        # nominal playback duration is the same for both streams (the
+        # identical full_signal, gain-scaled for reference only, both at
+        # SAMPLE_RATE frames), so any repeatable elapsed-time difference
+        # between the two aplay processes for that SAME nominal duration
+        # is consistent with (not proof of) independent playback-clock
+        # behavior between the two separate USB Audio Class devices.
+        nominal_ms = total_playback_s * 1000.0
+        if nominal_ms > 0:
+            timing_summary["approx_effective_ppm_difference"] = round(
+                (duration_diff_ms / nominal_ms) * 1_000_000, 1
+            )
 
     pre_roll_samples = int(PRE_ROLL_S * SAMPLE_RATE)
     quiet_before = captured[: pre_roll_samples * 2]
@@ -672,6 +786,7 @@ async def run_continuous(
         "full_signal": full_signal,
         "reference_clipped_samples": ref_clip["n_clipped"],
         "reference_clipped_percent": ref_clip["pct_clipped"],
+        "timing": timing_summary,
     }
 
 
@@ -1450,6 +1565,34 @@ async def _run_track_continuous(args: argparse.Namespace) -> int:
           f"({result['reference_clipped_samples']} samples)")
     if result["reference_clipped_percent"] > 0:
         print("  *** WARNING: reference is CLIPPED -- this run is not valid evidence. ***")
+    print()
+
+    # R0081 -- host/process-level timing instrumentation (see run_continuous's
+    # own docstring for exactly what these measure and why: two separate
+    # USB Audio Class devices, no shared clock configured anywhere in this
+    # system's ALSA setup, one of them ALSA-resampled 16kHz->48kHz and the
+    # other not). Printed as its own labeled block so it is never mistaken
+    # for certified DAC-sample timing.
+    t = result["timing"]
+    print("  --- host-observed playback subprocess timing (NOT certified DAC sample timing) ---")
+    for name in ("speaker", "reference"):
+        st = t[name]
+        pid = st.get("pid", "?")
+        print(f"    {name:>9} (pid {pid}): "
+              f"task_requested_ns={st.get('task_requested_ns', '?')}  "
+              f"subprocess_created_ns={st.get('subprocess_created_ns', '?')}  "
+              f"communicate_begin_ns={st.get('communicate_begin_ns', '?')}  "
+              f"process_return_ns={st.get('process_return_ns', '?')}")
+    print(f"    speaker_process_elapsed_ms   : {t['speaker_process_elapsed_ms']}")
+    print(f"    reference_process_elapsed_ms : {t['reference_process_elapsed_ms']}")
+    print(f"    process_start_skew_ms        : {t['process_start_skew_ms']}")
+    print(f"    process_finish_skew_ms       : {t['process_finish_skew_ms']}")
+    if "elapsed_duration_difference_ms" in t:
+        print(f"    elapsed_duration_difference_ms (speaker - reference) : "
+              f"{t['elapsed_duration_difference_ms']}")
+        print(f"    approx_effective_ppm_difference (host-observed effective duration "
+              f"mismatch, NOT certified oscillator ppm) : "
+              f"{t.get('approx_effective_ppm_difference')}")
     print()
     print(f"  {'cycle':>5}  {'start_s':>8}  {'end_s':>8}  {'cum_ref_s':>10}  "
           f"{'mic_rms':>8}  {'mic_peak':>9}")
