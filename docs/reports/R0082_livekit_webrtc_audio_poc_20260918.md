@@ -5617,3 +5617,319 @@ session did not execute any hardware. **R0082-G remains READY for
 deliberate barge-in runs #2–#5**, now with both the corrected
 mono-based classification boundary and the `AudioSource` queue-clear
 fix in place.
+
+## 104. R0082-G deliberate barge-in replication set — runs #2–#5 (VALID PASS, independently re-verified)
+
+The operator executed four further real hardware deliberate-barge-in
+runs, completing the ≥5-run replication set (`r0082g_bargein_001`
+through `r0082g_bargein_005`, this session's own run #1 =
+`r0082g_bargein_001` / `run_id=20260918T202620Z`, §102). This session
+did not execute runs #2–#5; every figure below was independently
+reproduced from the evidence files, not merely trusted from the
+console transcript.
+
+### 104.1 Evidence verification (independently reproduced)
+
+```
+run_id            SHA256 48k                                              SHA256 16k                                              match
+20260918T205742Z  5e90408a2bc272400d5ea65a43151f97836878493abe6e442557d... 9442a75da29ae7f49ee1e39750bfdf42bd3e0adacd3751fefb4f...  EXACT
+20260918T210003Z  77079238c8c4adb41582ac406a3818bbd308adc1d30f667337c3... fd71995bf7697c7d6e98c921eaba24a9c960771fe074839f286...  EXACT
+20260918T210125Z  52871b0111f40a7705c7e667474b1a044c1f74fb4c77127175a0... b5433d691d00b5c7e005ad4954672dedcc4e0f7cb985323e6b9...  EXACT
+20260918T210253Z  3bda27d66c8c6e0c19022c59a2697ddf0a187f245980525a79f7... b03e3a48b7b98f28ccb96d6f9aced1ca5a72f5211fe0b5d78ed...  EXACT
+```
+
+All 8 hashes recomputed via `sha256sum` on the actual files in
+`r0082f_live_captures/` — exact matches, byte-for-byte.
+
+**WAV properties and CSV row counts, independently inspected:**
+
+```
+run_id            48k nframes/dur      16k nframes/dur      CSV rows (incl. header)
+20260918T205742Z  750720 / 15.640s     250240 / 15.640s     488 (487 VAD frames)
+20260918T210003Z  684480 / 14.260s     228160 / 14.260s     445 (444 VAD frames)
+20260918T210125Z  720000 / 15.000s     240000 / 15.000s     468 (467 VAD frames)
+20260918T210253Z  701280 / 14.610s     233760 / 14.610s     456 (455 VAD frames)
+```
+
+(all channels=1, sampwidth=2, framerate matches 48000/16000 as
+expected — no malformed files, no discrepancy found.)
+
+**Accepted VAD start / confirmed interruption timestamps, recomputed
+directly from each CSV** (scanning `vad_user_started_speaking_equivalent`
+and `interrupt_confirmed` columns), matching the reported figures
+exactly:
+
+```
+run_id            post_user_started   post_user_confirmed
+20260918T205742Z  [13.280]            [13.600]
+20260918T210003Z  [11.904]            [12.224]
+20260918T210125Z  [12.640]            [12.960]
+20260918T210253Z  [12.256]            [12.576]
+```
+
+**`pre_user_false_positive`, independently recomputed** by scanning
+every CSV row for an accepted start/confirm with `timestamp_monotonic
+< milestones["speak_now"]` (the corrected, canonical, actual-cue
+boundary from §103.1 — not the idealized 9.0s): **`False` for all four
+runs**, zero exceptions, zero pre-cue accepted events of any kind.
+
+**`capture_ok`/`VERDICT`, reproduced by hand** using each run's own
+`capture_duration_s` (from WAV `nframes`), confirmed post-confirmed
+timestamp, and `min_required_s = post_user_confirmed[0] +
+POST_INTERRUPT_MARGIN_S`:
+
+```
+run_id            capture_duration_s   min_required_s   capture_ok   VERDICT
+20260918T205742Z  15.640               14.600            True         PASS
+20260918T210003Z  14.260               13.224            True         PASS
+20260918T210125Z  15.000               13.960            True         PASS
+20260918T210253Z  14.610               13.576            True         PASS
+```
+
+**Queue-clear verification (`AudioSource.clear_queue()`), independently
+recomputed from each run's `milestones.json`:**
+
+```
+run_id            queued_before_clear_s   queued_after_clear_s   queue clear AFTER cancel_requested?
+20260918T205742Z  1.0091232939739712      0.0                    YES (+6.591ms)
+20260918T210003Z  1.00355409597978        0.0                    YES (+6.521ms)
+20260918T210125Z  1.0060435750056058      0.0                    YES (+6.690ms)
+20260918T210253Z  1.000091205991339       0.0                    YES (+6.793ms)
+```
+
+`queued_before_clear > 0` confirmed for all four (real audio genuinely
+had accumulated in the `AudioSource`'s own internal queue at the moment
+of cancellation — averaging just over 1.0s, consistent with the
+default `queue_size_ms=1000` being nearly saturated at steady-state
+playback); `queued_after_clear == 0.0` confirmed for all four (the
+queue was genuinely, completely discarded). Milestone ordering was
+independently recomputed for **all five runs including #1** and found
+monotonic and causally sensible in every case:
+`playback_cancel_requested < last_speech_frame_submitted <
+audio_source_queued_before_clear_mono < audio_source_queue_cleared_mono
+< audio_source_queued_after_clear_mono < playback_stopped` — with
+exactly ONE additional ~10ms frame slipping through between
+`playback_cancel_requested` and `last_speech_frame_submitted` in every
+single run (expected: the cancel event is only checked once per loop
+iteration, and it was set by a concurrent task, so at most one frame in
+flight can complete before the check catches it — not a defect).
+
+**"No further submission after clear" / "no resume":** confirmed
+structurally for all four runs — `samples_submitted` in each run's own
+log is strictly less than the full 1,112,708-sample stimulus
+(`playback_stopped_early=True` in every case), and the harness's own
+`_play_signal_cancelable()` has no code path that re-enters the
+submission loop after `break` (verified offline, §103.3, unchanged this
+round).
+
+### 104.2 Aggregate table — deliberate human barge-in, runs #1–#5
+
+```
+run   pre_user_fp   VAD start   CONFIRMED   VAD->confirm   confirm->cancel   queued_before   queued_after   verdict
+#1    False         12.256s     12.576s     0.320111s      0.0000323s        n/a (pre-fix)   n/a (pre-fix)  PASS
+#2    False         13.280s     13.600s     0.320035s      0.0000239s        1.0091s         0.0000s        PASS
+#3    False         11.904s     12.224s     0.320096s      0.0000295s        1.0036s         0.0000s        PASS
+#4    False         12.640s     12.960s     0.319963s      0.0000285s        1.0060s         0.0000s        PASS
+#5    False         12.256s     12.576s     0.319967s      0.0000312s        1.0001s         0.0000s        PASS
+```
+
+**Aggregate: 5/5 deliberate human barge-in detection/confirmation
+PASS. 0/5 pre-user accepted false positives.** VAD-start→confirmed
+latency is remarkably consistent across all five runs (0.31996s–
+0.32011s, a ~150µs spread) — matches production `confirm_hold_secs
+=0.3` plus one 32ms frame-granularity quantization step, exactly as
+designed, on every single run. confirmed→cancel-requested latency is
+consistently in the 24–33µs range (same event-loop iteration in every
+case). This aggregate does **not** by itself establish the physical/
+acoustic prompt-stop claim — see §105.
+
+## 105. Acoustic-stop analysis (Task 3) — methodology and result: NOT MEASURABLE FROM MIC EVIDENCE
+
+**Question.** Does the far-end NeXa speech actually disappear
+acoustically after `playback_cancel_requested`/
+`audio_source_queue_cleared`, as distinct from merely "future
+submission stopped"? The mic capture contains BOTH genuine near-end
+operator speech AND residual/echo from NeXa playback simultaneously at
+the moment of interest — raw total RMS after cancellation is dominated
+by the operator's own voice (peaking in the thousands of RMS units per
+run #1's own onset analysis, §102.2) and cannot isolate a much weaker
+echo component, so it was deliberately NOT used as the primary method.
+
+**Method attempted.** The frozen source WAV
+(`r0082d_speech_en_pl_v1.wav`, sha256
+`703db210bcef8222adf044e88594958289be8d0e6ff4798ad8245b0c1076c21d`,
+re-verified this round) is known exactly. For each run:
+
+1. **Delay estimation** from the pre-`SPEAK-NOW`, human-silent, actively-
+   playing window (audio-relative [4.0s, cue_start−0.2s], chosen because
+   audio-relative t=4.0s maps to playback-relative ≈0.9–1.0s across all
+   five runs — safely after real playback begins, confirmed by direct
+   inspection). Raw-sample Pearson cross-correlation between the mic
+   excerpt and the correspondingly-shifted source excerpt was computed
+   over a candidate delay range of −50ms to +600ms (the mapping from
+   audio-relative time to playback-relative time, and thus to the
+   expected source sample index, uses the same
+   `timestamp_monotonic`↔`audio_relative_timestamp_s` CSV interpolation
+   established in §102.2).
+2. **Null/control baseline**: the SAME mic excerpt correlated against
+   source excerpts at physically implausible delays (2.0–2.8s out — far
+   beyond any real acoustic/network/buffer path for this setup) to
+   establish a chance-level correlation distribution.
+3. **Significance test**: the in-range peak is judged "significant" only
+   if it exceeds 3× the null distribution's 95th percentile AND 2σ+mean
+   of the null distribution.
+4. **Temporal-consistency check**: for any run whose peak passed the
+   significance test, a sliding 0.5s-window correlation (at the fixed
+   best-delay found in step 1) was computed across the whole pre-cue
+   region, to check whether the correlation stays consistently elevated
+   and same-signed (expected of a genuine, stable echo path) or merely
+   spikes once (consistent with a chance artifact).
+5. **Envelope-based cross-correlation** (20ms-window short-time RMS
+   envelope of both signals, correlated the same way) was also computed
+   as a more AEC-nonlinearity-robust alternative, since AEC's residual
+   echo suppression can scramble fine sample-level phase while
+   potentially preserving coarser energy-envelope structure.
+
+*(One implementation defect was caught and fixed during this analysis,
+before drawing any conclusion: the delay-search loop's "best correlation"
+tracker was initially seeded at `-1.0`, making `abs(best) = 1.0`
+unbeatable by any real correlation coefficient (bounded in [-1, 1]) —
+the exact same class of bug previously found and fixed in R0082-D's own
+`find_lag_and_corr()`. Fixed by seeding at `0.0` before any results were
+interpreted; this is a fix to a throwaway analysis script, not to the
+committed harness, and did not affect any verdict.)*
+
+**Results:**
+
+```
+run_id            raw-sample peak |r|   null p95   significant?   envelope peak |r|   envelope null p95   significant?
+20260918T202620Z  0.0544 (@510ms)       0.0161      True*          0.1855 (@435ms)      0.2346               False
+20260918T205742Z  0.0368 (@218ms)       0.0245      False          0.1923 (@320ms)      0.1999               False
+20260918T210003Z  0.1203 (@496ms)       0.0268      True*          0.2807 (@145ms)      0.2112               False
+20260918T210125Z  0.0352 (@166ms)       0.0212      False          0.2140 (@460ms)      0.2849               False
+20260918T210253Z  0.0352 (@42ms)        0.0212      False          0.3193 (@505ms)      0.2189               False
+```
+
+`*` = nominally passed the significance test on the raw-sample method
+alone, BUT the temporal-consistency check (step 4) invalidates both:
+sliding 0.5s-window correlation at the run's own best-delay, computed
+across the entire pre-cue region, shows the correlation sign FLIPPING
+repeatedly and its magnitude fluctuating between roughly ±0.06 (run
+`20260918T202620Z`) or spiking once to +0.198 in a single 0.5s window
+against an otherwise-flat ~0.01–0.03 background (run
+`20260918T210003Z`) — neither pattern is consistent with a stable,
+physically real, fixed-delay echo path; both are consistent with
+chance. The estimated "best delays" also do not cluster around a common
+value across runs (42ms–510ms, no consistent physical delay), which a
+genuine, repeatable acoustic/system echo path would be expected to
+show.
+
+**Conclusion: NOT MEASURABLE FROM MIC EVIDENCE**, for all five runs
+(including run #1). This is a rigorous negative result, not a
+shortcut — two independent, defensible cross-correlation methods (raw-
+sample and envelope-based), each checked against an explicit null
+baseline for statistical significance, and a temporal-consistency
+check that specifically debunked the two nominally-significant raw-
+sample results, all converge on the same conclusion: this harness's AEC
+suppression (`echo_cancellation=True`, WebRTC AEC on `PlatformAudio`)
+is strong enough that any residual far-end echo correlated with the
+known source is, at best, indistinguishable from measurement noise in
+this mic evidence. This is consistent with every prior R0082 round's
+own finding that AEC-suppressed residual echo sits at RMS 2–4 (near the
+noise floor) even while the far-end stimulus is actively, loudly
+"speaking" (§102.2's own baseline). **Estimated acoustic-stop latency:
+NOT MEASURABLE for any of the five runs. Whether source-correlated
+playback resumes later: also NOT MEASURABLE** (a method that cannot
+reliably detect the PRESENCE of source-correlated content, even in a
+window where it is known for certain to be present, cannot reliably
+detect its absence or reappearance either).
+
+## 106. Run #1 nuance (Task 4)
+
+Run #1 (`r0082g_bargein_001`, `run_id=20260918T202620Z`) occurred
+**before** `AudioSource.clear_queue()` was added to the harness (§103.2
+was implemented and committed after run #1). Its evidence therefore has
+no `audio_source_queued_before_clear_s`/`audio_source_queued_after_
+clear_s`/`audio_source_queue_cleared_mono` milestones — this is
+expected, not a defect, and is not retroactively claimed. Kept exactly
+as originally classified:
+
+```
+run #1 = VALID PASS for:
+  - no pre-user accepted self-echo (pre_user_false_positive=False,
+    independently re-confirmed this round using the corrected
+    ACTUAL-mono-SPEAK-NOW boundary, §103.1/§104.1)
+  - human VAD detection (accepted start at t=12.256s)
+  - interruption confirmation (INTERRUPT_CONFIRMED at t=12.576s)
+  - future submission cancellation (playback_stopped_early=True,
+    507360/1112708 samples submitted, §102.5)
+```
+
+**Publisher-side queued-audio discard is NOT claimed for run #1** — the
+mechanism did not exist yet at the time of that run. Run #1's own mic
+evidence was included in the §105 acoustic-stop analysis (it is run
+`20260918T202620Z` in that table) using the identical methodology
+applied to runs #2–#5: **NOT MEASURABLE FROM MIC EVIDENCE**, same
+conclusion, no separate/different treatment warranted or found.
+
+## 107. Decision (Task 5) — four separate classifications, not merged
+
+```
+A. Deliberate human detection/confirmation:
+   PASS
+   (5/5 real hardware runs: accepted VAD start -> INTERRUPT_CONFIRMED,
+   0/5 pre-user accepted false positives, VAD-start->confirmed latency
+   consistent with production confirm_hold_secs=0.3 on every run)
+
+B. Publisher-side queued audio discard (runs #2-#5):
+   PASS
+   (4/4 runs: queued_before_clear > 0 in every case -- confirming real
+   audio was genuinely queued -- and queued_after_clear == 0.0 in
+   every case -- confirming it was genuinely discarded; clear_queue()
+   invoked strictly after playback_cancel_requested, before any further
+   frame submission, in every case)
+
+C. Physical/acoustic prompt stop:
+   NOT PROVEN
+   (two independent, null-baseline-tested cross-correlation methods,
+   applied to all 5 runs including #1, found no statistically reliable,
+   temporally-consistent source-correlated signal in the mic evidence
+   at all -- not even in the pre-cue window where echo is known for
+   certain to be present. This is a genuine measurement limitation of
+   this harness's AEC-suppressed mic evidence, not a negative finding
+   about whether the speaker actually stops -- it is simply NOT
+   MEASURABLE from the evidence collected. "Future submission stopped"
+   and "publisher queue discarded" (both B, PASS) are NOT the same
+   claim as "the physical speaker fell silent at a known instant," and
+   this report does not conflate them.)
+
+D. Playback resume after interruption:
+   NOT OBSERVED (software/structural) / NOT MEASURABLE (acoustic)
+   (software-level: zero evidence of any resumed frame submission in
+   any of the 5 runs -- capture_frame() call counts and submitted-
+   sample totals are all consistent with a single, permanent stop, and
+   the harness has no code path that re-enters the submission loop;
+   acoustic-level: cannot be assessed at all, for the same reason as C
+   -- if source-correlated content cannot be reliably detected even
+   when present, its reappearance cannot be reliably ruled out or in)
+```
+
+**The evidence supports A and B fully. It does not yet support C.**
+What remains missing for C: a measurement method with better
+sensitivity than mic-based cross-correlation against a AEC-suppressed
+residual this weak — e.g. a dedicated reference microphone positioned
+to capture the speaker's ACOUSTIC output directly (bypassing the
+hardware's own AEC processing entirely), or an electrical tap on the
+speaker's own drive signal, neither of which this research harness
+currently has. This is stated as a genuine open gap, not glossed over.
+
+## 108. Static checks (Task 6)
+
+```
+git diff --check                                                     PASS
+```
+
+No code changes were made or needed this round — all analysis was
+read-only inspection of existing evidence files plus one throwaway
+analysis script (not part of the committed harness). Report-only
+commit.
