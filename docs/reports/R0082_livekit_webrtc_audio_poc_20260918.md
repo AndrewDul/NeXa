@@ -5392,3 +5392,228 @@ re-verified in full, with a defensible (uncertainty-bounded) acoustic-
 onset estimate and a clean pre-`SPEAK-NOW` diagnostic scan.** This is
 one run of the eventual ≥5-run replication set, not the replication
 set itself. This session did not execute any further hardware.
+
+## 103. Two evidence-backed harness corrections, found by run #1's own offline analysis (no hardware run)
+
+Run #1's own offline analysis (§102) surfaced two harness issues that
+must be closed before replication runs #2–#5. **Neither issue
+invalidates run #1's PASS classification for live human VAD detection /
+no pre-user accepted self-echo** — both are addressed below without
+touching the verdict that made run #1 a PASS.
+
+### 103.1 Correction #4 — canonical boundary must be the ACTUAL emitted `SPEAK NOW`, not the idealized/scheduled one
+
+**Defect.** §102.2 found the idealized/scheduled
+`speak_now_boundary_t_s = PRE_ROLL_S + BARGEIN_SPEAK_NOW_TIME_S` (9.0s,
+audio-relative) lagged the ACTUAL emitted `SPEAK NOW`
+(`milestones["speak_now"]`, wall-clock) by roughly 1.0s in run #1's own
+audio-relative timeline (~10.025s). The operator cannot possibly speak
+before the cue has ACTUALLY been emitted — a false event landing
+between the scheduled 9.0s and the real cue would have been wrongly
+treated as "post-cue" (potentially reaching `PASS`) under the old
+boundary. This was no longer scientifically sufficient.
+
+**Fix.** `evaluate_deliberate_bargein_result()` now classifies using
+`started_events_mono`/`confirmed_events_mono` (wall-clock, already
+recorded by `LiveVadChain`) directly against `speak_now_mono`
+(`milestones["speak_now"]`) — never the idealized audio-relative value:
+
+```python
+pre_user_started   = [t for t, tm in started_pairs   if _is_pre(tm, speak_now_mono)]
+post_user_started   = [t for t, tm in started_pairs   if not _is_pre(tm, speak_now_mono)]
+pre_user_confirmed = [t for t, tm in confirmed_pairs if _is_pre(tm, speak_now_mono)]
+post_user_confirmed = [t for t, tm in confirmed_pairs if not _is_pre(tm, speak_now_mono)]
+```
+
+where `_is_pre(tm, boundary) = boundary is None or tm < boundary` — if
+`speak_now_mono is None` (the cue genuinely never fired, e.g. a
+pre-`SPEAK-NOW` false positive cancelled it before it could), EVERY
+accepted event is treated as pre-user by definition: there is no
+"after `SPEAK NOW`" window if `SPEAK NOW` never happened. The idealized
+`speak_now_boundary_t_s`/`cue_start_boundary_t_s` values are **not
+silently mixed into this comparison** — they remain parameters used
+ONLY for (a) `capture_ok`'s minimum-duration floor heuristics
+(audio-relative domain, orthogonal to the false-positive semantic
+split) and (b) diagnostic passthrough of the scheduled-vs-actual gap.
+The returned `pre_user_*`/`post_user_*` lists still report
+AUDIO-RELATIVE timestamps (for CSV/report continuity) even though the
+SELECTION is made using monotonic values. A parallel `cue_start_mono`
+(`milestones.get("cue_start")`) drives the `pre_countdown_*`/
+`during_countdown_*` diagnostic sub-split the same way.
+
+**Offline regression added** (models run #1's own finding exactly):
+scheduled `SPEAK NOW`-equivalent = 9.0s, actual emitted `SPEAK NOW` =
+10.0s, false accepted start at 9.5s (after the scheduled boundary, but
+before the real cue), later genuine barge-in after 10.0s succeeds →
+verdict is `FAIL-E`, not `PASS` — proven correct offline; a complementary
+test confirms a genuine event strictly after the delayed actual cue
+still `PASS`es cleanly.
+
+**Run #1 reproduction (does not invalidate the original PASS).** Using
+run #1's own exact recorded values (`speak_now_mono=268137.820367925`,
+accepted VAD start at audio-relative 12.256 /
+`mono=268140.052419`, confirmed interruption at audio-relative 12.576 /
+`mono=268140.372530`), the corrected classifier was run directly:
+`pre_user_false_positive=False`, `VERDICT=PASS` — unchanged. Run #1's
+only accepted start/confirm occurred well after BOTH the scheduled
+(9.0s) and the actual (~10.025s) cue boundaries, so this correction
+does not and could not have changed its classification.
+
+**Corrected diagnostic for run #1** (recomputed against the ACTUAL cue
+boundary per instruction, not merely `t<9.0s`):
+
+```
+                                idealized (t<9.0s)   ACTUAL (t<speak_now_mono)
+pre-cue row count               282                   314
+max Silero probability          0.3161                0.3161
+max smoothed volume             0.42699               0.42699
+frames with probability>=0.7    0 / 282                0 / 314
+candidate/STARTING/SPEAKING     0 / 282                0 / 314
+```
+
+The wider, ACTUAL-boundary window (314 rows vs. 282) adds 32 more
+frames of observation but finds no new peak and no new suspicious
+activity — both windows report the exact same maxima. The corrected
+diagnostic conclusion is identical to the original: **no suspicious
+near-threshold activity before the operator's cue, under either
+boundary.**
+
+### 103.2 Correction #5 — `AudioSource.clear_queue()` now invoked on confirmed interruption
+
+**Defect.** §102.5 found ~1.008s of audio submitted ahead of wall-clock
+during run #1's playback segment. Stopping the Python `capture_frame()`
+submission loop on `INTERRUPT_CONFIRMED` proves FUTURE audio stops
+being submitted; it does not by itself prove already-buffered audio is
+discarded from the actual playout path.
+
+**Audit of the exact `AudioSource` construction** (per instruction, no
+assumption): `signal_source = rtc.AudioSource(LIVE_SAMPLE_RATE, 1)` in
+both `run_speech_role` (silent-user) and
+`run_speech_role_deliberate_bargein`. The installed API
+(`livekit==1.1.19`, audited directly via `inspect.signature`):
+
+```
+rtc.AudioSource.__init__(self, sample_rate, num_channels,
+                          queue_size_ms: int = 1000, loop=None) -> None
+```
+
+The harness passes only `(LIVE_SAMPLE_RATE, 1)` — i.e. the **DEFAULT
+`queue_size_ms=1000`** (1000ms), exactly matching the ~1.0s observed
+gap. `AudioSource.clear_queue()` (synchronous, confirmed via
+`inspect.iscoroutinefunction` → `False`) and `AudioSource.queued_duration`
+(a property returning seconds of buffered audio) are both confirmed
+present in the installed runtime — the required APIs exist; this is not
+a STOP-and-report case.
+
+**Fix.** `_play_signal_cancelable()` (deliberate-bargein mode only,
+silent-user untouched) now does this the INSTANT `cancel_event` is
+observed set, before anything else (including cancelling the cue task):
+
+```python
+if cancel_event.is_set():
+    stopped_early = True
+    queued_before_s = signal_source.queued_duration
+    milestones["audio_source_queued_before_clear_s"] = queued_before_s
+    print(f"... AUDIO_SOURCE_QUEUED_BEFORE_CLEAR = {queued_before_s:.4f}s")
+    signal_source.clear_queue()
+    print("... AUDIO_SOURCE_QUEUE_CLEARED")
+    queued_after_s = signal_source.queued_duration
+    milestones["audio_source_queued_after_clear_s"] = queued_after_s
+    print(f"... AUDIO_SOURCE_QUEUED_AFTER_CLEAR = {queued_after_s:.4f}s")
+    break
+```
+
+Log ordering on a real confirmed interruption is now: `PLAYBACK_CANCEL_
+REQUESTED` (unchanged, from `_consume_mic`) → `AUDIO_SOURCE_QUEUED_
+BEFORE_CLEAR` → `AUDIO_SOURCE_QUEUE_CLEARED` → `AUDIO_SOURCE_QUEUED_
+AFTER_CLEAR` → `PLAYBACK_STOPPED` (unchanged, from the caller). No new
+frames can be submitted after this point (the loop has `break`-ed) and
+playback cannot resume (unchanged, structural, no retry code path
+exists).
+
+**`queue_size_ms` was deliberately NOT changed.** Per instruction:
+prove `clear_queue()` works correctly first, preserve stable real-time
+playback, and only change queue size if evidence shows it is needed.
+`clear_queue()` alone already satisfies the actual requirement
+(confirmed interruption → stop future submission → discard queued
+publisher audio) without the risk shrinking `queue_size_ms` would carry
+for the NORMAL (non-cancelled) playback path's pacing. This was not an
+arbitrary queue-size change — it remains at its default.
+
+**What this fix does and does NOT prove.** It closes the gap between
+"future submission stopped" and "buffered publisher-side audio
+discarded" — both now verifiably true, with `queued_duration` recorded
+immediately before and after `clear_queue()`. **It does NOT by itself
+prove the physical speaker fell silent at that instant.** That would
+additionally depend on downstream WebRTC/Opus encode, network
+transport, and the far-end device's own playout buffer — none of which
+this research harness observes or controls. Accordingly:
+
+```
+R0082-G run #1:
+  VALID PASS for live human detection / no pre-user accepted self-echo.
+
+Prompt physical/acoustic stop:
+  NOT YET FULLY PROVEN -- ~1.008s of publisher audio was submitted
+  ahead of wall-clock in run #1 (queue_size_ms=1000, default, at the
+  time of that run). The VAD/barge-in PASS is NOT downgraded by this;
+  stopping future audio submission is not claimed to be identical to
+  immediate physical speaker silence.
+```
+
+**Offline validation added** (`FakeSignalSource` extended with
+`clear_queue()`/`queued_duration`, modeling the confirmed installed
+API): queue clear invoked exactly once on cancellation even with
+nothing queued (`queued_before=queued_after=0.0`); queue clear NEVER
+invoked on natural (non-cancelled) completion; mid-stream cancellation
+shows `queued_before > 0` (real frames were queued) and
+`queued_after == 0.0` (genuinely discarded); no `capture_frame()` calls
+occur after the clear; the four new milestones
+(`audio_source_queued_before_clear_mono`, `audio_source_queue_cleared_
+mono`, `audio_source_queued_after_clear_mono`, `playback_stopped`) are
+monotonically ordered. A structural check confirms the `cancel_event`
+check remains the FIRST statement inside the submission loop (detection
+itself is not delayed by the new queue-clearing code).
+
+### 103.3 Offline validation performed this round (all before any hardware)
+
+```
+py_compile                                                          PASS
+ruff                                                                 PASS
+git diff --check                                                     PASS
+production VAD constants unchanged (VAD_CONFIDENCE/START_SECS/
+  STOP_SECS/MIN_VOLUME grep-verified byte-identical)                 PASS
+silent-user run_speech_role body byte-for-byte identical to the
+  last commit (10405 chars, programmatic diff)                       PASS
+DELAYED CUE regression (scheduled 9.0s / actual 10.0s / false event
+  at 9.5s / genuine barge-in after 10.0s) -> FAIL-E                   PASS (3/3 sub-checks)
+DELAYED CUE complement (genuine event after the actual delayed
+  cue) -> PASS                                                        PASS
+RUN #1 REPRODUCTION using its own exact recorded mono timestamps
+  -> pre_user_false_positive=False, VERDICT=PASS (unchanged)          PASS (2/2)
+Existing CASE 1-5 / TEST 1-6 (all prior FAIL-E/FAIL-F corrections)
+  re-verified correct under the new mono-based classifier             PASS (all)
+AudioSource queue-clear: invoked exactly once on cancellation
+  even with nothing queued                                            PASS (4/4)
+AudioSource queue-clear: NOT invoked on natural completion             PASS (2/2)
+AudioSource queue-clear: mid-stream cancel -- queued_before>0,
+  queued_after=0.0, no frames submitted after clear                   PASS (4/4)
+AudioSource queue-clear: milestone ordering monotonic                  PASS
+Structural: cancel_event check remains first statement in the
+  submission loop (detection not delayed by queue-clearing)            PASS
+Positive/negative VAD control regression                               PASS (5/5, unaffected)
+LiveVadChain.process_frame() CSV backward-compatibility regression      PASS (4/4, unaffected)
+_play_signal_cancelable() cancellation/no-resume regression             PASS (10/10, unaffected)
+```
+
+86 checks total, all PASS.
+
+**Verdict: both corrections CONFIRMED correct offline.** Run #1 remains
+`VALID PASS` for live human VAD/barge-in detection with no pre-user
+accepted self-echo event; the prompt physical/acoustic stop claim
+remains explicitly `NOT YET FULLY PROVEN` pending `clear_queue()`
+verification on real hardware. No production files were touched. This
+session did not execute any hardware. **R0082-G remains READY for
+deliberate barge-in runs #2–#5**, now with both the corrected
+mono-based classification boundary and the `AudioSource` queue-clear
+fix in place.

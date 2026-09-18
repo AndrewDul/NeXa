@@ -327,6 +327,50 @@ mic WAV and the full per-frame CSV timeline are preserved specifically
 so the actual acoustic onset can be independently re-estimated offline
 after a real run (the same RMS-scan technique used to choose the cue
 timestamp), without altering this live decision.
+
+**Fourth correction (found after real hardware run #1's own offline
+acoustic-onset analysis):** the idealized/scheduled
+`speak_now_boundary_t_s = PRE_ROLL_S + BARGEIN_SPEAK_NOW_TIME_S`
+(audio-relative, 9.0s) turned out to lag the ACTUAL emitted `SPEAK NOW`
+(`milestones["speak_now"]`, wall-clock) by roughly 1.0s in real
+hardware run #1's own audio-relative timeline (~10.025s). The operator
+cannot possibly speak before the cue has ACTUALLY been emitted, so a
+false event landing between the scheduled 9.0s and the real cue would
+have been wrongly treated as "post-cue" under the old boundary. Fixed:
+`evaluate_deliberate_bargein_result()` now classifies using
+`started_events_mono`/`confirmed_events_mono` (wall-clock, already
+recorded by `LiveVadChain`) directly against `speak_now_mono`
+(`milestones["speak_now"]`) -- never the idealized audio-relative
+value. The idealized/scheduled values remain available ONLY for (a)
+`capture_ok`'s minimum-duration floor heuristics (audio-relative
+domain, orthogonal to the false-positive semantic boundary) and (b)
+diagnostic passthrough reporting of the scheduled-vs-actual gap -- they
+are never silently mixed into the pre/post-user classification itself.
+
+**Fifth correction (found after the same offline analysis of run #1's
+own evidence, ~1.0s of audio observed submitted ahead of wall-clock):**
+stopping the Python `capture_frame()` submission loop on
+`INTERRUPT_CONFIRMED` proves future audio stops being SUBMITTED; it
+does not by itself prove already-buffered audio is discarded from the
+actual playout path. `signal_source` is an `rtc.AudioSource`
+(`livekit==1.1.19`, audited directly) constructed with only
+`(LIVE_SAMPLE_RATE, 1)` -- i.e. the DEFAULT `queue_size_ms=1000`,
+unchanged by this fix. `_play_signal_cancelable()` now calls the
+installed API's `AudioSource.clear_queue()` (confirmed present, a
+synchronous method that discards all buffered audio) the INSTANT
+`cancel_event` is observed set, recording `queued_duration` (also
+confirmed present, a property returning seconds of buffered audio)
+immediately before and immediately after clearing. `queue_size_ms`
+itself is deliberately left at its default -- shrinking it risks
+degrading real-time pacing for the NORMAL (non-cancelled) playback
+path, and `clear_queue()` alone already satisfies the actual
+requirement (discard queued publisher audio on confirmed interruption)
+without that risk. This closes the gap between "future submission
+stopped" and "buffered publisher-side audio discarded" -- it does NOT
+by itself prove the physical speaker fell silent at that instant
+(that would additionally depend on downstream WebRTC/Opus encode,
+network transport, and the far-end device's own playout buffer, none
+of which this research harness observes or controls).
 """
 
 from __future__ import annotations
@@ -1117,10 +1161,14 @@ async def run_speech_role(
 def evaluate_deliberate_bargein_result(
     *,
     started_events: list[float],
+    started_events_mono: list[float],
     confirmed_events: list[float],
+    confirmed_events_mono: list[float],
     vad_frames_processed: int,
     capture_duration_s: float,
     cue_emitted: bool,
+    speak_now_mono: float | None,
+    cue_start_mono: float | None,
     speak_now_boundary_t_s: float,
     cue_start_boundary_t_s: float,
     playback_stopped_early: bool,
@@ -1129,69 +1177,102 @@ def evaluate_deliberate_bargein_result(
     """R0082-G classification -- pure function, unit-testable without any
     hardware/asyncio/LiveKit involvement.
 
-    **Canonical false-positive boundary is `SPEAK NOW`
-    (`speak_now_boundary_t_s`), NOT countdown-start
-    (`cue_start_boundary_t_s`).** The operator is explicitly instructed
-    to remain completely silent through the entire "BARGE-IN IN 3/2/1"
-    countdown and to begin speaking only once `>>> SPEAK NOW <<<`
-    appears. Any accepted VAD start or confirmed interruption at ANY
-    point before `SPEAK NOW` -- whether before the countdown even
-    starts, or DURING "IN 3"/"IN 2"/"IN 1" while the operator is still
-    silent by instruction -- is still a genuine self-echo false
-    positive, not genuine human speech, and must classify as `FAIL-E`.
-    (Correction, second review: the first implementation used
-    `cue_start_boundary_t_s` -- countdown-start -- as this boundary,
-    which wrongly let a false trigger DURING the countdown itself slip
-    through as "post-cue" and potentially still reach `PASS`. Fixed
-    below. `cue_start_boundary_t_s` is retained as a parameter purely
-    for diagnostic sub-splitting -- see `during_countdown_started`/
-    `during_countdown_confirmed` in the returned dict -- it is no
-    longer used anywhere in the PASS/FAIL decision.)
+    **Canonical false-positive boundary is the ACTUAL emitted `SPEAK
+    NOW` monotonic timestamp (`speak_now_mono`), NOT the idealized/
+    scheduled audio-relative boundary.** (Correction, fourth review: an
+    offline analysis of real hardware run #1 found the ACTUAL emitted
+    `SPEAK NOW` landed roughly 1.0s later, in the audio-relative
+    timeline, than the idealized `speak_now_boundary_t_s = PRE_ROLL_S +
+    BARGEIN_SPEAK_NOW_TIME_S` the classifier previously used. The
+    operator cannot possibly speak before the cue has ACTUALLY been
+    emitted, so using the idealized/scheduled boundary as the
+    false-positive cutoff was no longer scientifically sufficient -- a
+    false event occurring after the scheduled 9.0s but BEFORE the real
+    `SPEAK NOW` would have been wrongly treated as "post-cue" even
+    though the operator was still silent by instruction. Fixed: the
+    classifier now compares `started_events_mono`/`confirmed_events_mono`
+    (both already recorded by `LiveVadChain`, wall-clock) directly
+    against `speak_now_mono` (`milestones["speak_now"]`, wall-clock).
+    `speak_now_boundary_t_s`/`cue_start_boundary_t_s` (the idealized,
+    scheduled, audio-relative values) are DELIBERATELY NOT mixed into
+    this comparison -- they remain parameters used ONLY for (a) the
+    `capture_ok` minimum-duration floor heuristics below [audio-relative
+    domain, unrelated to the false-positive semantic split] and (b)
+    passthrough diagnostic reporting of the scheduled-vs-actual gap. If
+    `speak_now_mono is None` (the cue never actually fired -- e.g. a
+    pre-SPEAK-NOW false positive cancelled it, see the third-review
+    correction below), EVERY accepted event is treated as pre-user by
+    definition: there is no "after SPEAK NOW" window if SPEAK NOW never
+    happened.
+
+    Also computes `cue_start_boundary_t_s`'s wall-clock counterpart,
+    `cue_start_mono` (`milestones.get("cue_start")`), used ONLY to
+    sub-split the pre-user events into `pre_countdown_*` (before the
+    countdown even started) vs. `during_countdown_*` (after countdown-
+    start but before the actual `SPEAK NOW`) for diagnostic telemetry --
+    neither sub-split participates in the PASS/FAIL decision.
 
     Returns a dict with the canonical `pre_user_*`/`post_user_*` fields
     (`pre_user_false_positive`, `pre_user_started`, `pre_user_confirmed`,
-    `post_user_started`, `post_user_confirmed`), plus `pre_cue_*`/
-    `post_cue_*` as backward-compatible ALIASES of the exact same
-    SPEAK-NOW-bounded values (kept only so any external caller/report
-    text still using the old names sees the corrected semantics rather
-    than breaking -- they are NOT computed against countdown-start).
-    `verdict` is one of "PASS", "FAIL-A".."FAIL-F".
+    `post_user_started`, `post_user_confirmed`) -- these lists still
+    report the AUDIO-RELATIVE timestamps (for CSV/report continuity),
+    even though the pre/post SELECTION is now made using the monotonic
+    values -- plus `pre_cue_*`/`post_cue_*` as backward-compatible
+    ALIASES of the exact same monotonic-bounded values. `verdict` is one
+    of "PASS", "FAIL-A".."FAIL-F".
 
-    **Correction, third review:** playback correctly cancels IMMEDIATELY
-    on ANY `INTERRUPT_CONFIRMED`, including one that fires before
-    `SPEAK NOW` (a genuine self-echo false positive) -- that is required
-    behavior, not a bug, and is NOT changed here. But
+    **Correction, third review (unchanged, still in force):** playback
+    correctly cancels IMMEDIATELY on ANY `INTERRUPT_CONFIRMED`, including
+    one that fires before `SPEAK NOW` (a genuine self-echo false
+    positive) -- that is required behavior, not a bug. But
     `_play_signal_cancelable()` also cancels the cue-delivery task when
-    playback stops early, so a pre-SPEAK-NOW false `INTERRUPT_CONFIRMED`
-    can mean `SPEAK NOW` is never emitted (`cue_emitted=False`) and the
-    capture never reaches anywhere near `MIN_DELIBERATE_CAPTURE_S`. The
-    OLD validity check (`not cue_emitted or not capture_ok` folded
-    together, both gating `FAIL-F` before `pre_user_false_positive` was
-    even consulted) would misclassify this exact case as `FAIL-F`
-    (instrumentation invalid) instead of `FAIL-E` (the correct
-    classification -- a genuine, correctly-detected self-echo false
-    positive that legitimately, correctly, cut the run short). Fixed:
-    capture validity (`capture_ok`) is now computed WITH KNOWLEDGE of
-    `pre_user_false_positive` -- when a pre-SPEAK-NOW false positive
-    occurred, only `POST_EVENT_EVIDENCE_MARGIN_S` of capture past the
-    EARLIEST offending event is required (proving the event's own
-    evidence was genuinely captured and persisted), not the full
-    SPEAK-NOW-reaching duration. `cue_emitted` is now checked SEPARATELY
-    and ONLY after `pre_user_false_positive` has already been ruled out
-    -- see the `if/elif` chain below."""
-    pre_user_started = [t for t in started_events if t < speak_now_boundary_t_s]
-    pre_user_confirmed = [t for t in confirmed_events if t < speak_now_boundary_t_s]
-    post_user_started = [t for t in started_events if t >= speak_now_boundary_t_s]
-    post_user_confirmed = [t for t in confirmed_events if t >= speak_now_boundary_t_s]
+    playback stops early, so a pre-`SPEAK-NOW` false `INTERRUPT_CONFIRMED`
+    can mean `SPEAK NOW` is never emitted (`cue_emitted=False`, and now
+    also `speak_now_mono=None`) and the capture never reaches anywhere
+    near `MIN_DELIBERATE_CAPTURE_S`. Capture validity (`capture_ok`) is
+    computed WITH KNOWLEDGE of `pre_user_false_positive` -- when a
+    pre-`SPEAK-NOW` false positive occurred, only
+    `POST_EVENT_EVIDENCE_MARGIN_S` of capture past the EARLIEST
+    offending event (audio-relative) is required, not the full
+    SPEAK-NOW-reaching duration. `cue_emitted` is checked SEPARATELY and
+    ONLY after `pre_user_false_positive` has already been ruled out --
+    see the `if/elif` chain below."""
+
+    def _is_pre(event_mono: float, boundary_mono: float | None) -> bool:
+        return boundary_mono is None or event_mono < boundary_mono
+
+    started_pairs = list(zip(started_events, started_events_mono, strict=True))
+    confirmed_pairs = list(zip(confirmed_events, confirmed_events_mono, strict=True))
+
+    pre_user_started = [t for t, tm in started_pairs if _is_pre(tm, speak_now_mono)]
+    post_user_started = [t for t, tm in started_pairs if not _is_pre(tm, speak_now_mono)]
+    pre_user_confirmed = [t for t, tm in confirmed_pairs if _is_pre(tm, speak_now_mono)]
+    post_user_confirmed = [t for t, tm in confirmed_pairs if not _is_pre(tm, speak_now_mono)]
     pre_user_false_positive = bool(pre_user_started or pre_user_confirmed)
 
     # Diagnostic-only sub-split of the pre-SPEAK-NOW events, purely for
     # telemetry/reporting (e.g. distinguishing "before the countdown even
     # started" from "during IN 3/IN 2/IN 1"). NOT used in the verdict.
-    pre_countdown_started = [t for t in pre_user_started if t < cue_start_boundary_t_s]
-    pre_countdown_confirmed = [t for t in pre_user_confirmed if t < cue_start_boundary_t_s]
-    during_countdown_started = [t for t in pre_user_started if t >= cue_start_boundary_t_s]
-    during_countdown_confirmed = [t for t in pre_user_confirmed if t >= cue_start_boundary_t_s]
+    # Uses the ACTUAL cue_start_mono when available, same reasoning as
+    # the primary boundary above.
+    pre_countdown_started = [
+        t for t, tm in started_pairs if _is_pre(tm, speak_now_mono) and _is_pre(tm, cue_start_mono)
+    ]
+    during_countdown_started = [
+        t
+        for t, tm in started_pairs
+        if _is_pre(tm, speak_now_mono) and not _is_pre(tm, cue_start_mono)
+    ]
+    pre_countdown_confirmed = [
+        t
+        for t, tm in confirmed_pairs
+        if _is_pre(tm, speak_now_mono) and _is_pre(tm, cue_start_mono)
+    ]
+    during_countdown_confirmed = [
+        t
+        for t, tm in confirmed_pairs
+        if _is_pre(tm, speak_now_mono) and not _is_pre(tm, cue_start_mono)
+    ]
 
     # Capture validity depends on WHICH kind of run this is:
     #  - a pre-SPEAK-NOW false positive legitimately, correctly, cuts the
@@ -1252,6 +1333,13 @@ def evaluate_deliberate_bargein_result(
         "capture_ok": capture_ok,
         "min_required_capture_s": min_required_s,
         "verdict": verdict,
+        # Diagnostic passthrough only -- NOT used in the verdict above.
+        # Lets a caller report the scheduled-vs-actual SPEAK NOW gap
+        # without recomputing it.
+        "speak_now_mono": speak_now_mono,
+        "cue_start_mono": cue_start_mono,
+        "speak_now_boundary_t_s_scheduled": speak_now_boundary_t_s,
+        "cue_start_boundary_t_s_scheduled": cue_start_boundary_t_s,
     }
 
 
@@ -1273,7 +1361,29 @@ async def _play_signal_cancelable(
     There is no code path that resumes submission afterward -- once this
     function returns, it is not re-entered for the same stream. Returns
     `(samples_submitted, stopped_early)`. Pure enough to unit-test with a
-    fake `signal_source` stub and a pre-set `cancel_event`."""
+    fake `signal_source` stub and a pre-set `cancel_event`.
+
+    **Correction, fifth review:** `signal_source` is an `rtc.AudioSource`
+    (`livekit==1.1.19` installed API, audited directly:
+    `AudioSource.__init__(self, sample_rate, num_channels,
+    queue_size_ms: int = 1000, ...)` -- the harness constructs it with
+    only `(LIVE_SAMPLE_RATE, 1)`, i.e. the DEFAULT `queue_size_ms=1000`,
+    unchanged by this fix). Stopping future `capture_frame()` calls does
+    NOT by itself discard audio already handed to the `AudioSource`'s own
+    internal queue -- up to `queue_size_ms` (1000ms) of already-submitted
+    audio could still be sitting there, unrelated to the Python
+    submission loop having stopped. Confirmed via the installed API:
+    `AudioSource.queued_duration` (property, seconds) and
+    `AudioSource.clear_queue()` (synchronous method -- discards all
+    buffered audio) are both present. On `stopped_early`, this function
+    now: (1) records `queued_duration` BEFORE clearing; (2) calls
+    `clear_queue()` immediately; (3) records `queued_duration` AFTER
+    clearing; (4) breaks the loop so no new frames are submitted
+    (unchanged); (5) never resumes (unchanged, structural). `queue_size_ms`
+    itself is left at its default -- shrinking it risks breaking
+    real-time pacing for the NORMAL (non-cancelled) playback path, and
+    `clear_queue()` alone already solves the stated requirement
+    (discard queued audio on confirmed interruption) without that risk."""
     total_samples = len(signal_pcm) // 2
     milestones["playback_start"] = time.monotonic()
 
@@ -1298,6 +1408,28 @@ async def _play_signal_cancelable(
         while offset < total_samples:
             if cancel_event.is_set():
                 stopped_early = True
+                # Discard whatever is already sitting in the AudioSource's
+                # own internal queue -- IMMEDIATELY, before doing anything
+                # else (including cancelling the cue task below). Stopping
+                # this loop alone does not guarantee already-submitted
+                # audio is discarded from the actual playout path.
+                queued_before_s = signal_source.queued_duration
+                milestones["audio_source_queued_before_clear_s"] = queued_before_s
+                milestones["audio_source_queued_before_clear_mono"] = time.monotonic()
+                print(
+                    "[speech] MILESTONE: AUDIO_SOURCE_QUEUED_BEFORE_CLEAR = "
+                    f"{queued_before_s:.4f}s"
+                )
+                signal_source.clear_queue()
+                milestones["audio_source_queue_cleared_mono"] = time.monotonic()
+                print("[speech] MILESTONE: AUDIO_SOURCE_QUEUE_CLEARED")
+                queued_after_s = signal_source.queued_duration
+                milestones["audio_source_queued_after_clear_s"] = queued_after_s
+                milestones["audio_source_queued_after_clear_mono"] = time.monotonic()
+                print(
+                    "[speech] MILESTONE: AUDIO_SOURCE_QUEUED_AFTER_CLEAR = "
+                    f"{queued_after_s:.4f}s"
+                )
                 break
             chunk_samples = min(FRAME_SAMPLES_LIVE, total_samples - offset)
             frame = rtc.AudioFrame.create(LIVE_SAMPLE_RATE, 1, FRAME_SAMPLES_LIVE)
@@ -1523,15 +1655,26 @@ async def run_speech_role_deliberate_bargein(
 
         result = evaluate_deliberate_bargein_result(
             started_events=chain.started_events,
+            started_events_mono=chain.started_events_mono,
             confirmed_events=chain.confirmed_events,
+            confirmed_events_mono=chain.confirmed_events_mono,
             vad_frames_processed=chain.n_frames,
             capture_duration_s=capture_duration_s,
             cue_emitted=cue_emitted,
+            speak_now_mono=milestones.get("speak_now"),
+            cue_start_mono=milestones.get("cue_start"),
             speak_now_boundary_t_s=speak_now_boundary_t_s,
             cue_start_boundary_t_s=cue_start_boundary_t_s,
             playback_stopped_early=stopped_early,
             playback_resumed_after_stop=playback_resumed_after_stop,
         )
+        if result["speak_now_mono"] is not None:
+            print(
+                "  NOTE: canonical classification uses the ACTUAL emitted "
+                f"SPEAK NOW (monotonic={result['speak_now_mono']:.6f}), not the "
+                f"idealized scheduled boundary (audio-relative="
+                f"{result['speak_now_boundary_t_s_scheduled']:.3f}s)."
+            )
 
         # Latencies are measured from SPEAK NOW (the canonical human-speech
         # boundary), not countdown-start. `speak_now_to_vad_start_s`
