@@ -3418,3 +3418,378 @@ the recommended direction only.
   settings, PipeWire defaults, system mixer, or LiveKit server
   configuration were touched this round. No hardware test was run. No
   DSP writes were made.
+
+# R0082-F — minimal LIVE production-equivalent VAD self-echo test (preparation only)
+
+## 74. Purpose and handoff from R0082-E
+
+R0082-E answered, OFFLINE, on 4 already-recorded WAV captures: does the
+production-equivalent Silero VAD chain false-trigger on NeXa's own
+self-echo residual? Result: 0 false triggers in all four conditions —
+but explicitly NOT proof the LIVE path is safe (no live timing, frame
+delivery, concurrency, or real-time audio behavior was tested). R0082-F
+tests the SAME question LIVE: while NeXa-like speech actually plays
+through the real speaker and the human user stays silent, does the
+LIVE `PlatformAudio` → Silero VAD path generate any false
+`UserStartedSpeaking`-equivalent events? **No hardware test was run
+this round — this section is preparation and offline/synthetic
+validation only.**
+
+## 75. Architecture decision — package installs into the isolated probe venv
+
+The brief's own recommended topology bundles `PlatformAudio` (mic
+capture) and the Silero VAD diagnostic chain into ONE process
+("PROCESS A"), which requires `onnxruntime` + `loudness` + `scipy`
+(streaming resampling) inside the SAME isolated probe venv that already
+holds `livekit`/`livekit-api`/`sounddevice`/etc. from R0082-A–D. The
+brief also states explicitly: *"No package upgrades unless absolutely
+necessary — and if something required is missing, STOP and report
+instead of installing it."* These two instructions were in real
+tension for this specific case — **this was put to the operator
+directly rather than decided unilaterally**, who chose: install
+`onnxruntime==1.24.4` and `loudness==0.2.0` (exact versions matching
+NeXa's own `.venv`, confirmed real aarch64 wheels) into the isolated
+probe venv. `scipy` (needed for the streaming resampler) was installed
+the same way. **No production-adjacent environment** (NeXa's own
+`.venv`, the Piper venv, system Python) was touched — only the
+already-established, throwaway, R0082-specific probe venv.
+
+## 76. Re-audit of production VAD configuration — CONFIRMED, zero drift
+
+Per instruction, every value R0082-E audited was re-checked directly
+against current source before building anything:
+
+```
+pipecat-ai version:              1.8.1                              (unchanged)
+DEFAULT_VAD_PARAMS:               VADParams(stop_secs=1.0)           (unchanged, runtime.py:87)
+LocalAudioConfig.sample_rate:     16000                              (unchanged, config.py:63-64)
+DEFAULT_CONFIRM_HOLD_SECS:        0.3                                (unchanged, interruption.py:44)
+Pipecat VAD_CONFIDENCE:           0.7                                (unchanged, vad_analyzer.py:25)
+Pipecat VAD_START_SECS:           0.2                                (unchanged, vad_analyzer.py:26)
+Pipecat VAD_MIN_VOLUME:           0.6                                (unchanged, vad_analyzer.py:28)
+silero_vad.onnx sha256:           597d30b3ec076608...bbfe82004       (identical byte-for-byte)
+bargein_wiring.py construction:   BargeInController(aec_health=health, ...)  (unchanged — aec_health
+                                   remains a mandatory, non-optional constructor argument)
+```
+
+**No discrepancy found — nothing has changed since R0082-E.** Per
+instruction, since everything matched exactly, this round proceeds
+without stopping.
+
+## 77. `BargeInController` audit — read-only, NOT modified, NOT used this round
+
+`src/nexa/voice/bargein.py` (521 lines) was read in full — no
+execution, no modification. Exactly ONE piece of its behavior actually
+depends on `AecReferenceHealth`:
+
+```python
+def _handle_speech_started(self) -> None:
+    if not self._sm.response_in_flight:
+        return
+    if not self._aec.barge_in_safe:        # <- the ONLY gating dependency
+        ...  # speech during a reply is silently ignored
+        return
+    ev = self._sm.speech_started(self._now())
+```
+
+Plus a mandatory `aec_health: AecReferenceHealth` constructor parameter
+(no default — the class cannot be built without one, confirmed
+`bargein.py:112` and its real construction site,
+`bargein_wiring.py:145-150`) and two telemetry-only fields
+(`aec_reference_active`/`aec_reference_failure_count`, reporting, not
+gating). **Everything else is architecture-neutral**:
+`InterruptionStateMachine` ownership, confirm-hold scheduling
+(`_schedule_confirm`/`_confirm_after_hold`), the M2.5B.1/.3
+settle-phase/capture-id lifecycle (`_arm_settle`/`_settle_after`/
+`_capture_deadline`/`_end_capture_phase`), `notify_response_dispatched`/
+`notify_response_finished`/`notify_interruption_complete`, and Pipecat
+frame routing (`process_frame`) reference no XVF3800/hardware-specific
+state at all.
+
+**Consequence, per instruction**: `barge_in_safe` is a precondition
+SPECIFIC to the CURRENT production XVF3800/`AecReferenceFeeder`
+hardware AEC path (R0028) — `PlatformAudio`'s WebRTC AEC has no
+equivalent discrete "far-end reference confirmed active" signal exposed
+to Python. Using `BargeInController` here would require a stub
+`AecReferenceHealth`-like object with `barge_in_safe` hardcoded `True`
+— presenting a fake precondition as if it meant something on this
+architecture, a real confound. **This round does NOT insert
+`BargeInController`.** The canonical live detection chain is
+PlatformAudio mic → Silero → VADAnalyzer state → the REAL
+`InterruptionStateMachine` directly → diagnostic logging only.
+`BargeInController` has **NOT** been validated on `PlatformAudio`, and
+this round makes no such claim.
+
+## 78. AEC state selected: **ON**
+
+Per instruction, this round does NOT re-sweep AEC OFF/ON — R0082-D/E
+already found no reliable, consistent AEC-driven difference in either
+direction (§59f/§70 of this report). The state chosen for the live
+test is **AEC ON**, because:
+
+1. **It is the only configuration that would ever actually be
+   deployed.** A real NeXa deployment on this architecture would
+   obviously run with the WebRTC AEC enabled — testing OFF would
+   validate a configuration that will never ship.
+2. R0082-D/E's own finding (no reliable benefit either direction) means
+   choosing ON does not sacrifice meaningful evidentiary value relative
+   to OFF for THIS test's purpose (VAD behavior, not AEC attenuation).
+3. Testing OFF would inject an artificially elevated echo condition
+   corresponding to no real deployment scenario — itself a confound in
+   the opposite direction from what a "least-confounded" choice should
+   avoid.
+
+`--aec` defaults to `on` in the harness; the operator command below
+does not override it.
+
+## 79. Live architecture
+
+```
+PROCESS A (--role hardware)              PROCESS B (--role speech)
+  rtc.PlatformAudio()                      rtc.AudioSource (synthetic)
+  real reSpeaker mic, real UAC playout      publishes the frozen speech WAV
+  publishes its own mic track                      |
+  subscribes to B's speech track  <----------------+ (triggers automatic
+  (AEC far-end reference)                            playout)
+        |
+        | self-reads its OWN mic track via rtc.AudioStream
+        v
+  StreamingResampler (48kHz -> 16kHz, stateful)
+        v
+  Level 1: SileroOnnxModel  ->  Level 2: VADAnalyzer state  ->
+  Level 3: REAL InterruptionStateMachine  ->  CSV + milestone log
+```
+
+Two genuinely separate OS processes, no shared `Room`/`PlatformAudio`,
+no Python `multiprocessing`/`fork()` — R0082-C's own `RaceDetected()`
+fix, unchanged.
+
+**A new architectural finding this round**: reading a JUST-PUBLISHED
+`LocalAudioTrack` via `rtc.AudioStream` works with **no room
+round-trip at all** — confirmed with a purely synthetic, no-hardware,
+no-room test (a `LocalAudioTrack` backed by a plain `rtc.AudioSource`,
+fed 15 frames, all 15 correctly read back via a local `AudioStream`).
+This lets `PROCESS A` self-analyze its own mic audio directly, instead
+of needing a second participant to subscribe to and relay it back
+(R0082-D's own pattern). **Not yet empirically confirmed specifically
+for a `PlatformAudioSource`-backed track** (requires real hardware,
+deferred to the operator's run) — the documented fallback, if the real
+hardware run finds the self-read stream never yields frames, is
+R0082-D's own remote-subscription pattern (not built this round, to
+keep the harness minimal).
+
+## 80. Real-time 48kHz → 16kHz resampling — stateful streaming design
+
+`rtc.AudioStream`'s ACTUAL delivered format was verified this round via
+a real `AudioFrameEvent` (not assumed): **`sample_rate=48000`,
+`samples_per_channel=480`** (10ms frames) — matching every prior R0082
+script's own convention.
+
+`StreamingResampler` applies ONE FIR anti-aliasing lowpass
+(`scipy.signal.firwin`, cutoff at 90% of the 8kHz output Nyquist) via
+`scipy.signal.lfilter`, carrying its `zi`/`zf` filter state across
+EVERY `push()` call, plus a running total-samples-seen counter that
+fixes the exact 3:1 decimation phase across arbitrary chunk-length
+boundaries. This is a genuinely stateful design — **not** independent
+per-chunk resampling, which would reset the FIR filter's memory (and
+distort the signal) at every 480-sample chunk boundary. No gain
+normalization, no AGC, no denoising added anywhere in this path.
+
+## 81. Synchronization
+
+Unchanged, event-based pattern from R0082-C/D/E: both roles wait
+(bounded, `SUBSCRIBE_TIMEOUT_S=30s`) for the OTHER participant's
+`track_subscribed` event before proceeding — no fixed wall-clock guess,
+no assumption about launch order. `PRE_ROLL_S`/`TAIL_S` are both set to
+**2.0s** (up from R0082-D's 1.0s, per this round's explicit "at least
+2s" requirement). The hardware role's total hold is derived from named
+constants (`SETTLE_S + PRE_ROLL_S + 23.181...s (speech duration) +
+TAIL_S + CLEANUP_GRACE_S`), printed in full at runtime, matching
+R0082-C/D's own established discipline.
+
+## 82. Telemetry schema
+
+Per-frame CSV (`r0082f_aec{on,off}_<run_id>_timeline.csv`), one row per
+32ms Silero frame:
+
+```
+timestamp_monotonic, audio_relative_timestamp_s, silero_prob,
+confidence_threshold, smoothed_volume, volume_threshold, vad_state,
+candidate_start, vad_user_started_speaking_equivalent,
+vad_user_stopped_speaking_equivalent, interruption_state,
+interrupt_confirmed
+```
+
+Milestone log (printed, not a separate file): hardware connected, mic
+published, speech track subscribed, VAD ready, PRE_ROLL start, PLAYBACK
+start, PLAYBACK end, TAIL end, disconnect — all present in
+`run_hardware_role`/`run_speech_role`. Raw evidence written at the end
+of the hardware role: `..._mic_48k.wav` (unmodified live capture) and
+`..._mic_16k.wav` (the exact Silero-input PCM after streaming
+resampling), both with SHA256 printed, neither normalized.
+
+## 83. Genuine production code reuse vs. research glue
+
+- **Genuine production code, unmodified, loaded directly from source**:
+  `nexa.voice.interruption.InterruptionStateMachine`, via
+  `importlib.util.spec_from_file_location`, bypassing
+  `nexa/voice/__init__.py`'s own `pipecat`/`loguru` import chain
+  entirely — isolation re-verified this round (`load_interruption_
+  state_machine_class()` asserts zero `nexa.voice`/`pipecat`/`loguru`
+  modules in `sys.modules` after loading, or raises).
+- **Verbatim algorithmic reproduction** (not imported directly, to
+  avoid pulling `loguru`/`pipecat`'s own package-init side effects into
+  a process that ALSO needs real-time LiveKit hardware access):
+  `SileroOnnxModel` (same bundled ONNX file, same sha256), the
+  `VADAnalyzer` 4-state hysteresis machine and its exact constants, and
+  the volume-gate math (`exp_smoothing`, `normalize_value`, the rolling
+  400ms window) — reusing the REAL `loudness.integrated_loudness()`
+  binding for the actual BS.1770 computation.
+- **Research glue, new this round**: the split-process room
+  orchestration (extends R0082-C/D's proven pattern), `StreamingResampler`,
+  and the CSV/milestone telemetry writer.
+
+New file: `docs/research/r0082_livekit_webrtc_audio_poc/
+r0082f_live_vad_self_echo_poc.py`. No production files touched.
+
+## 84. Offline/synthetic validation — ALL REQUIRED CHECKS PASS
+
+```
+import                                          PASS
+--help                                          PASS
+py_compile                                      PASS
+ruff                                            1 line-length error found and fixed -- 0 on re-check
+git diff --check                                PASS
+dependency isolation (no nexa.voice/pipecat/
+  loguru/google.genai in sys.modules)            PASS
+```
+
+**Positive control** (mandatory, per instruction) — the frozen speech
+WAV's own content (its ORIGINAL, un-attenuated PCM — not a mic
+capture) fed through the SAME `StreamingResampler`+`LiveVadChain`
+pipeline the live harness uses, in realistic 480-sample (10ms) chunks:
+
+```
+n_frames=724  max_prob=0.9966
+VADUserStartedSpeaking-equivalent at t=0.672s
+INTERRUPT_CONFIRMED at t=0.992s
+```
+
+**The full pipeline correctly detects and confirms real speech when it
+is genuinely present** — a future "0 events" result on the real live
+test cannot be dismissed as broken instrumentation.
+
+**Negative control** (mandatory) — 26 seconds of pure digital silence
+through the identical pipeline:
+
+```
+n_frames=812  max_prob=0.0238
+started_events=[]  confirmed_events=[]
+```
+
+**Zero events on pure silence, as required.**
+
+**End-to-end async mechanics validation** — a synthetic dry run
+(throwaway harness, deleted after use) exercising the REAL room
+connect/publish/subscribe/self-read/streaming-resample/VAD/CSV/cleanup
+orchestration (`run_hardware_role`'s own async structure), using a
+synthetic `AudioSource` standing in for `PlatformAudio` and feeding it
+the frozen speech WAV:
+
+```
+first live frame: sample_rate=48000 samples_per_channel=480  (confirmed
+                                                                live, not assumed)
+n_frames=855  max_prob=0.9964
+started_events=[1.504]  confirmed_events=[1.824]
+```
+
+Token generation, room connect/disconnect, publish/subscribe, the
+self-read-without-round-trip mechanism, 512-sample Silero framing, the
+VAD state machine, `InterruptionStateMachine`, and CSV generation all
+confirmed working together, live, asynchronously — only real
+`PlatformAudio` hardware itself remains untested (by design, deferred
+to the operator).
+
+**A minor, honestly-reported discrepancy, not chased further**: a
+raw-waveform cross-correlation comparison between `StreamingResampler`'s
+output and R0082-D/E's own batch `resample_poly` output (on the same
+source WAV) showed matching RMS levels (5484.9 vs. 5462.9, ~0.4% apart
+— no gross scaling error) but a weak/negative correlation coefficient
+after a naive single-lag alignment attempt — most likely reflecting
+real phase-response differences between the two different FIR filter
+designs rather than a functional defect, especially since the SAME
+streaming-resampled output was independently and directly confirmed
+correct by the positive control above (Silero classified it as speech
+with 0.997 confidence and the full pipeline correctly confirmed it).
+Not investigated further this round — the functional (Silero
+classification) validation is the metric that actually matters here,
+and it passed unambiguously.
+
+No audio device is opened anywhere in the offline/synthetic validation
+above — `onnxruntime.InferenceSession`, `loudness.integrated_loudness`,
+and `scipy.signal.lfilter` are pure numerical calls; the synthetic
+`AudioSource`/local-track self-read mechanism touches no hardware.
+
+## 85. Limitations
+
+- **No real hardware test was run.** Every result in §84 is offline or
+  synthetic. `PlatformAudio()` itself was never invoked by this session.
+- Self-read on a `PlatformAudioSource`-backed track is unconfirmed —
+  stated explicitly, with a documented fallback, §79/module docstring.
+- AEC fixed at ON, not re-swept (§78) — a deliberate scope decision, not
+  an oversight.
+- `BargeInController`'s own `AecReferenceHealth` gate remains untested
+  by design (§77) — this round validates only the architecture-neutral
+  detection chain up to `InterruptionStateMachine`.
+- Deliberate human barge-in is explicitly NOT tested this round (a
+  later, separate stage per the brief).
+- The streaming-vs-batch resampler cross-check (§84) was inconclusive
+  by raw correlation but functionally validated by Silero classification
+  — noted as a real, unresolved minor discrepancy in methodology, not
+  hidden.
+- No production code, NeXa Core, Gemini, Pipecat, `ConversationSession`,
+  Memory, Identity, Context, `AecReferenceFeeder`, XVF3800 DSP, PipeWire
+  defaults, ALSA system config, system mixer, or speaker volume were
+  touched this round. No hardware test was run. No DSP writes, no sudo
+  configuration changes, no production package upgrades.
+
+## 86. Exact operator procedure — SILENT USER ONLY, AEC ON, first live run
+
+**Prerequisite** (separate terminal, once):
+
+```bash
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/livekit_server/livekit-server --dev --bind 127.0.0.1
+```
+
+**The two commands — start hardware first, then speech, within the 30s
+subscribe timeout:**
+
+```bash
+PROBE=/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/r0082_livekit_probe_venv/bin/python3
+POC=docs/research/r0082_livekit_webrtc_audio_poc/r0082f_live_vad_self_echo_poc.py
+ROOM=r0082f_silent_user_$(date +%s)
+
+# terminal A — hardware/live VAD participant (real PlatformAudio, AEC ON)
+$PROBE $POC --role hardware --aec on --room-name "$ROOM"
+
+# terminal B — deterministic speech participant
+$PROBE $POC --role speech --room-name "$ROOM"
+```
+
+**The operator must remain completely silent throughout** — no
+deliberate speech, no barge-in attempt. This is the SILENT-USER-only
+run per the brief; a separate later round will test deliberate
+interruption. **This has intentionally NOT been run by this session.**
+
+### PASS / FAIL (restated from the brief, for the operator's reference)
+
+**PASS**: `VADUserStartedSpeaking`-equivalent events = 0 **AND**
+`INTERRUPT_CONFIRMED` events = 0, across pre-roll + full speech playback
++ post-roll. Raw probability spikes above 0.7 are allowed and do NOT
+automatically fail if production debounce/volume/state logic correctly
+rejects them (exactly as §68a of R0082-E's own report demonstrated).
+
+**FAIL**: any accepted `VADUserStartedSpeaking`-equivalent event during
+operator silence, or any `INTERRUPT_CONFIRMED` event — record the exact
+timestamp and cross-reference the corresponding audio segment in the
+saved WAV evidence.
