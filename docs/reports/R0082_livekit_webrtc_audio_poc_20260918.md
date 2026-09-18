@@ -1907,3 +1907,436 @@ run. **Do not run `--aec on` yet** — withheld until this `--aec off`
 run is confirmed to complete the full 30s measurement, pass its own
 capture-completeness check, and finish without a native WebRTC abort.
 This has intentionally **not** been run by this session.
+
+## 44. First complete PlatformAudio AEC OFF/ON pair — offline WAV analysis
+
+§43's procedure was run by the operator. Both runs completed cleanly
+(capture-completeness check passed on both, no `RaceDetected`, no
+truncation, healthy server-side RTP stats — 1469/1469 packets, 0 lost,
+0 out-of-order on the hardware uplink). This section analyzes the
+resulting WAV evidence offline. **No new hardware test was run this
+round.**
+
+### 44a. File verification
+
+Located in `docs/research/r0082_livekit_webrtc_audio_poc/r0082c_aec_captures/`:
+
+| File | Size (bytes) | SHA256 |
+|---|---|---|
+| `r0082c_aecoff_20260918T134735Z_stationary_multitone_mic.wav` | 3,073,004 | `c9461c9e57ea95c71f3e58846753a31e5d1196b82da92cd958e9e42ed2227a51` |
+| `r0082c_aecoff_20260918T134735Z_stationary_multitone_signal.wav` | 2,880,044 | `3cd904e1105054c7b18d80ab6273161e0aeaef1deb4111bf74bfcaa97f252bfb` |
+| `r0082c_aecon_20260918T135110Z_stationary_multitone_mic.wav` | 3,073,004 | `fbd80c08f0c6adbe1b45c18a58a7a0c552ca1cb1b77eeba3f4f89532f20a24bc` |
+| `r0082c_aecon_20260918T135110Z_stationary_multitone_signal.wav` | 2,880,044 | `3cd904e1105054c7b18d80ab6273161e0aeaef1deb4111bf74bfcaa97f252bfb` |
+
+All four: mono, 16-bit (S16_LE), 48000Hz. Mic files: 1,536,480 frames /
+32.010s. Signal files: 1,440,000 frames / 30.000s.
+
+**Signal WAVs are SHA256-identical between the OFF and ON runs**
+(`3cd904e1...52bfb` both) — confirms the deterministic
+`stationary_multitone` generator produced byte-identical stimuli for
+both conditions, as required. No discrepancy to explain.
+
+### 44b. Analysis tooling
+
+New file: `docs/research/r0082_livekit_webrtc_audio_poc/r0082c_wav_analysis.py`
+— research-only, reads the 4 WAVs directly (never modifies them), no
+`nexa.*`/`pipecat.*`/`google.*`/`loguru`/LiveKit imports, no hardware
+access. Run with plain system `python3` (numpy 2.2.4 + scipy 1.17.1
+already available there, confirmed this round — not NeXa's own `.venv`,
+which lacks scipy, and not the isolated livekit probe venv, which is
+unrelated to this analysis). `py_compile` and `ruff` both clean. All
+RMS values below are on the original int16 PCM scale — the recordings
+were never normalized before analysis.
+
+### 44c. Time-domain: 1-second table (stimulus-relative; t=0 is pre-roll end)
+
+**OFF mic** (pre-roll rms=2.84, peak=15):
+
+```
+[ 0- 1s] rms=  2.59 peak=  11   [10-11s] rms=  7.54 peak= 32   [20-21s] rms=  3.47 peak= 26
+[ 1- 2s] rms=  5.20 peak=  37   [11-12s] rms=  8.44 peak= 70   [21-22s] rms=  1.91 peak=  8
+[ 2- 3s] rms= 11.87 peak= 105   [12-13s] rms=  8.62 peak= 30   [22-23s] rms= 27.00 peak=265
+[ 3- 4s] rms=  5.10 peak=  31   [13-14s] rms=  6.76 peak= 33   [23-24s] rms=  1.94 peak= 10
+[ 4- 5s] rms=  3.70 peak=  20   [14-15s] rms=  2.08 peak=  8   [24-25s] rms=  1.77 peak=  7
+[ 5- 6s] rms=  2.92 peak=  13   [15-16s] rms=  1.94 peak=  8   [25-26s] rms=  1.80 peak=  7
+[ 6- 7s] rms=  8.39 peak=  29   [16-17s] rms=  1.62 peak=  7   [26-27s] rms=  1.71 peak=  8
+[ 7- 8s] rms=  8.90 peak=  30   [17-18s] rms=  1.68 peak=  7   [27-28s] rms=  4.85 peak= 26
+[ 8- 9s] rms=  9.99 peak=  35   [18-19s] rms=  1.83 peak=  7   [28-29s] rms=  8.74 peak= 30
+[ 9-10s] rms= 13.55 peak=  96   [19-20s] rms=  1.85 peak=  7   [29-30s] rms= 10.27 peak= 32
+tail: rms=5.70 peak=29
+```
+
+**ON mic** (pre-roll rms=15.06, peak=144):
+
+```
+[ 0- 1s] rms=216.17 peak= 934   [10-11s] rms= 31.13 peak=107   [20-21s] rms= 20.98 peak=105
+[ 1- 2s] rms=534.75 peak=1190   [11-12s] rms= 20.33 peak= 73   [21-22s] rms= 35.83 peak=102
+[ 2- 3s] rms=508.77 peak=1135   [12-13s] rms= 24.72 peak= 74   [22-23s] rms= 37.92 peak=121
+[ 3- 4s] rms=146.38 peak= 740   [13-14s] rms= 23.93 peak= 93   [23-24s] rms= 41.13 peak=109
+[ 4- 5s] rms=155.31 peak= 688   [14-15s] rms= 27.87 peak=103   [24-25s] rms= 41.69 peak=129
+[ 5- 6s] rms= 68.44 peak= 369   [15-16s] rms= 34.09 peak= 92   [25-26s] rms= 38.84 peak=131
+[ 6- 7s] rms= 11.46 peak=  57   [16-17s] rms= 38.37 peak=120   [26-27s] rms= 36.08 peak=124
+[ 7- 8s] rms= 23.54 peak= 114   [17-18s] rms= 24.08 peak=112   [27-28s] rms= 35.22 peak=130
+[ 8- 9s] rms= 32.55 peak= 102   [18-19s] rms=  2.99 peak= 14   [28-29s] rms= 37.23 peak=131
+[ 9-10s] rms= 31.47 peak=  91   [19-20s] rms= 13.02 peak= 81   [29-30s] rms= 35.66 peak=114
+tail: rms=21.81 peak=109
+```
+
+Note the OFF table's own irregular spikes (e.g. window 22-23s =
+27.00 rms / 265 peak against neighboring windows around 1.7-1.9 rms) —
+addressed in §44g/§45.
+
+### 44d. Time-domain: 250ms fine view of the first 6s (startup transient shape)
+
+**OFF**: stays in the 2.3-8.0 rms range throughout, no step or ramp —
+consistent with weak, intermittent leakage rather than a startup
+transient (OFF has no AEC to converge).
+
+**ON** (key transition): the first 0.75s is quiet (12.5-15.3 rms,
+matching the pre-roll baseline of 15.06) — **then an ABRUPT STEP**, not
+a gradual ramp: `[0.75-1.00s] rms=431.70` → `[1.00-1.25s] rms=524.47` →
+sustained 400-620 rms through `[2.75-3.00s]` → **then a sharp,
+non-monotonic decline**: `[3.00-3.25s] rms=22.18` (a sudden near-total
+drop) → `[3.25-3.50s] rms=59.19` → `[3.50-3.75s] rms=20.08` →
+`[3.75-4.00s] rms=285.15` (a large re-spike) → `[4.00-4.50s]` decaying
+160-232 → `[4.75-5.25s]` dropping to 10-28 → `[5.50-6.00s] rms=89-103`
+(another re-spike).
+
+**Answering §5's exact shape questions directly:** the onset is an
+**abrupt step**, not a smooth ramp. The decay is **not** smoothly
+monotonic — it **oscillates**, with at least two large re-spikes inside
+the first 6 seconds (at ~3.75s and ~5.5-6.0s) after already dropping to
+a much lower level. It reaches its later-run range (roughly 20-40 rms)
+only intermittently within the first 6s, and even the "post-convergence"
+15-30s region (§44f) still shows real window-to-window variation
+(2.99 to 41.69 rms across the ten 1s windows) — this is not a clean,
+settled steady state.
+
+### 44e. Frequency-domain: Goertzel narrow-band magnitude + power fraction
+
+Method: single-bin DFT correlation (matched-filter) magnitude at each
+target frequency over each named time region, plus the SAME method at
+four off-target reference frequencies (750/1500/3000/4000Hz — none
+present in the stimulus) as a noise-floor comparison. `target_frac_of_power`
+estimates the fraction of the WINDOW's total RMS power explained by the
+three target-frequency sinusoids (Parseval: a pure sinusoid of Goertzel
+magnitude `m` has power `m²/2`).
+
+```
+-- OFF mic --
+    0-3s: rms=  7.63  500Hz=0.22 1000Hz=0.16 2000Hz=0.98  target_frac=0.9%  off-target=0.05/0.03/0.01/0.01
+    3-6s: rms=  4.01  500Hz=0.20 1000Hz=0.09 2000Hz=0.13  target_frac=0.2%  off-target=0.04/0.01/0.01/0.00
+   6-15s: rms=  8.73  500Hz=0.75 1000Hz=0.60 2000Hz=1.18  target_frac=1.5%  off-target=0.00/0.01/0.01/0.01
+  15-30s: rms=  8.08  500Hz=0.23 1000Hz=0.29 2000Hz=0.61  target_frac=0.4%  off-target=0.01/0.00/0.00/0.00
+
+-- ON mic --
+    0-3s: rms=444.05  500Hz=1.21 1000Hz=2.51 2000Hz=196.28  target_frac=9.8%  off-target=0.30/0.14/0.03/0.01
+    3-6s: rms=129.40  500Hz=1.28 1000Hz=1.92 2000Hz= 39.31  target_frac=4.6%  off-target=0.42/0.27/0.02/0.04
+   6-15s: rms= 25.99  500Hz=1.26 1000Hz=0.62 2000Hz=  7.10  target_frac=3.9%  off-target=0.46/0.02/0.01/0.00
+  15-30s: rms= 33.36  500Hz=0.33 1000Hz=2.35 2000Hz=  6.48  target_frac=2.1%  off-target=0.32/0.07/0.01/0.00
+```
+
+**Two things are simultaneously true and must not be collapsed into
+one claim:**
+
+1. In EVERY region, target-frequency magnitude is well above the
+   off-target reference magnitude (e.g. ON 15-30s: 2000Hz=6.48 vs.
+   off-target max 0.32 — ~20x) — real, frequency-exact, stimulus-locked
+   energy is present in both OFF and ON.
+2. `target_frac_of_power` never exceeds ~10% — meaning even at its
+   largest (ON 0-3s), the three discrete target tones account for only
+   a small fraction of the window's total RMS power. **Most of the
+   window's own energy, in both conditions, is NOT at the three
+   stimulus frequencies.**
+
+An FFT top-peak survey (Hanning-windowed, `docs/research/
+r0082_livekit_webrtc_audio_poc/r0082c_wav_analysis.py` §6b) makes this
+concrete for the post-convergence region:
+
+```
+OFF 15-30s top peaks:  131.4Hz(1.41)  116.3Hz(0.48)  160.4Hz(0.33)  196.4Hz(0.31)  2000.1Hz(0.28)*  500.0Hz(0.20)*  999.9Hz(0.20)*  278.1Hz(0.19)
+ON  15-30s top peaks: 2000.1Hz(29.78)* 1000.1Hz(5.97)* 499.9Hz(2.63)* 182.5Hz(2.05) 278.3Hz(1.07) 250.0Hz(0.89) 750.0Hz(0.75) 1984.9Hz(0.54)*
+  (* = within 20Hz of a target frequency)
+```
+
+**OFF's largest peaks are unrelated low frequencies (116-196Hz) that do
+not match the stimulus or any of its harmonics** — the target
+frequencies ARE present but are smaller than these unrelated peaks.
+**ON's largest peaks by far ARE the exact target frequencies**,
+especially 2000Hz (29.78, more than 14x the next largest non-target
+peak at 182.5Hz=2.05) — ON's spectrum, unlike OFF's, is dominated among
+DISCRETE peaks by the stimulus itself, even though (per point 2 above)
+most of the window's total RMS POWER is still broadband/spread across
+many other frequencies. **This directly answers §6's A/B/C/D
+question: the answer is (D) a combination** — real, dominant,
+stimulus-frequency-locked discrete energy (especially at 2000Hz) EXISTS
+and is unambiguous, but it coexists with, and is outweighed in total
+power by, broadband/noise-like content spread elsewhere in the
+spectrum. Neither "it's just echo" nor "it's just noise" is
+individually correct.
+
+### 44f. Post-convergence OFF vs. ON comparison
+
+Excluding the first two 3s windows (0-6s, dominated by the ON startup
+transient), the 6-30s region:
+
+```
+                    OFF          ON
+6-15s   rms       8.73         25.99
+15-30s  rms       8.08         33.36
+2000Hz Goertzel:
+6-15s             1.18          7.10   (~6.0x)
+15-30s            0.61          6.48   (~10.6x)
+```
+
+**AEC ON remains materially above AEC OFF after the startup transient,
+at both the overall-RMS level and specifically at the target-frequency
+level.** This matches the operator's own rough 6.98/29.78 comparison
+and refines it: the excess is not merely broadband noise coincidence —
+part of it is measurably concentrated at exactly the stimulus's own
+2000Hz component, in a way OFF's much smaller 2000Hz leakage is not.
+
+### 44g. Lag-tolerant cross-correlation vs. the known signal
+
+**Methodology and an explicit limitation**: the `stationary_multitone`
+stimulus (500/1000/2000Hz, all exact harmonics of a 500Hz fundamental,
+period 2ms) is itself periodic with a 2ms period. This means
+sample-domain cross-correlation has an inherent **ambiguity modulo
+~2ms** — a correlation peak at, say, +14ms and one at +16ms cannot be
+distinguished as "the true acoustic delay" vs. "a periodic sidelobe" by
+this method alone. Only the peak correlation COEFFICIENT (how strongly
+correlated, in magnitude) is treated as reliable; a specific absolute
+lag figure is not claimed beyond noting it is ambiguous modulo 2ms.
+Normalized cross-correlation (`scipy.signal.correlate`, FFT method,
+bounded to ±100ms) was computed per region:
+
+```
+-- OFF mic vs. known signal --
+    0-3s: best_lag=  55.52ms  peak_corr_coeff=-0.1306
+    3-6s: best_lag= -96.42ms  peak_corr_coeff=-0.0644
+   6-15s: best_lag= -41.98ms  peak_corr_coeff=-0.2361
+  15-30s: best_lag=  96.25ms  peak_corr_coeff=+0.0922
+
+-- ON mic vs. known signal --
+    0-3s: best_lag=  98.38ms  peak_corr_coeff=-0.3639
+    3-6s: best_lag= -97.23ms  peak_corr_coeff=+0.2664
+   6-15s: best_lag=  94.44ms  peak_corr_coeff=-0.2612
+  15-30s: best_lag=  -0.25ms  peak_corr_coeff=+0.2103
+```
+
+**All peak correlation coefficients are weak in magnitude** (|coeff|
+0.06-0.36; a strong, dominant linear relationship would read closer to
+0.7-1.0). This is consistent with, not contradictory to, §44e's
+frequency-domain finding: frequency-domain analysis detects narrow-band
+energy regardless of phase relationship across a window, while
+time-domain correlation requires actual phase/timing alignment. A
+real, frequency-exact acoustic coupling can coexist with weak
+time-domain correlation if the path introduces phase distortion,
+multipath/reverberation, or non-linear processing (WebRTC AEC
+implementations commonly include a non-linear residual/comfort-noise
+suppression stage beyond simple linear adaptive filtering, though this
+specific mechanism is not verified from Python source here — flagged as
+a possibility, not confirmed). **Conclusion: the answer to §7's key
+question — "is the large AEC ON signal actually correlated with the
+speaker stimulus, or mostly unrelated" — is: it is DEMONSTRABLY
+frequency-correlated (§44e) but only WEAKLY time/phase-correlated
+(this section).** Neither a clean "yes, it's echo" nor a clean "no,
+it's unrelated noise" answer is fully supported; the honest description
+is a partial, frequency-locked but phase-incoherent relationship.
+
+### 44h. Quiet/pre-roll baseline structure
+
+```
+OFF quiet: mean(DC)=-0.396  rms=2.84  peak=15
+  top peaks: 171.0Hz(0.30) 238.0Hz(0.29) 217.0Hz(0.29) 319.0Hz(0.29) 347.0Hz(0.27) 380.0Hz(0.26)
+  broadband floor (median FFT magnitude): 0.0037
+
+ON quiet:  mean(DC)=+0.362  rms=15.06  peak=144
+  top peaks: 493.0Hz(1.32) 656.0Hz(1.28) 444.0Hz(1.19) 468.0Hz(1.15) 518.0Hz(1.12) 817.0Hz(1.12)
+  broadband floor (median FFT magnitude): 0.0042
+```
+
+Neither quiet region shows a single dominant narrow spectral line, a
+significant DC offset, or an obviously periodic structure — both look
+like broadband, multi-frequency noise spread across a wide range
+(roughly 150-400Hz for OFF, roughly 440-820Hz for ON), not a single
+identifiable tone or hum. The ON quiet region's peaks are NOT near the
+stimulus frequencies (493-817Hz range, versus 500/1000/2000Hz targets —
+only 493Hz and 518Hz are even loosely close to 500Hz, and this is
+BEFORE the stimulus starts, so it cannot be stimulus leakage). The
+broadband floor estimate (median FFT magnitude) is only marginally
+higher for ON (0.0042) than OFF (0.0037) — the ON quiet region's much
+higher RMS (15.06 vs. 2.84) is therefore NOT simply "a slightly raised
+broadband floor" — it reflects a genuinely higher level of broadband,
+multi-frequency activity across a specific ~450-820Hz range, not a
+uniform gain increase across the whole spectrum, and not a match to any
+later stimulus-driven pattern. **Wording used per instruction: "The AEC
+ON run had a higher measured pre-stimulus baseline" — no claim is made
+that enabling the AEC toggle itself caused this**, since this is a
+single, un-repeated run pair and the two runs were not acoustically
+or temporally controlled against each other beyond both using the same
+stimulus generator and device defaults.
+
+### 44i. OFF physical-playout verification — was the speaker signal actually present?
+
+This is the critical check requested in §9: could OFF's low overall RMS
+(6.74, per the operator's own figures) simply reflect that no
+meaningful acoustic playout reached the room/microphone at all (i.e.
+OFF≈6.74 would then say nothing about "excellent echo rejection")?
+
+```
+OFF, full 30s stimulus region:
+  500Hz target magnitude  = 0.325   (vs. off-target 750Hz  = 0.014,  ~23x)
+  1000Hz target magnitude = 0.184   (vs. off-target 1500Hz = 0.008,  ~23x)
+  2000Hz target magnitude = 0.742   (vs. off-target 3000Hz = 0.002, ~371x)
+
+OFF, quiet/pre-roll region (SAME exact frequencies, stimulus NOT yet playing):
+  500Hz  = 0.036
+  1000Hz = 0.021
+  2000Hz = 0.018
+
+Ratio (stimulus-playing / quiet, same frequency):
+  500Hz  ≈ 9.0x
+  1000Hz ≈ 8.8x
+  2000Hz ≈ 41.2x
+```
+
+**Every target frequency is substantially elevated during stimulus
+playback relative to BOTH the off-target reference bins in the same
+window AND the identical frequency measured during the quiet/no-signal
+region.** This is a real, internally cross-validated, quiet-vs-active
+comparison, not a single arbitrary threshold. **Conclusion: physical
+acoustic playout genuinely reached the reSpeaker microphone in the OFF
+run — this is CONFIRMED, not merely plausible.** OFF's overall RMS of
+6.74 is dominated by unrelated background noise (§44e/§44f), not by
+this genuine-but-weak leakage — so OFF=6.74 should NOT be read as "6.74
+worth of echo was well-suppressed"; it should be read as "a small,
+verifiable, frequency-exact leakage component exists, embedded within a
+larger amount of unrelated ambient/environmental noise."
+
+### 44j. Limitations
+
+- **Single, un-repeated run pair.** No statistical replication; a
+  single OFF run and a single ON run, not a counterbalanced or repeated
+  design. Any run-to-run acoustic/environmental/gain variation (§44h)
+  cannot be separated from a true AEC-attributable effect with only one
+  pair.
+- **Cross-correlation lag is ambiguous modulo ~2ms** (§44g) due to the
+  stimulus's own harmonic structure — absolute delay is not resolved,
+  only the coarse presence/strength of correlation.
+- **The exact mechanism behind the low time-domain correlation
+  coefficients despite real frequency-domain presence is not resolved**
+  — phase distortion, multipath/reverberation, and non-linear APM
+  post-processing are all plausible; none is confirmed from Python-level
+  analysis alone.
+- **The exact source of the broadband (non-target-frequency) energy in
+  both OFF and ON is not identified** — could be room/environmental
+  noise, electrical interference, PipeWire/ALSA internal noise, or
+  reSpeaker self-noise; not investigated further this round (out of
+  scope for the audio-only AEC question).
+- **This is a synthetic, non-speech, stationary-multitone stimulus.**
+  It was specifically designed (§31-33) to remove a frequency-segment
+  confound for TIME-stability analysis; it is not representative of
+  real speech spectrally, temporally, or in level dynamics, and cannot
+  by itself characterize how WebRTC AEC behaves against actual TTS/human
+  speech.
+
+## 45. Relation to NeXa self-interruption
+
+The production concern this whole investigation traces back to:
+
+```
+NeXa speaks through speaker -> reSpeaker hears NeXa's own voice ->
+residual echo reaches input -> VAD may classify it as user speech ->
+NeXa interrupts herself
+```
+
+This round's evidence is **diagnostic only** — no Silero, no VAD, no
+Gemini, no NeXa Core, no barge-in logic was exercised. What this round
+DOES establish, narrowly: (1) `PlatformAudio`'s WebRTC AEC, under this
+specific non-speech stimulus, does NOT reduce residual energy relative
+to AEC OFF after the startup transient — it is measurably HIGHER,
+including at the exact stimulus frequencies (§44f); (2) the excess is a
+genuine mix of stimulus-frequency-locked and broadband content, not
+purely artifactual noise (§44e); (3) the AEC ON startup transient is
+large, abrupt, and takes several seconds to settle into an already
+noisy, non-fully-stable range (§44d). None of this, by itself, tells us
+whether a real Silero VAD instance would classify this residual as
+speech — that depends on Silero's own model behavior against this
+specific spectral/temporal shape, which is unmeasured here.
+
+**Does the evidence support moving to a deterministic SPEECH stimulus
+next? Yes** — the stationary_multitone diagnostic has done what it was
+built for (isolate the audio/AEC layer from the R0082-B frequency-
+segment confound, and now from Silero/VAD entirely) and has surfaced a
+real, specific, needs-explaining result (AEC ON not reducing, and
+apparently increasing, post-convergence residual under this stimulus).
+Continuing to iterate on non-speech synthetic tones would not directly
+answer the production question; a speech-shaped stimulus is the natural
+next step, conceptually:
+
+```
+- a FIXED, prerecorded or TTS-generated speech WAV
+- the SAME exact file played in both the OFF and ON conditions
+- same speaker volume, same room/device positions as this round
+- no human speech during the baseline/measurement window
+- compare residual speech-band energy / speech-correlated content
+  between OFF and ON, using the same kind of frequency- and
+  correlation-based analysis as this round
+- only THEN, as a separate later step, reintroduce Silero VAD to see
+  whether the measured residual is large/speech-like enough to trigger
+  false activation
+```
+
+**This experiment is proposed conceptually only. It is NOT executed
+this round. No speech stimulus was generated or played.**
+
+## 46. Updated evidence classifications
+
+```
+1.  R0082-C OFF captured real acoustic speaker leakage.                    CONFIRMED
+2.  R0082-C ON captured real acoustic speaker leakage.                     CONFIRMED
+3.  AEC ON has a startup/convergence transient.                            CONFIRMED
+4.  The AEC ON startup transient decays with time.                        SUPPORTED
+     (true in coarse trend; NOT smoothly monotonic -- oscillates with
+     real re-spikes, see §44d)
+5.  AEC ON remains above OFF after convergence.                            CONFIRMED
+6.  The post-convergence excess is stimulus-correlated.                    SUPPORTED
+     (real, dominant discrete energy at target frequencies -- see #7)
+7.  The post-convergence excess is broadband/noise-like.                   SUPPORTED
+     (most of the window's total RMS POWER is NOT at the 3 target
+     tones -- both #6 and #7 are true simultaneously, see §44e)
+8.  AEC ON run has a higher pre-stimulus baseline.                         CONFIRMED
+     (measured fact only; NOT attributed to the AEC toggle itself --
+     single un-repeated run pair, see §44h/§44j)
+9.  WebRTC AEC is objectively worse for real speech.                       NOT PROVEN
+     (this stimulus is non-speech; out of scope this round)
+10. Current stationary_multitone result is sufficient to decide the
+    NeXa production architecture.                                         NOT PROVEN
+11. PlatformAudio split-process transport is stable enough to
+    continue research.                                                    SUPPORTED
+     (clean completion, healthy RTP stats, zero RaceDetected/
+     truncation -- a separate axis from the AEC audio-quality question)
+12. The result currently explains NeXa self-interruption.                  NOT PROVEN
+     (no Silero/VAD was exercised this round)
+13. The result currently proves NeXa self-interruption would be fixed
+    (by enabling PlatformAudio AEC).                                       NOT PROVEN
+     (current directional evidence argues AGAINST a "simple fix"
+     narrative -- post-convergence residual is higher with AEC ON than
+     OFF under this stimulus -- but this cannot be extended to real
+     speech+VAD behavior without the speech-stimulus experiment, §45)
+```
+
+## 47. Recommended next experiment (proposed only — not executed)
+
+Per §45: a deterministic, fixed speech stimulus (prerecorded or TTS),
+played identically in OFF and ON conditions, same physical setup as
+this round, analyzed with the same frequency/correlation methodology,
+BEFORE Silero VAD is reintroduced into any test. **Not run this round.
+No speech WAV was generated or played. No further hardware test was
+executed.**
+
+No production code (`src/`, `apps/`), NeXa Core, Gemini, Pipecat,
+Silero, `BargeInController`, `AecReferenceFeeder`, XVF3800 DSP settings,
+PipeWire defaults, system mixer, or LiveKit server configuration were
+touched this round. No hardware test was run.
