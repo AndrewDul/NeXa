@@ -4308,3 +4308,461 @@ rather than re-running blindly. If it proceeds, watch for the
 `VALIDITY SUMMARY` block at the end: only trust the PASS/FAIL verdict
 if `vad_frames_processed > 0` and `capture_complete = True`. **This has
 intentionally NOT been run by this session.**
+
+## 94. R0082-F hardware attempt #2 — REAL RESULT — VALID PASS
+
+The operator executed the two-command procedure from §93 on real
+hardware (real reSpeaker mic, real UAC speaker, real `livekit-server`
+`--dev` instance, real production ONNX Silero model, real
+`InterruptionStateMachine`). This session did not execute the run; the
+operator reported the result and this session independently
+re-verified every artifact below against the files on disk before
+recording it here.
+
+**Run identity**
+
+```
+run_id     = 20260918T190711Z
+room       = r0082f_silent_user_002
+AEC        = ON
+```
+
+**Reported result (operator)**
+
+```
+remote_audio_frames_received  = 2727
+remote_audio_samples_received = 1308960
+vad_frames_processed          = 852
+capture_duration_s            = 27.270
+expected_min_duration_s       = 27.181
+capture_complete              = True
+max_prob                      = 0.3810
+started_events                = 0
+confirmed_events              = 0
+VALID TEST -- PASS
+```
+
+**Independent re-verification performed this session (not merely
+trusted):**
+
+- `sha256sum` on both evidence WAVs in
+  `docs/research/r0082_livekit_webrtc_audio_poc/r0082f_live_captures/`:
+
+  | file | SHA256 | match |
+  |---|---|---|
+  | `r0082f_aecon_20260918T190711Z_mic_48k.wav` | `a8a0daa7e72d357168a8821c81edabb5f50fa67ea459b8516b7dddea23c026d1` | exact |
+  | `r0082f_aecon_20260918T190711Z_mic_16k.wav` | `74ef8fac716645b00b601edd233295cc2a625c5e5dcfd60b73f6c4e74a33f709` | exact |
+
+- `wave.open()` inspection of both files:
+  - 48k: `channels=1, sampwidth=2, framerate=48000, nframes=1308960` →
+    `27.270s` — matches `remote_audio_samples_received` and
+    `capture_duration_s` exactly.
+  - 16k: `channels=1, sampwidth=2, framerate=16000, nframes=436320` →
+    `27.270s` — exact 3:1 sample-rate ratio with the 48k file, as
+    required by `StreamingResampler`'s fixed decimation factor.
+- `r0082f_aecon_20260918T190711Z_timeline.csv`: `wc -l` = 853 lines =
+  1 header row + **852 data rows**, exactly matching
+  `vad_frames_processed=852`. Header row confirmed to match the
+  script's own `CSV_HEADER` list exactly (no drift).
+- Recomputed `max_prob` directly from the `silero_prob` column of all
+  852 CSV rows (independent of the script's own printed summary):
+  `max(silero_prob) = 0.38102`, `mean(silero_prob) = 0.01133` — matches
+  the reported `max_prob = 0.3810` (4-decimal rounding of the same
+  value).
+- Counted rows with `vad_user_started_speaking_equivalent == 1` or
+  `interrupt_confirmed == 1` directly: **0 in both columns, across all
+  852 rows** — independently confirms `started_events=0` and
+  `confirmed_events=0`, not merely the script's own printed count.
+  `vad_state=QUIET` and `interruption_state=responding` hold for the
+  full run (spot-checked first/last rows; consistent with zero VAD
+  starts).
+
+**LiveKit server transport stats for the hardware upstream (this run
+only):**
+
+```
+packetsExpected    = 1080
+packetsSeenPrimary = 1080
+packetsLost         = 0
+packetsOutOfOrder   = 0
+nacks               = 0
+rtt                 = 1ms
+```
+
+These stats describe this run only. They are not evidence of general
+network reliability and must not be read as a claim that all future
+runs will be lossless.
+
+**Evidence chain of custody note:** attempt #1's evidence in the same
+directory (`20260918T184355Z`, `nframes=0`, header-only CSV) is the
+reconstructed placeholder described in §89 — reconstructed
+byte-for-byte from the deterministic `_write_wav()` helper after an
+accidental `rm -rf` during this session's own dry-run cleanup, and
+independently re-verified against the original SHA256 values at that
+time. It remains a record of the failed attempt, not of attempt #2.
+
+**Classification (operator, adopted here as accurate and independently
+re-verified):**
+
+| claim | status |
+|---|---|
+| Live `PlatformAudio`/WebRTC remote mic path carries real captured audio | CONFIRMED |
+| Live real speaker playback occurred | CONFIRMED |
+| Live production-equivalent Silero VAD processing ran on the live remote stream | CONFIRMED |
+| Zero false `VADUserStartedSpeaking`-equivalent events during this silent-user run | CONFIRMED |
+| Zero `INTERRUPT_CONFIRMED` events during this silent-user run | CONFIRMED |
+| Global self-interruption problem is solved | NOT PROVEN YET — a silent-user run cannot demonstrate correct behavior under a genuine interruption; that requires a deliberate-barge-in test (R0082-G, below) |
+
+**Verdict: R0082-F hardware attempt #2 = VALID PASS, independently
+re-verified.** This closes R0082-F. R0082-F alone does not prove
+self-interruption is solved — it proves the live PlatformAudio→remote
+subscription→StreamingResampler→Silero→InterruptionStateMachine chain
+does not spuriously fire during genuine near-end silence with real
+NeXa-equivalent speech playing through the real speaker with AEC ON.
+Whether a genuine human interruption is correctly detected and acted
+upon by this same chain is the subject of R0082-G.
+
+## 95. R0082-G — DELIBERATE HUMAN BARGE-IN — preparation (no hardware run)
+
+**Goal.** While NeXa-like speech plays through the real speaker, the
+operator deliberately speaks over it once, at a documented cue. Must
+show: Silero detects genuine near-end speech → an accepted
+`VADUserStartedSpeaking`-equivalent → the REAL
+`InterruptionStateMachine` reaches `INTERRUPT_CONFIRMED` → deterministic
+playback stops promptly and does not resume. Still no Gemini, no full
+NeXa Core, no production migration.
+
+### 95.1 Architecture — unchanged from R0082-F
+
+Same two-process split, same remote-subscription VAD observation point,
+same `StreamingResampler`/`SileroOnnxModel`/`VolumeTracker`/
+`LiveVadChain`/`InterruptionStateMachine`-bypass-load code, same AEC=ON.
+No return to local self-read. Added purely additively in
+`docs/research/r0082_livekit_webrtc_audio_poc/r0082f_live_vad_self_echo_poc.py`
+via a new `--test-mode {silent-user, deliberate-bargein}` flag,
+`silent-user` remains the default and is **byte-for-byte unchanged**:
+independently diffed this session against the pre-R0082-G version of
+`run_speech_role` (the silent-user function body) — `10405` characters,
+identical, confirmed programmatically. The only shared-code touch is an
+additive, backward-compatible extension to `LiveVadChain.process_frame()`
+(`extra_fields: list | None = None` — `None` reproduces the exact prior
+12-column row) and to `LiveVadChain` itself (new bookkeeping attributes
+`started_events_mono`, `confirmed_events_mono`, `candidate_start_events*`
+— unread by the silent-user path). `CSV_HEADER` (silent-user, 12 columns)
+is untouched; a new `CSV_HEADER_BARGEIN` (14 columns) is used only by
+deliberate-bargein mode.
+
+### 95.2 VAD configuration — unchanged, not tuned
+
+`confidence=0.7`, `start_secs=0.2`, `stop_secs=1.0`, `min_volume=0.6`,
+`confirm_hold_secs=0.3` — identical constants, identical
+`InterruptionStateMachine` load path, not touched this round.
+
+### 95.3 Cue design and the exact playback-relative timestamp
+
+A short-time RMS scan of the frozen stimulus (`r0082d_speech_en_pl_v1.wav`,
+50ms window / 25ms hop, 200-count int16 RMS silence threshold) found the
+speech-activity envelope of the file. Selected excerpt around the
+chosen cue window (full trace available by re-running the same scan):
+
+```
+SPEECH: 5.400s - 5.950s
+gap:    5.950s - 6.100s  (0.150s)
+SPEECH: 6.100s - 6.450s
+SPEECH: 6.475s - 7.600s   <- longest run bracketing the cue
+gap:    7.600s - 7.925s  (0.325s)
+SPEECH: 7.925s - 9.300s
+```
+
+The cue is fixed at (playback-relative, i.e. relative to the moment
+`PLAYBACK start` fires):
+
+```
+BARGEIN_CUE_START_TIME_S  = 4.0   -- "BARGE-IN IN 3"
+                             5.0   -- "BARGE-IN IN 2"
+                             6.0   -- "BARGE-IN IN 1"
+BARGEIN_SPEAK_NOW_TIME_S  = 7.0   -- ">>> SPEAK NOW <<<"
+```
+
+`SPEAK NOW` lands inside the 6.475s-7.600s continuous English run, with
+margin from both the preceding 0.150s micro-gap and the following
+0.325s gap before the next 7.925s-9.300s run — chosen deliberately so
+the operator's post-reaction-time speech is very likely to still
+overlap genuine deterministic playback, which is the condition under
+test (not silence at the moment of the human's own barge-in). The cue
+is terminal text only, delivered by a dedicated `asyncio.sleep`-paced
+task (`_play_signal_cancelable`'s internal `_deliver_cue()`) running
+concurrently with, but decoupled from, the frame-submission loop's own
+pacing — **no speaker beep**, per instruction, since a beep is itself
+an acoustic event the mic would capture and would contaminate the VAD/
+interruption evidence.
+
+**Operator phrase (first canonical run):** `Przerwij, teraz opowiedz mi
+o czymś innym.` — printed as part of the `SPEAK NOW` line itself so the
+operator does not need to memorize it in advance. Operator begins
+speaking immediately after the cue; no millisecond-precision timing is
+required of the human.
+
+### 95.4 Playback cancellation — real, not faked
+
+New helper `_play_signal_cancelable()` replaces the frame-submission
+loop for deliberate-bargein mode only (the silent-user loop is untouched
+and inlined as before). It checks a shared `asyncio.Event`
+(`interrupt_confirmed_event`) once per 10ms frame and, the instant it is
+set, **stops calling `signal_source.capture_frame()` entirely** — no
+further audio reaches the LiveKit track from that point on. The event is
+set from exactly one place: inside `_consume_mic`'s VAD loop, the moment
+`chain.confirmed_events` (populated only by the REAL
+`InterruptionStateMachine`'s own `poll()` reaching
+`interrupt_confirmed`) grows. Raw Silero probability crossing 0.7, or a
+candidate start existing, never sets this event by itself — only a
+genuine `INTERRUPT_CONFIRMED`. There is no retry/resume code path
+anywhere in `_play_signal_cancelable` or its caller; once the loop
+breaks it is not re-entered for that signal source. `PLAYBACK_CANCEL_
+REQUESTED` and `PLAYBACK_STOPPED` are logged with monotonic timestamps
+at the moment each occurs and recorded into a per-run
+`..._milestones.json` sidecar (see §95.6).
+
+### 95.5 Validity criteria — separate from silent-user mode
+
+Deliberate-bargein mode does **not** require the full ~27.18s capture
+(a successful interruption intentionally shortens it). New pure
+function `evaluate_deliberate_bargein_result()`:
+
+- if a post-cue `INTERRUPT_CONFIRMED` occurred: requires
+  `capture_duration_s >= max(speak_now_boundary, first_confirmed_t_s +
+  1.0s margin)`;
+- otherwise (nothing legitimately shortened the run): requires the
+  same full duration silent-user mode requires
+  (`PRE_ROLL_S + SPEECH_DURATION_S + TAIL_S ≈ 27.18s`).
+
+Silent-user mode's own inline `capture_complete = capture_duration_s >=
+expected_min_duration_s` rule is untouched and was independently
+verified this round to still reject the exact same shortened-capture
+value that deliberate-bargein mode accepts (offline test, §95.7).
+
+### 95.6 Evidence and latency measurement
+
+Deliberate-bargein mode writes: `r0082g_bargein_<run_id>_mic_48k.wav`,
+`..._mic_16k.wav`, `..._timeline.csv` (14-column `CSV_HEADER_BARGEIN`,
+adds `playback_active`/`playback_cancel_requested` to the original 12
+columns), and a new `..._milestones.json` sidecar recording monotonic
+timestamps for `playback_start`, `cue_start`, `speak_now`,
+`playback_cancel_requested`, `playback_stopped`,
+`last_speech_frame_submitted`, plus derived latencies
+`cue_to_vad_start_s`, `cue_to_interrupt_confirmed_s`,
+`interrupt_confirmed_to_cancel_requested_s`. Cue-to-detection latencies
+explicitly include human reaction time (operational, not pure
+algorithmic latency) — stated, not hidden. Offline post-hoc acoustic-
+onset re-estimation from the captured mic WAV (independent of the live
+decision) remains available via the same RMS-scan technique used for
+cue selection, but was not required for this preparation round and is
+left as an optional follow-up, not claimed as done.
+
+One documented CSV bookkeeping nuance (observed in the dry run, §95.8):
+the `interrupt_confirmed=1` row itself is written with
+`playback_cancel_requested` still `0`, because `extra_fields` is
+captured at the start of that frame's processing, before the
+just-detected confirmation updates the flag; the very next row (recorded
+~27µs later in the dry run) correctly shows `playback_cancel_requested=1`.
+This is expected, documented bookkeeping order, not a defect — the
+authoritative confirmation moment is still exactly the
+`interrupt_confirmed=1` row.
+
+### 95.7 FAIL taxonomy and pre-cue false-positive tracking
+
+`evaluate_deliberate_bargein_result()` returns one of:
+
+```
+PASS      -- exactly the expected chain, no pre-cue false positive
+FAIL-A    -- operator spoke, no accepted post-cue VAD start
+FAIL-B    -- accepted post-cue VAD start, no post-cue INTERRUPT_CONFIRMED
+FAIL-C    -- INTERRUPT_CONFIRMED occurred, playback did not stop early
+             (frame submission reached natural completion)
+FAIL-D    -- playback stopped then resumed (structurally impossible by
+             this loop's design; checked anyway)
+FAIL-F    -- test instrumentation invalid (no cue emitted, zero VAD
+             frames, or capture shorter than the relaxed rule allows)
+```
+
+`pre_cue_false_positive` (any accepted VAD start or confirmed
+interruption before the cue's own countdown-start boundary) is computed
+and reported **independently** of the verdict above — a later genuine
+interruption never hides an earlier false trigger. "FAIL-E" in the
+original taxonomy is this pre-cue flag, surfaced as its own boolean
+rather than folded into the verdict enum, specifically so it cannot be
+masked by an otherwise-clean post-cue PASS.
+
+### 95.8 Offline validation performed this round (all before any hardware)
+
+```
+py_compile                                                    PASS
+ruff                                                           PASS
+git diff --check                                               PASS
+silent-user run_speech_role body byte-for-byte unchanged        PASS
+  (10405 chars, programmatic diff, identical)
+evaluate_deliberate_bargein_result(): PASS scenario              PASS
+  ...FAIL-A / FAIL-B / FAIL-C / FAIL-D scenarios                 PASS (4/4)
+  ...pre-cue false positive flagged + does not mask a PASS        PASS
+  ...FAIL-F (zero frames / capture too short)                    PASS (2/2)
+  ...deliberate-mode ACCEPTS shortened capture (10.75s vs the
+     27.18s silent-user requirement)                              PASS
+  ...silent-user's OWN unchanged rule still REJECTS that same
+     10.75s capture                                               PASS
+_play_signal_cancelable(): pre-set cancel -> 0 frames submitted   PASS
+  ...never cancelled -> full natural completion                  PASS
+  ...mid-stream cancel -> stops promptly, 0 < offset < total       PASS
+  ...re-invocation with an already-set event -> still 0 frames
+     (no hidden resume state)                                     PASS
+LiveVadChain.process_frame() backward compatibility:
+  ...no-extra_fields row == 12 columns, byte-identical to before   PASS
+  ...extra_fields=[..] row == 14 columns, first 11 content
+     fields identical (field 0 is wall-clock, expected to differ)  PASS
+Positive control (frozen speech WAV): max_prob=0.9966,
+  started_events=1, confirmed_events=1                            PASS
+Negative control (26s silence): 0 started, 0 confirmed             PASS
+FULL END-TO-END DRY RUN (synthetic fake-hardware publisher
+  standing in for real hardware, feeding real speech content as a
+  simulated operator barge-in at a scheduled time; REAL unmodified
+  run_speech_role_deliberate_bargein subscribing to it remotely,
+  against a real local livekit-server):
+    remote_audio_frames_received = 1285
+    vad_frames_processed         = 401
+    capture_duration_s           = 12.850  (min_required = 11.816)
+    playback_stopped_early       = True (stopped at 424800/1112708
+                                    samples submitted -- genuinely
+                                    short of natural completion)
+    pre_cue_false_positive       = False
+    post_cue_started_events      = [10.496]
+    post_cue_confirmed_events    = [10.816]
+    cue_to_vad_start_s                        = 0.514s
+    cue_to_interrupt_confirmed_s              = 0.834s
+    interrupt_confirmed_to_cancel_requested_s = 0.000s
+    VERDICT: PASS                                                 PASS
+```
+
+No production files were touched by this round's implementation or
+validation (`src/`, `apps/`, Gemini, `ConversationSession`, NeXa Core,
+`BargeInController` production code, `AecReferenceFeeder`, XVF3800 DSP,
+PipeWire/ALSA/system-mixer config, speaker volume — none modified).
+The dry-run evidence was moved (not overwritten in place, not deleted)
+into a clearly separated
+`r0082f_live_captures/r0082g_dryrun_synthetic_NOT_real_hardware/`
+subdirectory precisely so it can never be confused with a real hardware
+deliberate-bargein run.
+
+## 96. R0082-G — FINAL GATE
+
+```
+architecture preserved (no self-read regression)              PASS
+VAD configuration unchanged, not tuned                          PASS
+cue timing chosen from real stimulus data + documented           PASS
+playback cancellation triggered ONLY by INTERRUPT_CONFIRMED      PASS
+playback does not resume after cancellation (structural + tested) PASS
+pre-cue false positives tracked and reported separately          PASS
+deliberate-bargein mode has its own validity rule (not reused
+  from silent-user)                                              PASS
+silent-user mode remains available and byte-for-byte unchanged    PASS
+py_compile / ruff / git diff --check                             PASS
+synthetic silence -> zero false events                           PASS
+synthetic strong speech -> VAD start + INTERRUPT_CONFIRMED         PASS
+synthetic confirmed interruption -> playback genuinely cancels     PASS
+full end-to-end dry run (mutual subscription, first-frame gate,
+  concurrent cue delivery + consumption + cancellation, real
+  InterruptionStateMachine, real evidence writing)                PASS
+no production files touched                                      PASS
+```
+
+**Verdict: R0082-G READY FOR ONE REAL DELIBERATE-BARGE-IN HARDWARE
+RUN.** This session did not execute hardware. Five-run replication at
+different timing points is explicitly a LATER step, gated on this first
+single run's own real-hardware result — not attempted this round.
+
+## 97. Answers to the 11 questions
+
+1. **Is R0082-F attempt #2 recorded as a VALID PASS?** Yes — §94, with
+   independently re-verified SHA256/frame-count/CSV evidence.
+2. **Is deliberate-barge-in mode implemented?** Yes —
+   `--test-mode deliberate-bargein`, additive, default remains
+   `silent-user`.
+3. **At what playback-relative time is the operator cue?** Countdown
+   starts at t=4.0s, `SPEAK NOW` at t=7.0s (playback-relative), chosen
+   from an RMS scan showing continuous active speech 6.475s-7.600s —
+   see §95.3.
+4. **Does only `INTERRUPT_CONFIRMED` stop playback?** Yes — the
+   cancellation event is set from exactly one place, gated on
+   `chain.confirmed_events` growing (the real `InterruptionStateMachine`
+   reaching `interrupt_confirmed`), never on raw probability or a
+   candidate start alone.
+5. **Does playback stay stopped?** Yes — no resume code path exists;
+   verified both structurally and by a dedicated offline test
+   (re-invocation with an already-set cancel event still submits zero
+   frames) and by the live dry run (playback never resumed after
+   cancellation, through TAIL and disconnect).
+6. **Are pre-cue false positives tracked separately?** Yes —
+   `pre_cue_false_positive` is computed and reported independently of
+   the post-cue PASS/FAIL verdict.
+7. **Does deliberate mode use its own validity rule?** Yes — §95.5;
+   silent-user's own rule is untouched and was verified to still reject
+   the same shortened capture deliberate-bargein mode accepts.
+8. **Do all offline controls pass?** Yes — §95.8, including a full
+   synthetic end-to-end dry run, not just unit-level checks.
+9. **Were any production files changed?** No — only
+   `r0082f_live_vad_self_echo_poc.py` (research script) and this report
+   were modified; `src/`, `apps/`, and all named production subsystems
+   are untouched.
+10. **Is R0082-G READY for ONE real deliberate-barge-in run?** Yes.
+11. **Exact operator commands and instructions** — see §98.
+
+## 98. Exact operator procedure — ONE real deliberate-barge-in run only
+
+**Do not run this more than once yet.** Five-run replication at
+different timing points is a later step, gated on this run's own
+result.
+
+**Prerequisite** (separate terminal, once):
+
+```bash
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/livekit_server/livekit-server --dev --bind 127.0.0.1
+```
+
+**The two commands:**
+
+```bash
+PROBE=/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/r0082_livekit_probe_venv/bin/python3
+POC=docs/research/r0082_livekit_webrtc_audio_poc/r0082f_live_vad_self_echo_poc.py
+ROOM=r0082g_bargein_$(date +%s)
+
+# terminal A -- hardware participant (real PlatformAudio, AEC ON; start first)
+$PROBE $POC --role hardware --aec on --room-name "$ROOM"
+
+# terminal B -- speech participant + deliberate-bargein cue/observer
+$PROBE $POC --role speech --test-mode deliberate-bargein --room-name "$ROOM"
+```
+
+**What the operator should do:** stay completely silent until terminal
+B prints the countdown. When it prints:
+
+```
+BARGE-IN IN 3
+BARGE-IN IN 2
+BARGE-IN IN 1
+>>> SPEAK NOW <<<   (Przerwij, teraz opowiedz mi o czymś innym.)
+```
+
+say **exactly**: `Przerwij, teraz opowiedz mi o czymś innym.` —
+starting immediately after `SPEAK NOW` appears. No millisecond-precision
+timing is required; ordinary reaction time is fine and is explicitly
+accounted for in the latency report (`cue_to_vad_start_s`,
+`cue_to_interrupt_confirmed_s`). Speak once; do not repeat the phrase
+unless the run is being deliberately repeated later as one of the
+five-run replication set.
+
+Terminal B will refuse to play anything (`TEST INVALID`) if no real
+remote mic frame arrives within 15s. At the end it prints a
+`VALIDITY + CLASSIFICATION SUMMARY` block — only trust the verdict if
+`capture_ok = True`; check `pre_cue_false_positive` separately from the
+main verdict; a real barge-in should show `VERDICT: PASS` with exactly
+one (or occasionally a few duplicate) post-cue VAD start(s) and exactly
+one confirmed interruption. **This has intentionally NOT been run by
+this session.**

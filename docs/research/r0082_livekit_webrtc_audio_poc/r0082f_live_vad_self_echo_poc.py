@@ -165,6 +165,76 @@ bit-for-bit identical, frequency/alias test clean, both VAD controls
 PASS). `onnxruntime==1.24.4`/`loudness==0.2.0`/`scipy` remain installed
 only in the isolated probe venv (operator-approved), confirmed by
 `pip check` to have caused no dependency drift.
+
+## R0082-G ADDENDUM — deliberate human barge-in mode (`--test-mode
+## deliberate-bargein`), additive only, silent-user mode UNCHANGED
+
+R0082-F (above) only proves the live chain does not spuriously fire
+while the human stays silent. It cannot show the chain correctly
+detects and acts on a REAL human interruption. `--test-mode
+deliberate-bargein` (default remains `silent-user`, byte-identical to
+everything above) adds exactly that, on the SAME architecture: no
+return to local self-read, no VAD config changes.
+
+**Cue timing** — chosen from an offline short-time-RMS scan of the
+frozen stimulus (50ms window/25ms hop, 200-count int16 RMS silence
+threshold; see R0082's own report for the full trace). The scan found
+a continuous active-speech run from **6.475s-7.600s** (English
+portion, well clear of both the initial silence and the ~0.6s EN/PL
+gap later in the file). The cue is fixed at:
+
+```
+BARGEIN_CUE_START_TIME_S = 4.0   (playback-relative) -- "BARGE-IN IN 3"
+                             5.0                     -- "BARGE-IN IN 2"
+                             6.0                     -- "BARGE-IN IN 1"
+BARGEIN_SPEAK_NOW_TIME_S = 7.0   (playback-relative) -- ">>> SPEAK NOW <<<"
+```
+
+`SPEAK NOW` lands inside the 6.475-7.600s active-speech run with 0.6s
+of continuing deterministic speech still to come after it, and the
+operator's own post-reaction-time speech is expected to overlap
+partly with the tail of that run and partly with the following
+7.925-9.300s run (separated by only a 0.325s natural TTS pause) --
+i.e. the operator is very likely to be speaking WHILE the deterministic
+stimulus is still audible, which is the condition under test. The
+countdown is delivered as terminal text only (no speaker beep, per
+instruction -- a beep would itself be an acoustic event captured by
+the mic and would contaminate the VAD/interruption evidence) via a
+separate `asyncio.sleep`-paced task, not tied to frame-submission
+counting.
+
+**Playback cancellation** -- real, not faked. The frame-submission loop
+checks a shared `asyncio.Event` (`interrupt_confirmed_event`) once
+per 10ms frame and stops calling `signal_source.capture_frame()`
+entirely the moment it is set; the event is set from exactly one place
+(`_consume_mic`'s VAD chain, the instant `chain.confirmed_events`
+grows), i.e. only a real `InterruptionStateMachine`
+`INTERRUPT_CONFIRMED` can set it -- not raw Silero probability, not a
+candidate start. There is no retry/resume code path anywhere in the
+loop, so once broken the loop cannot restart.
+
+**Validity criteria are SEPARATE from silent-user mode** -- deliberate-
+bargein mode does not require the full ~27.18s capture; it requires
+capture through `max(speak_now boundary, first confirmed interruption
++ 1.0s margin)` if a confirmed interruption occurred, else the full
+duration (nothing legitimately shortened it if no interruption fired).
+
+**Pre-cue false positives are tracked and reported separately** from
+the genuine post-cue interruption outcome -- any accepted VAD start or
+confirmed interruption before the cue's own countdown-start boundary
+is flagged regardless of what happens afterward.
+
+**FAIL taxonomy** (distinct classes, per instruction):
+A = operator spoke, no accepted post-cue VAD start;
+B = accepted post-cue VAD start, no post-cue `INTERRUPT_CONFIRMED`;
+C = `INTERRUPT_CONFIRMED` occurred but playback did not verifiably stop
+early (frame submission reached natural completion);
+D = playback stopped then resumed (structurally impossible by this
+loop's design -- checked anyway);
+E = a false event (start or confirm) occurred BEFORE the cue;
+F = test instrumentation invalid (first-frame gate, zero VAD frames,
+or capture too short even under the relaxed deliberate-mode rule).
+PASS = exactly the expected chain with no pre-cue false positive.
 """
 
 from __future__ import annotations
@@ -239,6 +309,34 @@ MODEL_RESET_INTERVAL_S = 5.0
 
 HARDWARE_IDENTITY = "r0082f_hardware"
 SPEECH_IDENTITY = "r0082f_speech"
+
+# ----------------------------------------------------------------------
+# R0082-G -- deliberate human barge-in mode constants (additive; do not
+# affect --test-mode silent-user, which is the default and unchanged).
+# ----------------------------------------------------------------------
+BARGEIN_SPEAK_NOW_TIME_S = 7.0  # playback-relative; see module docstring
+BARGEIN_CUE_LEAD_S = 3.0  # "3, 2, 1" at 1s apart before SPEAK NOW
+BARGEIN_CUE_START_TIME_S = BARGEIN_SPEAK_NOW_TIME_S - BARGEIN_CUE_LEAD_S  # 4.0
+OPERATOR_PHRASE_PL = "Przerwij, teraz opowiedz mi o czymś innym."
+POST_INTERRUPT_MARGIN_S = 1.0  # min capture required after a confirmed interruption
+MIN_DELIBERATE_CAPTURE_S = PRE_ROLL_S + BARGEIN_SPEAK_NOW_TIME_S + 0.5
+
+CSV_HEADER_BARGEIN = [
+    "timestamp_monotonic",
+    "audio_relative_timestamp_s",
+    "silero_prob",
+    "confidence_threshold",
+    "smoothed_volume",
+    "volume_threshold",
+    "vad_state",
+    "candidate_start",
+    "vad_user_started_speaking_equivalent",
+    "vad_user_stopped_speaking_equivalent",
+    "interruption_state",
+    "interrupt_confirmed",
+    "playback_active",
+    "playback_cancel_requested",
+]
 
 EXPECTED_INPUT_NAME_SUBSTRING = "reSpeaker"
 EXPECTED_OUTPUT_NAME_SUBSTRING = "UACDemoV1.0"
@@ -481,10 +579,20 @@ class LiveVadChain:
         self.started_events: list[float] = []
         self.stopped_events: list[float] = []
         self.confirmed_events: list[float] = []
+        # R0082-G additions -- wall-clock companions to the audio-relative
+        # lists above, and candidate-start (STARTING-entry) timestamps, all
+        # purely additive bookkeeping used only by deliberate-bargein mode's
+        # latency reporting. Silent-user mode does not read these.
+        self.started_events_mono: list[float] = []
+        self.confirmed_events_mono: list[float] = []
+        self.candidate_start_events: list[float] = []
+        self.candidate_start_events_mono: list[float] = []
         self.csv_writer = csv_writer
         self.max_prob = 0.0
 
-    def process_frame(self, frame_int16: np.ndarray, t_s: float) -> None:
+    def process_frame(
+        self, frame_int16: np.ndarray, t_s: float, *, extra_fields: list | None = None
+    ) -> None:
         assert len(frame_int16) == VAD_FRAME_SAMPLES
         audio_float32 = frame_int16.astype(np.float32) / 32768.0
         prob = float(self.model(audio_float32, VAD_SAMPLE_RATE)[0][0])
@@ -508,6 +616,8 @@ class LiveVadChain:
             if self.vad_state == "QUIET":
                 self.vad_state = "STARTING"
                 self.starting_count = 1
+                self.candidate_start_events.append(t_s)
+                self.candidate_start_events_mono.append(time.monotonic())
             elif self.vad_state == "STARTING":
                 self.starting_count += 1
             elif self.vad_state == "STOPPING":
@@ -528,6 +638,7 @@ class LiveVadChain:
             self.starting_count = 0
             speech_start_event = True
             self.started_events.append(t_s)
+            self.started_events_mono.append(time.monotonic())
             self.sm.speech_started(t_s)
 
         if self.vad_state == "STOPPING" and self.stopping_count >= VAD_STOP_FRAMES:
@@ -541,25 +652,27 @@ class LiveVadChain:
         confirmed = ev.value == "interrupt_confirmed"
         if confirmed:
             self.confirmed_events.append(t_s)
+            self.confirmed_events_mono.append(time.monotonic())
 
         self.n_frames += 1
         if self.csv_writer is not None:
-            self.csv_writer.writerow(
-                [
-                    f"{time.monotonic():.6f}",
-                    f"{t_s:.3f}",
-                    f"{prob:.5f}",
-                    VAD_CONFIDENCE,
-                    f"{volume:.5f}",
-                    VAD_MIN_VOLUME,
-                    self.vad_state,
-                    int(self.vad_state == "STARTING"),
-                    int(speech_start_event),
-                    int(speech_end_event),
-                    self.sm.state.value,
-                    int(confirmed),
-                ]
-            )
+            row = [
+                f"{time.monotonic():.6f}",
+                f"{t_s:.3f}",
+                f"{prob:.5f}",
+                VAD_CONFIDENCE,
+                f"{volume:.5f}",
+                VAD_MIN_VOLUME,
+                self.vad_state,
+                int(self.vad_state == "STARTING"),
+                int(speech_start_event),
+                int(speech_end_event),
+                self.sm.state.value,
+                int(confirmed),
+            ]
+            if extra_fields is not None:
+                row.extend(extra_fields)
+            self.csv_writer.writerow(row)
 
 
 CSV_HEADER = [
@@ -901,6 +1014,396 @@ async def run_speech_role(
         print(f"[speech pid={os.getpid()}] disconnected cleanly")
 
 
+def evaluate_deliberate_bargein_result(
+    *,
+    started_events: list[float],
+    confirmed_events: list[float],
+    vad_frames_processed: int,
+    capture_duration_s: float,
+    cue_emitted: bool,
+    speak_now_boundary_t_s: float,
+    cue_start_boundary_t_s: float,
+    playback_stopped_early: bool,
+    playback_resumed_after_stop: bool,
+) -> dict:
+    """R0082-G classification -- pure function, unit-testable without any
+    hardware/asyncio/LiveKit involvement. Returns a dict with:
+    `pre_cue_false_positive` (bool, reported independently of the rest,
+    per instruction), `verdict` (one of "PASS", "FAIL-A".."FAIL-F"), and
+    the supporting event lists split pre/post cue."""
+    pre_cue_started = [t for t in started_events if t < cue_start_boundary_t_s]
+    pre_cue_confirmed = [t for t in confirmed_events if t < cue_start_boundary_t_s]
+    post_cue_started = [t for t in started_events if t >= cue_start_boundary_t_s]
+    post_cue_confirmed = [t for t in confirmed_events if t >= cue_start_boundary_t_s]
+    pre_cue_false_positive = bool(pre_cue_started or pre_cue_confirmed)
+
+    if post_cue_confirmed:
+        min_required_s = max(
+            speak_now_boundary_t_s, post_cue_confirmed[0] + POST_INTERRUPT_MARGIN_S
+        )
+    else:
+        min_required_s = MIN_DELIBERATE_CAPTURE_S
+    capture_ok = capture_duration_s >= min_required_s
+
+    if vad_frames_processed == 0 or not cue_emitted or not capture_ok:
+        verdict = "FAIL-F"
+    elif not post_cue_started:
+        verdict = "FAIL-A"
+    elif not post_cue_confirmed:
+        verdict = "FAIL-B"
+    elif not playback_stopped_early:
+        verdict = "FAIL-C"
+    elif playback_resumed_after_stop:
+        verdict = "FAIL-D"
+    else:
+        verdict = "PASS"
+
+    return {
+        "pre_cue_false_positive": pre_cue_false_positive,
+        "pre_cue_started": pre_cue_started,
+        "pre_cue_confirmed": pre_cue_confirmed,
+        "post_cue_started": post_cue_started,
+        "post_cue_confirmed": post_cue_confirmed,
+        "capture_ok": capture_ok,
+        "min_required_capture_s": min_required_s,
+        "verdict": verdict,
+    }
+
+
+async def _play_signal_cancelable(
+    signal_source,
+    signal_pcm: bytes,
+    *,
+    cancel_event: asyncio.Event,
+    milestones: dict,
+    cue_start_time_s: float = BARGEIN_CUE_START_TIME_S,
+    speak_now_time_s: float = BARGEIN_SPEAK_NOW_TIME_S,
+    emit_cue: bool = True,
+) -> tuple[int, bool]:
+    """Submits `signal_pcm` frame-by-frame, exactly like the silent-user
+    loop, but (a) concurrently delivers the terminal countdown cue on a
+    real-time `asyncio.sleep` schedule tied to PLAYBACK start, and (b)
+    checks `cancel_event` once per 10ms frame and stops submitting
+    IMMEDIATELY (no further `capture_frame` calls) the moment it is set.
+    There is no code path that resumes submission afterward -- once this
+    function returns, it is not re-entered for the same stream. Returns
+    `(samples_submitted, stopped_early)`. Pure enough to unit-test with a
+    fake `signal_source` stub and a pre-set `cancel_event`."""
+    total_samples = len(signal_pcm) // 2
+    milestones["playback_start"] = time.monotonic()
+
+    async def _deliver_cue() -> None:
+        if not emit_cue:
+            return
+        await asyncio.sleep(cue_start_time_s)
+        milestones["cue_start"] = time.monotonic()
+        print("\n  BARGE-IN IN 3")
+        await asyncio.sleep(1.0)
+        print("  BARGE-IN IN 2")
+        await asyncio.sleep(1.0)
+        print("  BARGE-IN IN 1")
+        await asyncio.sleep(1.0)
+        milestones["speak_now"] = time.monotonic()
+        print(f"  >>> SPEAK NOW <<<   ({OPERATOR_PHRASE_PL})\n")
+
+    cue_task = asyncio.create_task(_deliver_cue())
+    offset = 0
+    stopped_early = False
+    try:
+        while offset < total_samples:
+            if cancel_event.is_set():
+                stopped_early = True
+                break
+            chunk_samples = min(FRAME_SAMPLES_LIVE, total_samples - offset)
+            frame = rtc.AudioFrame.create(LIVE_SAMPLE_RATE, 1, FRAME_SAMPLES_LIVE)
+            buf = array.array("h", frame.data)
+            chunk = array.array("h")
+            chunk.frombytes(signal_pcm[offset * 2 : (offset + chunk_samples) * 2])
+            for i in range(FRAME_SAMPLES_LIVE):
+                buf[i] = chunk[i] if i < chunk_samples else 0
+            frame.data[:] = buf
+            await signal_source.capture_frame(frame)
+            milestones["last_speech_frame_submitted"] = time.monotonic()
+            offset += chunk_samples
+    finally:
+        if not cue_task.done():
+            cue_task.cancel()
+            try:
+                await cue_task
+            except asyncio.CancelledError:
+                pass
+    if stopped_early:
+        milestones["playback_stopped"] = time.monotonic()
+    return offset, stopped_early
+
+
+async def run_speech_role_deliberate_bargein(
+    *,
+    url: str,
+    api_key: str,
+    api_secret: str,
+    room_name: str,
+) -> None:
+    """R0082-G. Identical connection/subscription/first-frame-gate
+    preamble to `run_speech_role` (silent-user), then diverges: playback
+    goes through `_play_signal_cancelable` (real-time countdown cue +
+    genuine, non-resuming cancellation on INTERRUPT_CONFIRMED), and the
+    CSV/validity/classification logic is R0082-G's own."""
+    print(f"[speech pid={os.getpid()}] starting (test-mode=deliberate-bargein)")
+    signal_pcm = read_speech_wav()
+    token = _make_token(
+        api_key=api_key, api_secret=api_secret, identity=SPEECH_IDENTITY, room=room_name
+    )
+    room = rtc.Room()
+    hw_track_ready = asyncio.Event()
+    remote_mic_track: list[rtc.Track] = []
+
+    def _on_track_subscribed(track_, publication, participant) -> None:
+        if participant.identity == HARDWARE_IDENTITY and track_.kind == rtc.TrackKind.KIND_AUDIO:
+            remote_mic_track.append(track_)
+            hw_track_ready.set()
+
+    room.on("track_subscribed", _on_track_subscribed)
+
+    signal_source = rtc.AudioSource(LIVE_SAMPLE_RATE, 1)
+    signal_track = rtc.LocalAudioTrack.create_audio_track("r0082f_speech_signal", signal_source)
+
+    try:
+        print(f"[speech pid={os.getpid()}] connecting to room {room_name!r}...")
+        await room.connect(url, token)
+        await room.local_participant.publish_track(signal_track)
+        print("[speech] MILESTONE: speech track published")
+
+        print("[speech] waiting for hardware mic track subscription...")
+        await asyncio.wait_for(hw_track_ready.wait(), timeout=SUBSCRIBE_TIMEOUT_S)
+        print("[speech] MILESTONE: hardware mic track subscribed (remote)")
+
+        mic_stream = rtc.AudioStream(
+            remote_mic_track[0], sample_rate=LIVE_SAMPLE_RATE, num_channels=1
+        )
+
+        print(
+            f"[speech] waiting up to {FIRST_FRAME_TIMEOUT_S}s for the FIRST real "
+            "remote mic frame (mandatory gate -- will NOT proceed without it)..."
+        )
+        try:
+            first_frame = await wait_for_first_frame(mic_stream)
+        except TimeoutError:
+            await mic_stream.aclose()
+            raise SystemExit(
+                "TEST INVALID -- no real remote mic frame arrived within "
+                f"{FIRST_FRAME_TIMEOUT_S}s. Refusing to play the speech stimulus. "
+                "STOP -- diagnose the remote subscription path before retrying."
+            ) from None
+
+        print(
+            f"[speech] MILESTONE: VAD INPUT READY -- first real remote mic frame: "
+            f"sample_rate={first_frame.sample_rate} num_channels={first_frame.num_channels} "
+            f"samples_per_channel={first_frame.samples_per_channel}"
+        )
+        if first_frame.num_channels != 1 or first_frame.sample_rate != LIVE_SAMPLE_RATE:
+            raise SystemExit(
+                f"Remote mic frame mismatch: num_channels={first_frame.num_channels}, "
+                f"sample_rate={first_frame.sample_rate}. Refusing to proceed."
+            )
+
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        csv_path = OUT_DIR / f"r0082g_bargein_{run_id}_timeline.csv"
+        csv_file = open(csv_path, "w", newline="")
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(CSV_HEADER_BARGEIN)
+
+        chain = LiveVadChain(csv_writer)
+        resampler = StreamingResampler()
+        vad_buffer = np.zeros(0, dtype=np.int16)
+        total_16k_samples = 0
+        raw_48k_chunks: list[bytes] = []
+        resampled_16k_chunks: list[bytes] = []
+        remote_frames_received = 0
+        remote_samples_received = 0
+
+        playback_active = False
+        playback_cancel_requested = False
+        interrupt_confirmed_event = asyncio.Event()
+        milestones: dict[str, float] = {}
+
+        def _extra_fields() -> list:
+            return [int(playback_active), int(playback_cancel_requested)]
+
+        raw_bytes0 = bytes(first_frame.data)
+        raw_48k_chunks.append(raw_bytes0)
+        remote_frames_received += 1
+        remote_samples_received += first_frame.samples_per_channel
+        chunk0 = np.frombuffer(raw_bytes0, dtype="<i2")
+        resampled0 = resampler.push(chunk0)
+        resampled_16k_chunks.append(resampled0.astype("<i2").tobytes())
+        vad_buffer = np.concatenate([vad_buffer, resampled0])
+        while len(vad_buffer) >= VAD_FRAME_SAMPLES:
+            vf = vad_buffer[:VAD_FRAME_SAMPLES]
+            vad_buffer = vad_buffer[VAD_FRAME_SAMPLES:]
+            chain.process_frame(
+                vf, total_16k_samples / VAD_SAMPLE_RATE, extra_fields=_extra_fields()
+            )
+            total_16k_samples += VAD_FRAME_SAMPLES
+
+        capture_stop = asyncio.Event()
+        prev_confirmed_count = len(chain.confirmed_events)
+
+        async def _consume_mic() -> None:
+            nonlocal vad_buffer, total_16k_samples, remote_frames_received
+            nonlocal remote_samples_received, playback_cancel_requested, prev_confirmed_count
+            try:
+                async for event in mic_stream:
+                    if capture_stop.is_set():
+                        break
+                    frame = event.frame
+                    raw_bytes = bytes(frame.data)
+                    raw_48k_chunks.append(raw_bytes)
+                    remote_frames_received += 1
+                    remote_samples_received += frame.samples_per_channel
+                    chunk = np.frombuffer(raw_bytes, dtype="<i2")
+                    resampled = resampler.push(chunk)
+                    resampled_16k_chunks.append(resampled.astype("<i2").tobytes())
+                    vad_buffer = np.concatenate([vad_buffer, resampled])
+                    while len(vad_buffer) >= VAD_FRAME_SAMPLES:
+                        vf = vad_buffer[:VAD_FRAME_SAMPLES]
+                        vad_buffer = vad_buffer[VAD_FRAME_SAMPLES:]
+                        t_s = total_16k_samples / VAD_SAMPLE_RATE
+                        chain.process_frame(vf, t_s, extra_fields=_extra_fields())
+                        total_16k_samples += VAD_FRAME_SAMPLES
+                        if (
+                            len(chain.confirmed_events) > prev_confirmed_count
+                            and not playback_cancel_requested
+                        ):
+                            playback_cancel_requested = True
+                            prev_confirmed_count = len(chain.confirmed_events)
+                            milestones["playback_cancel_requested"] = time.monotonic()
+                            print(
+                                "[speech] MILESTONE: PLAYBACK_CANCEL_REQUESTED "
+                                f"(INTERRUPT_CONFIRMED at t={chain.confirmed_events[-1]:.3f}s)"
+                            )
+                            interrupt_confirmed_event.set()
+            except asyncio.CancelledError:
+                return
+
+        consume_task = asyncio.create_task(_consume_mic())
+
+        print(f"[speech] MILESTONE: PRE_ROLL start ({PRE_ROLL_S}s)")
+        await asyncio.sleep(PRE_ROLL_S)
+
+        print("[speech] MILESTONE: PLAYBACK start")
+        playback_active = True
+        samples_submitted, stopped_early = await _play_signal_cancelable(
+            signal_source,
+            signal_pcm,
+            cancel_event=interrupt_confirmed_event,
+            milestones=milestones,
+        )
+        playback_active = False
+        if stopped_early:
+            print(
+                f"[speech] MILESTONE: PLAYBACK_STOPPED (cancelled -- submitted "
+                f"{samples_submitted}/{len(signal_pcm) // 2} samples)"
+            )
+        else:
+            print("[speech] MILESTONE: PLAYBACK end (completed naturally, not cancelled)")
+
+        print(f"[speech] MILESTONE: TAIL start ({TAIL_S}s)")
+        await asyncio.sleep(TAIL_S)
+        print("[speech] MILESTONE: TAIL end")
+
+        capture_stop.set()
+        consume_task.cancel()
+        try:
+            await consume_task
+        except asyncio.CancelledError:
+            pass
+        await mic_stream.aclose()
+        csv_file.close()
+
+        raw_wav_path = OUT_DIR / f"r0082g_bargein_{run_id}_mic_48k.wav"
+        vad_wav_path = OUT_DIR / f"r0082g_bargein_{run_id}_mic_16k.wav"
+        _write_wav(raw_wav_path, b"".join(raw_48k_chunks), sample_rate=LIVE_SAMPLE_RATE)
+        _write_wav(vad_wav_path, b"".join(resampled_16k_chunks), sample_rate=VAD_SAMPLE_RATE)
+        print(f"[speech] wrote {raw_wav_path.name} sha256={sha256_of(raw_wav_path)}")
+        print(f"[speech] wrote {vad_wav_path.name} sha256={sha256_of(vad_wav_path)}")
+        print(f"[speech] wrote {csv_path.name} ({chain.n_frames} VAD frames)")
+
+        cue_emitted = "speak_now" in milestones
+        capture_duration_s = remote_samples_received / LIVE_SAMPLE_RATE
+        speak_now_boundary_t_s = PRE_ROLL_S + BARGEIN_SPEAK_NOW_TIME_S
+        cue_start_boundary_t_s = PRE_ROLL_S + BARGEIN_CUE_START_TIME_S
+        playback_resumed_after_stop = False  # structurally impossible; see docstring
+
+        result = evaluate_deliberate_bargein_result(
+            started_events=chain.started_events,
+            confirmed_events=chain.confirmed_events,
+            vad_frames_processed=chain.n_frames,
+            capture_duration_s=capture_duration_s,
+            cue_emitted=cue_emitted,
+            speak_now_boundary_t_s=speak_now_boundary_t_s,
+            cue_start_boundary_t_s=cue_start_boundary_t_s,
+            playback_stopped_early=stopped_early,
+            playback_resumed_after_stop=playback_resumed_after_stop,
+        )
+
+        latencies = {}
+        if "speak_now" in milestones and result["post_cue_started"]:
+            idx = chain.started_events.index(result["post_cue_started"][0])
+            latencies["cue_to_vad_start_s"] = (
+                chain.started_events_mono[idx] - milestones["speak_now"]
+            )
+        if "speak_now" in milestones and result["post_cue_confirmed"]:
+            idx = chain.confirmed_events.index(result["post_cue_confirmed"][0])
+            latencies["cue_to_interrupt_confirmed_s"] = (
+                chain.confirmed_events_mono[idx] - milestones["speak_now"]
+            )
+        if "playback_cancel_requested" in milestones and result["post_cue_confirmed"]:
+            idx = chain.confirmed_events.index(result["post_cue_confirmed"][0])
+            latencies["interrupt_confirmed_to_cancel_requested_s"] = (
+                milestones["playback_cancel_requested"] - chain.confirmed_events_mono[idx]
+            )
+
+        import json
+
+        milestones_path = OUT_DIR / f"r0082g_bargein_{run_id}_milestones.json"
+        milestones_path.write_text(
+            json.dumps({"milestones": milestones, "latencies_s": latencies}, indent=2)
+        )
+        print(f"[speech] wrote {milestones_path.name}")
+
+        print("\n" + "=" * 70)
+        print("R0082-G VALIDITY + CLASSIFICATION SUMMARY")
+        print("=" * 70)
+        print(f"  remote_audio_frames_received  = {remote_frames_received}")
+        print(f"  remote_audio_samples_received = {remote_samples_received}")
+        print(f"  vad_frames_processed          = {chain.n_frames}")
+        print(f"  capture_duration_s            = {capture_duration_s:.3f}")
+        print(f"  cue_emitted                   = {cue_emitted}")
+        print(f"  min_required_capture_s        = {result['min_required_capture_s']:.3f}")
+        print(f"  capture_ok                    = {result['capture_ok']}")
+        print(f"  playback_stopped_early        = {stopped_early}")
+        print(f"  pre_cue_false_positive        = {result['pre_cue_false_positive']}")
+        if result["pre_cue_false_positive"]:
+            print(
+                "  *** PRE-CUE FALSE POSITIVE(S) -- self-echo trigger BEFORE the "
+                f"cue: started={result['pre_cue_started']} confirmed={result['pre_cue_confirmed']} "
+                "-- reported independently of the outcome below ***"
+            )
+        print(f"  post_cue_started_events       = {result['post_cue_started']}")
+        print(f"  post_cue_confirmed_events     = {result['post_cue_confirmed']}")
+        for k, v in latencies.items():
+            print(f"  {k:<40s} = {v:.3f}s")
+        print(f"\n  VERDICT: {result['verdict']}")
+        if result["verdict"] != "PASS":
+            print("  This is NOT a PASS -- see FAIL taxonomy in this module's docstring.")
+    finally:
+        await signal_source.aclose()
+        await room.disconnect()
+        print(f"[speech pid={os.getpid()}] disconnected cleanly")
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -915,6 +1418,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--url", default=DEFAULT_URL)
     p.add_argument("--api-key", default=DEFAULT_API_KEY)
     p.add_argument("--api-secret", default=DEFAULT_API_SECRET)
+    p.add_argument(
+        "--test-mode", choices=["silent-user", "deliberate-bargein"], default="silent-user",
+        help="R0082-F silent-user (default, unchanged) or R0082-G deliberate-bargein "
+             "(operator speaks once, on cue). Only affects --role speech; ignored by "
+             "--role hardware, which behaves identically either way.",
+    )
     return p.parse_args()
 
 
@@ -924,6 +1433,11 @@ async def main() -> int:
         await run_hardware_role(
             aec=(args.aec == "on"), url=args.url, api_key=args.api_key,
             api_secret=args.api_secret, room_name=args.room_name,
+        )
+    elif args.test_mode == "deliberate-bargein":
+        await run_speech_role_deliberate_bargein(
+            url=args.url, api_key=args.api_key, api_secret=args.api_secret,
+            room_name=args.room_name,
         )
     else:
         await run_speech_role(
