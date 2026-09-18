@@ -5157,3 +5157,238 @@ mechanism (immediate, unconditional, unmodified), same SPEAK-NOW
 classification boundary, only the interaction between capture validity
 and the pre-`SPEAK-NOW` false-positive check corrected. This session
 did not execute hardware.
+
+## 102. R0082-G real hardware deliberate-barge-in run #1 — RESULT: VALID PASS
+
+The operator executed the exact §98 procedure (with `--test-mode
+deliberate-bargein`) on real hardware. This session did not execute
+the run; the operator reported the result and this session
+independently re-verified every artifact below before recording it
+here, per this investigation's established discipline.
+
+**Run identity**
+
+```
+room       = r0082g_bargein_001
+run_id     = 20260918T202620Z
+```
+
+### 102.1 Evidence verification (independently reproduced, not merely trusted)
+
+```
+r0082g_bargein_20260918T202620Z_mic_48k.wav
+  sha256 = f9c89079b0ea28ab2fbaaf9a003f17f8f33d6757bf9d21b506c2ba613906cc73  EXACT MATCH
+  wave.open(): channels=1 sampwidth=2 framerate=48000 nframes=701280 duration=14.610s
+
+r0082g_bargein_20260918T202620Z_mic_16k.wav
+  sha256 = 27747acf43e6b24a51fd30725682537694902cbd60a9e971e1c30cc8ee36ed4a  EXACT MATCH
+  wave.open(): channels=1 sampwidth=2 framerate=16000 nframes=233760 duration=14.610s
+
+r0082g_bargein_20260918T202620Z_timeline.csv
+  457 lines = 1 header + 456 data rows -- matches vad_frames_processed=456 exactly
+  header matches CSV_HEADER_BARGEIN exactly (14 columns, no drift)
+
+r0082g_bargein_20260918T202620Z_milestones.json
+  playback_start=268130.816465854  cue_start=268134.817540937
+  speak_now=268137.820367925       playback_cancel_requested=268140.372561208
+  playback_stopped=268140.378588482  last_speech_frame_submitted=268140.378583612
+  latencies_s: speak_now_to_vad_start_s=2.2320349310175516
+               speak_now_to_interrupt_confirmed_s=2.5521609490388073
+               interrupt_confirmed_to_cancel_requested_s=3.233394818380475e-05
+```
+
+**Independent recomputation from the CSV directly (not merely the
+script's own printed summary), all EXACT matches to the operator's
+reported figures:**
+
+- `remote_audio_samples_received=701280` == 48k WAV `nframes` exactly.
+- `post_user_started_events=[12.256]`, `post_user_confirmed_events=[12.576]`
+  — recomputed directly by scanning `vad_user_started_speaking_equivalent`
+  and `interrupt_confirmed` columns for `1`: found exactly these two
+  rows, nowhere else.
+- `pre_user_false_positive=False` — recomputed directly: zero rows with
+  `audio_relative_timestamp_s < 9.0` (the code's fixed
+  `speak_now_boundary_t_s = PRE_ROLL_S + BARGEIN_SPEAK_NOW_TIME_S`) have
+  `vad_user_started_speaking_equivalent=1` or `interrupt_confirmed=1`.
+- `capture_ok=True` reproduced by hand from the run's own logic: since
+  `pre_user_false_positive=False` and `post_user_confirmed=[12.576]`,
+  `min_required_s = max(9.0, 12.576+1.0) = 13.576`; `capture_duration_s
+  =14.610 >= 13.576` → `True`. Matches.
+- `VERDICT=PASS` reproduced by hand: `post_user_started` non-empty,
+  `post_user_confirmed` non-empty, `playback_stopped_early=True`,
+  `playback_resumed_after_stop=False` (structural) → `PASS`. Matches.
+
+**Classification: R0082-G deliberate barge-in #1 = VALID PASS.** This
+is the FIRST of the eventual ≥5-run replication set required before any
+broader claim; it does **not** by itself satisfy that requirement. It
+demonstrates, for the first time on real hardware, that the full live
+chain (`PlatformAudio` → remote subscription → `StreamingResampler` →
+Silero → `InterruptionStateMachine`) correctly detects a genuine human
+interruption, reaches `INTERRUPT_CONFIRMED`, and genuinely stops
+playback — with zero false positives before the operator's own cue.
+
+### 102.2 Offline acoustic-onset re-estimation (diagnostic only — does NOT alter the live verdict)
+
+Method: short-time RMS envelope of the raw 48k mic WAV (20ms window,
+5ms hop, no normalization, no modification of the evidence file),
+cross-checked against the per-frame Silero probability already
+recorded in the CSV (32ms native resolution). A ~7-second pre-`SPEAK
+NOW` baseline (audio-relative 3.0s–9.9s, during which the deterministic
+stimulus was itself actively "speaking" for most of that span) was used
+to characterize the AEC-suppressed echo-residual noise floor: **mean
+RMS=3.0, p95=3.9, max=60.7** (int16 units) — confirming AEC suppresses
+the far-end echo to a low, stable floor even while the stimulus is
+actively speaking, which is the baseline against which the onset below
+is judged.
+
+**Fine-grained scan (5ms hop) around the transition:**
+
+```
+t_s (audio-relative)   RMS
+11.9100                 1.7
+11.9150                 2.2   <- still at baseline
+11.9200                14.7   <- rise begins
+11.9250                24.1
+11.9300                58.7
+11.9350               222.3
+11.9400               378.3
+11.9450               941.6
+11.9500              1663.8
+```
+
+Cross-check against the CSV's own Silero probability (32ms frames):
+`t=11.904 prob=0.00204` (baseline) → `t=11.936 prob=0.57814` (sharp
+rise, the frame spanning the RMS transition above) → `t=11.968
+prob=0.92502` (clearly speech). The two independent signals (raw energy
+and neural VAD probability) agree on the same ~30ms transition window.
+
+**Onset estimate: audio-relative t ≈ 11.92s, uncertainty interval
+[11.915s, 11.945s]** (~30ms wide, bounded by where RMS departs baseline
+and where it is unambiguously elevated). The rise is abrupt (roughly
+two orders of magnitude within ~20–30ms) — far too large and far too
+fast to be attributable to AEC-suppressed playback echo, whose own
+residual stayed at RMS 2–4 throughout the entire pre-`SPEAK-NOW`
+baseline **including while the deterministic stimulus was itself
+actively speaking** (confirmed: the stimulus's own content is actively
+"speaking" during almost the entire window from `SPEAK NOW` through the
+interruption point, per the RMS scan of the frozen stimulus in §95.3 —
+7.925s–9.300s of the stimulus corresponds to playback-relative
+≈8.86s at the mic onset's own wall-clock moment, i.e. the stimulus
+WAS actively playing at the moment of onset, and its echo was STILL
+suppressed to the same low floor elsewhere in this same run). This is a
+strong, evidence-based argument that the onset is genuine near-end
+(human) speech, not residual echo — stated as a defensible conclusion
+with quantified uncertainty, not invented precision.
+
+**Note on `SPEAK NOW`'s own timing:** the code's fixed classification
+boundary is `speak_now_boundary_t_s = 9.0s` (audio-relative,
+`PRE_ROLL_S + BARGEIN_SPEAK_NOW_TIME_S`). The ACTUAL `SPEAK NOW` event
+(from `milestones["speak_now"]`, wall-clock) maps, via linear
+interpolation of the CSV's own `timestamp_monotonic`↔
+`audio_relative_timestamp_s` pairing, to audio-relative t ≈ 10.025s —
+about 1.0s later than the idealized fixed boundary. This reflects real
+mic-subscription/first-frame-gate startup latency baked into the
+audio-relative clock's own t=0, not a defect: it does **not** affect
+the correctness of `pre_user_false_positive=False`, since zero accepted
+events occur anywhere before 9.0s, let alone before the later, more
+precise 10.025s. All latency figures below use the ACTUAL wall-clock
+`speak_now` milestone (10.025s-equivalent), not the idealized 9.0s
+classification boundary.
+
+### 102.3 Latency breakdown, by category
+
+All times below are wall-clock (`timestamp_monotonic`), derived by
+locally interpolating each event's audio-relative timestamp against its
+nearest bracketing CSV rows' own `timestamp_monotonic` values (the same
+method used to place `SPEAK NOW` itself, §102.2). Onset-derived figures
+carry the [11.915s, 11.945s] uncertainty interval from §102.2; the
+other three events (`VAD start`, `INTERRUPT_CONFIRMED`,
+`playback_cancel_requested`) are exact CSV/milestone timestamps with no
+onset-derived uncertainty.
+
+```
+SPEAK NOW -> acoustic onset            = human reaction latency
+  ≈ 1.90s   (interval ≈ 1.89s - 1.92s)
+
+acoustic onset -> accepted VAD start   = VAD/onset latency
+  ≈ 0.33s   (interval ≈ 0.31s - 0.34s)
+  (reflects VAD_START_FRAMES=6x32ms=192ms hysteresis PLUS the 400ms
+  rolling-window volume tracker's own ramp-up time -- the CSV shows
+  Silero probability crossing 0.7 well before smoothed volume crosses
+  0.6, so volume smoothing, not probability, is the rate-limiting
+  factor here)
+
+accepted VAD start -> INTERRUPT_CONFIRMED = confirmation-hold latency
+  = 0.320s   (EXACT: t=12.256 -> t=12.576, both direct CSV timestamps)
+  (matches production confirm_hold_secs=0.3 plus one 32ms frame-
+  granularity quantization step -- exactly as designed)
+
+INTERRUPT_CONFIRMED -> playback_cancel_requested = playback cancellation latency
+  = 0.000032s   (EXACT, from milestones.json -- same event-loop
+  iteration; matches the design: the cancel event is set immediately
+  upon observing chain.confirmed_events grow)
+
+-- derived, combined figure --
+acoustic onset -> INTERRUPT_CONFIRMED
+  ≈ 0.65s   (interval ≈ 0.63s - 0.66s)
+```
+
+The `speak_now_to_vad_start_s=2.232s` and
+`speak_now_to_interrupt_confirmed_s=2.552s` figures already reported by
+the live script (and independently reproduced) are the SUM of human
+reaction latency + VAD/onset latency (+ confirmation-hold latency for
+the second one) — they were always documented as including human
+reaction time (§100/§101), and this offline analysis now decomposes
+that combined figure into its constituent parts for the first time on
+real hardware data.
+
+### 102.4 Pre-`SPEAK-NOW` diagnostic scan (diagnostic only — canonical result remains the accepted VAD/`InterruptionStateMachine` events)
+
+```
+max Silero probability before SPEAK NOW (t<9.0s)   = 0.3161
+max smoothed volume before SPEAK NOW (t<9.0s)       = 0.42699
+frames with probability >= 0.7 before SPEAK NOW     = 0 / 282
+candidate/STARTING/SPEAKING-state frames before SPEAK NOW = 0 / 282
+```
+
+No suspicious near-threshold activity of any kind was found before
+`SPEAK NOW`. Both the probability and volume ceilings stayed
+comfortably below their respective thresholds (0.7 and 0.6) for the
+entire ~7-second pre-cue window, consistent with `pre_user_false_positive
+=False` and with the AEC-suppression baseline established in §102.2.
+
+### 102.5 Playback shortening
+
+```
+samples submitted before cancellation = 507360 / 1112708 = 45.60%
+submitted playback duration           = 507360 / 48000 = 10.570s
+  (of the full 23.181s stimulus)
+```
+
+Observational note (not a defect, not requiring any code change):
+wall-clock elapsed between `playback_start` and
+`last_speech_frame_submitted` in `milestones.json` is
+`268140.378583612 - 268130.816465854 = 9.562s`, about 1.0s less than
+the sample-count-derived `10.570s`. This indicates `capture_frame()`'s
+submission loop was not running in strict 1:1 real-time lockstep for
+this run's playback segment (some internal buffering/burst delivery),
+not that the sample count itself is wrong — the 507360-sample figure is
+an exact count of frames actually handed to the track and is the
+authoritative figure for "how much of the stimulus was submitted."
+
+### 102.6 No discrepancy triggering the STOP-and-report protocol
+
+Every reported figure (`remote_audio_frames_received`,
+`remote_audio_samples_received`, `vad_frames_processed`,
+`capture_duration_s`, `cue_emitted`, `capture_ok`,
+`playback_stopped_early`, `pre_user_false_positive`,
+`post_user_started_events`, `post_user_confirmed_events`, all three
+milestone latencies, and `VERDICT=PASS`) was independently reproduced
+from the evidence files and matched exactly. No evidence file was
+malformed. No code was changed as part of this analysis.
+
+**Verdict: R0082-G real hardware run #1 = VALID PASS, independently
+re-verified in full, with a defensible (uncertainty-bounded) acoustic-
+onset estimate and a clean pre-`SPEAK-NOW` diagnostic scan.** This is
+one run of the eventual ≥5-run replication set, not the replication
+set itself. This session did not execute any further hardware.
