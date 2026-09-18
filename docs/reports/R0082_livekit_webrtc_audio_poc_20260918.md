@@ -1476,3 +1476,228 @@ stream-age effect (§25a) — the frequency-content confound is removed.
 **Do not run `--aec on` yet** — withheld until this `--aec off` run is
 confirmed to open the real devices via `PlatformAudio` and complete
 successfully. This has intentionally **not** been run by this session.
+
+**Superseded by §34 below** — §33's command crashed before producing a
+measurement (§34a). §34 documents the crash, the split-process
+refactor, and the preflight that validated the fix before the real AEC
+test is attempted again.
+
+## 34. R0082-C real hardware attempt #1 — crashed before measurement
+
+The operator ran §33's command. Device discovery and room join both
+succeeded:
+
+```
+R0082-C PlatformAudio+room AEC PoC
+run_id=20260918T132003Z
+aec=off
+
+recording: default: reSpeaker XVF3800 4-Mic Array Analog Stereo
+playout:   default: UACDemoV1.0 Analog Stereo
+
+input default OK
+output default OK
+```
+
+Then the process aborted inside native WebRTC:
+
+```
+Fatal error in: ../audio/audio_send_stream.cc, line 404
+Check failed: !race_checker404.RaceDetected()
+Aborted
+```
+
+The LiveKit server logs confirmed both participants joined the real
+room and disconnected essentially immediately following the client
+abort. This is explicitly **not** an AEC result, not a reSpeaker
+sample-rate failure, not a PipeWire default-device failure, not a
+Python exception, and not evidence that PlatformAudio AEC does not
+work — the process died inside native WebRTC before the deterministic
+30s measurement could run.
+
+### Classification
+
+```
+R0082-C real hardware attempt #1
+
+PlatformAudio initialization        PASS
+recording device discovery          PASS
+reSpeaker PipeWire default          PASS
+playout device discovery            PASS
+UACDemo PipeWire default            PASS
+LiveKit room connection             PASS
+both participants joined            PASS
+
+30s stimulus playback               NOT REACHED
+AEC OFF measurement                 NOT PRODUCED
+AEC stability result                NOT AVAILABLE
+
+native WebRTC:
+audio_send_stream.cc RaceDetected   CONFIRMED
+exact cause                         OPEN
+single-process/two-Room concurrency HIGH-PRIORITY HYPOTHESIS
+```
+
+### Primary hypothesis (not proven)
+
+The PoC at that point ran ONE Python process, ONE asyncio loop, and TWO
+`rtc.Room()` participants concurrently (real `PlatformAudio` + a
+synthetic test publisher/subscriber) inside that single process. A
+native WebRTC `RaceDetected()` assertion makes this single-process/
+two-`Room`/two-`PeerConnection` concurrency structure the
+highest-priority hypothesis — **this is a hypothesis, not a proven root
+cause.** "Two Rooms caused the crash" is not asserted as fact.
+
+### External evidence considered
+
+- Python `multiprocessing` was explicitly ruled out as the fix
+  mechanism: there is a currently open upstream LiveKit Python SDK issue
+  reporting SIGABRT/FFI callback crashes with `multiprocessing`'s
+  PROCESS mode on Linux — using it here could introduce a different
+  crash class rather than removing this one.
+- The installed `livekit==1.1.19` was **not** casually upgraded or
+  downgraded as a first reaction — no version change was made this
+  round.
+- The dev token's `InsecureKeyLengthWarning` (6-byte HMAC key, from the
+  `--dev` server's placeholder `devkey`/`secret` credentials) is
+  recorded but was **not** treated as related to `RaceDetected()` — it
+  is a JWT-signing-strength warning, unrelated to native audio pipeline
+  concurrency.
+
+## 35. Split into two independent OS processes
+
+Refactored `r0082c_platform_audio_room_aec_poc.py` (R0082-C's own PoC
+only — no other file touched) from the single-process/two-`Room` design
+into a `--role {hardware,test}` split: each role is launched as its OWN
+`python3` invocation (own interpreter, own `rtc.Room()`, own LiveKit
+FFI/runtime state) — no shared `Room`, no shared `PlatformAudio`, no
+Python `multiprocessing`, no `fork()`-based worker model, per
+instruction. Renamed the hardware-side identity from `"r0082c_pi"` to
+`"r0082c_hardware"` for clarity. Removed the now-inapplicable
+single-process `run_poc()` joint orchestrator. Added `--room-name`
+(required, must match between the two invocations — the only
+coordination the two processes share) and a `--no-stimulus` flag on
+`--role test` (join and hold the room without playing any signal PCM —
+used only by the preflight below, not the real AEC test).
+
+Re-ran the full offline validation suite on the refactored script — all
+pass:
+
+```
+isolated-venv import      PASS
+--help                    PASS
+py_compile                PASS
+ruff (0 errors)            PASS
+git diff --check           PASS
+isolation check (no nexa/pipecat/loguru/Silero/Gemini-SDK on import)  PASS
+```
+
+## 36. Split-process synthetic validation (no PlatformAudio, no hardware)
+
+Before touching real hardware again, validated the split-process
+topology's own mechanics using two genuinely separate OS processes,
+neither touching a physical device: a throwaway synthetic stand-in for
+the hardware role (constant-tone `rtc.AudioSource`, published under
+identity `"r0082c_hardware"`, kept only in the session scratchpad —
+never part of this repo) launched via a background `python3` invocation,
+and the REAL `--role test` script as the second, independently launched
+process.
+
+```
+fake-hardware process: pid=1329341 (shell-tracked matches internally logged pid)
+test process:          pid=1329388 (shell-tracked matches internally logged pid)
+```
+
+Both PIDs are confirmed genuinely distinct OS processes (not threads or
+coroutines within one interpreter). Both exited with code 0. Full
+publish → subscribe (`track_subscribed` fired correctly across the
+process boundary) → capture → windowed RMS analysis → WAV write → clean
+disconnect all worked correctly (captured a flat, correctly-computed
+RMS of the fake constant tone, as expected). **Zero `FfiHandle`
+assertion errors** in either process's log — the only anomaly was one
+harmless native-library `Attempted to drop unknown FFI handle` warning
+(same class already seen and documented as non-fatal in R0082-C's own
+earlier single-process dry-run, §27), not a Python exception, not a
+crash. Throwaway harness and its WAV output were deleted after use.
+
+## 37. Minimal real-hardware preflight (split processes, no deterministic stimulus)
+
+Per the required sequence, ran a short real-hardware preflight —
+`PlatformAudio` genuinely initialized, real reSpeaker mic capture
+genuinely active — but with **no** deterministic 30s stimulus played,
+to isolate whether the split-process topology alone resolves the
+`RaceDetected()` abort before attempting the full measurement again.
+
+Sequence executed, both as separate `python3` processes sharing only
+`--room-name`:
+
+```
+1. start local LiveKit server                          DONE
+2. start hardware participant process                  DONE (pid=1330273)
+3. verify PlatformAudio creation                        PASS (no error)
+4. verify reSpeaker default                             PASS ("input default OK: 'default: reSpeaker XVF3800 4-Mic Array Analog Stereo'")
+5. verify UACDemoV1.0 default                            PASS ("output default OK: 'default: UACDemoV1.0 Analog Stereo'")
+6. connect                                               PASS
+7. publish mic track                                     PASS
+8. test participant joins separately                    DONE (pid=1330345, independently launched)
+9. subscribe successfully                                PASS ("hardware mic track subscribed")
+10. hold the room alive, NO deterministic stimulus       PASS ("play_stimulus=False -- holding room, no signal sent")
+11. clean shutdown                                        PASS (both processes exited 0, "disconnected cleanly")
+```
+
+**No crash. No `RaceDetected()`. No `Fatal error`. No `Aborted`.**
+Grepped both process logs explicitly for
+`RaceDetected|Fatal error|Aborted|AssertionError|Traceback` — none
+found. The LiveKit server's own debug log confirms this was a genuine,
+active audio session, not a no-op: real RTP statistics for the
+hardware participant's upstream mic track (347 packets over ~7.1s,
+`packetsLost: 0`, jitter values present — real audio was actually
+flowing from the reSpeaker through PlatformAudio's WebRTC pipeline),
+and a clean `CLIENT_INITIATED` disconnect on both sides.
+
+**Preflight result: PASS.** Splitting the participants into separate OS
+processes removed the `RaceDetected()` abort under these short,
+no-stimulus conditions. This is evidence FOR the single-process/two-Room
+concurrency hypothesis (§34) without being definitive proof of root
+cause for the FULL 30s stimulus case, which has not yet been attempted
+under the split-process topology — that is the next, not-yet-run step
+(§38).
+
+## 38. Updated first R0082-C hardware command — split-process, `stationary_multitone`
+
+Preflight passed (§37), so per instruction: exactly ONE
+command/procedure for AEC OFF, `stationary_multitone`, 30 seconds.
+**No AEC ON command is given yet.**
+
+**Prerequisite** (start once, separate terminal):
+
+```bash
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/livekit_server/livekit-server --dev --bind 127.0.0.1
+```
+
+**Procedure — TWO separate terminals, a SHARED room name** (pick any
+unique room name for `<ROOM>`, e.g. `r0082c_run_$(date +%s)`):
+
+```bash
+# terminal A — hardware participant (real PlatformAudio; start this one first)
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/r0082_livekit_probe_venv/bin/python3 \
+  docs/research/r0082_livekit_webrtc_audio_poc/r0082c_platform_audio_room_aec_poc.py \
+  --role hardware --aec off --duration 30 --room-name <ROOM>
+
+# terminal B — test participant (synthetic; start within ~30s of terminal A)
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/r0082_livekit_probe_venv/bin/python3 \
+  docs/research/r0082_livekit_webrtc_audio_poc/r0082c_platform_audio_room_aec_poc.py \
+  --role test --aec off --duration 30 --stimulus stationary_multitone --room-name <ROOM>
+```
+
+`<ROOM>` must be IDENTICAL in both commands. `--aec off` on the test
+side is a label only (used in its own output WAV filenames); the
+functional AEC toggle lives entirely in the hardware-role invocation.
+WAV evidence and the windowed RMS table are written by the **test**
+process only, under
+`docs/research/r0082_livekit_webrtc_audio_poc/r0082c_aec_captures/`.
+Operator should monitor CPU/RAM separately (e.g. `top`) on both
+processes during the run. **Do not run `--aec on` yet** — withheld
+until this `--aec off` run is confirmed to complete the full 30s
+measurement without a native WebRTC abort. This has intentionally
+**not** been run by this session.
