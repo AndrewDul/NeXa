@@ -2340,3 +2340,363 @@ No production code (`src/`, `apps/`), NeXa Core, Gemini, Pipecat,
 Silero, `BargeInController`, `AecReferenceFeeder`, XVF3800 DSP settings,
 PipeWire defaults, system mixer, or LiveKit server configuration were
 touched this round. No hardware test was run.
+
+# R0082-D — deterministic SPEECH AEC OFF/ON comparison (preparation only)
+
+## 48. Why speech is the next experiment
+
+§44-47's `stationary_multitone` analysis found: OFF genuinely captured
+real, frequency-exact speaker leakage (though small relative to
+unrelated background noise); ON had a large, abrupt, non-monotonic
+startup transient; and even after convergence, ON remained materially
+ABOVE OFF, both overall and at the exact stimulus frequencies. That was
+diagnostic-only, non-speech, and a single un-repeated run pair — it does
+not by itself explain or predict NeXa's real self-interruption problem,
+which depends on how a REAL SPEECH-shaped residual behaves relative to
+what Silero VAD would classify as speech. R0082-D moves one step closer
+to production relevance while still keeping Silero, Gemini, Pipecat, and
+NeXa Core entirely out of scope. **No hardware test was run this
+round** — this section documents preparation only.
+
+## 49. Local TTS audit — no new system installed
+
+Audited what local/offline TTS capability already exists in this repo
+and on this Pi, per instruction, before generating anything:
+
+- `piper-tts` 1.8.0 confirmed installed and usable. NeXa's own
+  `src/nexa/tts/config.py` already defines the exact product voices:
+  `EN_VOICE = "en_GB-jenny_dioco-medium"`, `PL_VOICE =
+  "pl_PL-gosia-medium"` (both "medium" quality, native 22050Hz per each
+  voice's own `.onnx.json` config — confirmed directly, not assumed).
+- The DEDICATED external Piper venv `nexa.tts.config` itself specifies
+  (`~/.local/share/nexa/tts/piper-http-venv`) exists and has both voice
+  models present as real files under `~/.local/share/nexa/tts/voices/`
+  (confirmed via `ls`, not assumed).
+- **No new TTS system was installed. No new model was downloaded. No
+  cloud/Gemini TTS was used.** `piper-http-venv`'s own environment was
+  used exactly as `nexa.tts.config` already configures it — nothing was
+  installed into it.
+
+**A real, out-of-scope finding, not acted on:** `nexa.tts.config`'s own
+docstring states `piper-tts` is installed in the external venv
+"deliberately NOT NeXa's own `.venv`, so the GPL-3.0-licensed
+`piper-tts` package is never imported into NeXa's own process." This
+round's audit found `piper-tts` 1.8.0 is ALSO currently importable from
+NeXa's own `.venv`
+(`.venv/lib/python3.13/site-packages/piper/__init__.py` exists) —
+appearing to contradict that documented licensing discipline. Recorded
+here as an observed fact for a future round; **not fixed this round**
+(out of scope — no production dependency surface was touched). This
+round's speech-generation script deliberately used ONLY the intended
+external venv, never NeXa's own `.venv`, regardless.
+
+## 50. Frozen speech stimulus — generated once, immutable
+
+New one-time preparation script (NOT part of the recurring test
+harness): `docs/research/r0082_livekit_webrtc_audio_poc/
+r0082d_generate_speech_stimulus.py`. Run in TWO stages, each with a
+DIFFERENT already-existing environment, NEITHER modified by this work:
+
+```bash
+# stage 1 (Piper synthesis -- the dedicated external piper venv, unmodified)
+/home/devdul/.local/share/nexa/tts/piper-http-venv/bin/python3 \
+    docs/research/r0082_livekit_webrtc_audio_poc/r0082d_generate_speech_stimulus.py \
+    --stage synthesize
+
+# stage 2 (resample to the canonical 48kHz research WAV -- plain system
+# python3, which already has numpy 2.2.4 + scipy 1.17.1, confirmed R0082-C;
+# installing scipy into the piper venv itself was avoided for exactly this reason)
+python3 docs/research/r0082_livekit_webrtc_audio_poc/r0082d_generate_speech_stimulus.py \
+    --stage resample
+```
+
+**Content**: EN (Jenny voice) + a 0.6s deliberate silence gap + PL
+(Gosia voice), chosen for natural phonetic diversity (voiced/unvoiced
+sounds, plosives, sibilants, vowels, natural sentence rhythm and
+punctuation-driven pauses) rather than for meaning:
+
+```
+EN: "Good afternoon. This is a fixed test recording, used only to
+measure microphone echo. The quick brown fox jumps over the lazy dog,
+testing plosive stops like pat, bat, kite, and goat."
+
+PL: "Dzien dobry. To jest stale nagranie testowe, uzywane wylacznie do
+pomiaru echa mikrofonu. Szybki lis przeskakuje nad leniwym psem,
+testujac szumiace i zwarte spolgloski."
+```
+
+**One-time processing, exactly as done, nothing more:** each language
+segment synthesized separately via `PiperVoice.synthesize_wav()` (each
+voice's own natural prosody/pauses from punctuation; no per-word
+tuning); concatenated with a 0.6s silence gap; resampled ONCE via
+`scipy.signal.resample_poly` at the EXACT integer ratio `up=320,
+down=147` (`48000/22050` reduced by `gcd=150` — not an approximation);
+a resulting inter-sample peak of 33498.3 (from resampling
+overshoot, a normal artifact of polyphase filtering on a nearly-full-scale
+signal) exceeded int16 range, so a single documented ONE-TIME safety
+scale of `0.9780` was applied to the whole file to avoid clipping — NOT
+a per-run normalization, applied exactly once before freezing the
+asset.
+
+**Canonical asset**:
+
+```
+File:      docs/research/r0082_livekit_webrtc_audio_poc/r0082d_speech_stimulus/r0082d_speech_en_pl_v1.wav
+Voices:    en_GB-jenny_dioco-medium (EN), pl_PL-gosia-medium (PL) -- NeXa's own configured product voices
+Format:    mono, 16-bit (S16_LE), 48000Hz
+Frames:    1,112,708
+Duration:  23.181s  (within the preferred ~20-30s range)
+RMS:       5542.45  (on the original int16 scale -- substantially louder
+           than R0082-B/C's deliberately quiet amplitude=0.05 tones,
+           ~1156 RMS -- a deliberate, documented choice: real production
+           TTS output is not played at a deliberately attenuated level,
+           so natural near-full-scale loudness (short of clipping) is
+           MORE representative here, not less)
+Peak:      32760  (of 32767 -- confirmed NOT clipping: peak < 32767)
+SHA256:    703db210bcef8222adf044e88594958289be8d0e6ff4798ad8245b0c1076c21d
+```
+
+**This file is immutable.** It will not be regenerated between runs —
+every OFF/ON run in the four-run sequence (§52) reads and publishes
+these exact bytes.
+
+## 51. R0082-D test harness — extends R0082-C, same split-process topology
+
+New file (R0082-C's own script is UNCHANGED, kept as a stable
+checkpoint of that stage): `docs/research/r0082_livekit_webrtc_audio_poc/
+r0082d_platform_audio_speech_poc.py`.
+
+**Preserved unchanged from R0082-C**: the two-genuinely-separate-OS-
+process split (`--role hardware` / `--role test`, no shared `Room`, no
+shared `PlatformAudio`, no Python `multiprocessing`, no `fork()`-based
+worker model, `livekit==1.1.19` unchanged); device-default verification
+instead of explicit selection (`AudioDeviceInfo.id` still always empty
+on this platform); the local dev `livekit-server` in the session
+scratchpad; the event-based mutual `track_subscribed` handshake and
+named timing constants (`SETTLE_S`/`SUBSCRIBE_TIMEOUT_S`/
+`CLEANUP_GRACE_S`); capture-completeness validation (a short capture
+FAILS the run outright — no zero-padding, no partial classification,
+unchanged from R0082-C's own fix).
+
+**New in R0082-D**:
+
+- `--stimulus-wav <path>` (required for BOTH roles) replaces
+  `--stimulus`/`--amplitude`/`--duration`. `_read_wav_validated()`
+  REJECTS (raises `SystemExit`, tested explicitly this round) any WAV
+  that is not already mono/16-bit/48000Hz — it never silently resamples
+  or coerces the file at run time. Verified against a deliberately
+  wrong-format (22050Hz) test WAV: correctly rejected with a clear
+  diagnostic; verified against the real frozen speech asset: correctly
+  accepted, with `n_samples`/`duration_s`/`sha256` all matching exactly.
+- **Duration synchronization**: the hardware role reads ONLY the
+  `--stimulus-wav` header (never plays anything itself — playout is
+  automatic via PlatformAudio once it subscribes to the test role's
+  track) to derive `duration_s` directly from the WAV's own frame
+  count/rate, instead of a manually-duplicated `--duration` CLI value.
+  Both roles are given the SAME `--stimulus-wav` path and therefore
+  derive an IDENTICAL duration independently — no duplicated number, no
+  new unexplained magic sleep. The hardware role's hold is still exactly
+  `SETTLE_S + PRE_ROLL_S + duration_s + TAIL_S + CLEANUP_GRACE_S`,
+  printed in full at runtime.
+- **Signal evidence integrity**: the "signal" WAV written as evidence is
+  the exact PCM read from the frozen asset (not regenerated), and its
+  own SHA256 is computed and compared against the frozen source's SHA256
+  at the end of every run, printed as `matches frozen source: True/False`
+  — this round's dry run confirmed `True`.
+
+## 52. Offline validation (no hardware touched)
+
+```
+isolated-venv import                              PASS
+--help                                             PASS
+py_compile (both new scripts)                      PASS
+ruff                                               2 line-length errors
+                                                    found (docstring
+                                                    usage example) and
+                                                    fixed -- 0 on re-check
+git diff --check                                   PASS
+isolation check (no nexa/pipecat/loguru/Silero/
+  Gemini-SDK modules on import)                    PASS
+canonical WAV header validation (accept path)       PASS -- real frozen
+                                                    asset: n_samples=
+                                                    1112708, duration=
+                                                    23.181s, sha256
+                                                    matches exactly
+canonical WAV header validation (reject path)       PASS -- a
+                                                    deliberately
+                                                    22050Hz test WAV was
+                                                    correctly REJECTED
+                                                    with SystemExit, not
+                                                    silently resampled
+PCM frame publication + full split-process
+  dry run (synthetic hardware stand-in, real
+  frozen speech WAV actually published)             PASS -- see below
+cleanup validation                                  PASS -- zero
+                                                    FfiHandle assertion
+                                                    errors, zero crash
+                                                    signatures
+```
+
+**Full synthetic split-process dry run**, real frozen speech WAV
+actually read and published (throwaway synthetic hardware stand-in,
+identity `r0082d_hardware`, kept only in the session scratchpad,
+deleted after use -- exercised the REAL `run_test_role`/
+`_read_wav_validated`/`_play_signal` functions unmodified, from the
+real script):
+
+```
+fake-hardware pid=1363837   test pid=1363909   (distinct processes, both exited 0)
+
+[test] stimulus-wav: .../r0082d_speech_en_pl_v1.wav  n_samples=1112708
+       duration=23.181s  sha256=703db210...076c21d
+[test] test subscribed to hardware mic
+[test] playing 23.181s speech stimulus
+[test] capture complete
+[test] capture completeness check:
+  expected: 1208708 samples / 2417416 bytes / 25.181s @ 48000Hz mono S16_LE
+  actual:   1209120 samples / 2418240 bytes / 25.190s
+[test] wrote signal evidence sha256=703db210...076c21d (matches frozen source: True)
+```
+
+Duration was correctly derived from the WAV header (23.181s, exactly
+matching §50's frozen asset); the capture-completeness check correctly
+passed (actual ≥ expected); the written signal evidence file is
+byte-identical to the frozen source (SHA256 match confirmed
+programmatically, not just visually). Zero `FfiHandle` assertion errors,
+zero crash signatures of any kind in either process's log. Throwaway
+harness and its WAV output were deleted after use; the local dev server
+was stopped after validation.
+
+`PlatformAudio()` was NOT invoked by this session. No real hardware test
+was run.
+
+## 53. Four-run counterbalanced experimental design
+
+A single OFF/ON pair (as R0082-C used) cannot separate a true AEC
+effect from run-to-run variation — R0082-C's own OFF/ON pair had
+materially different pre-stimulus quiet baselines (2.84 vs. 15.06 RMS,
+§44h). R0082-D therefore specifies a counterbalanced FOUR-run sequence:
+
+```
+Run A1 = AEC OFF
+Run B1 = AEC ON
+Run B2 = AEC ON
+Run A2 = AEC OFF
+```
+
+(OFF → ON → ON → OFF, per instruction — no strong technical reason was
+found to prefer the reverse ordering.) Every run uses: the EXACT same
+`r0082d_speech_en_pl_v1.wav` (same SHA256, printed and checked every
+run); the same speaker volume; the same physical device positions; the
+same PipeWire defaults; the same `PlatformAudioOptions` except
+`echo_cancellation` (`noise_suppression=False`, `auto_gain_control=False`
+throughout, unchanged from R0082-C); no human speech during any run; no
+moving the mic/speaker between runs; a unique `--room-name` per run.
+**None of these four runs have been executed. This round prepares the
+harness and the asset only.**
+
+### Per-run data to collect (unchanged shape from R0082-C, per instruction)
+
+AEC mode; room name; stimulus SHA256; stimulus duration; capture
+expected/actual samples and duration; quiet/pre-roll RMS and peak;
+per-3s-window RMS/peak (already what the harness computes and prints);
+overall/first-half/second-half means; min/max. Both the speech stimulus
+WAV and the processed microphone WAV are retained for every run (as
+R0082-C's own evidence convention already does). **Capture completeness
+remains mandatory — an incomplete run FAILS outright and is not
+classified**, unchanged from R0082-C's own fix (§40).
+
+## 54. Offline analysis plan (for after the four runs — not run yet)
+
+Planned, not yet executed: lag-tolerant normalized cross-correlation
+(now more informative than R0082-C's own analysis, §44g, since real
+speech is non-periodic and does not have the `stationary_multitone`
+stimulus's ~2ms ambiguity); best correlation coefficient per run; an
+estimated acoustic/system lag where the correlation is strong enough to
+be defensible; speech-band RMS over time; stimulus-correlated residual
+per run; quiet-baseline comparison across all four runs (not just one
+pair); a spectrogram/STFT-derived speech-band comparison if it proves
+useful once real data exists; paired OFF-vs-ON comparisons (A1 vs. B1,
+A2 vs. B2, and B1 vs. B2 for ON-to-ON replication, A1 vs. A2 for
+OFF-to-OFF replication) per §55's success criteria. **No formal ERLE
+figure will be computed unless the setup is confirmed to support one
+correctly** — residual attenuation/comparison is the wording used
+instead, matching R0082-C's own established convention (§21 of this
+report).
+
+## 55. Success criteria for this stage (not yet evaluated — no data exists)
+
+This stage does **not** test Silero. The question is narrower: does
+`PlatformAudio` WebRTC AEC reduce a real speech-shaped self-playback
+signal reaching the mic path?
+
+```
+Strong positive evidence: ON runs (B1, B2) consistently show LOWER
+  speech-correlated residual than OFF runs (A1, A2), AND the result
+  REPLICATES across both ON trials and both OFF trials.
+
+Bad/ambiguous evidence: e.g. A1 low, B1 high, B2 low, A2 high -- would
+  indicate strong run/state variability dominating over any simple AEC
+  effect, not a clean toggle-driven result.
+```
+
+## 56. Important wording constraint carried forward from R0082-C
+
+R0082-C's own analysis (§44i) confirmed stimulus-associated leakage
+reaches the microphone path, but did not fully prove every bit of that
+leakage has a purely acoustic (through-the-air) origin as opposed to
+some other coupling path. R0082-D preserves this distinction explicitly
+and will not overstate it:
+
+```
+stimulus-associated leakage into the microphone path: CONFIRMED (R0082-C)
+purely acoustic origin of ALL leakage: NOT FULLY PROVEN
+```
+
+## 57. Limitations
+
+- **No hardware test has been run for R0082-D.** Everything in this
+  section is preparation, asset generation, and offline-validated
+  harness code — not a result.
+- The speech stimulus is a fixed, non-interactive, single Piper-
+  synthesized recording — it is not identical to live conversational
+  speech in dynamics or content, though it exercises real phonetic
+  diversity (plosives, sibilants, vowels, natural pauses) that
+  `stationary_multitone` could not.
+- The frozen asset's loudness (RMS ≈5542, near-full-scale peak) is a
+  deliberate departure from R0082-B/C's quiet amplitude=0.05 convention
+  (§50) — this makes it NOT directly RMS-comparable to R0082-B/C's own
+  synthetic-tone results without normalization; any cross-stage
+  comparison must account for this explicitly.
+- The four-run design addresses run-to-run baseline variability
+  (§53) but still uses only ONE physical setup/session — genuine
+  environmental drift across the whole four-run sequence (e.g. if it
+  spans a long wall-clock period) is not separately controlled for.
+- Silero VAD, Gemini, Pipecat, and NeXa Core remain entirely
+  unexercised — this stage cannot, by itself, answer whether a real
+  self-interruption event would occur; it answers only the narrower
+  audio-residual question (§55).
+
+## 58. Relationship to NeXa self-interruption
+
+Unchanged framing from §45: the ultimate question is whether NeXa's OWN
+SPEECH survives PlatformAudio's WebRTC AEC path strongly enough to
+trigger Silero VAD's `UserStartedSpeaking` classification. R0082-D is
+the first stage that uses REAL SPEECH instead of synthetic tones, and
+is still explicitly diagnostic — Silero is deliberately deferred to a
+LATER, separate stage (not implemented or run this round):
+
+```
+(future, NOT this round)
+NeXa speech plays, user stays silent -> Silero should produce 0 false
+  UserStartedSpeaking events
+
+then, separately:
+NeXa speech plays, real user interrupts -> Silero should detect real
+  speech promptly
+```
+
+R0082-D's own four-run OFF/ON/ON/OFF result (once actually run) will
+determine whether it is scientifically justified to proceed to that
+Silero stage at all, or whether the audio-residual problem itself needs
+further isolation first.
