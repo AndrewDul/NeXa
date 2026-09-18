@@ -41,6 +41,24 @@ no `fork()`-based worker model. Launch with `--role hardware` in one
 terminal/process and `--role test` in another, sharing only a
 `--room-name` (and the room server URL/credentials) as coordination.
 
+A short real-hardware preflight (no deterministic stimulus played)
+confirmed the split-process topology does NOT reproduce
+`RaceDetected()` -- evidence FOR, not proof of, the concurrency
+hypothesis above. That preflight also surfaced a SEPARATE, real
+synchronization/lifetime defect (now fixed, see `run_hardware_role`'s
+own docstring): the hardware role originally held the room open via a
+fixed `total_s + 2.0` sleep started immediately after publish, with no
+tie to when the test role actually began or finished capturing --
+timing math showed a test role capture window of ~33s starting only
+AFTER it detects the hardware mic subscription, so even a modest
+operator launch-timing gap could let the hardware role disconnect
+mid-capture and silently truncate the recording. Fixed by having the
+hardware role wait (bounded) for the TEST role's own track to be
+subscribed before starting its measurement-lifetime hold, and by adding
+explicit capture-completeness validation on the test role's side
+(`run_test_role` FAILS the run outright, rather than analyzing or
+zero-padding a short recording).
+
 ## Why a real LiveKit room is required here (unlike R0082-B)
 
 R0082-A's own source audit of `rtc.platform_audio.py` (installed
@@ -183,6 +201,27 @@ WINDOW_S = 3.0
 PRE_ROLL_S = 1.0
 TAIL_S = 1.0
 
+#: R0082-C -- named timing constants for cross-process coordination
+#: (replaces an earlier unexplained `total_s + 2.0` magic-number sleep on
+#: the hardware role, which assumed a fixed operator launch-timing gap
+#: instead of synchronizing to an actual event -- found to be unsafe:
+#: even a small launch delay could let the hardware process disconnect
+#: before the test process finished its own capture window).
+#:
+#: SETTLE_S: matches the test role's own post-subscribe settle sleep
+#: (lets the automatic-playout pipeline actually start rendering before
+#: pre-roll is counted).
+#: SUBSCRIBE_TIMEOUT_S: bounded wait for the OTHER participant's track to
+#: be subscribed -- used by BOTH roles, so neither depends on the other
+#: having started first or on any assumed wall-clock launch gap.
+#: CLEANUP_GRACE_S: extra time the hardware role stays up after its
+#: computed measurement lifetime, so the test role's own `finally`
+#: cleanup (aclose/disconnect) has room to complete before the hardware
+#: role tears down PlatformAudio.
+SETTLE_S = 1.0
+SUBSCRIBE_TIMEOUT_S = 30.0
+CLEANUP_GRACE_S = 3.0
+
 OUT_DIR = Path(__file__).resolve().parent / "r0082c_aec_captures"
 
 HARDWARE_IDENTITY = "r0082c_hardware"
@@ -265,7 +304,7 @@ async def _play_signal(source: rtc.AudioSource, pcm: bytes) -> None:
 async def run_hardware_role(
     *,
     aec: bool,
-    total_s: float,
+    duration_s: float,
     url: str,
     api_key: str,
     api_secret: str,
@@ -278,7 +317,18 @@ async def run_hardware_role(
     subscribed copy of this track, exactly mirroring what a REAL remote
     listener -- e.g. a future Gemini Live leg -- would receive). Runs
     entirely in its own process/interpreter -- no other `Room` or
-    `PlatformAudio` object exists anywhere in this process."""
+    `PlatformAudio` object exists anywhere in this process.
+
+    R0082-C (this round) -- does NOT hold the room for a fixed
+    `total_s + <magic number>` sleep started right after publish (found
+    unsafe: nothing tied that sleep to when the test process actually
+    started capturing, so a launch-timing gap of only a few seconds
+    could truncate the test role's capture). Instead, waits (bounded,
+    `SUBSCRIBE_TIMEOUT_S`) for the TEST participant's own audio track to
+    be subscribed -- the same class of event-based sync the test role
+    already used for the hardware mic track -- before starting its own
+    measurement-lifetime hold. This makes operator launch ORDER/timing
+    between the two processes irrelevant within the timeout window."""
     print(f"[hardware pid={os.getpid()}] starting")
     platform_audio = rtc.PlatformAudio()
     try:
@@ -303,13 +353,34 @@ async def run_hardware_role(
             api_key=api_key, api_secret=api_secret, identity=HARDWARE_IDENTITY, room=room_name
         )
         room = rtc.Room()
+        test_track_ready = asyncio.Event()
+
+        def _on_track_subscribed(track: rtc.Track, publication, participant) -> None:
+            if participant.identity == TEST_IDENTITY and track.kind == rtc.TrackKind.KIND_AUDIO:
+                test_track_ready.set()
+
+        room.on("track_subscribed", _on_track_subscribed)
+
         try:
             print(f"[hardware pid={os.getpid()}] connecting to room {room_name!r}...")
             await room.connect(url, token)
             print(f"[hardware pid={os.getpid()}] connected, publishing mic track")
             await room.local_participant.publish_track(track)
-            print(f"[hardware pid={os.getpid()}] published, holding room for {total_s + 2.0:.1f}s")
-            await asyncio.sleep(total_s + 2.0)
+
+            print(
+                f"[hardware pid={os.getpid()}] waiting for test participant "
+                "audio track subscription..."
+            )
+            await asyncio.wait_for(test_track_ready.wait(), timeout=SUBSCRIBE_TIMEOUT_S)
+            print(f"[hardware pid={os.getpid()}] hardware subscribed to test audio track")
+
+            hold_s = SETTLE_S + PRE_ROLL_S + duration_s + TAIL_S + CLEANUP_GRACE_S
+            print(
+                f"[hardware pid={os.getpid()}] holding room for {hold_s:.1f}s "
+                f"(SETTLE={SETTLE_S}+PRE_ROLL={PRE_ROLL_S}+duration={duration_s}"
+                f"+TAIL={TAIL_S}+CLEANUP_GRACE={CLEANUP_GRACE_S})"
+            )
+            await asyncio.sleep(hold_s)
         finally:
             source.close()
             await room.disconnect()
@@ -365,13 +436,13 @@ async def run_test_role(
         await room.local_participant.publish_track(signal_track)
 
         print(f"[test pid={os.getpid()}] waiting for hardware mic track subscription...")
-        await asyncio.wait_for(mic_track_ready.wait(), timeout=30.0)
-        print(f"[test pid={os.getpid()}] hardware mic track subscribed")
+        await asyncio.wait_for(mic_track_ready.wait(), timeout=SUBSCRIBE_TIMEOUT_S)
+        print(f"[test pid={os.getpid()}] test subscribed to hardware mic")
         # Settle: let the hardware process's auto-subscribe + PlatformAudio
         # automatic playout pipeline actually start rendering before we
         # start counting pre-roll -- avoids capturing a cold-start
         # transient as "quiet_before".
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(SETTLE_S)
 
         if not play_stimulus:
             print(f"[test pid={os.getpid()}] play_stimulus=False -- holding room, no signal sent")
@@ -405,6 +476,37 @@ async def run_test_role(
         print(f"[test pid={os.getpid()}] capture complete")
 
         captured = b"".join(captured_chunks)
+
+        # R0082-C -- capture completeness validation. Must NOT silently
+        # analyze a truncated recording (e.g. if the hardware process
+        # disconnected early, or the capture stream stalled) -- a short
+        # capture must FAIL the run, not produce a misleadingly "valid"
+        # AEC/stability classification from partial data.
+        expected_total_s = PRE_ROLL_S + duration_s + TAIL_S
+        expected_samples = int(expected_total_s * SAMPLE_RATE)
+        expected_bytes = expected_samples * 2
+        actual_samples = len(captured) // 2
+        actual_bytes = len(captured)
+        actual_duration_s = actual_samples / SAMPLE_RATE
+        print(f"[test pid={os.getpid()}] capture completeness check:")
+        print(
+            f"  expected: {expected_samples} samples / {expected_bytes} bytes "
+            f"/ {expected_total_s:.3f}s @ {SAMPLE_RATE}Hz mono S16_LE"
+        )
+        print(
+            f"  actual:   {actual_samples} samples / {actual_bytes} bytes "
+            f"/ {actual_duration_s:.3f}s"
+        )
+        if actual_samples < expected_samples:
+            raise SystemExit(
+                f"Capture INCOMPLETE: expected >= {expected_samples} samples "
+                f"({expected_total_s:.3f}s @ {SAMPLE_RATE}Hz mono S16_LE), got "
+                f"only {actual_samples} samples ({actual_duration_s:.3f}s). "
+                "Refusing to compute AEC/stability metrics from a truncated "
+                "recording, and refusing to pad missing data with zeros -- "
+                "this run FAILS, not a valid (even partial) measurement."
+            )
+
         pre_roll_samples = int(PRE_ROLL_S * SAMPLE_RATE)
         quiet_before = captured[: pre_roll_samples * 2]
         start_byte = pre_roll_samples * 2
@@ -416,6 +518,13 @@ async def run_test_role(
             w_start = start_byte + i * window_samples * 2
             w_end = w_start + window_samples * 2
             window = captured[w_start:w_end]
+            if len(window) < window_samples * 2:
+                raise SystemExit(
+                    f"Window {i + 1} INCOMPLETE: expected {window_samples} "
+                    f"samples, got only {len(window) // 2}. Refusing to "
+                    "compute a partial-window RMS/peak value -- this run "
+                    "FAILS."
+                )
             windows_data.append({
                 "window": i + 1,
                 "window_start_s": round(i * WINDOW_S, 2),
@@ -508,7 +617,7 @@ async def main() -> int:
 
     if args.role == "hardware":
         await run_hardware_role(
-            aec=aec, total_s=total_s, url=args.url, api_key=args.api_key,
+            aec=aec, duration_s=args.duration, url=args.url, api_key=args.api_key,
             api_secret=args.api_secret, room_name=args.room_name,
         )
         return 0

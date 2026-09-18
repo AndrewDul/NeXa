@@ -1701,3 +1701,209 @@ processes during the run. **Do not run `--aec on` yet** — withheld
 until this `--aec off` run is confirmed to complete the full 30s
 measurement without a native WebRTC abort. This has intentionally
 **not** been run by this session.
+
+**Superseded by §43 below.** §38's procedure text above claimed the
+test role could "start within ~30s of terminal A" — this was **wrong
+and dangerous** (§39 explains exactly why) and is corrected, not
+repeated, in §43.
+
+## 39. Confirmed synchronization/lifetime defect (found before running the full measurement)
+
+Before running the 30s measurement, the exact timing was checked and a
+real defect was found. The hardware role held the room open via:
+
+```
+connect -> publish mic track -> sleep(total_s + 2.0)
+```
+
+started immediately after publish, where `total_s = PRE_ROLL_S(1) +
+duration_s(30) + TAIL_S(1) = 32s`, i.e. a hold of ~34s **from the
+hardware role's own publish time**.
+
+The test role's own capture timeline, independently, only *starts*
+after it detects the hardware mic subscription:
+
+```
+wait for hardware mic subscribed (bounded)
++ 1s settle
++ 1s pre-roll
++ 30s stimulus
++ 1s tail
+≈ 33s from "hardware mic subscribed", not from the hardware role's own publish time
+```
+
+Nothing tied the hardware role's fixed sleep to the test role's actual
+progress — the previous §38 guidance that "either start order works
+within ~30s" was an unverified claim (the hardware role's code never
+actually waited for anything from the test role; it only slept a fixed
+amount). Even a modest operator launch-timing gap between the two
+terminals could let the hardware role disconnect (and `platform_audio`
+close) while the test role's capture was still in progress, producing a
+silently truncated recording that could have been misread as a
+real AEC/stability result.
+
+**Also found:** the module's own docstring, from the previous round,
+already *claimed* "the hardware role waits (bounded timeout) similarly
+for the test role's stimulus track before its own room join is
+considered complete" — this was **not actually implemented** at the
+time; a documentation/implementation mismatch, not merely a missing
+feature. This round's fix makes that claim true for the first time.
+
+## 40. Fix — event-based mutual synchronization, named timing constants, capture-completeness validation
+
+Three changes to `r0082c_platform_audio_room_aec_poc.py` (this PoC
+only):
+
+1. **`run_hardware_role` now waits for the test role's own track.** It
+   registers a `track_subscribed` handler filtered to `TEST_IDENTITY` +
+   `KIND_AUDIO`, and does `await asyncio.wait_for(test_track_ready.wait(),
+   timeout=SUBSCRIBE_TIMEOUT_S)` — the SAME class of event-based sync
+   the test role already used for the hardware mic track — before
+   starting its own measurement-lifetime hold. This makes operator
+   launch ORDER/timing between the two processes irrelevant within the
+   timeout window, instead of depending on an assumed wall-clock gap.
+2. **Named timing constants**, not a magic number: `SETTLE_S = 1.0`,
+   `SUBSCRIBE_TIMEOUT_S = 30.0`, `CLEANUP_GRACE_S = 3.0`. The hardware
+   role's post-subscription hold is now derived explicitly:
+   `hold_s = SETTLE_S + PRE_ROLL_S + duration_s + TAIL_S +
+   CLEANUP_GRACE_S` — printed in full at runtime (e.g. `"holding room
+   for 9.0s (SETTLE=1.0+PRE_ROLL=1.0+duration=3.0+TAIL=1.0+
+   CLEANUP_GRACE=3.0)"`), so the exact budget is always visible in the
+   log, not buried in an unexplained sleep value.
+3. **Capture completeness validation** in `run_test_role`. Before
+   computing any window metric, the test role now checks
+   `actual_samples` (from the joined captured PCM) against
+   `expected_samples = int((PRE_ROLL_S + duration_s + TAIL_S) *
+   SAMPLE_RATE)`, printing both expected and actual sample/byte/duration
+   counts. If `actual_samples < expected_samples`, the run raises
+   `SystemExit` with a clear diagnostic and **does not** compute or
+   write any AEC/stability result — no zero-padding, no partial-window
+   classification. Additionally, each individual 3s analysis window is
+   checked for its own full expected sample count before its RMS/peak
+   is computed; a short window also fails the run outright rather than
+   silently contributing an under-counted RMS value.
+
+## 41. Re-validation (offline)
+
+```
+isolated-venv import      PASS
+--help                    PASS
+py_compile                PASS
+ruff                      1 line-length error found and fixed (107 > 100
+                           chars, the new "waiting for test participant
+                           audio track subscription..." print) -- 0
+                           errors on re-check
+git diff --check           PASS
+isolation check (no nexa/pipecat/loguru/Silero/Gemini-SDK on import)  PASS
+```
+
+## 42. Re-validation (split-process synthetic, then real-hardware no-stimulus preflight)
+
+**Synthetic split-process re-validation** (throwaway fake-hardware
+stand-in, extended to also subscribe to the test role's own track,
+exercising the FULL new mutual-handshake — kept only in the session
+scratchpad, deleted after use):
+
+```
+fake-hardware process: pid=1339332
+test process:          pid=1339401
+```
+
+Both genuinely distinct processes, both exited 0. Log confirms the full
+mutual handshake fired on both sides ("hardware subscribed to test
+audio track" / "test subscribed to hardware mic"), and the new capture
+completeness check printed and PASSED (`expected: 384000 samples ...
+8.000s` vs. `actual: 384480 samples ... 8.010s` — actual ≥ expected).
+Zero `FfiHandle` assertion errors; the only anomaly, as before, is one
+harmless native-library "unknown FFI handle" warning (non-fatal, same
+class documented in §27/§36).
+
+**Real-hardware no-stimulus preflight, re-run with the fix** — genuinely
+separate processes, `PlatformAudio` actually initialized, real reSpeaker
+capture active, no deterministic stimulus played:
+
+```
+hardware pid=1339911
+test     pid=1339953
+```
+
+Full required log sequence confirmed present on both sides:
+
+```
+[hardware] connecting to room ... / connected, publishing mic track
+[hardware] waiting for test participant audio track subscription...
+[hardware] hardware subscribed to test audio track
+[hardware] holding room for 9.0s (SETTLE=1.0+PRE_ROLL=1.0+duration=3.0+TAIL=1.0+CLEANUP_GRACE=3.0)
+[hardware] disconnected cleanly / platform_audio closed, exiting
+
+[test] connecting to room ... / connected, publishing stimulus track
+[test] waiting for hardware mic track subscription...
+[test] test subscribed to hardware mic
+[test] play_stimulus=False -- holding room, no signal sent
+[test] disconnected cleanly / preflight complete
+```
+
+Grepped both logs explicitly for
+`RaceDetected|Fatal error|Aborted|AssertionError|Traceback` — **none
+found.** Both processes exited 0.
+
+### Conclusions preserved, not overstated
+
+```
+split-process synthetic validation           PASS
+split-process real PlatformAudio preflight   PASS
+
+RaceDetected in split preflight               NOT OBSERVED
+single-process/two-Room hypothesis            STRENGTHENED
+exact original root cause                     STILL OPEN
+```
+
+Splitting into separate OS processes continues to avoid the
+`RaceDetected()` abort under short, no-stimulus conditions, now with a
+correctly-synchronized (event-based, not wall-clock-guessed) hold
+lifetime and explicit capture-completeness protection against a
+silently truncated recording. This remains evidence FOR the concurrency
+hypothesis, not proof of root cause — the full 30s measurement under
+the corrected split-process topology has still not been attempted.
+
+## 43. Corrected first R0082-C hardware command — split-process, synchronized, `stationary_multitone`
+
+Supersedes §38's procedure (which contained the incorrect "~30s" launch
+guidance, §39). Same prerequisite:
+
+```bash
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/livekit_server/livekit-server --dev --bind 127.0.0.1
+```
+
+**Procedure — TWO separate terminals, a SHARED room name** (pick any
+unique room name for `<ROOM>`, e.g. `r0082c_run_$(date +%s)`). Launch
+order no longer matters within `SUBSCRIBE_TIMEOUT_S` (30s) — both
+roles now wait for an actual cross-process subscription event, not a
+wall-clock guess:
+
+```bash
+# terminal A — hardware participant (real PlatformAudio)
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/r0082_livekit_probe_venv/bin/python3 \
+  docs/research/r0082_livekit_webrtc_audio_poc/r0082c_platform_audio_room_aec_poc.py \
+  --role hardware --aec off --duration 30 --room-name <ROOM>
+
+# terminal B — test participant (synthetic)
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/r0082_livekit_probe_venv/bin/python3 \
+  docs/research/r0082_livekit_webrtc_audio_poc/r0082c_platform_audio_room_aec_poc.py \
+  --role test --aec off --duration 30 --stimulus stationary_multitone --room-name <ROOM>
+```
+
+`<ROOM>` must be IDENTICAL in both commands. `--aec off` on the test
+side is a label only (used in its own output WAV filenames); the
+functional AEC toggle lives entirely in the hardware-role invocation.
+WAV evidence and the windowed RMS table are written by the **test**
+process only, under
+`docs/research/r0082_livekit_webrtc_audio_poc/r0082c_aec_captures/` —
+and will now **refuse to be written** (the run fails loudly instead,
+§40) if the captured recording is shorter than the full
+`PRE_ROLL_S + duration_s + TAIL_S` expected region. Operator should
+monitor CPU/RAM separately (e.g. `top`) on both processes during the
+run. **Do not run `--aec on` yet** — withheld until this `--aec off`
+run is confirmed to complete the full 30s measurement, pass its own
+capture-completeness check, and finish without a native WebRTC abort.
+This has intentionally **not** been run by this session.
