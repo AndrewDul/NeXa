@@ -8,9 +8,11 @@
 
 **ALSA capture query result (§16.7, real hardware, 2026-09-18): the active-period explanation for §7d's exact 512-sample/32.000ms MLS lag split is REFUTED** — actual negotiated `period_size=2000`/`buffer_size=8000` frames, neither divides evenly by 512; a source scope-check of the diagnostic script found no application-level 512-sample block either. The MLS bimodality itself remains a real, reproduced observation — its source is now UNRESOLVED, not invalidated. A new, unrelated ALSA fact: `plug:respeaker`'s mono capture is a 50/50 route mix of the device's 2 (ASR-beamformed) hardware channels — a plausible contributor to the already-documented spectral-reshaping finding (§7d), not claimed to cause the lag split.
 
-**Counterbalanced gain confirmation RESULT (§16.9, real hardware, 2026-09-18): `gain=0.5` does NOT reproduce — REJECTED/de-prioritized.** `gain1.0` beat `gain0.5` 3/3 in the A-first sequence and lost only 1/3 in the B-first sequence; combined, `gain0.5` is ~6.36%/~0.54dB WORSE than `gain1.0`. **Why the original sweep showed an apparent ~30% advantage is UNRESOLVED** — order/settle confounding in that sweep's own ascending design and the newly-observed time/state dependence (below) are both plausible contributors; this report does not assign the cause to either without further evidence, and does not retroactively claim the sweep result is "explained." Production `gain=1.0` stays unchanged; no Gemini/conversational gain=0.5 test is warranted from this evidence. **A far larger, unanticipated finding**: residual dropped ~35-41% between the run's first half (sequence 1) and second half (sequence 2) — 30.10→19.40 (gain0.5), 29.23→17.30 (gain1.0) — while quiet floor and acoustic stimulus stayed essentially fixed. An offline lifecycle audit (§16.10) found the Python-level control flow is structurally uniform block to block (fresh subprocess recreation every time, no explicit AEC reset anywhere) — this does **not** identify which layer is responsible; host/ALSA/USB scheduling, driver/stream-open-close state, XVF3800 DSP state, and physical/acoustic state are all still-open candidates, not ranked against each other. A new, cleaner script mode, `--track-continuous` (§16.12), was built — a true continuous-stream test with no stream recreation or gap anywhere inside the measured window — as the recommended next hardware step (§16.15), ahead of the restart-based `--track` mode built previously (§16.11 explains why it is now secondary).
+**Counterbalanced gain confirmation RESULT (§16.9, real hardware, 2026-09-18): `gain=0.5` does NOT reproduce — REJECTED/de-prioritized.** `gain1.0` beat `gain0.5` 3/3 in the A-first sequence and lost only 1/3 in the B-first sequence; combined, `gain0.5` is ~6.36%/~0.54dB WORSE than `gain1.0`. **Why the original sweep showed an apparent ~30% advantage is UNRESOLVED** — order/settle confounding in that sweep's own ascending design and the newly-observed time/state dependence (below) are both plausible contributors; this report does not assign the cause to either without further evidence, and does not retroactively claim the sweep result is "explained." Production `gain=1.0` stays unchanged; no Gemini/conversational gain=0.5 test is warranted from this evidence. **A far larger, unanticipated finding**: residual dropped ~35-41% between the run's first half (sequence 1) and second half (sequence 2) — 30.10→19.40 (gain0.5), 29.23→17.30 (gain1.0) — while quiet floor and acoustic stimulus stayed essentially fixed. An offline lifecycle audit (§16.10) found the Python-level control flow is structurally uniform block to block (fresh subprocess recreation every time, no explicit AEC reset anywhere) — this does **not** identify which layer is responsible; host/ALSA/USB scheduling, driver/stream-open-close state, XVF3800 DSP state, and physical/acoustic state are all still-open candidates, not ranked against each other. A new, cleaner script mode, `--track-continuous` (§16.12), was built — a true continuous-stream test with no stream recreation or gap anywhere inside the measured window — ahead of the restart-based `--track` mode built previously (§16.11 explains why it is now secondary). **Its first real-hardware run (§16.14) confirms a large (~4.64×/~13.3dB) in-stream, non-monotonic residual oscillation with zero stream recreation** — a second-stage silence-interval test (§16.15) is now the recommended next hardware step (§16.16).
 
-Working model: baseline residual echo (always present, §7/§7b) + an intermittent reference-queue/scheduling failure (confirmed once today, §16) + a newly-found, larger elapsed-time/exposure-dependent residual-stability effect (§16.9-16.10) + possibly AEC adaptation/recovery effects, combining to varying degrees per utterance. AEC/state stability is now a HIGHER-priority open question than gain calibration. Root cause still NOT proven.
+**First `--track-continuous` real-hardware run (§16.14, run id `20260918T074722Z`): a large, non-monotonic, IN-STREAM residual state change is CONFIRMED with zero stream recreation.** 10 byte-identical 3s cycles, one uninterrupted capture/speaker/reference stream, `gain=1.0` fixed: RMS went 39.0→38.5→25.8→11.1→8.4 (a strong early improvement) then 24.7→15.4→24.5→10.9→13.3 (degrades and recovers repeatedly, no stream event of any kind). First-half mean 24.56 → second-half mean 17.76 (−27.7%/≈−2.8dB); max/min span ≈4.64×/≈13.3dB within the SAME stream. This directly refutes "stream reopen/recreation is required for large residual variation" and rules out a simple monotonic-warm-up model — intermittent timing/state/DSP/AEC instability is now STRONGLY SUPPORTED as a class, though the exact responsible layer (XVF3800 DSP, ALSA/USB scheduling, driver state, host scheduling, acoustic state) remains unassigned. `quiet_before_rms=15.3` this run is materially higher than the ~7 RMS floor during §16.9's confirmation — a caveat against cross-run absolute-RMS comparison, not an explanation for the in-run oscillation (all 10 cycles share one run's conditions). This gives the operator's own "some answers perfect, others broken" observation a deterministic, non-speech hardware analogue — not yet claimed to prove the exact live conversational mechanism (no speech, no Silero/VAD in this test). A second-stage run after 30s of defined silence (§16.15-16.16) is now justified and is the next step.
+
+Working model: baseline residual echo (always present, §7/§7b) + an intermittent reference-queue/scheduling failure (confirmed once today, §16) + a confirmed, large, non-monotonic in-stream residual-stability effect (§16.14) + possibly AEC adaptation/recovery effects, combining to varying degrees per utterance. AEC/state stability is now a HIGHER-priority open question than gain calibration. Root cause still NOT proven.
 **Depends on:** R0080 (accepted `2b894e7`), R0071 (frozen baseline), R0052–R0056 (prior self-echo investigation), R0053 (gain-coherence defect, now further quantified)
 
 No Memory/ContextEngine/recall_context/Personality/Relationship/Learning/FTS/vector changes touched. No forced audio-architecture redesign. No Silero threshold tuning. No DSP register writes.
@@ -456,6 +458,11 @@ Every filename now encodes condition/gain/amplitude/stimulus/trial, e.g. `off_ga
 | AEC residual stability across one fixed physical setup | **NOT STABLE** — confirmed ~35-41% residual drop between the confirmation run's first and second half, with quiet floor and stimulus held fixed (§16.9) |
 | Sequence/time effect vs. gain effect | **Sequence/time effect is FAR LARGER** (~35-41%) than the gain effect under test (~6%) (§16.9) |
 | Cause of the sequence/time effect | **OPEN** — AEC warm-up/adaptation, retained cross-exposure state, and another time-dependent mechanism are candidates; not chosen among (§16.10) |
+| Continuous in-stream residual change (first `--track-continuous` run) | **CONFIRMED** — non-monotonic, zero stream recreation; max/min span ~4.64×/~13.3dB (§16.14) |
+| Simple monotonic warm-up model | **NOT SUFFICIENT** — real hardware shows repeated degrade/recover cycles, not a settling curve (§16.14) |
+| Stream reopen/recreation required for large residual variation | **REFUTED** — the full ~13.3dB span occurred inside one uninterrupted stream (§16.14) |
+| Intermittent timing/state/DSP/AEC instability | **STRONGLY SUPPORTED as a class**; exact layer (XVF3800 DSP vs. ALSA/USB/driver/host/acoustic) still OPEN (§16.14) |
+| Cross-run quiet-floor comparability (§16.9 vs. §16.14) | **NOT COMPARABLE** — 15.3 RMS vs. ~7 RMS; recorded as a caveat, not an explanation for the in-run oscillation (§16.14) |
 | MLS timing stimulus | **WORKING / better than tones** — trials 1/2 agree to ~0.19ms; tone stimulus independently confirmed ambiguous (112 vs 0 spurious peaks) (§7d) |
 | Physical acoustic lag | **NOT YET STABLE 3/3** — bimodal (2× ~134.4ms, 1× ~102.5ms), exact 512-sample/32.000ms split — REAL OBSERVATION, source UNRESOLVED (§7d, §16.7) |
 | 512-sample split caused by active ALSA capture period/buffer | **REFUTED** — actual negotiated `period_size=2000`/`buffer_size=8000`, neither divides evenly by 512; no app-level 512 block found in source either (§16.7) |
@@ -929,7 +936,7 @@ python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
   --post-settle-gap 0.5
 ```
 
-Real result and interpretation: §16.9. A much larger, unanticipated finding — a strong sequence/time effect exceeding the gain effect under test — required an offline lifecycle audit (§16.10) and a new, cleaner script mode (§16.12) before recommending the next hardware step (§16.15).
+Real result and interpretation: §16.9. A much larger, unanticipated finding — a strong sequence/time effect exceeding the gain effect under test — required an offline lifecycle audit (§16.10) and a new, cleaner script mode (§16.12), whose own first real-hardware result (§16.14) now justifies a second-stage silence-interval test (§16.15) as the next hardware step (§16.16).
 
 ---
 
@@ -1047,19 +1054,69 @@ Built this update, after §16.10's audit identified `--track`'s own remaining co
 - **Sharp non-monotonic jumps**: intermittent timing/state instability becomes the leading class.
 - **One step-change followed by a new stable level**: report the exact cycle/time it occurs at — this is a real, distinct finding; **do not describe it as monotonic warm-up**.
 
-## 16.14 Optional second-stage test — explicitly NOT built or run this update
+## 16.14 First `--track-continuous` RESULT (real hardware, 2026-09-18, run id `20260918T074722Z`)
 
-If §16.12's first continuous run shows a clear early→late improvement, the natural next experiment would be a SECOND identical continuous run after a defined silence interval, to distinguish whether the improved state persists across stream closure, resets on a new stream, or decays with silence. **Not built or scheduled this update** — per instruction, only justified by the first continuous run's own result.
+Protocol exactly as designed (§16.12): `gain=1.0` fixed, `amplitude=0.05`, `stimulus=tones`, ONE capture stream, ONE speaker playback stream, ONE reference playback stream, 10 byte-identical 3s cycles = 30s continuous playback/reference, no stream recreation, no silent gaps between cycles, no Gemini, no VAD, 0% clipping. `quiet_before_rms = 15.3`.
 
-## 16.15 Next action
+| Cycle | Window | `mic_window_rms` | `mic_window_peak` |
+|---|---|---|---|
+| 1 | 0-3s | 39.0 | 248 |
+| 2 | 3-6s | 38.5 | 132 |
+| 3 | 6-9s | 25.8 | 107 |
+| 4 | 9-12s | 11.1 | 66 |
+| 5 | 12-15s | 8.4 | 52 |
+| 6 | 15-18s | 24.7 | 145 |
+| 7 | 18-21s | 15.4 | 83 |
+| 8 | 21-24s | 24.5 | 157 |
+| 9 | 24-27s | 10.9 | 62 |
+| 10 | 27-30s | 13.3 | 65 |
+
+First-half mean = 24.56, second-half mean = 17.76 (**−27.7% / ≈−2.8dB**, verified exactly this update); min=8.4 (cycle 5), max=39.0 (cycle 1) — **≈4.64× / ≈13.3dB span** within this one uninterrupted stream (also verified exactly).
+
+**Interpretation, per §16.13's own decision logic**: this is **not** a flat run, and **not** a simple monotonic warm-up curve. Cycles 1-5 show a strong, consistent improvement (39.0→38.5→25.8→11.1→8.4), but cycle 6 then degrades sharply — **without any stream restart** — back to 24.7, followed by another improvement (15.4), another degradation (24.5), then two more low cycles (10.9, 13.3). A single step-change-to-a-new-stable-level (§16.13's third bullet) is explicitly ruled out by this shape — the residual does not settle at a new level, it oscillates.
+
+```
+Continuous exposure produces a large state-dependent residual change:   CONFIRMED
+Simple monotonic warm-up model:                                         NOT SUFFICIENT
+Stream reopen/recreation REQUIRED for large residual changes:           REFUTED for this run
+Large residual deterioration can occur inside ONE uninterrupted stream: CONFIRMED
+Intermittent timing/state/DSP/AEC instability:                          STRONGLY SUPPORTED as a class
+```
+
+**The exact responsible layer is NOT assigned to XVF3800 DSP specifically.** §16.10's own unranked candidate list still applies in full: XVF3800 adaptive/AEC internal state, reference/acoustic relative alignment, USB scheduling, ALSA timing, driver state, host scheduling, or another physical/acoustic time-varying state. This continuous design removes stream-reopen boundaries from INSIDE the run (confirmed: the oscillation happens with zero stream recreation), but it does not, on its own, distinguish between these remaining candidate layers.
+
+**Quiet-floor caveat, recorded as a caveat, not an explanation**: this run's `quiet_before_rms = 15.3` is materially higher than the ~7 RMS floors seen during the earlier counterbalanced confirmation (§16.9) — **absolute RMS values must not be directly compared across these two experiments** as though baseline acoustic conditions were identical. This does **not** explain the within-run 39.0→8.4→24.7→10.9 oscillation, since all 10 cycles belong to the same uninterrupted run, use byte-identical source content, and share whatever quiet-floor condition was present for that one run.
+
+**Consequence for R0081, precisely scoped**: the operator's own subjective production observation (some answers nearly perfect, others severely broken, in the same session/setup) now has a deterministic, non-speech, non-VAD hardware analogue — same stream, same gain, same signal, same devices, same physical setup, yet residual cancellation effectiveness varies by up to ~13.3dB over 30 seconds with zero external change. This materially strengthens the case that live false-self-interruption severity can depend on time/state rather than a deterministic Core/Memory or gain setting. **Not yet claimed**: that this proves the exact live conversational failure mechanism — the stimulus here is deterministic tones, not speech, and Silero/VAD is not exercised by this test at all.
+
+## 16.15 Second-stage experiment — NOW JUSTIFIED by §16.14's result; design and interpretation documented before handoff
+
+The previously-deferred second-stage test is now justified by §16.14's real result: does the good/bad state persist across stream closure and a controlled silence interval, or reset, or remain irregular? **No production/script redesign** — this reuses the exact same `--track-continuous` command a second time, separated by 30 seconds of defined silence.
+
+**Protocol for the operator**: run the identical command once, wait 30 seconds of complete silence (no physical volume change, no mic/speaker movement, no mixer change, no USB reconnect, no process touching the reference device during the silence), then run the identical command again. Preserve both timestamped WAV pairs (the run-id fix from the prior update already guarantees this — the two runs will have different run ids and will not overwrite each other).
+
+**Interpretation, documented BEFORE the operator runs it, per instruction**:
+
+- **Case A — second run starts low** (e.g. cycles near 10-12 from the start): supports persistence of the improved state across stream closure / 30s silence.
+- **Case B — second run resets high** (e.g. cycles near 35-38 from the start, similar to run 1's own opening): supports reset/decay of the improved state during closure/silence.
+- **Case C — second run begins or remains highly irregular** (e.g. an unpredictable mix like 14, 30, 11, 27 with no clear opening level): strengthens intermittent state/timing instability over a simple warm-up/reset model — consistent with what run 1 itself already showed after cycle 5.
+
+**Do not infer persistence/reset from cycle 1 alone** — cycle 1 may contain a startup transient. Compare at least cycles 1-3 together, and the overall shape of the full 10-cycle run, against run 1's own shape (§16.14) before concluding which case applies.
+
+## 16.16 Next action
+
+**Exactly one operator procedure**: 30 seconds of controlled silence, then one identical `--track-continuous` command.
 
 ```bash
+# 1. Wait 30 seconds of complete silence (no volume/position/mixer/USB change,
+#    nothing touching the reference device) after the first run already completed.
+# 2. Then run the identical command again:
 python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
   --track-continuous --track-gain 1.0 \
   --track-continuous-cycle-s 3.0 --track-continuous-cycles 10
 ```
 
-**Return the full output**, especially the per-cycle table and the first-half/second-half means. This does not use Gemini, VAD, or touch production code/DSP registers/Silero. **Do not run the restart-based `--track` mode instead** — `--track-continuous` is the one recommended next step, per §16.11's own reasoning. Interpret per §16.13's decision logic once the result is in.
+**Return the full output** (per-cycle table, run id, first-half/second-half means, min/max) from this second run. Interpret per §16.15's Case A/B/C framework, comparing against §16.14's own first-run shape. This does not use Gemini, VAD, or touch production code/DSP registers/Silero/gain.
 
 ---
 
@@ -1077,4 +1134,6 @@ Root cause is not confirmed. `coherent_reference_gain` is confirmed NOT validate
 
 **This update (2026-09-18, two small diagnostic-quality corrections before the first `--track-continuous` hardware run, per review — still no hardware run)**: (1) renamed the ambiguous `elapsed_playback_s`/`source_offset_s` fields to explicit `cycle_start_s`/`cycle_end_s` (§16.12) — PCM slicing itself unchanged, reporting only; added an offline test confirming the exact arithmetic. (2) Added a per-invocation run id (`datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")`) shared by both the signal and mic WAV from one run, preventing a second identical `--track-continuous` invocation from silently overwriting the first run's raw evidence; printed prominently in the output; added an offline test confirming two invocations produce disjoint filenames. Neither correction touches `src/`/`apps/`/`tests/`, DSP, ALSA, or production gain.
 
-Per this project's established practice for this exact situation: this update's changes are the R0081 report plus the `--track-continuous` diagnostic mode (`docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py`) — no `src/`/`apps/`/`tests/` file touched. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, Silero was not touched, production reference gain was not changed, and no Gemini conversation was run this update** — no hardware was run this update at all; `--track-continuous` was built and offline-verified only.
+**This update (2026-09-18, first real `--track-continuous` result)**: recorded the operator's real-hardware first continuous run (run id `20260918T074722Z`) — a large (max/min ≈4.64×/≈13.3dB), non-monotonic residual oscillation CONFIRMED inside ONE uninterrupted capture/speaker/reference stream, with zero stream recreation. This refutes "stream reopen is required for large residual variation" and rules out a simple monotonic warm-up model; intermittent timing/state/DSP/AEC instability is now STRONGLY SUPPORTED as a class, with the exact responsible layer still OPEN (not assigned to XVF3800 DSP specifically). Recorded the cross-run quiet-floor difference (15.3 vs. ~7 RMS) as a caveat against absolute-RMS comparison between experiments, explicitly not as an explanation for the in-run oscillation. Documented the consequence for R0081 precisely: this gives the operator's own subjective "some answers perfect, others broken" observation a deterministic, non-speech hardware analogue, without yet claiming it proves the exact live conversational mechanism. Designed and documented the second-stage 30-second-silence-interval experiment's Case A/B/C interpretation BEFORE handoff, per instruction, reusing the exact same command — no script/production changes needed for this next step. No new code, no hardware run, this update.
+
+Per this project's established practice for this exact situation: this update's change is the R0081 report only — no `src/`/`apps/`/`tests/`/diagnostic-script file touched. **R0081 is NOT marked PASS. No DSP/firmware/ALSA configuration was changed on the live system, `CoherentReferenceGain` was not enabled, Silero was not touched, production reference gain was not changed, and no Gemini conversation was run this update** — no hardware was run by me this update; the real-hardware result incorporated here was already explained (§16.13's decision logic) before being run and was performed by the operator.
