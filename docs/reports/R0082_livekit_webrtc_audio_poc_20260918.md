@@ -2700,3 +2700,326 @@ R0082-D's own four-run OFF/ON/ON/OFF result (once actually run) will
 determine whether it is scientifically justified to proceed to that
 Silero stage at all, or whether the audio-residual problem itself needs
 further isolation first.
+
+## 59. Four-run counterbalanced speech AEC OFF/ON result — offline analysis
+
+The operator ran the four-run sequence (§53). **No new hardware test was
+run this round** — this section is offline analysis of the existing
+captures only.
+
+### 59a. File verification
+
+All four run_ids located under `docs/research/r0082_livekit_webrtc_audio_poc/
+r0082d_aec_captures/`:
+
+```
+A1_OFF (20260918T144322Z): signal sha256=703db210...076c21d  mic sha256=dd4bbfd9...2b75196
+B1_ON  (20260918T144740Z): signal sha256=703db210...076c21d  mic sha256=fef4e9bd...bed47d04
+B2_ON  (20260918T144932Z): signal sha256=703db210...076c21d  mic sha256=dc79b724...19f5f9799
+A2_OFF (20260918T145221Z): signal sha256=703db210...076c21d  mic sha256=8596fbda...4a0eb39
+```
+
+All four signal WAVs SHA256-match the frozen canonical stimulus
+(`703db210bcef8222adf044e88594958289be8d0e6ff4798ad8245b0c1076c21d`)
+**exactly** — confirmed programmatically, not visually. All four mic
+captures: mono, 16-bit, 48000Hz, 1,209,120 frames, 25.190s — exceeding
+the expected minimum (1,208,708 samples / 25.181s = `PRE_ROLL_S +
+23.181416...s + TAIL_S`), i.e. all four captures are complete.
+
+**Data-hygiene note:** a FIFTH WAV pair
+(`r0082d_aecoff_20260918T145123Z_speech_{signal,mic}.wav`) also exists
+in the capture directory, timestamped between B2 and A2, but was **not**
+one of the four run_ids the operator reported. It is excluded from the
+analysis below and flagged here for transparency rather than silently
+ignored — most likely an earlier attempt at A2 that was discarded before
+the reported A2 run.
+
+New analysis script (research-only, plain system `python3`, numpy+scipy,
+no `nexa.*`/`pipecat.*`/`livekit`/production imports):
+`docs/research/r0082_livekit_webrtc_audio_poc/r0082d_wav_analysis.py`.
+
+### 59b. A real bug found and fixed during this analysis
+
+The first draft of the lag-search function initialized its
+"best correlation found so far" tracker to `-1.0` (the theoretical
+maximum possible correlation MAGNITUDE) and compared with `abs(c) >
+abs(best_corr)`. Since genuine correlation coefficients for real,
+independent, only-weakly-related recordings never reach exactly ±1.0,
+this comparison could never succeed — the loop silently never updated
+its result, and a LATER unrelated offset calculation happened to
+convert the untouched default into a value that looked like a real
+(and suspicious) result: **all four runs reporting `best_lag=-300.00ms`
+exactly (the edge of the search range) with `peak_corr_coeff=-1.0000`
+exactly** — an impossible outcome for four independent real recordings,
+caught precisely because it was too clean to be real. Fixed by
+initializing the tracker to `0.0` (beaten by any nonzero correlation).
+**Verified correct** with a synthetic controlled test: a known signal
+embedded in noise at a known 300-sample offset, at a weak 2% amplitude
+with realistic background noise, was recovered by the fixed function at
+exactly the correct offset with a plausible correlation coefficient
+(0.97) — confirming the fix, not just the absence of the previous
+symptom.
+
+### 59c. Lag alignment — a real methodology limitation, stated plainly
+
+After the fix, real (non-degenerate) results:
+
+```
+A1_OFF: best_lag= -234.46ms  peak_corr_coeff=-0.0195
+B1_ON:  best_lag= -149.75ms  peak_corr_coeff=+0.0138
+B2_ON:  best_lag=  -46.98ms  peak_corr_coeff=-0.0128
+A2_OFF: best_lag= -208.21ms  peak_corr_coeff=+0.0142
+```
+
+**These peak correlation coefficients are very low** (|r| 0.013-0.020,
+r² 0.0002-0.0004) — essentially no strong, sample-domain linear
+relationship was found between the raw reference PCM and ANY of the
+four captured mic recordings, in EITHER AEC condition. This is treated
+as a genuine methodology limitation of raw-waveform cross-correlation
+for this specific signal/pathway, not as evidence that no acoustic
+coupling exists: the played stimulus and the captured uplink each pass
+through LiveKit's own Opus encode/decode (a lossy, perceptually-tuned
+codec, likely applied twice — once on the downlink to the speaker, once
+on the uplink from the mic), through the real acoustic
+speaker→room→microphone path (frequency-response coloration,
+reverberation), and through PlatformAudio's APM (even with
+`noise_suppression=False`/`auto_gain_control=False`, the AEC path
+itself performs adaptive filtering that reshapes phase/waveform). All
+of these can reduce raw sample-domain correlation without eliminating
+genuine physical leakage — R0082-C's own tone-based analysis (§44g)
+found a similar, if less extreme, pattern (weak time-domain correlation
+coexisting with clear frequency-domain evidence of real leakage).
+**Consequence: the derived lag estimates and the "stimulus-correlated
+component" metric (§59d) built on them are LOW-CONFIDENCE for this
+dataset** — the full-region RMS, time-resolved, and STFT band-power
+results (which do not depend on this correlation being strong) are
+treated as the more trustworthy evidence for the comparisons below.
+
+### 59d. Full-duration per-run metrics (not the runtime-truncated 7×3s windows)
+
+The runtime harness only printed 7 complete 3-second windows (21s) —
+per instruction, all metrics below are recomputed from the saved WAVs
+over the FULL 23.181s aligned speech region:
+
+```
+         quiet_rms  quiet_peak  full_rms  full_peak  stim_component_rms  residual_rms  r²
+A1_OFF     153.35      1480       56.74      1487           1.11           56.73      0.0004
+B1_ON        5.12        22       38.60      1422           0.53           38.60      0.0002
+B2_ON        5.88        27       41.15      1838           0.53           41.15      0.0002
+A2_OFF       5.67        24       27.67      1131           0.39           27.67      0.0002
+```
+
+The "stimulus-correlated component" is two-plus orders of magnitude
+smaller than "full_rms" in every run (§59c's limitation directly
+visible here) — the overwhelming majority of captured energy, in ALL
+FOUR runs including both OFF runs, is NOT explained by a simple
+scaled/shifted copy of the reference signal at this method's
+sensitivity. This is reported honestly rather than forced into a
+stronger claim.
+
+### 59e. A1 pre-roll anomaly — a decaying startup transient, not steady noise
+
+```
+A1_OFF pre-roll: mean(DC)=-1.563  rms=153.35  peak=1480
+  first-half rms=216.38  second-half rms=14.60   <- DECAYS within the 1s window itself
+  top spectral peaks: 132.0Hz(8.43) 196.0Hz(3.54) 245.0Hz(2.90) 116.0Hz(2.87) 175.0Hz(2.80) 148.0Hz(2.26)
+  broadband floor (median FFT magnitude): 0.0043
+
+B1_ON pre-roll: rms=5.12   first-half=5.21  second-half=5.03  (flat, no transient)
+  broadband floor: 0.0043
+B2_ON pre-roll: rms=5.88   first-half=6.26  second-half=5.47  (flat, no transient)
+  broadband floor: 0.0043
+A2_OFF pre-roll: rms=5.67  first-half=5.61  second-half=5.72  (flat, no transient)
+  broadband floor: 0.0043
+```
+
+**A1's pre-roll is a DECAYING TRANSIENT** (216→14.6 rms within one
+second), dominated by LOW frequencies (116-245Hz, magnitudes 3-8x
+larger than B1/B2/A2's own quiet-region peaks) — not steady broadband
+noise, not a DC offset (mean ≈ -1.6, negligible), not a periodic tone
+matching the stimulus. **The broadband floor (median FFT magnitude) is
+IDENTICAL across all four runs (0.0043), including A1** — the
+persistent, steady-state noise characteristic is the SAME in every run;
+A1's anomaly is specifically a TRANSIENT that had not fully decayed by
+the end of the 1-second pre-roll window, not a change in the underlying
+noise floor. Since A1 was the FIRST of the four runs, a
+connection/session warm-up artifact (e.g. PipeWire stream negotiation,
+WebRTC ADM initial buffer ramp-up) is a plausible, evidence-consistent
+explanation — this is recorded as SUPPORTED, not CONFIRMED (no repeated
+"first run of a session" trial exists to test reproducibility). A1's
+elevated speech-region `full_rms` (56.74, the highest of all four runs)
+is plausibly still affected by the tail of this same transient bleeding
+into the early speech region — **A1 is therefore NOT treated as a clean,
+representative AEC-OFF baseline** for the comparisons below.
+
+### 59f. Pairwise comparisons
+
+```
+A1_OFF vs B1_ON:  full_rms 56.74 -> 38.60   ratio=0.680x  -3.35dB   (ON lower -- but A1 is confounded, §59e)
+B2_ON  vs A2_OFF: full_rms 41.15 -> 27.67   ratio=0.672x  -3.45dB   (OFF lower -- the OPPOSITE direction)
+A1_OFF vs A2_OFF: full_rms 56.74 -> 27.67   ratio=0.488x  -6.24dB   (both OFF -- large gap, explained by A1's own anomaly, §59e)
+B1_ON  vs B2_ON:  full_rms 38.60 -> 41.15   ratio=1.066x  +0.56dB   (both ON -- close, good replication)
+```
+
+**§59f is the central finding of this round.** The single CLEANEST
+comparison — `B2_ON vs A2_OFF`, explicitly the one the brief flagged as
+most important, with near-identical quiet baselines (5.88 vs. 5.67) and
+adjacent in the run sequence — shows AEC **OFF** with the LOWER residual
+(27.67 vs. 41.15, a -3.45dB difference in OFF's favor). This is the
+OPPOSITE direction from the `A1_OFF vs B1_ON` comparison, which is
+itself unreliable because A1 is confounded by its own startup transient
+(§59e). The two ON runs (B1, B2) replicate each other closely (+0.56dB
+apart) — but the two OFF runs (A1, A2) do NOT (−6.24dB apart), and that
+gap is attributable to A1's own anomaly rather than to the AEC toggle.
+**No absolute significance is claimed with n=2/condition**, per
+instruction.
+
+### 59g. Run-order trend — the apparent monotonic pattern does not survive full-duration recomputation
+
+The operator's own runtime-reported `overall mean` (the truncated
+7-window/21s figure) showed an apparently clean monotonic decline:
+`A1=38.84 → B1=26.84 → B2=18.70 → A2=17.70`. **Recomputed over the full
+23.181s aligned region, this monotonicity breaks down:**
+
+```
+A1_OFF: full_rms=56.74   B1_ON: full_rms=38.60   B2_ON: full_rms=41.15   A2_OFF: full_rms=27.67
+```
+
+`B2 (41.15) > B1 (38.60)` — a real increase, not a continued decline.
+The apparent "smooth warm-up" story in the runtime numbers was partly an
+artifact of only using the first ~21s rather than the complete 23.181s
+stimulus. The pattern that DOES survive: a large drop from A1 to B1
+(plausibly A1's own startup-transient recovery, §59e, not necessarily
+an AEC effect), followed by a relatively flat/mixed B2-A2 pair. This is
+recorded as a **HYPOTHESIS** (first-run warm-up), not a confirmed
+general "progressive warm-up/stabilization" trend across the whole
+sequence.
+
+### 59h. Time-resolved analysis — a shared transient near t≈6-7s across 3 of 4 runs
+
+250ms- and 1s-resolution RMS tables (lag-aligned per run, first 10s of
+speech-relative time) both show a large, elevated-energy region
+clustering around **t≈6.0-6.75s in A1, B1, and B2** (1s-window values:
+A1=83.2, B1=30.1, B2=74.6 at the t=6-7s bin), while **A2's own largest
+early peak appears about 1s later, at t=7.0-8.0s (43.2)**. Three
+independent sessions showing elevated energy clustering within roughly
+the same ~1s region of the aligned playback, out of a 23s/~93-bin table,
+is unlikely to be pure coincidence — this **partially supports**
+stimulus-dependent (spoken-content-tied) leakage, consistent with this
+region corresponding to a specific loud phrase/phoneme in the EN
+segment of the stimulus. It is not perfectly reproducible in exact
+onset time across all four runs (A2 is offset by ~1s), which may
+reflect genuine run-to-run timing/state variability, or residual
+imprecision in the low-confidence lag estimates themselves (§59c) —
+both are plausible and not distinguished by this analysis.
+
+### 59i. STFT-derived band power — no consistent OFF/ON pattern in any band
+
+```
+                300-1000Hz  1000-2000Hz  2000-4000Hz  4000-8000Hz
+A1_OFF            12.512        1.280        0.637        0.141
+B1_ON              7.101        1.310        0.634        0.243
+B2_ON              8.862        1.706        0.886        0.113
+A2_OFF             5.624        1.819        0.753        0.166
+```
+
+No band shows AEC OFF consistently above or below AEC ON across both
+OFF/ON pairs — each band ranks the four runs differently, and A2 (OFF)
+has the LOWEST 300-1000Hz power of all four runs (the band voiced
+speech dominates), not the highest. This is additional evidence against
+a clean, general "AEC ON reduces residual" story, and further supports
+that run/state variability, not the AEC toggle, dominates these
+differences.
+
+## 60. Updated evidence classifications
+
+```
+1.  All four runs used byte-identical speech stimulus.              CONFIRMED
+2.  All four captures are complete.                                 CONFIRMED
+3.  A1 has an anomalous pre-stimulus baseline.                      CONFIRMED
+4.  A1 is representative of normal AEC OFF behaviour.                REFUTED
+5.  B1 and B2 are mutually reproducible.                            SUPPORTED
+6.  A2 is consistent with the low-baseline state seen in B1/B2.     SUPPORTED
+7.  AEC ON consistently lowers total mic RMS.                     NOT PROVEN
+     (the cleanest pair, B2 vs A2, shows the OPPOSITE)
+8.  AEC ON consistently lowers speech-correlated residual.        NOT PROVEN
+     (same B2-vs-A2 result; correlation metric itself low-confidence, §59c)
+9.  AEC OFF consistently performs worse than ON.                     REFUTED
+     (as a general claim -- B2-vs-A2 shows OFF performing BETTER)
+10. Run/state variability is substantial.                          CONFIRMED
+11. Run/state variability is larger than the AEC effect.            SUPPORTED
+     (conservative -- n=2/condition, not asserted as statistically proven)
+12. Evidence of progressive warm-up/stabilization over run order.  HYPOTHESIS
+     (A1->B1 drop plausible as first-run recovery; B1->B2->A2 does
+     NOT continue the trend once full-duration-recomputed, §59g)
+13. WebRTC AEC currently provides production-worthy echo
+    suppression.                                                  NOT PROVEN
+14. Current evidence proves NeXa self-interruption is solved.        REFUTED
+15. Current evidence is sufficient to proceed to an OFFLINE
+    Silero-on-captured-WAV experiment.                              SUPPORTED
+```
+
+## 61. Relation to NeXa self-interruption
+
+```
+Would the residual speech present in these mic WAVs plausibly still
+look speech-like enough to trigger VAD?
+```
+
+**NOT PROVEN until Silero is run offline on the saved mic WAVs** — per
+instruction, this is not answered by intuition. The waveform/correlation
+evidence gathered this round (§59c) is explicitly low-confidence for
+detecting fine-grained stimulus correlation, and total RMS alone
+(§59d/§59f) does not by itself indicate whether Silero's own model would
+classify any given residual segment as speech. The one piece of evidence
+worth carrying forward: §59h's shared t≈6-7s transient across 3 of 4
+runs is a concrete, real candidate event to check directly against
+Silero's own response, rather than a synthetic assumption.
+
+## 62. Next experiment — chosen: (A) offline Silero VAD on the four existing mic WAVs
+
+Of the three options offered:
+
+```
+A) offline Silero VAD analysis of the four already-recorded mic WAVs
+B) another controlled hardware replication is required first
+C) AEC/PlatformAudio configuration must be investigated first
+```
+
+**(A) is chosen.** Reasoning: it is the cheapest possible next step (no
+new hardware run, reuses the exact captures already gathered and
+verified this round), and it directly answers the question that
+actually matters for production risk — whether Silero would classify
+any of this residual as speech — rather than continuing to refine the
+AEC-effect-vs-variability question in the abstract. Its result
+determines whether (B) or (C) is even worth pursuing: if Silero
+produces zero false triggers on all four WAVs (including the A1 anomaly
+and the shared t≈6-7s event), the current audio-layer ambiguity may not
+matter for the production question at all; if Silero DOES trigger,
+that gives a concrete, reproducible test case to drive either (B)
+further hardware replication or (C) AEC configuration work, instead of
+guessing which is needed. **This offline Silero step is NOT executed
+this round** — it is the recommended next step only, per instruction.
+
+## 63. Limitations (this round)
+
+- n=2 per AEC condition — no statistical significance is claimed
+  anywhere in this section, per instruction.
+- The sample-domain cross-correlation method proved low-confidence for
+  this dataset (§59c) — lag estimates and the "stimulus-correlated
+  component" metric built on them should be treated as suggestive, not
+  authoritative; the RMS/time-resolved/band-power results are weighted
+  more heavily in the conclusions above for this reason.
+- A1's confound (§59e) means the four-run design's intended
+  counterbalancing is effectively weakened to "one clean OFF (A2), two
+  ON (B1, B2), one confounded OFF (A1)" rather than a clean 2-vs-2 — a
+  real limitation of this specific run, not of the four-run design
+  itself.
+- The shared t≈6-7s transient (§59h) is suggestive but not definitively
+  isolated to a specific word/phoneme in this round — no forced
+  alignment against the stimulus text's own timing was attempted.
+- No production code, NeXa Core, Gemini, Pipecat, Silero, Silero
+  production integration, `BargeInController`, `AecReferenceFeeder`,
+  XVF3800 settings, PipeWire defaults, system mixer, or LiveKit server
+  configuration were touched this round. No hardware test was run. No
+  DSP writes were made.
