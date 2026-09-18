@@ -230,6 +230,16 @@ already defines (R0053's own system audit).
     python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
         --track --track-gain 1.0 --track-trials 8 --post-settle-gap 0.5
 
+    # continuous-STREAM fixed-gain adaptation diagnostic -- ONE capture/
+    # speaker/reference stream for the whole run, no stream recreation, no
+    # silent gap, between cycles (unlike --track above, which still
+    # recreates every subprocess and re-settles per trial). Preferred
+    # FIRST test for whether residual changes during one uninterrupted
+    # session, before the restart-based --track above.
+    python3 docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py \
+        --track-continuous --track-gain 1.0 \
+        --track-continuous-cycle-s 3.0 --track-continuous-cycles 10
+
 Run ``--condition off`` then ``--condition on`` back to back (same
 physical speaker volume, same room, same mic position) for a directly
 comparable pair. Repeat 3x per condition recommended — real acoustic
@@ -430,6 +440,29 @@ def build_signal(
     raise ValueError(f"unknown stimulus: {stimulus!r}")
 
 
+def build_continuous_signal(
+    stimulus: str, *, cycle_s: float, cycles: int, amplitude: float,
+    sample_rate: int = SAMPLE_RATE,
+) -> bytes:
+    """R0081 -- ``--track-continuous``: build ONE ``cycle_s``-long
+    deterministic segment via ``build_signal`` (generated exactly once),
+    then repeat it ``cycles`` times by plain byte concatenation -- never
+    regenerated per cycle. This is what makes a per-cycle RMS comparison
+    meaningful: every cycle's acoustic source content is byte-identical,
+    so any measured difference between cycles reflects only capture-side/
+    system-state change, not a difference in what was played. Each
+    cycle's own ``build_signal`` call already fades in/out at its own
+    edges (20ms for tones, 5ms for MLS), so a cycle-to-cycle boundary in
+    the concatenated stream is simply one cycle's own fade-out
+    immediately followed by the next cycle's own fade-in -- no new click
+    or discontinuity is introduced beyond what a single ordinary trial
+    already has at its own start/end."""
+    segment = build_signal(
+        stimulus, duration_s=cycle_s, amplitude=amplitude, sample_rate=sample_rate
+    )
+    return segment * cycles
+
+
 def clip_stats(pcm: bytes) -> dict:
     """R0081 -- heuristic clipping detector: counts int16 samples sitting
     EXACTLY on the saturation ceiling/floor `audioop.mul` produces
@@ -559,6 +592,76 @@ async def run_trial(
         "reference_pre_gain_peak": _peak(ref_pre_gain_pcm),
         "reference_post_gain_rms": round(_rms(ref_post_gain_pcm), 1) if feed_reference else None,
         "reference_post_gain_peak": _peak(ref_post_gain_pcm) if feed_reference else None,
+        "reference_clipped_samples": ref_clip["n_clipped"],
+        "reference_clipped_percent": ref_clip["pct_clipped"],
+    }
+
+
+async def run_continuous(
+    *, gain: float, cycle_s: float, cycles: int, amplitude: float, stimulus: str,
+) -> dict:
+    """R0081 -- ``--track-continuous``: ONE capture stream, ONE speaker
+    playback stream, ONE reference playback stream, for the ENTIRE run --
+    no stream recreation, no silent gap, between measurement cycles.
+    Built specifically because ``--track`` (which reuses ``run_condition``/
+    ``run_trial`` per trial) still recreates every ``aplay``/``arecord``
+    subprocess, inserts a 3s settle and an optional silent gap, for EVERY
+    measured trial -- confounding a true continuous-exposure test with
+    repeated stream open/close and silence injection. This function
+    instead builds the full ``cycle_s * cycles`` continuous PCM ONCE
+    (``build_continuous_signal``, byte-identical content per cycle), then
+    plays it start-to-finish as a single uninterrupted stream, slicing
+    the ONE resulting continuous capture into per-cycle windows OFFLINE
+    afterward -- only the initial stream startup (before the first
+    cycle) is outside the continuously-measured exposure."""
+    segment_bytes_per_cycle = int(cycle_s * SAMPLE_RATE) * 2
+    full_signal = build_continuous_signal(
+        stimulus, cycle_s=cycle_s, cycles=cycles, amplitude=amplitude
+    )
+    total_playback_s = cycle_s * cycles
+    total_capture_s = PRE_ROLL_S + total_playback_s + TAIL_MARGIN_S
+
+    capture_task = asyncio.create_task(capture_pcm(duration_s=total_capture_s))
+    await asyncio.sleep(PRE_ROLL_S)
+
+    ref_pcm = apply_gain(full_signal, gain)
+    play_tasks = [
+        asyncio.create_task(play_pcm(full_signal, device=SPEAKER_DEVICE)),
+        asyncio.create_task(play_pcm(ref_pcm, device=REFERENCE_DEVICE)),
+    ]
+    await asyncio.gather(*play_tasks)
+
+    captured = await capture_task
+
+    pre_roll_samples = int(PRE_ROLL_S * SAMPLE_RATE)
+    quiet_before = captured[: pre_roll_samples * 2]
+    start_byte = pre_roll_samples * 2
+
+    cycles_data: list[dict] = []
+    for i in range(cycles):
+        c_start = start_byte + i * segment_bytes_per_cycle
+        c_end = c_start + segment_bytes_per_cycle
+        window = captured[c_start:c_end]
+        cycles_data.append({
+            "cycle": i + 1,
+            "source_offset_s": round(i * cycle_s, 2),
+            "elapsed_playback_s": round(i * cycle_s, 2),
+            "cumulative_reference_exposure_s": round((i + 1) * cycle_s, 2),
+            "mic_window_rms": round(_rms(window), 1),
+            "mic_window_peak": _peak(window),
+        })
+
+    ref_clip = clip_stats(ref_pcm)
+    return {
+        "gain": gain,
+        "amplitude": amplitude,
+        "stimulus": stimulus,
+        "cycle_s": cycle_s,
+        "cycles": cycles,
+        "quiet_before_rms": round(_rms(quiet_before), 1),
+        "cycles_data": cycles_data,
+        "captured_full": captured,
+        "full_signal": full_signal,
         "reference_clipped_samples": ref_clip["n_clipped"],
         "reference_clipped_percent": ref_clip["pct_clipped"],
     }
@@ -867,10 +970,16 @@ def parse_args() -> argparse.Namespace:
         "entirely. Built after --confirm's own counterbalanced run showed a much larger "
         "between-sequence residual change (~35-41%%) than the gain effect it was testing -- "
         "this isolates elapsed time / cumulative reference exposure from any gain-order "
-        "interaction. Reports trial/elapsed-time/cumulative-reference-exposure alongside "
-        "quiet_before_rms/mic_window_rms/mic_window_peak/clipping for each trial, plus a "
-        "first-half vs second-half mean comparison. Ignores --condition/--gain/--sweep/"
-        "--confirm. Defaults --amplitude to 0.05 if not explicitly given.",
+        "interaction. IMPORTANT LIMITATION (why --track-continuous exists too): every trial "
+        "here still goes through run_condition/run_trial, so a fresh aplay/arecord is "
+        "recreated, a settle is played, and an optional silent gap is inserted for EVERY "
+        "trial -- this removes gain switching but does NOT cleanly isolate simple continuous "
+        "AEC exposure/adaptation from repeated stream open/close and silence injection. Use "
+        "--track-continuous for that. Reports trial/elapsed-time/cumulative-reference-"
+        "exposure alongside quiet_before_rms/mic_window_rms/mic_window_peak/clipping for "
+        "each trial, plus a first-half vs second-half mean comparison. Ignores "
+        "--condition/--gain/--sweep/--confirm/--track-continuous. Defaults --amplitude to "
+        "0.05 if not explicitly given.",
     )
     p.add_argument(
         "--track-gain", type=float, default=1.0,
@@ -884,22 +993,52 @@ def parse_args() -> argparse.Namespace:
         "bounded hardware time, enough to see a trend without an open-ended run).",
     )
     p.add_argument(
+        "--track-continuous", action="store_true",
+        help="R0081 -- continuous-STREAM fixed-gain adaptation diagnostic: ONE capture "
+        "stream, ONE speaker playback stream, ONE reference playback stream for the ENTIRE "
+        "run -- no stream recreation, no silent gap, between measurement cycles (unlike "
+        "--track, which recreates every subprocess and re-settles per trial). Fixed gain "
+        "(--track-gain, default 1.0), no gain switching, no VAD, no Gemini. Builds ONE "
+        "cycle_s-long deterministic segment (--track-continuous-cycle-s, default 3.0s) once, "
+        "repeats it byte-identically --track-continuous-cycles times (default 10 = 30s "
+        "continuous playback/reference), plays it as a single uninterrupted stream, then "
+        "slices the ONE resulting continuous capture into per-cycle windows OFFLINE. Reports "
+        "cycle/source-offset/elapsed-playback-time/cumulative-continuous-reference-exposure/"
+        "mic_window_rms/mic_window_peak per cycle, plus quiet_before_rms, first-half vs "
+        "second-half means, and min/max. Ignores --condition/--gain/--sweep/--confirm/"
+        "--track. Defaults --amplitude to 0.05 if not explicitly given.",
+    )
+    p.add_argument(
+        "--track-continuous-cycle-s", type=float, default=3.0,
+        help="Length of the ONE deterministic segment repeated for --track-continuous "
+        "(default 3.0s). With --stimulus mls, must stay under ~4.09s (the MLS period at "
+        "16kHz) -- same guard as everywhere else this stimulus is used.",
+    )
+    p.add_argument(
+        "--track-continuous-cycles", type=int, default=10,
+        help="Number of times the segment repeats for --track-continuous (default 10 -- "
+        "10 x 3.0s = 30s continuous playback/reference, a bounded hardware run).",
+    )
+    p.add_argument(
         "--label", default=None,
         help="Optional label for the saved WAV files (default: derived from "
-        "--condition/--gain/--amplitude/--stimulus, ignored with --sweep/--confirm/--track "
-        "which label each point/block/trial themselves).",
+        "--condition/--gain/--amplitude/--stimulus, ignored with --sweep/--confirm/--track/"
+        "--track-continuous which label each point/block/trial/run themselves).",
     )
     args = p.parse_args()
 
-    exclusive_modes = [args.sweep, args.confirm, args.track]
+    exclusive_modes = [args.sweep, args.confirm, args.track, args.track_continuous]
     if sum(1 for m in exclusive_modes if m) > 1:
-        p.error("--sweep, --confirm, and --track are mutually exclusive")
+        p.error("--sweep, --confirm, --track, and --track-continuous are mutually exclusive")
     if args.repeats is None:
         args.repeats = 3 if args.sweep else 1
     if args.amplitude is None:
-        args.amplitude = 0.05 if (args.sweep or args.confirm or args.track) else 0.5
+        args.amplitude = 0.05 if any(exclusive_modes) else 0.5
     if not any(exclusive_modes) and args.condition is None:
-        p.error("--condition is required unless --sweep, --confirm, or --track is passed")
+        p.error(
+            "--condition is required unless --sweep, --confirm, --track, or "
+            "--track-continuous is passed"
+        )
 
     return args
 
@@ -1253,6 +1392,81 @@ async def _run_track(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _run_track_continuous(args: argparse.Namespace) -> int:
+    """R0081 -- continuous-stream fixed-gain adaptation diagnostic. See
+    ``run_continuous``'s own docstring for exactly why this exists
+    alongside (not instead of) ``--track``: this is the version with NO
+    stream recreation and NO silent gap anywhere inside the measured
+    exposure window."""
+    cycle_s = args.track_continuous_cycle_s
+    cycles = args.track_continuous_cycles
+    total_s = cycle_s * cycles
+
+    print("NeXa R0081 — continuous-stream fixed-gain adaptation diagnostic")
+    print(f"  gain={args.track_gain:g} (fixed, no switching)  amplitude={args.amplitude}  "
+          f"stimulus={args.stimulus}")
+    print(f"  {cycles} cycles x {cycle_s:g}s = {total_s:g}s continuous playback/reference  "
+          f"pre-roll={PRE_ROLL_S:g}s  tail={TAIL_MARGIN_S:g}s")
+    print("  ONE capture stream, ONE speaker stream, ONE reference stream for the whole run "
+          "-- no stream recreation, no silent gap, between cycles. Only the initial stream "
+          "startup (before cycle 1) is outside the continuously-measured exposure.")
+    print()
+
+    result = await run_continuous(
+        gain=args.track_gain, cycle_s=cycle_s, cycles=cycles,
+        amplitude=args.amplitude, stimulus=args.stimulus,
+    )
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    label = f"track_continuous_gain{args.track_gain:g}_amp{args.amplitude:g}_{args.stimulus}"
+    signal_path = OUT_DIR / f"{label}_signal.wav"
+    mic_path = OUT_DIR / f"{label}_mic.wav"
+    _write_wav(signal_path, result["full_signal"], sample_rate=SAMPLE_RATE)
+    _write_wav(mic_path, result["captured_full"], sample_rate=SAMPLE_RATE)
+
+    print(f"  quiet_before_rms: {result['quiet_before_rms']}")
+    print(f"  reference_clipped_percent: {result['reference_clipped_percent']}%  "
+          f"({result['reference_clipped_samples']} samples)")
+    if result["reference_clipped_percent"] > 0:
+        print("  *** WARNING: reference is CLIPPED -- this run is not valid evidence. ***")
+    print()
+    print(f"  {'cycle':>5}  {'src_offset_s':>12}  {'elapsed_s':>10}  {'cum_ref_s':>10}  "
+          f"{'mic_rms':>8}  {'mic_peak':>9}")
+    for c in result["cycles_data"]:
+        print(f"  {c['cycle']:>5}  {c['source_offset_s']:>12.2f}  "
+              f"{c['elapsed_playback_s']:>10.2f}  "
+              f"{c['cumulative_reference_exposure_s']:>10.2f}  "
+              f"{c['mic_window_rms']:>8.1f}  {c['mic_window_peak']:>9}")
+
+    rms_values = [c["mic_window_rms"] for c in result["cycles_data"]]
+    if rms_values:
+        half = max(1, len(rms_values) // 2)
+        first_half, second_half = rms_values[:half], rms_values[half:]
+        fh_mean = sum(first_half) / len(first_half)
+        print()
+        print(f"  first-half ({len(first_half)} cycles) mean mic_window_rms  : {fh_mean:.2f}")
+        if second_half:
+            sh_mean = sum(second_half) / len(second_half)
+            print(f"  second-half ({len(second_half)} cycles) mean mic_window_rms : "
+                  f"{sh_mean:.2f}")
+        print(f"  min mic_window_rms : {min(rms_values):.2f}  "
+              f"max mic_window_rms : {max(rms_values):.2f}")
+
+    print()
+    print(f"  saved: {signal_path}")
+    print(f"  saved: {mic_path}")
+    print()
+    print("Interpretation: a progressive cycle-to-cycle decrease supports continuous-"
+          "exposure/AEC-adaptation (do not yet claim which internal XVF3800 algorithm). A "
+          "flat trend does NOT support pure continuous warm-up -- the earlier --confirm "
+          "drop would more likely depend on stream lifecycle, gain switching, or another "
+          "boundary effect. A sharp non-monotonic jump supports intermittent timing/state "
+          "instability instead. A single step-change followed by a new stable level is a "
+          "real finding on its own -- report the exact cycle it occurs at; do not call that "
+          "monotonic warm-up.")
+    return 0
+
+
 async def main() -> int:
     args = parse_args()
     if args.sweep:
@@ -1261,6 +1475,8 @@ async def main() -> int:
         return await _run_confirm(args)
     if args.track:
         return await _run_track(args)
+    if args.track_continuous:
+        return await _run_track_continuous(args)
     return await _run_single(args)
 
 
