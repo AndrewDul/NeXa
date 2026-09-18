@@ -1015,21 +1015,39 @@ R0082-A audit                        PASS
 R0082-B device/sample-rate path      PASS after alias fix
 WebRTC AEC execution                 PASS
 WebRTC AEC residual reduction        CONFIRMED
-Time stability requirement           FAIL / NOT MET
+Time stability requirement           FAIL / NOT MET   (historical — see §25a correction)
 MediaDevices/PortAudio PoC           PARTIAL PASS
 Production migration                 NOT APPROVED
 Gemini integration                   NOT YET
 ```
 
-R0082 overall is not yet a full PASS. **Caveat on "Time stability
-requirement FAIL / NOT MET":** §24's new finding means this failure may
-be partially or substantially attributable to the tones stimulus's own
-3-segment frequency structure rather than (or in addition to) genuine
-elapsed-time/stream-age drift — an MLS-stimulus run is needed to
-disambiguate before this can be attributed to one cause or the other
-with confidence. The FAIL classification itself is recorded as
-instructed and is not overturned; the mechanism behind it is now known
-to be less settled than "time-dependent instability" alone would imply.
+R0082 overall is not yet a full PASS. This table is preserved exactly as
+originally recorded — the `FAIL / NOT MET` entry is **not deleted** —
+but §25a below supersedes it as the current interpretation.
+
+### 25a. Interpretation correction (this round)
+
+```
+WebRTC AEC attenuation:       CONFIRMED
+time stability:                INCONCLUSIVE from the old segmented-tones experiment
+
+frequency-content confound:   CONFIRMED
+exact physical mechanism:     OPEN
+true time drift:              NOT YET RESOLVED
+```
+
+§24's WAV sanity check found the `tones` stimulus's own sequential
+500→1000→2000Hz segments were confounded with the "late-run rise" — the
+old `FAIL / NOT MET` verdict cannot be read as an independent
+demonstration of true elapsed-time/stream-age instability, because the
+experiment that produced it could not distinguish a time effect from a
+frequency-content effect. This is **not** a claim that the late rise was
+definitely caused by frequency response either — the exact physical
+mechanism remains open, and whether genuine time drift exists at all is
+not yet resolved either way. §26 onward (the new `stationary_multitone`
+stimulus) exists specifically to remove this confound before the real
+`PlatformAudio` A/B is run, so the next result can legitimately settle
+this question.
 
 ## 26. R0082-C — architecture audit (before build)
 
@@ -1280,3 +1298,181 @@ item 10. **Do not run `--aec on` yet** — withheld until this `--aec off`
 run is confirmed to open the real reSpeaker/UACDemoV1.0 devices via
 `PlatformAudio` and complete successfully. This has intentionally
 **not** been run by this session.
+
+**Superseded by §31 below** — §30's command used `--stimulus tones`,
+which §25a's correction means is confounded for time-stability
+measurement. §31 adds a `stationary_multitone` stimulus specifically to
+remove that confound; §32 gives the updated, authoritative first
+operator command. §30's own text above is left as historical record,
+not deleted.
+
+## 31. `stationary_multitone` stimulus — removes the frequency-content confound
+
+Added `build_stationary_multitone_signal()` to
+`docs/research/r0082_livekit_webrtc_audio_poc/r0082_audio_utils.py`
+(still standard-library-only — `array`, `math`, `struct`, `wave`,
+`pathlib`; no new dependency) and wired it into `build_signal()`'s
+dispatch as `"stationary_multitone"`, alongside the existing `"tones"`
+and `"mls"` (neither removed). Both `r0082_platform_audio_aec_poc.py`
+(R0082-B) and `r0082c_platform_audio_room_aec_poc.py` (R0082-C) had
+their `--stimulus` CLI choices extended to include it.
+
+### What it does
+
+All three of `build_test_signal`'s own frequencies — 500Hz, 1000Hz,
+2000Hz — play **simultaneously**, for the entire requested duration,
+with deterministic fixed phases (all zero). No segment transitions: the
+spectral content is identical from the first sample to the last. The
+same 20ms linear fade-in/out `build_test_signal` uses is still applied
+(for click-avoidance only — since every component's own `sin(...)` is
+already exactly zero at `t=0`, the unfaded signal itself already starts
+at zero amplitude; the fade is kept for consistency and to avoid any
+edge discontinuity from the fade window boundary itself).
+
+### Normalization — exact derivation
+
+Naively giving each of the 3 components the same per-tone amplitude as
+the existing single-tone stimulus (0.05) would triple the total drive
+level, not preserve it — RMS *power* adds across uncorrelated
+frequencies, not peak amplitude. The exact math (also in the function's
+own code comment):
+
+```
+A single sinusoid of peak amplitude A has RMS = A / sqrt(2).
+
+N uncorrelated sinusoids (different frequencies -> ~zero cross-
+correlation over any window spanning many cycles) of EQUAL per-tone
+peak amplitude a sum to a combined signal whose mean-square power is
+the SUM of each component's own power (variances add for uncorrelated
+signals):
+    combined_meansq = N * (a^2 / 2)
+    combined_RMS     = a * sqrt(N / 2)
+
+Solve for a such that combined_RMS equals a single tone's RMS at the
+SAME `amplitude` parameter (amplitude / sqrt(2)):
+    a * sqrt(N / 2) = amplitude / sqrt(2)
+    a = amplitude / sqrt(2) / sqrt(N / 2)
+    a = amplitude / sqrt(N)          <- exact, sqrt(2) cancels
+
+Self-consistency check: combined_RMS = (amplitude/sqrt(N)) * sqrt(N/2)
+    = amplitude / sqrt(2)  -- EXACTLY the single-tone RMS, for any N.
+```
+
+With `N=3` and `amplitude=0.05` (the project's standard default): each
+component's own peak amplitude is `0.05/sqrt(3) ≈ 0.02887`. A defensive
+`max(-32768, min(32767, value))` clamp is present in the code but is
+not expected to trigger — worst-case perfect constructive interference
+of all 3 components reaches `per_tone_amplitude * 32767 * 3 ≈ 2837`,
+well inside int16 range; confirmed empirically below (peak observed:
+2111, i.e. the clamp never activated).
+
+## 32. `stationary_multitone` offline validation
+
+Generated the exact signal the first real R0082-C hardware run will use
+(`duration_s=30.0, sample_rate=48000, amplitude=0.05`) and validated it
+without touching any microphone/speaker hardware, using only the
+already-isolated `r0082_audio_utils.py` (importable with plain `python3`
+— no venv needed, confirmed — since it has zero non-stdlib
+dependencies).
+
+**Determinism:** built twice independently; the two outputs are
+byte-for-byte identical.
+
+**Header/duration:** mono, S16_LE (`sampwidth=2`), 48000Hz,
+1,440,000 frames, exactly 30.000s.
+
+**No clipping:** overall peak = 2111 (int16 max is 32767) — the
+defensive clamp in §31 never activates.
+
+**Combined RMS vs. single-tone target:** stationary_multitone overall
+RMS = 1157.51; single-tone (`tones`, `amplitude=0.05`) RMS = 1156.47;
+ratio = 1.0009 — matches the derivation in §31 almost exactly (the
+small residual difference is the fade-envelope edge effect, present
+identically in both stimuli).
+
+**Spectral content — confirmed present and CONSTANT throughout,** via
+a pure-Python single-bin DFT correlation (no numpy) at 500/1000/2000Hz
+in three 1-second sub-windows spread across the signal (t=1-2s,
+t=15-16s, t=28-29s — deliberately away from the fade edges), plus an
+off-target 3000Hz probe as a noise-floor reference:
+
+```
+start  (t=1.0-2.0s):   500Hz=472.7  1000Hz=472.8  2000Hz=472.8   (3000Hz ref=0.04)
+middle (t=15.0-16.0s): 500Hz=472.7  1000Hz=472.8  2000Hz=472.8   (3000Hz ref=0.04)
+end    (t=28.0-29.0s): 500Hz=472.7  1000Hz=472.8  2000Hz=472.8   (3000Hz ref=0.04)
+```
+
+All three target frequencies are present with equal, constant magnitude
+at the start, middle, and end of the signal (essentially identical
+across all three windows); the off-target frequency reads at the noise
+floor. **No frequency transitions remain.**
+
+### Exact 10-window RMS analysis (3s windows, the same windowing R0082-B/C use)
+
+```
+window   window_s      rms       peak
+  1      0.0- 3.0    1155.45     2111
+  2      3.0- 6.0    1158.03     2111
+  3      6.0- 9.0    1158.03     2111
+  4      9.0-12.0    1158.03     2111
+  5     12.0-15.0    1158.03     2111
+  6     15.0-18.0    1158.03     2111
+  7     18.0-21.0    1158.03     2111
+  8     21.0-24.0    1158.03     2111
+  9     24.0-27.0    1158.03     2111
+ 10     27.0-30.0    1155.45     2111
+```
+
+`min/max = 1155.45 / 1158.03` → **max/min = 1.0022** (target ~1.00 —
+met). The only two windows that differ at all (1 and 10, by 0.22%) are
+the ones containing the 20ms fade edges; all 8 interior windows are
+bit-for-bit equal at 1158.03. Peak is identical (2111) in every single
+window — the only variation anywhere is the RMS dip from the fade
+envelope, not from any frequency-dependent effect.
+
+**No segment-boundary discontinuities:** a finer 0.5s-resolution
+sub-window scan across the full 30s signal (60 sub-windows) found
+`max/min = 1.0136` overall, with **only** the very first and very last
+0.5s sub-windows (t=0.0s and t=29.5s — the fade-in/out region) deviating
+more than 1% from the median; all 58 interior sub-windows are within 1%
+of the median RMS. There is no analog anywhere in this signal of the old
+`tones` stimulus's sharp ~3x step at the 500→1000→2000Hz transitions
+(R0082-B §24).
+
+### Validation suite (re-run after adding `stationary_multitone`)
+
+```
+isolated-venv import (r0082_audio_utils, plain python3, no venv needed)  PASS
+py_compile (all 3 files: utils, R0082-B PoC, R0082-C PoC)               PASS
+ruff (whole r0082_livekit_webrtc_audio_poc/ directory)                  PASS (0 errors)
+git diff --check                                                        PASS
+--help (both R0082-B and R0082-C scripts)                               PASS
+```
+
+No microphone/speaker hardware was used for any of this validation —
+`build_stationary_multitone_signal()` and every check above operate
+purely on the generated PCM in memory/on disk.
+
+## 33. Updated first R0082-C hardware command — `stationary_multitone`
+
+Supersedes §30's `--stimulus tones` command (kept above as historical
+record, not deleted). Same prerequisite as §30:
+
+```bash
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/livekit_server/livekit-server --dev --bind 127.0.0.1
+```
+
+**The one operator command (AEC OFF only):**
+
+```bash
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/r0082_livekit_probe_venv/bin/python3 \
+  docs/research/r0082_livekit_webrtc_audio_poc/r0082c_platform_audio_room_aec_poc.py \
+  --aec off --duration 30 --stimulus stationary_multitone
+```
+
+With this stimulus, any systematic window-to-window RMS change in the
+real hardware result can legitimately be interpreted as a time/
+stream-age effect (§25a) — the frequency-content confound is removed.
+**Do not run `--aec on` yet** — withheld until this `--aec off` run is
+confirmed to open the real devices via `PlatformAudio` and complete
+successfully. This has intentionally **not** been run by this session.

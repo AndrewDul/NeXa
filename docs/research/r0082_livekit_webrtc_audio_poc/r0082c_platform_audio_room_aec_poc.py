@@ -415,8 +415,14 @@ def parse_args() -> argparse.Namespace:
         help="Test duration in seconds (default 30).",
     )
     p.add_argument(
-        "--stimulus", choices=["tones", "mls"], default="tones",
-        help="Reused from R0081/R0082-B (default 'tones').",
+        "--stimulus", choices=["tones", "mls", "stationary_multitone"], default="tones",
+        help=(
+            "'tones'/'mls' reused from R0081/R0082-B (default 'tones'). "
+            "'stationary_multitone' (R0082-C): 500+1000+2000Hz mixed "
+            "simultaneously for the full duration, no segment transitions "
+            "-- removes the frequency-content confound R0082-B's WAV "
+            "sanity check found in 'tones'."
+        ),
     )
     p.add_argument(
         "--amplitude", type=float, default=0.05,
