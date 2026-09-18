@@ -214,10 +214,19 @@ candidate start. There is no retry/resume code path anywhere in the
 loop, so once broken the loop cannot restart.
 
 **Validity criteria are SEPARATE from silent-user mode** -- deliberate-
-bargein mode does not require the full ~27.18s capture; it requires
-capture through `max(speak_now boundary, first confirmed interruption
-+ 1.0s margin)` if a confirmed interruption occurred, else the full
-duration (nothing legitimately shortened it if no interruption fired).
+bargein mode does not require the full ~27.18s capture. Three cases,
+in priority order: (1) a pre-`SPEAK-NOW` false positive occurred
+(`pre_user_false_positive`) -- only `POST_EVENT_EVIDENCE_MARGIN_S`
+(0.5s) of capture past the EARLIEST such event is required, since a
+real self-echo false positive correctly, legitimately, cuts the run
+short via immediate playback cancellation (see the third correction
+below -- this is NOT the same requirement as case 2); (2) otherwise, a
+genuine post-`SPEAK-NOW` confirmed interruption occurred -- capture
+through `max(speak_now boundary, first post-SPEAK-NOW confirmed
+interruption + POST_INTERRUPT_MARGIN_S (1.0s))` is required; (3)
+otherwise (no interruption of any kind) -- the full
+`MIN_DELIBERATE_CAPTURE_S` is required, since nothing legitimately
+shortened the run.
 
 **The canonical false-positive boundary is `SPEAK NOW`
 (`speak_now_boundary_t_s = PRE_ROLL_S + BARGEIN_SPEAK_NOW_TIME_S`), NOT
@@ -234,7 +243,7 @@ speech, and is tracked, reported in full detail
 wired into the canonical verdict as `FAIL-E`, regardless of whether the
 later genuine post-`SPEAK-NOW` barge-in also succeeds.
 
-**Two corrections, both found before any hardware execution, both
+**Three corrections, all found before any hardware execution, all
 preserved here as history rather than silently erased:**
 
 1. **First fix (verdict-level):** the first implementation computed
@@ -243,8 +252,8 @@ preserved here as history rather than silently erased:**
    `VERDICT=PASS`. Fixed by checking it immediately after
    instrumentation validity and before any of the post-cue A/B/C/D
    checks.
-2. **Second fix (boundary-level, this round):** the boundary used for
-   that check was `cue_start_boundary_t_s` (countdown-start, t=4.0s
+2. **Second fix (boundary-level):** the boundary used for that check
+   was `cue_start_boundary_t_s` (countdown-start, t=4.0s
    playback-relative) rather than `speak_now_boundary_t_s` (t=7.0s
    playback-relative). This meant a false trigger occurring DURING the
    countdown itself (while the operator was still silent, by
@@ -259,15 +268,39 @@ preserved here as history rather than silently erased:**
    backward-compatible ALIASES of the SAME SPEAK-NOW-bounded values
    (not recomputed against countdown-start) so no ambiguous terminology
    hides the distinction.
+3. **Third fix (validity-semantics-level, this round):** playback
+   correctly cancels IMMEDIATELY on any `INTERRUPT_CONFIRMED`, including
+   a pre-`SPEAK-NOW` false one -- that is required, correct behavior,
+   and is deliberately NOT delayed or suppressed by this fix.
+   `_play_signal_cancelable()` also cancels the cue-delivery task when
+   playback stops early, so a pre-`SPEAK-NOW` false `INTERRUPT_CONFIRMED`
+   can mean `SPEAK NOW` is never emitted at all
+   (`cue_emitted=False`), and the capture never reaches anywhere near
+   `MIN_DELIBERATE_CAPTURE_S`. The old check folded
+   `not cue_emitted or not capture_ok` into the FIRST (`FAIL-F`) branch,
+   evaluated BEFORE `pre_user_false_positive` -- so this exact,
+   correctly-detected self-echo scenario was misclassified as `FAIL-F`
+   (instrumentation invalid) instead of `FAIL-E` (a genuine, correctly
+   handled, pre-`SPEAK-NOW` false positive). Fixed: `capture_ok` is now
+   computed WITH KNOWLEDGE of `pre_user_false_positive` (see the
+   3-case validity description above), and `cue_emitted` is checked
+   SEPARATELY, only AFTER `pre_user_false_positive` has already been
+   ruled out.
 
 **FAIL taxonomy** (distinct classes, per instruction), checked in this
 exact order:
-F = test instrumentation invalid (first-frame gate, zero VAD frames,
-or capture too short even under the relaxed deliberate-mode rule);
+F(1) = zero VAD frames, OR capture shorter than the situation-appropriate
+minimum (see the 3-case validity description above -- this alone does
+NOT yet distinguish self-echo from instrumentation failure);
 E = a false accepted VAD start or confirmed interruption occurred
-BEFORE `SPEAK NOW` (`pre_user_false_positive`) -- covers both
-before-the-countdown and during-the-countdown false triggers -- checked
-next, before any post-`SPEAK-NOW` outcome is considered;
+BEFORE `SPEAK NOW` (`pre_user_false_positive`) -- covers before-the-
+countdown, during-the-countdown, AND cases where that same false
+positive's own immediate, correct playback cancellation meant
+`SPEAK NOW` was never reached -- checked next, before `cue_emitted` or
+any post-`SPEAK-NOW` outcome is considered;
+F(2) = (only once `pre_user_false_positive` is ruled out) `SPEAK NOW`
+was never emitted -- a genuine instrumentation problem, not a
+self-echo event;
 A = operator spoke, no accepted post-`SPEAK-NOW` VAD start;
 B = accepted post-`SPEAK-NOW` VAD start, no post-`SPEAK-NOW`
 `INTERRUPT_CONFIRMED`;
@@ -278,7 +311,9 @@ loop's design -- checked anyway).
 PASS = exactly the expected post-`SPEAK-NOW` chain AND
 `pre_user_false_positive is False`. `VERDICT=PASS` can no longer
 coexist with a false positive at any point before `SPEAK NOW`,
-countdown included.
+countdown included, and a correctly-detected-and-acted-on pre-
+`SPEAK-NOW` false positive can no longer be mislabeled `FAIL-F` merely
+because its own correct handling shortened the run.
 
 **Latency caveat, stated explicitly, not hidden:** `speak_now_to_
 vad_start_s` (and `speak_now_to_interrupt_confirmed_s`) are measured
@@ -375,8 +410,16 @@ BARGEIN_SPEAK_NOW_TIME_S = 7.0  # playback-relative; see module docstring
 BARGEIN_CUE_LEAD_S = 3.0  # "3, 2, 1" at 1s apart before SPEAK NOW
 BARGEIN_CUE_START_TIME_S = BARGEIN_SPEAK_NOW_TIME_S - BARGEIN_CUE_LEAD_S  # 4.0
 OPERATOR_PHRASE_PL = "Przerwij, teraz opowiedz mi o czymś innym."
-POST_INTERRUPT_MARGIN_S = 1.0  # min capture required after a confirmed interruption
+POST_INTERRUPT_MARGIN_S = 1.0  # min capture after a GENUINE post-SPEAK-NOW confirmed interruption
 MIN_DELIBERATE_CAPTURE_S = PRE_ROLL_S + BARGEIN_SPEAK_NOW_TIME_S + 0.5
+# Min capture required after a PRE-SPEAK-NOW (self-echo) false accepted
+# start/confirmation -- deliberately SMALL: a real self-interruption
+# legitimately cuts the run short (playback cancels immediately on
+# INTERRUPT_CONFIRMED, correctly, even before SPEAK NOW), so this run
+# must not be penalized with the full MIN_DELIBERATE_CAPTURE_S/
+# POST_INTERRUPT_MARGIN_S requirement -- only enough evidence past the
+# offending event to prove it was genuinely captured and persisted.
+POST_EVENT_EVIDENCE_MARGIN_S = 0.5
 
 CSV_HEADER_BARGEIN = [
     "timestamp_monotonic",
@@ -1112,7 +1155,30 @@ def evaluate_deliberate_bargein_result(
     SPEAK-NOW-bounded values (kept only so any external caller/report
     text still using the old names sees the corrected semantics rather
     than breaking -- they are NOT computed against countdown-start).
-    `verdict` is one of "PASS", "FAIL-A".."FAIL-F"."""
+    `verdict` is one of "PASS", "FAIL-A".."FAIL-F".
+
+    **Correction, third review:** playback correctly cancels IMMEDIATELY
+    on ANY `INTERRUPT_CONFIRMED`, including one that fires before
+    `SPEAK NOW` (a genuine self-echo false positive) -- that is required
+    behavior, not a bug, and is NOT changed here. But
+    `_play_signal_cancelable()` also cancels the cue-delivery task when
+    playback stops early, so a pre-SPEAK-NOW false `INTERRUPT_CONFIRMED`
+    can mean `SPEAK NOW` is never emitted (`cue_emitted=False`) and the
+    capture never reaches anywhere near `MIN_DELIBERATE_CAPTURE_S`. The
+    OLD validity check (`not cue_emitted or not capture_ok` folded
+    together, both gating `FAIL-F` before `pre_user_false_positive` was
+    even consulted) would misclassify this exact case as `FAIL-F`
+    (instrumentation invalid) instead of `FAIL-E` (the correct
+    classification -- a genuine, correctly-detected self-echo false
+    positive that legitimately, correctly, cut the run short). Fixed:
+    capture validity (`capture_ok`) is now computed WITH KNOWLEDGE of
+    `pre_user_false_positive` -- when a pre-SPEAK-NOW false positive
+    occurred, only `POST_EVENT_EVIDENCE_MARGIN_S` of capture past the
+    EARLIEST offending event is required (proving the event's own
+    evidence was genuinely captured and persisted), not the full
+    SPEAK-NOW-reaching duration. `cue_emitted` is now checked SEPARATELY
+    and ONLY after `pre_user_false_positive` has already been ruled out
+    -- see the `if/elif` chain below."""
     pre_user_started = [t for t in started_events if t < speak_now_boundary_t_s]
     pre_user_confirmed = [t for t in confirmed_events if t < speak_now_boundary_t_s]
     post_user_started = [t for t in started_events if t >= speak_now_boundary_t_s]
@@ -1127,7 +1193,19 @@ def evaluate_deliberate_bargein_result(
     during_countdown_started = [t for t in pre_user_started if t >= cue_start_boundary_t_s]
     during_countdown_confirmed = [t for t in pre_user_confirmed if t >= cue_start_boundary_t_s]
 
-    if post_user_confirmed:
+    # Capture validity depends on WHICH kind of run this is:
+    #  - a pre-SPEAK-NOW false positive legitimately, correctly, cuts the
+    #    run short -- only a small margin of evidence past the earliest
+    #    offending event is required;
+    #  - otherwise, a genuine post-SPEAK-NOW confirmed interruption sets
+    #    the usual POST_INTERRUPT_MARGIN_S requirement;
+    #  - otherwise (no interruption at all, of any kind) the full
+    #    MIN_DELIBERATE_CAPTURE_S is required, since nothing legitimately
+    #    shortened the run.
+    if pre_user_false_positive:
+        earliest_pre_user_event_t_s = min(pre_user_started + pre_user_confirmed)
+        min_required_s = earliest_pre_user_event_t_s + POST_EVENT_EVIDENCE_MARGIN_S
+    elif post_user_confirmed:
         min_required_s = max(
             speak_now_boundary_t_s, post_user_confirmed[0] + POST_INTERRUPT_MARGIN_S
         )
@@ -1135,10 +1213,12 @@ def evaluate_deliberate_bargein_result(
         min_required_s = MIN_DELIBERATE_CAPTURE_S
     capture_ok = capture_duration_s >= min_required_s
 
-    if vad_frames_processed == 0 or not cue_emitted or not capture_ok:
+    if vad_frames_processed == 0 or not capture_ok:
         verdict = "FAIL-F"
     elif pre_user_false_positive:
         verdict = "FAIL-E"
+    elif not cue_emitted:
+        verdict = "FAIL-F"
     elif not post_user_started:
         verdict = "FAIL-A"
     elif not post_user_confirmed:

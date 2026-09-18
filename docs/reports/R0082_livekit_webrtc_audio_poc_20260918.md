@@ -5004,3 +5004,156 @@ remains READY for one real deliberate-barge-in hardware run** — same
 architecture, same cue timing, same cancellation mechanism, same
 validity rule, only the classification boundary and field names
 corrected. This session did not execute hardware.
+
+## 101. CORRECTION #3 — a correctly-detected pre-SPEAK-NOW false interruption could be mislabeled FAIL-F instead of FAIL-E; now fixed (no hardware run)
+
+A **third, distinct** defect, found by a further operator review,
+still before any hardware execution. It does not undo or contradict
+§99 or §100 — both remain correct. This round closes a
+runtime-interaction edge case those two fixes did not yet cover.
+
+**Defect.** Playback correctly cancels IMMEDIATELY on ANY
+`INTERRUPT_CONFIRMED`, including one that fires before `SPEAK NOW` — a
+genuine self-echo false positive. That is required, correct safety/
+evidence behavior and was never in question. However,
+`_play_signal_cancelable()` also cancels the cue-delivery task the
+instant playback stops early. So this sequence is possible on real
+hardware:
+
+```
+operator silent
+false self-echo -> INTERRUPT_CONFIRMED during (or even before) the countdown
+-> playback_cancel_requested -> playback stops -> cue task cancelled
+-> SPEAK NOW never emitted -> cue_emitted = False
+```
+
+The verdict ordering fixed in §99/§100 still checked instrumentation
+validity as a single combined condition:
+
+```python
+if vad_frames_processed == 0 or not cue_emitted or not capture_ok:
+    verdict = "FAIL-F"
+elif pre_user_false_positive:
+    verdict = "FAIL-E"
+```
+
+Since `cue_emitted` is `False` in the sequence above, this run would
+hit the FIRST branch and report `FAIL-F` (instrumentation invalid) —
+even though the run was actually a textbook example of the ORIGINAL
+self-echo failure mode being correctly detected and correctly acted
+upon. `FAIL-F` implies "we don't know what happened"; the correct
+label is `FAIL-E` ("we know exactly what happened, and it was a false
+positive"). Compounding this, `capture_ok`'s minimum-duration
+requirement (`MIN_DELIBERATE_CAPTURE_S`, ≈ reaching `SPEAK NOW`) also
+assumed the run would reach `SPEAK NOW` under normal circumstances — a
+run correctly, legitimately, cut short by a real self-echo detection
+would usually fail that requirement too, compounding the
+misclassification risk.
+
+**Required behavior, preserved exactly:** playback cancellation is NOT
+delayed or suppressed. A pre-`SPEAK-NOW` `INTERRUPT_CONFIRMED` SHOULD
+stop playback immediately — that is exactly what should happen and
+remains unchanged. The fix is entirely in verdict/validity semantics,
+not in when or whether cancellation happens.
+
+**Fix.** `evaluate_deliberate_bargein_result()`'s capture-validity
+computation now depends on which of three situations applies:
+
+```python
+if pre_user_false_positive:
+    earliest_pre_user_event_t_s = min(pre_user_started + pre_user_confirmed)
+    min_required_s = earliest_pre_user_event_t_s + POST_EVENT_EVIDENCE_MARGIN_S
+elif post_user_confirmed:
+    min_required_s = max(
+        speak_now_boundary_t_s, post_user_confirmed[0] + POST_INTERRUPT_MARGIN_S
+    )
+else:
+    min_required_s = MIN_DELIBERATE_CAPTURE_S
+capture_ok = capture_duration_s >= min_required_s
+
+if vad_frames_processed == 0 or not capture_ok:
+    verdict = "FAIL-F"
+elif pre_user_false_positive:
+    verdict = "FAIL-E"
+elif not cue_emitted:
+    verdict = "FAIL-F"
+elif not post_user_started:
+    verdict = "FAIL-A"
+elif not post_user_confirmed:
+    verdict = "FAIL-B"
+elif not playback_stopped_early:
+    verdict = "FAIL-C"
+elif playback_resumed_after_stop:
+    verdict = "FAIL-D"
+else:
+    verdict = "PASS"
+```
+
+A new constant `POST_EVENT_EVIDENCE_MARGIN_S = 0.5` (seconds) defines
+the small post-event evidence margin: when a pre-`SPEAK-NOW` false
+positive occurred, only this much capture past the EARLIEST offending
+event is required — proving that event's own evidence (WAV/CSV/
+timestamps) was genuinely captured and persisted — not the full
+`MIN_DELIBERATE_CAPTURE_S`/`POST_INTERRUPT_MARGIN_S` requirement that
+assumes the run reached (or nearly reached) `SPEAK NOW`. `cue_emitted`
+is now checked as its own, separate branch, reached ONLY after
+`pre_user_false_positive` has already been ruled out — so a genuine
+instrumentation failure (cue never fired for some OTHER, non-self-echo
+reason) still correctly reports `FAIL-F`, while a cue-never-fired
+caused by a correctly-detected pre-`SPEAK-NOW` false positive now
+correctly reports `FAIL-E`.
+
+**Scope of the fix.** `evaluate_deliberate_bargein_result()`'s validity
+computation and verdict `if/elif` ordering, one new constant
+(`POST_EVENT_EVIDENCE_MARGIN_S`), and docstring/FAIL-taxonomy text
+only. **`_play_signal_cancelable()` and the live cancellation wiring
+are untouched** — re-verified this round by an explicit programmatic
+diff against the last commit (byte-for-byte identical), confirming
+cancellation remains immediate and unconditional on any
+`INTERRUPT_CONFIRMED`, not delayed or suppressed by this fix. No
+change to cue timing, no change to VAD thresholds
+(`confidence`/`start_secs`/`stop_secs`/`min_volume`/`confirm_hold_secs`
+unchanged). `--test-mode silent-user` re-verified byte-for-byte
+unchanged (`10405` characters, programmatic diff, identical). No
+production files touched.
+
+**Offline validation performed (pure classification tests; full
+synthetic dry run NOT re-run, per the same reasoning as §99/§100 — this
+fix does not touch runtime wiring):**
+
+```
+py_compile                                                          PASS
+ruff                                                                 PASS
+git diff --check                                                     PASS
+TEST 1 -- pre-countdown INTERRUPT_CONFIRMED -> playback cancels
+  before the cue ever starts -> cue_emitted=False -> verdict MUST
+  be FAIL-E, not FAIL-F                                              PASS (3/3 sub-checks)
+TEST 2 -- during-countdown INTERRUPT_CONFIRMED -> playback stops
+  before SPEAK NOW -> cue_emitted=False -> FAIL-E                     PASS (2/2 sub-checks)
+TEST 3 -- no pre-user event + SPEAK NOW never emitted because of a
+  GENUINE instrumentation problem (not a self-echo event) -> FAIL-F   PASS (2/2 sub-checks)
+TEST 4 -- no pre-user event + clean SPEAK NOW + genuine barge-in
+  succeeds -> PASS                                                    PASS
+TEST 5 -- pre-user accepted START without confirmation (cue fires
+  normally, post-SPEAK-NOW chain succeeds) -> still FAIL-E             PASS (2/2 sub-checks)
+TEST 6 -- existing FAIL-A/B/C/D/F classifications remain correct       PASS (6/6)
+_play_signal_cancelable() body byte-for-byte identical to the last
+  commit -- cancellation remains immediate/unconditional, not
+  delayed or suppressed by this fix                                   PASS
+silent-user run_speech_role body byte-for-byte identical to the
+  last commit (10405 chars, programmatic diff)                        PASS
+_play_signal_cancelable() cancellation/no-resume regression
+  (Section 2 of the offline suite, unaffected by this fix)            PASS (10/10)
+LiveVadChain.process_frame() CSV backward-compatibility regression     PASS (4/4, unaffected)
+Positive/negative VAD control regression                               PASS (5/5, unaffected)
+```
+
+62 checks total, all PASS.
+
+**Verdict: FAIL-F/FAIL-E validity-semantics fix CONFIRMED correct
+offline. R0082-G remains READY for one real deliberate-barge-in
+hardware run** — same architecture, same cue timing, same cancellation
+mechanism (immediate, unconditional, unmodified), same SPEAK-NOW
+classification boundary, only the interaction between capture validity
+and the pre-`SPEAK-NOW` false-positive check corrected. This session
+did not execute hardware.
