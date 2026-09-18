@@ -273,11 +273,18 @@ target architecture.
 ## 10. Files added
 
 - `docs/research/r0082_livekit_webrtc_audio_poc/r0082_platform_audio_aec_poc.py`
-  — the R0082-B minimal audio-only PoC script. Reuses `build_signal` from
-  R0081's `r0081_direct_aec_diagnostic.py` and `_peak`/`_rms`/`_write_wav`
-  from `m2_6b4m_self_echo_probe.py` via direct `sys.path` insertion (no
-  duplication of signal-generation logic). `py_compile`-clean (isolated
-  probe venv) and `ruff check`-clean (NeXa's own `.venv/bin/ruff`).
+  — the R0082-B minimal audio-only PoC script. Imports `build_signal`/
+  `_peak`/`_rms`/`_write_wav` exclusively from this directory's own
+  `r0082_audio_utils.py` (§12a — corrected after the first hardware
+  attempt found these were originally reused via `sys.path` from R0081's
+  scripts, one of which had an accidental `nexa`/`loguru` runtime
+  dependency). `py_compile`-clean (isolated probe venv) and
+  `ruff check`-clean (NeXa's own `.venv/bin/ruff`).
+- `docs/research/r0082_livekit_webrtc_audio_poc/r0082_audio_utils.py` —
+  new (§12a), standard-library-only (`array`, `math`, `struct`, `wave`,
+  `pathlib`) verbatim copies of `build_signal`/`build_test_signal`/
+  `build_mls_signal`/`_rms`/`_peak`/`_write_wav`, confirmed byte-for-byte
+  identical output to the originals (§12a item 7).
 - `docs/research/r0082_livekit_webrtc_audio_poc/` (new, empty until the PoC
   is actually run) — output directory for `r0082_aec_captures/` WAV
   evidence, run-id-named, following the same convention as R0081's own
@@ -343,6 +350,106 @@ to work:** assign the `array.array('h', ...)` object directly
 (`frame.data[:] = buf`), which is format-compatible. Applied in
 `_play_signal()` with an explanatory comment. This was caught during
 offline validation, before any hardware run was attempted.
+
+## 12a. First hardware attempt: NOT RUN — import-time isolation defect found and fixed
+
+The operator's first real R0082-B command (`--aec off --duration 30
+--stimulus tones`, run with the isolated probe venv's Python per §19)
+**did not reach hardware access.** It failed immediately during Python
+imports:
+
+```
+ModuleNotFoundError: No module named 'loguru'
+```
+
+**Import chain:** `r0082_platform_audio_aec_poc.py` ->
+`r0081_direct_aec_diagnostic.build_signal` -> `nexa.voice.aec_gain` ->
+`nexa.voice.__init__` -> `nexa.voice.bargein` -> `loguru`.
+
+**Root cause:** the PoC script reused `build_signal` from R0081's own
+`r0081_direct_aec_diagnostic.py`, which imports `from nexa.voice.aec_gain
+import apply_gain` at module scope. Importing `nexa.voice.aec_gain`
+triggers `nexa.voice`'s own `__init__.py`, which imports
+`nexa.voice.bargein`, which imports `loguru` — a NeXa production runtime
+dependency that is deliberately **not** installed in R0082's isolated
+probe venv (installing it, or the rest of NeXa's runtime surface, into
+that venv would defeat the isolation R0082 exists to test).
+
+This is **not** a hardware failure, not an AEC failure, not a
+sample-rate failure, and not a LiveKit failure — it is a dependency-
+boundary defect found before any hardware access was attempted, on the
+very first invocation.
+
+**Fix:** extracted the minimal deterministic diagnostic primitives this
+PoC actually needs (`build_signal`/`build_test_signal`/`build_mls_signal`,
+`_rms`, `_peak`, `_write_wav`) into a new, standard-library-only local
+module, `docs/research/r0082_livekit_webrtc_audio_poc/r0082_audio_utils.py`
+(uses only `array`, `math`, `struct`, `wave`, `pathlib`). Every function
+is a **verbatim copy** of the existing R0081/`m2_6b4m_self_echo_probe.py`
+algorithm — not a redesign — with provenance comments in the new module
+explaining exactly why the copy exists. `m2_6b4m_self_echo_probe.py`
+itself was separately audited (§12b) and found to already be safe at
+module scope; only `r0081_direct_aec_diagnostic.py`'s `nexa.voice.aec_gain`
+import was the actual defect. The PoC script now imports exclusively from
+its own local `r0082_audio_utils.py`, never from either R0081 helper
+script.
+
+**Validated in the actual isolated R0082 venv** (all 9 items from the
+correction request):
+
+1. Importing `r0082_platform_audio_aec_poc.py` succeeds — confirmed.
+2. `--help` succeeds — confirmed (full usage text prints, no import error).
+3. `py_compile` succeeds for both the PoC script and the new utility
+   module — confirmed.
+4. `ruff check` succeeds (0 errors) for the whole `r0082_livekit_webrtc_audio_poc/`
+   directory — confirmed.
+5. `git diff --check` succeeds (no whitespace issues) — confirmed.
+6. Importing the PoC does **not** load `nexa`, `pipecat`, `loguru`, or
+   Silero modules, and does not load the Gemini SDK (`google.genai`/
+   `google.generativeai`) — confirmed by inspecting `sys.modules` after
+   import. **One clarification, not a violation:** `google.protobuf` (and
+   its `_upb` C-extension backend) IS loaded — this is `livekit`'s own
+   direct dependency (WebRTC/gRPC signaling uses protobuf as a wire
+   format) and is unrelated to Gemini/GenAI; `google.genai` and
+   `google.generativeai` are confirmed absent from `sys.modules`.
+7. Signal generation is byte-for-byte identical to the previous R0081
+   tone/MLS builders — confirmed directly (old script run in NeXa's own
+   `.venv`, where its `nexa.*` imports resolve, compared byte-for-byte
+   against the new module run in the same interpreter): `tones` at
+   duration 3.0/amplitude 0.05/sample_rate 48000 identical; `mls` at
+   duration 1.0/amplitude 0.05/sample_rate 48000 identical; `tones` at
+   duration 3.0/amplitude 0.5/sample_rate 16000 (R0081's own original
+   default parameters) identical; both old and new raise the identical
+   `ValueError` message when `mls`'s duration/rate combination would
+   exceed the MLS period (a deliberately preserved guard, not a
+   discrepancy).
+8. `_rms`/`_peak` return known expected values on synthetic PCM
+   (constant-1000 int16 -> rms=peak=1000.0/1000; full-scale square wave
+   -> rms=peak=32767.0/32767; empty PCM -> 0.0/0) — confirmed, run in the
+   isolated probe venv.
+9. `_write_wav` produces a valid mono, 16-bit, PCM S16_LE WAV (verified
+   by reading it back with the stdlib `wave` module and confirming
+   channels=1, sample width=2, frame rate as requested, and frame data
+   round-trips exactly) — confirmed, run in the isolated probe venv.
+
+No real speaker/microphone playback was run as part of this correction,
+per instruction.
+
+## 12b. `m2_6b4m_self_echo_probe.py` audit — no fix needed there
+
+Audited whether `m2_6b4m_self_echo_probe.py` (the source of the
+previously-reused `_rms`/`_peak`/`_write_wav`) also pulls in NeXa/Pipecat/
+runtime dependencies at import time. Its module-level imports are stdlib +
+`numpy` only (`argparse, asyncio, json, math, os, statistics, struct, sys,
+time, traceback, wave`, `dataclasses`, `datetime`, `pathlib`, `typing`,
+`numpy`) — every `nexa.*`/`pipecat.*` import in that file lives inside
+deferred functions (`_pipecat_imports()`, and similar function-scoped
+imports used only by its own live-hardware code paths), never at module
+scope. So this file was **not** the cause of the `loguru` failure, and by
+itself would have been safe to import from. It was still replaced (§12a)
+so the new `r0082_audio_utils.py` has zero external dependencies at all
+(not even `numpy`), for the strongest possible isolation guarantee, and so
+the PoC's dependency surface is fully stated in one place.
 
 ## 13. Test methodology (for the not-yet-run R0082-B hardware test)
 
@@ -462,28 +569,35 @@ actual installed source and/or real, safe, read-only hardware probes — none
 were assumed or invented from memory. The architecture question (Pi
 edge/frontend vs. NeXa agent/backend) is resolved with direct source
 evidence (§3). A minimal, offline-validated (`py_compile` + `ruff`
-clean) R0082-B PoC script exists and is ready to run.
+clean, and now dependency-isolation-clean per §12a) R0082-B PoC script
+exists and is ready to run.
 
-**R0082-B (the actual hardware AEC A/B test): NOT YET RUN.** No verdict is
-given for R0082-B or for R0082 overall — this explicitly awaits the
-operator's real hardware test, run only after this report's review, per
-instruction.
+**First hardware attempt: NOT RUN.** Reason: an import-time isolation
+defect was found before hardware access — the PoC transitively imported
+`loguru` (NeXa production runtime dependency) via
+`r0081_direct_aec_diagnostic.py`'s own `nexa.voice.aec_gain` import (full
+chain and fix: §12a). This is explicitly **not** a hardware failure, not
+an AEC failure, not a sample-rate failure, and not a LiveKit failure —
+it was caught, diagnosed, and fixed entirely offline, before any device
+access was attempted. The fix has been validated against all 9 items
+requested (§12a) in the actual isolated R0082 venv.
+
+**AEC effectiveness: NOT YET TESTED.** No verdict is given for R0082-B or
+for R0082 overall — this still awaits the operator's real hardware test,
+now with the corrected, dependency-isolated PoC script, run only after
+this report's review.
 
 ## 19. Minimal command for the first real R0082 hardware test (NOT run by this session)
 
 ```bash
-# 1. AEC OFF baseline
-/path/to/isolated/r0082_livekit_probe_venv/bin/python3 \
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/r0082_livekit_probe_venv/bin/python3 \
     docs/research/r0082_livekit_webrtc_audio_poc/r0082_platform_audio_aec_poc.py \
     --aec off --duration 30 --stimulus tones
-
-# 2. AEC ON, immediately after, same physical conditions
-/path/to/isolated/r0082_livekit_probe_venv/bin/python3 \
-    docs/research/r0082_livekit_webrtc_audio_poc/r0082_platform_audio_aec_poc.py \
-    --aec on --duration 30 --stimulus tones
 ```
 
 Run with the isolated probe venv's Python (§4's install command), **not**
 NeXa's own `.venv`. Operator should monitor CPU/RAM (e.g. `top` in a second
-terminal) during each run per §13. This has intentionally **not** been run
-by this session.
+terminal) during the run per §13. **Do not run `--aec on` yet** — that
+command is intentionally withheld until this `--aec off` run is confirmed
+to open the real devices and complete successfully. This has intentionally
+**not** been run by this session.

@@ -35,17 +35,27 @@ NOT a mock) supports exactly this: ``open_input(enable_aec=...)`` then
 instance's reverse stream automatically -- fully local, no
 room/server/token needed. This script uses exactly that path.
 
-## Reused, not reimplemented
+## Reused, not reimplemented -- but from a LOCAL, dependency-free copy
 
 Test-signal generation (``build_signal``/``build_test_signal``/
-``build_mls_signal``) is imported directly from
+``build_mls_signal``) and the analysis primitives (``_rms``/``_peak``/
+``_write_wav``) are imported from this directory's own
+``r0082_audio_utils.py`` -- the SAME algorithms/amplitude semantics as
 ``docs/research/m2_6_cloud_realtime_voice/r0081_direct_aec_diagnostic.py``
--- the SAME deterministic, non-speech signal philosophy as R0081, at a
-48kHz sample rate (``MediaDevices``'s own default; R0082-A's own audit
-found this API path does NOT use NeXa's old 16kHz internal rate).
-``_rms``/``_peak``/``_write_wav`` are imported from
-``m2_6b4m_self_echo_probe.py``, the same primitives R0081's own script
-already reuses.
+and ``m2_6b4m_self_echo_probe.py`` (byte-for-byte identical output; see
+``r0082_audio_utils.py``'s own docstring), at a 48kHz sample rate
+(``MediaDevices``'s own default; R0082-A's own audit found this API path
+does NOT use NeXa's old 16kHz internal rate).
+
+**Why a local copy instead of importing R0081's scripts directly:** the
+first real R0082-B hardware attempt failed at import time --
+``r0081_direct_aec_diagnostic.py`` imports ``nexa.voice.aec_gain`` at
+module scope, which transitively loads ``nexa.voice``'s own
+``__init__.py`` -> ``nexa.voice.bargein`` -> ``loguru``, none of which are
+(or should be) installed in R0082's isolated probe venv. That was an
+import-time isolation defect, not a hardware/AEC/LiveKit failure --
+``r0082_audio_utils.py`` fixes it by holding a verbatim, standard-library-
+only copy of just the primitives this PoC actually needs.
 
 ## Environment -- this needs an ISOLATED venv, NOT NeXa's own .venv
 
@@ -59,9 +69,9 @@ dev venv, never NeXa's own), this script must be run with a SEPARATE
 Python environment that has the ``livekit``/``sounddevice`` extras
 installed -- see R0082-A's report for the exact versions verified
 compatible with this Raspberry Pi (aarch64) and the exact install
-command. NeXa's own ``sys.path`` insertion below only adds the R0081
-research directory (for the signal-generation reuse above), not
-NeXa's ``src/`` -- this script never imports ``nexa.*``.
+command. This script imports ONLY this directory's own
+``r0082_audio_utils.py`` (stdlib-only) plus ``livekit``/``sounddevice`` --
+never ``nexa.*``, ``pipecat.*``, ``google.*``, or ``loguru``.
 
 ## Usage (see R0082's own report for the full protocol; do not run this
 ## against real hardware without reading R0082-A's device-enumeration
@@ -94,15 +104,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-R0081_RESEARCH_DIR = REPO_ROOT / "docs" / "research" / "m2_6_cloud_realtime_voice"
-sys.path.insert(0, str(R0081_RESEARCH_DIR))
 
-from m2_6b4m_self_echo_probe import (  # noqa: E402  (reused, not reimplemented)
+# R0082 -- import ONLY from this directory's own local, stdlib-only
+# r0082_audio_utils.py, NOT from docs/research/m2_6_cloud_realtime_voice/.
+# r0081_direct_aec_diagnostic.py imports `nexa.voice.aec_gain` at module
+# scope, which transitively loads `nexa.voice.bargein` -> `loguru` --
+# an accidental production-runtime dependency this PoC must not carry.
+# r0082_audio_utils.py holds verbatim copies of the same algorithms
+# (build_signal/_rms/_peak/_write_wav) with that dependency removed; see
+# its own module docstring and R0082's report for the full story.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from r0082_audio_utils import (  # noqa: E402  (local, stdlib-only)
     _peak,
     _rms,
     _write_wav,
+    build_signal,
 )
-from r0081_direct_aec_diagnostic import build_signal  # noqa: E402  (reused, not reimplemented)
 
 try:
     from livekit import rtc
