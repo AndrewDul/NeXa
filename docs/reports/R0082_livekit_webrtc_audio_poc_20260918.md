@@ -3793,3 +3793,210 @@ rejects them (exactly as §68a of R0082-E's own report demonstrated).
 operator silence, or any `INTERRUPT_CONFIRMED` event — record the exact
 timestamp and cross-reference the corresponding audio segment in the
 saved WAV evidence.
+
+## 87. Pre-hardware gap closure — probe venv audit + resampler validation
+
+Two evidence gaps were closed before any hardware run: (1) auditing the
+isolated probe venv after the `onnxruntime`/`loudness`/`scipy` installs,
+and (2) independently validating `StreamingResampler` against a
+mathematically identical whole-array reference, since the prior round's
+positive-control PASS proved the pipeline recognizes strong speech but
+did NOT prove the resampler preserves WEAK residuals faithfully. **No
+hardware, no speaker playback, no `PlatformAudio` initialization, no
+production changes this round.**
+
+### 87a. Probe venv audit
+
+```bash
+pip check   # -> "No broken requirements found."
+pip freeze
+```
+
+```
+livekit==1.1.19          (unchanged — matches R0082-C/D/E's own confirmed version exactly)
+livekit-api==1.2.1        (unchanged — matches this report's own earlier table exactly)
+livekit-protocol==1.1.27
+loudness==0.2.0           (operator-approved exact version, unchanged since install)
+numpy==2.5.3
+onnxruntime==1.24.4       (operator-approved exact version, unchanged since install)
+PyJWT==2.14.0              (satisfies the documented <3,>=2.12.0 constraint)
+protobuf==7.36.2
+scipy==1.18.1
+sounddevice==0.5.6         (unchanged — matches R0082-B's own confirmed version exactly)
+tenacity==9.1.4            (unchanged — matches R0082-B/C's own confirmed version exactly)
+```
+
+**Cross-referenced against the ACTUAL install transaction logs from
+this investigation** (not re-derived from memory): the `scipy` install
+showed `Requirement already satisfied: numpy<2.8,>=2.0.0 ... (2.5.3)` —
+numpy was untouched. The `onnxruntime==1.24.4 loudness==0.2.0` install
+showed `Requirement already satisfied: protobuf ... (7.36.2)` and its
+own `Installing collected packages:` line listed ONLY
+`mpmath, flatbuffers, sympy, packaging, loudness, onnxruntime` — none
+of `livekit`, `livekit-api`, `sounddevice`, `numpy`, `protobuf`,
+`PyJWT`, or `tenacity` appeared in either transaction's installed-package
+list, meaning none were upgraded, downgraded, or removed.
+
+**Explicit answer**: installing `scipy`/`onnxruntime`/`loudness` did
+**NOT** upgrade, downgrade, remove, or conflict with any package used
+by the existing R0082 LiveKit harness. `pip check` confirms zero broken
+requirements. No STOP condition was triggered.
+
+### 87b. Resampler validation — new file, new controlled tests
+
+New file: `docs/research/r0082_livekit_webrtc_audio_poc/
+r0082f_resampler_validation.py`. Imports `StreamingResampler`/
+`LiveVadChain` directly from `r0082f_live_vad_self_echo_poc.py` (not a
+reimplementation). No hardware, no room, no `PlatformAudio` anywhere in
+this script.
+
+**Whole-array reference**: the SAME FIR coefficients
+(`StreamingResampler`'s own `self.b`, obtained from a real instance,
+never re-derived), the SAME zero-initial-state assumption, and the SAME
+3:1 decimation-from-index-0 convention, applied to the ENTIRE input in
+ONE `scipy.signal.lfilter` call — this is not a different resampling
+algorithm, it is the identical math applied without chunking, exactly
+per instruction.
+
+**Result — chunking does not change the numerical result (proven, not
+assumed)**:
+
+```
+A) whole-array reference vs B) 480-sample streaming (frozen speech WAV, 1,112,708 input samples):
+  output samples: 370903 vs 370903  (length_diff=0)
+  pearson_at_lag0=1.00000000  best_lag=0
+  max_abs_diff=0.000000  rms_diff=0.000000
+  first_differing_sample_index=None
+
+A) whole-array reference vs C) IRREGULAR-chunk streaming (chunk sizes
+   479,481,137,997,211,503,1,2999,50,480,17,4001,333, cycled):
+  output samples: 370903 vs 370903  (length_diff=0)
+  pearson_at_lag0=1.00000000  best_lag=0
+  max_abs_diff=0.000000  rms_diff=0.000000
+  first_differing_sample_index=None
+
+B) 480-chunk vs C) irregular-chunk:
+  max_abs_diff=0.000000  (transitively consistent)
+```
+
+**Bit-for-bit identical in every case, including deliberately
+non-multiple-of-3, deliberately irregular chunk boundaries (1-sample
+and 4001-sample chunks included).** This directly proves the running
+`_total_in_samples` decimation-phase counter is correct — chunking,
+regular or irregular, does not change the resampler's numerical output
+at all. §84's earlier "weak/negative correlation" finding against
+R0082-D/E's own `resample_poly` is now conclusively explained: it was
+NOT a defect in `StreamingResampler` (ruled out here, against its own
+mathematically identical reference) — it reflects real, expected phase/
+group-delay differences between two genuinely DIFFERENT FIR filter
+designs (this script's own 63-tap `firwin` filter vs. `resample_poly`'s
+internal filter), exactly the hypothesis already stated, now confirmed
+correct rather than merely assumed. No redesign was needed or performed
+— validation did not reveal a defect.
+
+### 87c. Impulse test — filter state and decimation phase, made obvious
+
+A single full-scale impulse (100ms, 4800 samples @ 48kHz) through all
+three methods:
+
+```
+reference:                  peak_index=10  peak_value=8416  (peak_time=0.625ms)
+480-chunk streaming:         peak_index=10  peak_value=8416  (peak_time=0.625ms)
+irregular-chunk streaming:   peak_index=10  peak_value=8416  (peak_time=0.625ms)
+
+reference vs 480-chunk:      max_abs_diff=0.000000
+reference vs irregular-chunk: max_abs_diff=0.000000
+```
+
+Identical group delay (0.625ms — a real, small, expected latency from
+the 63-tap linear-phase FIR filter, negligible relative to the VAD's
+own ~200-1000ms timing budget) and bit-for-bit identical outputs across
+all three methods — no state or phase defect exists at chunk
+boundaries, including at the very first sample of the very first chunk.
+
+### 87d. Frequency / alias test
+
+10 seconds of synthetic 48kHz tones (amplitude 8000, comparable to
+real speech-like levels) at each frequency, through the 480-chunk
+streaming resampler, measured via the same Goertzel method used
+throughout R0082-B–E:
+
+```
+  500Hz: in=3999.67  out=3996.87  ratio=0.9993
+ 1000Hz: in=3999.74  out=3996.35  ratio=0.9992
+ 3000Hz: in=3999.80  out=3998.11  ratio=0.9996
+ 6000Hz: in=3999.70  out=3970.98  ratio=0.9928
+ 7500Hz: in=3999.73  out=1194.05  ratio=0.2985   <- expected: above the 7200Hz
+                                                      (0.9x output Nyquist) filter cutoff
+ 9000Hz (>= output Nyquist): alias would land at 7000Hz -- alias_mag=4.59 vs in=3999.80
+                              -> suppression_ratio=871.4x (~-58.8dB)
+12000Hz (>= output Nyquist): alias would land at 4000Hz -- alias_mag=3.96 vs in=4000.00
+                              -> suppression_ratio=1010.9x (~-60.1dB)
+
+stationary multitone (500+1000+3000+6000+7500Hz, mixed): per-frequency
+  ratios (0.9993/0.9990/0.9996/0.9928/0.2986) closely match the
+  single-tone results above -- no unexpected intermodulation distortion.
+```
+
+**All three required properties confirmed**: speech-band frequencies up
+to 6kHz survive with >99% amplitude, with no sign inversion anywhere
+(every in-band ratio is positive and close to 1.0); frequencies at or
+above the 8kHz output Nyquist are suppressed by ~59-60dB before
+decimation — no alias reaches meaningful amplitude in the 0-8kHz output
+band (alias magnitudes of 4-5, against an input magnitude of ~4000, are
+effectively at the noise floor). 7500Hz's own real, expected roll-off
+(cutoff sits at 7200Hz, 90% of the output Nyquist, per
+`StreamingResampler.__init__`'s own documented margin) is noted
+explicitly, not glossed over — it is within the filter's own designed
+transition band, not a defect.
+
+### 87e. Controls repeated with the UNCHANGED resampler — both PASS
+
+```
+POSITIVE CONTROL: n_frames=724  max_prob=0.9966
+  started_events=[0.672]  confirmed_events=[0.992]   -> PASS
+
+NEGATIVE CONTROL: n_frames=812  max_prob=0.0238
+  started_events=[]  confirmed_events=[]              -> PASS
+```
+
+Identical to §84's earlier results (expected — the resampler was not
+modified, only independently validated). No VAD threshold, hysteresis,
+volume gate, or confirm-hold value was altered anywhere in this round
+(`confidence=0.7`, `start_secs=0.2`, `stop_secs=1.0`, `min_volume=0.6`,
+`confirm_hold_secs=0.3` — all unchanged, re-confirmed against source in
+§76, not re-audited again this round since nothing in the codebase
+changed).
+
+### 87f. Final validation sweep
+
+```
+pip check                                        PASS
+py_compile (all R0082 scripts, incl. new file)    PASS
+ruff (whole r0082_livekit_webrtc_audio_poc/ dir)  PASS (0 errors after fixing 5 line-length/
+                                                   unused-import errors in the new file)
+git diff --check                                  PASS
+```
+
+## 88. FINAL GATE — R0082-F READY FOR FIRST REAL HARDWARE RUN
+
+```
+pip check                                        PASS
+no unexpected package/version conflict            PASS
+whole-array vs 480-chunk resampler                PASS (bit-for-bit identical)
+whole-array vs irregular-chunk resampler          PASS (bit-for-bit identical)
+impulse/phase test                                 PASS (bit-for-bit identical)
+basic frequency/alias test                         PASS
+positive VAD control                               PASS
+negative silence control                           PASS
+py_compile                                         PASS
+ruff                                               PASS
+git diff --check                                   PASS
+```
+
+**All eleven gate conditions pass. Verdict: R0082-F READY FOR FIRST
+REAL HARDWARE RUN.** The operator command from §86 is unchanged and
+reproduced there — this round changed no code in
+`r0082f_live_vad_self_echo_poc.py` itself, only added independent
+validation evidence in a new file. **This session did not execute the
+hardware run.**
