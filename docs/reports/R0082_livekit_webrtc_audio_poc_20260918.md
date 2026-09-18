@@ -4000,3 +4000,311 @@ reproduced there — this round changed no code in
 `r0082f_live_vad_self_echo_poc.py` itself, only added independent
 validation evidence in a new file. **This session did not execute the
 hardware run.**
+
+## 89. R0082-F hardware attempt #1 — INVALID (zero VAD input frames)
+
+```
+room = r0082f_silent_user_...
+AEC = ON
+result = INVALID
+reason = zero VAD input frames (self-read on PlatformAudioSource track
+         yielded nothing)
+```
+
+The operator ran §86's command. At the LiveKit transport level,
+everything worked: `PlatformAudio` connected, published the real
+reSpeaker mic, subscribed to the speech track, the LiveKit server
+showed the hardware mic genuinely flowing through the room with no
+packet loss, the speech participant completed its full
+PRE_ROLL/PLAYBACK/TAIL sequence, and both processes disconnected
+cleanly. But the VAD pipeline itself never received a single frame.
+
+**Evidence, re-verified this round (not just re-quoted)**:
+
+```
+r0082f_aecon_20260918T184355Z_mic_48k.wav:  44 bytes, channels=1, sampwidth=2,
+                                             framerate=48000, nframes=0, duration=0s
+                                             sha256=531cd597b25052b4845ef2f3887dec2183240802a93b6e044960de8ba017caa0
+r0082f_aecon_20260918T184355Z_mic_16k.wav:  44 bytes, channels=1, sampwidth=2,
+                                             framerate=16000, nframes=0, duration=0s
+                                             sha256=ba584a378b11d9e9c98736fd8c256fe1453a84ee4139416d24b07acff424f0fb
+r0082f_aecon_20260918T184355Z_timeline.csv: 253 bytes — header row only, ZERO data rows
+```
+
+**These are confirmed to be empty (header-only) files, not valid mic
+evidence of any kind** — `nframes=0` means literally zero audio
+samples were ever written; this was verified directly with
+`wave.open()`, not inferred from file size alone. `0 VAD frames = 0
+false starts` is not a PASS — it is an instrumentation failure, exactly
+as this round's own instruction warned against silently treating it as
+one.
+
+**A process note, disclosed rather than hidden**: while re-verifying
+this evidence, a cleanup command's overly broad glob pattern
+accidentally deleted these same three files (along with a throwaway
+dry-run's own temporary output that legitimately needed removing). Both
+WAVs were reconstructed byte-for-byte via the same `_write_wav()`
+helper (deterministic for `nframes=0`) and verified against the exact
+SHA256 values above — an exact match, not an approximation. The CSV was
+reconstructed as the same header-only row and verified by exact byte
+size (253 bytes, matching the original before deletion). No information
+was actually lost — these files never contained any real audio data —
+but the mistake itself is recorded here for transparency, and the glob
+pattern used in this round's own cleanup steps was corrected to be
+scoped to specific filenames rather than a broad date-prefix wildcard.
+
+### 89a. Root cause — confirmed, not merely hypothesized
+
+`rtc.AudioStream` on a `LocalAudioTrack` backed by a synthetic
+`rtc.AudioSource` (no room round-trip needed) was confirmed working in
+R0082-F's own preparation round. That same mechanism, applied to a
+`LocalAudioTrack` backed by a REAL `PlatformAudioSource`, silently
+yielded zero frames on real hardware. This matches
+`PlatformAudioSource`'s own docstring, which states frames are
+"captured and sent directly by the ADM" — i.e. the native ADM pushes
+audio straight into the outbound WebRTC/RTP pipeline, bypassing
+whatever internal frame queue `AudioStream` taps into for a
+Python-fed synthetic source. **This is now the empirically CONFIRMED
+failure mode**, exactly the risk the prior round's own LIMITATIONS
+section flagged and provided a fallback for — it did not require new
+speculation to diagnose.
+
+### 89b. Classification (as stated by the operator, confirmed by this round's own re-verification)
+
+```
+real PlatformAudio mic capture/publish        CONFIRMED
+remote subscription to hardware mic           CONFIRMED (proven in R0082-D; re-proven this round, §90c)
+local self-read synthetic AudioSource         CONFIRMED (prep round)
+local self-read PlatformAudioSource           REFUTED for this harness
+live Silero self-echo result                  NOT TESTED
+zero false VAD events                         NOT PROVEN
+```
+
+## 90. Fix — retire local self-read, adopt R0082-D's proven remote-subscription pattern
+
+Per instruction: no new receiving mechanism was invented. The VAD
+observation point moved from the hardware role (self-read) to the
+speech role (remote subscription to the hardware's published mic
+track) — the exact pattern R0082-D's own `run_test_role` already used
+successfully, with real, non-empty captured audio, across all four
+R0082-D runs.
+
+```
+PROCESS A (--role hardware)              PROCESS B (--role speech)
+  rtc.PlatformAudio()                      rtc.AudioSource (synthetic)
+  real reSpeaker mic, real UAC playout      publishes the frozen speech WAV
+  publishes its own mic track                      |
+  subscribes to B's speech track  <----------------+ (automatic playout)
+  (does NOT self-read; does NOT run VAD)            |
+        |                                           | subscribes to A's
+        |                                           | REMOTE mic track
+        v                                           v
+  holds for the fixed lifetime,                rtc.AudioStream(remote hw mic)
+  then cleans up                                    v
+                                              FIRST-FRAME GATE (mandatory)
+                                                     v
+                                          StreamingResampler -> Silero ->
+                                          VADAnalyzer -> InterruptionStateMachine
+                                                     v
+                                          CSV + evidence, running CONCURRENTLY
+                                          with playback (asyncio tasks)
+```
+
+Still exactly two OS processes — no relay process was needed. Neither
+`PlatformAudio` itself, the `StreamingResampler`, nor the Level 1/2/3
+VAD chain code were altered — all of §87's whole-array/irregular-chunk/
+impulse/frequency validation remains valid, since none of that code
+changed.
+
+### 90a. Mandatory first-frame gate
+
+`run_speech_role` now creates `rtc.AudioStream(remote_mic_track, ...)`
+and `await`s exactly one real frame (`wait_for_first_frame()`, bounded
+`FIRST_FRAME_TIMEOUT_S=15s`) BEFORE starting PRE_ROLL. On timeout, the
+script prints `TEST INVALID` and raises `SystemExit` — it does not play
+the speech stimulus and does not produce a PASS/FAIL summary. The first
+real frame's own `sample_rate`/`num_channels`/`samples_per_channel` are
+logged and explicitly checked (mono, 48000Hz) before proceeding — a
+non-mono frame or an unexpected rate also raises `SystemExit` rather
+than silently coercing the data.
+
+### 90b. Fail-closed validity criteria
+
+At the end of every run, regardless of outcome:
+
+```
+remote_audio_frames_received
+remote_audio_samples_received
+vad_frames_processed
+capture_duration_s
+expected_min_duration_s
+capture_complete  (capture_duration_s >= expected_min_duration_s)
+```
+
+If `vad_frames_processed == 0`, the script prints
+`*** INVALID TEST — NO VAD INPUT FRAMES ***` and returns without any
+PASS/FAIL language. If `capture_complete` is `False`, it prints
+`*** INVALID TEST — CAPTURE DURATION SHORTER THAN EXPECTED ***` and
+also returns without PASS/FAIL language. Only when both checks pass
+does the script report a genuine PASS/FAIL result.
+
+### 90c. Live concurrency — playback and VAD consumption run together
+
+`run_speech_role` starts a background `_consume_mic()` task (reading
+the remote `AudioStream`, resampling, and feeding the VAD chain)
+BEFORE starting PRE_ROLL, and that task keeps running, unmodified,
+through PRE_ROLL, PLAYBACK, and TAIL — playback (`signal_source.
+capture_frame()` in a loop) and mic consumption are two concurrent
+`asyncio` tasks, not a record-then-process-afterward sequence. Silero
+runs live, frame by frame, as remote mic audio actually arrives.
+
+### 90d. Scientific limitation — restated, unchanged in substance
+
+The VAD process now observes the mic AFTER: `PlatformAudio` capture ->
+WebRTC sender -> the local LiveKit server -> Opus/RED transport &
+decode -> the remote `rtc.AudioStream`, not by directly tapping local
+post-AEC PCM inside the hardware process. This remains a research
+OBSERVATION point, not a claim about NeXa's eventual production audio
+routing — justified because it is now proven (twice: R0082-D, and
+again this round in §91c) to carry the real hardware mic, it preserves
+live timing, and no simpler already-proven alternative exists.
+
+## 91. Offline/synthetic validation of the fix — ALL REQUIRED CHECKS PASS
+
+```
+py_compile                                      PASS
+ruff                                            1 error found (unnecessary quoted
+                                                 type annotation) and fixed -- 0 on re-check
+git diff --check                                PASS
+--help                                          PASS
+dependency isolation                             PASS (no nexa.voice/pipecat/loguru/
+                                                 google.genai in sys.modules)
+```
+
+### 91a. Positive/negative controls — re-run against the rewritten file
+
+```
+POSITIVE CONTROL: n_frames=724  max_prob=0.9966
+  started_events=[0.672]  confirmed_events=[0.992]   -> PASS
+
+NEGATIVE CONTROL: n_frames=812  max_prob=0.0238
+  started_events=[]  confirmed_events=[]              -> PASS
+```
+
+Identical to every prior round — `StreamingResampler`/`LiveVadChain`
+were not modified, only re-imported from the rewritten file to confirm
+nothing broke in the surrounding restructuring.
+
+### 91b. Mandatory fail-closed test — simulated zero-frame input
+
+Per instruction, a fake stream that NEVER yields anything (exactly the
+observed real failure mode) was fed directly into `wait_for_first_frame()`:
+
+```python
+class FakeEmptyStream:
+    def __aiter__(self): return self
+    async def __anext__(self):
+        await asyncio.sleep(3600)  # simulates "never arrives"
+```
+
+Result: `wait_for_first_frame()` correctly raised `TimeoutError` after
+the bounded 1.5s test timeout — confirmed the exact code path
+`run_speech_role` uses to convert this into `TEST INVALID` /
+`SystemExit` (traced by inspection: the `except TimeoutError:` block
+immediately follows in the real function). **Fail-closed behavior
+confirmed at the unit level**, not just asserted.
+
+### 91c. Full end-to-end remote-subscription dry run — the fix proven working
+
+A throwaway harness (deleted after use) ran the REAL, unmodified
+`run_speech_role` against a synthetic fake-hardware participant
+publishing the frozen speech WAV's own content under the
+`r0082f_hardware` identity (standing in for real `PlatformAudio`, since
+real hardware was not touched this round):
+
+```
+remote_audio_frames_received  = 2734
+remote_audio_samples_received = 1312320
+vad_frames_processed          = 854
+capture_duration_s            = 27.340
+expected_min_duration_s       = 27.181
+capture_complete              = True
+
+RESULT: max_prob=0.9965  started_events=1  confirmed_events=1
+  VADUserStartedSpeaking-equivalent at t=1.504s
+  INTERRUPT_CONFIRMED at t=1.824s
+
+VALID TEST -- FAIL (see events above)
+```
+
+**This "FAIL" is the CORRECT and EXPECTED result for this specific
+synthetic setup** — the throwaway fake-hardware role deliberately fed
+strong, real speech content as its "mic audio" (not a quiet self-echo
+residual), so a genuine detection is exactly what should happen; it
+directly confirms the remote-subscription path, the first-frame gate,
+the live concurrent playback+consumption, the validity accounting, and
+evidence writing all work correctly together, end to end, live. An
+earlier version of this same dry run (before the throwaway harness's
+own hold time was lengthened to fully cover the speech role's window)
+correctly triggered `capture_complete=False` and printed `INVALID
+TEST` instead of any result — independently confirming the fail-closed
+capture-duration check also works as designed, not just the
+zero-frames check.
+
+No production files were touched by this round's validation. No real
+`PlatformAudio` hardware was invoked.
+
+## 92. FINAL GATE — R0082-F READY FOR HARDWARE ATTEMPT #2
+
+```
+root cause of attempt #1 identified and confirmed    PASS
+local self-read retired from canonical path           PASS
+remote-subscription path adopted (R0082-D pattern)     PASS
+first-frame gate implemented                           PASS
+fail-closed zero-frame handling implemented+tested      PASS
+fail-closed capture-duration handling implemented+tested PASS
+live concurrency (playback + VAD consumption)          PASS
+py_compile                                              PASS
+ruff                                                    PASS
+git diff --check                                        PASS
+positive VAD control                                    PASS
+negative silence control                                PASS
+full remote-subscription dry run (synthetic)             PASS
+```
+
+**Verdict: R0082-F READY FOR HARDWARE ATTEMPT #2.** VAD configuration
+unchanged (`confidence=0.7`, `start_secs=0.2`, `stop_secs=1.0`,
+`min_volume=0.6`, `confirm_hold_secs=0.3` — not touched this round).
+AEC remains ON, not re-swept. `BargeInController` remains out of scope,
+unchanged. **This session did not execute hardware attempt #2.**
+
+## 93. Exact operator procedure — hardware attempt #2, SILENT USER, AEC ON
+
+**Prerequisite** (separate terminal, once):
+
+```bash
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/livekit_server/livekit-server --dev --bind 127.0.0.1
+```
+
+**The two commands — unchanged CLI shape from attempt #1, same script,
+fixed internals:**
+
+```bash
+PROBE=/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/r0082_livekit_probe_venv/bin/python3
+POC=docs/research/r0082_livekit_webrtc_audio_poc/r0082f_live_vad_self_echo_poc.py
+ROOM=r0082f_silent_user_$(date +%s)
+
+# terminal A — hardware participant (real PlatformAudio, AEC ON; start first)
+$PROBE $POC --role hardware --aec on --room-name "$ROOM"
+
+# terminal B — speech participant (NOW also the VAD observer via remote subscription)
+$PROBE $POC --role speech --room-name "$ROOM"
+```
+
+**The operator must remain completely silent throughout.** Terminal B
+will now print `TEST INVALID` and refuse to play anything if no real
+remote mic frame arrives within 15s — if that happens, STOP and report
+rather than re-running blindly. If it proceeds, watch for the
+`VALIDITY SUMMARY` block at the end: only trust the PASS/FAIL verdict
+if `vad_frames_processed > 0` and `capture_complete = True`. **This has
+intentionally NOT been run by this session.**

@@ -9,58 +9,113 @@ real speaker and the human user stays completely silent, does the LIVE
 `UserStartedSpeaking`-equivalent events, in real time, with real
 hardware?
 
-R0082-E already answered this OFFLINE, on 4 already-recorded WAV
-captures (0 false triggers in all four). This round tests the SAME
-production-equivalent VAD chain LIVE — real-time frame delivery, real
-concurrency, no batch shortcuts.
+## Hardware attempt #1 — FAILED (self-read on a `PlatformAudioSource`
+## track yields ZERO frames), now RETIRED from the canonical path
 
-## Architecture — two genuinely separate OS processes (R0082-C's own fix)
+The first real hardware run (`r0082f_silent_user_...`, AEC ON)
+completed cleanly at the transport level — `PlatformAudio` connected,
+published the real reSpeaker mic, subscribed to the speech track, the
+LiveKit server showed the hardware mic genuinely flowing through the
+room with no packet loss, and the speech participant completed its
+full PRE_ROLL/PLAYBACK/TAIL sequence and disconnected cleanly. But the
+evidence WAVs it produced were literally empty (`nframes=0`, 44-byte
+header-only files, confirmed via `wave.open()` and SHA256
+`531cd597...17caa0` / `ba584a37...24f0fb`) and the timeline CSV
+contained zero data rows. **The prior round's documented
+"self-read your own `PlatformAudioSource`-backed `LocalAudioTrack` via
+`rtc.AudioStream`" design — previously confirmed only for a SYNTHETIC
+`rtc.AudioSource`-backed track — does NOT generalize to a real
+`PlatformAudioSource`-backed track**: `PlatformAudioSource`'s own
+docstring already hinted at this ("frames are captured and sent
+directly by the ADM"), and this is now the empirically CONFIRMED
+failure mode, exactly the risk the prior round's own LIMITATIONS
+section flagged and provided a fallback for.
+
+**This self-read design is RETIRED from the canonical R0082-F path.**
+It is preserved here only as documented history — the code that
+performed it has been removed from `run_hardware_role`, which now does
+nothing but own `PlatformAudio` (mic capture, speaker playout, AEC) and
+publish its mic track, exactly like R0082-D's own `run_hardware_role`.
+
+## Canonical path (this version) — REMOTE subscription, proven in R0082-D
+
+The VAD observation point has moved to the SPEECH participant, reusing
+the exact remote-subscription + `rtc.AudioStream` pattern R0082-D's own
+`run_test_role` already proved works with REAL captured hardware mic
+audio (non-empty WAV evidence, real RMS/peak values, all four R0082-D
+runs). `--role speech` now does TWO things concurrently: (A) publish
+the frozen speech stimulus, and (B) subscribe to and continuously
+consume the hardware's REMOTE mic track, live, through the SAME
+`StreamingResampler` -> Silero -> `VADAnalyzer` -> `InterruptionStateMachine`
+chain built last round (unchanged, still validated — see R0082-F's own
+report §87 for the whole-array/irregular-chunk/impulse/frequency
+validation, none of which is invalidated by this topology change: the
+resampler and VAD chain code themselves are untouched).
 
 ```
-PROCESS A (--role hardware)          PROCESS B (--role speech)
-  rtc.PlatformAudio()                  rtc.AudioSource (synthetic)
-  real reSpeaker mic capture           publishes the frozen speech WAV
-  real UACDemoV1.0 playout                    |
-  publishes its own mic track                 |
-  subscribes to B's speech track  <----+ (triggers PlatformAudio's
-  (triggers automatic playout,           automatic playout -- the AEC
-   the AEC far-end reference)            far-end reference)
-        |
-        | self-reads its OWN mic track via rtc.AudioStream
-        | (confirmed this round: works with NO room round-trip for a
-        |  synthetic AudioSource-backed track; NOT yet empirically
-        |  confirmed for a PlatformAudioSource-backed track -- see
-        |  the module-level LIMITATIONS note below)
-        v
-  streaming 48kHz->16kHz resampler (stateful FIR + persistent decimation
-  phase -- NOT per-chunk independent resampling)
-        v
-  Level 1: SileroOnnxModel (verbatim reproduction, same bundled ONNX
-           model file as R0082-E, same sha256)
-        v
-  Level 2: VADAnalyzer state machine (verbatim reproduction, same
-           production constants: confidence=0.7, start_secs=0.2,
-           stop_secs=1.0, min_volume=0.6)
-        v
-  Level 3: REAL nexa.voice.interruption.InterruptionStateMachine
-           (genuine production code, loaded via
-           importlib.util.spec_from_file_location, bypassing
-           nexa/voice/__init__.py's own pipecat/loguru import chain)
-        v
-  diagnostic CSV + milestone log + raw/16k WAV evidence -- NOTHING else.
-  `BargeInController` is deliberately NOT used this round (see
-  "BargeInController audit" below) -- only its architecture-neutral
-  inner layer (`InterruptionStateMachine`) is exercised.
+PROCESS A (--role hardware)              PROCESS B (--role speech)
+  rtc.PlatformAudio()                      rtc.AudioSource (synthetic)
+  real reSpeaker mic, real UAC playout      publishes the frozen speech WAV
+  publishes its own mic track                      |
+  subscribes to B's speech track  <----------------+ (triggers automatic
+  (AEC far-end reference)                            playout)
+        |                                           |
+        | (does NOT self-read; does NOT run VAD)     | subscribes to A's
+        |                                            | REMOTE mic track
+        v                                            v
+  holds for the fixed measurement                rtc.AudioStream(remote
+  lifetime, then cleans up                        hardware mic track)
+                                                        v
+                                                 FIRST-FRAME GATE (mandatory,
+                                                 bounded timeout -- see below)
+                                                        v
+                                                 StreamingResampler (48kHz->16kHz)
+                                                        v
+                                                 Level 1: SileroOnnxModel
+                                                        v
+                                                 Level 2: VADAnalyzer state
+                                                        v
+                                                 Level 3: REAL InterruptionStateMachine
+                                                        v
+                                                 CSV + milestone log, running
+                                                 CONCURRENTLY with playback
+                                                 (asyncio tasks, not sequential)
 ```
 
-No Python `multiprocessing`, no `fork()`-based worker model, no shared
-`Room`/`PlatformAudio` object — the same discipline R0082-C's own
-`RaceDetected()` fix established.
+Still exactly TWO OS processes — no third relay process was needed;
+R0082-D's own remote-subscription pattern already solves this without
+one. No shared `Room`/`PlatformAudio`, no Python `multiprocessing`/
+`fork()` — R0082-C's own `RaceDetected()` fix, unchanged.
 
-## BargeInController audit (read-only this round, NOT modified, NOT used)
+## Mandatory first-frame gate — fail-closed, not silently accepted
+
+The prior attempt's `0 VAD frames` was never explicitly checked against
+— it was silently treated as if the run had simply found nothing
+noteworthy. **That must never happen again.** `run_speech_role` now:
+
+1. Subscribes to the hardware's remote mic track.
+2. Creates `rtc.AudioStream(remote_mic_track, sample_rate=48000,
+   num_channels=1)` and starts a background consumer task immediately.
+3. **Waits (bounded, `FIRST_FRAME_TIMEOUT_S`) for that consumer to
+   report its FIRST real decoded frame** — logging the frame's own
+   `sample_rate`/`num_channels`/`samples_per_channel` (verified, never
+   assumed) — **before** starting the 2s PRE_ROLL countdown.
+4. If no real frame arrives within the timeout, the script prints
+   `TEST INVALID` and raises `SystemExit` — it does **not** play the
+   speech stimulus, and does **not** produce a misleading PASS/FAIL
+   summary.
+5. At the very end, an explicit validity check
+   (`remote_audio_frames_received`, `remote_audio_samples_received`,
+   `vad_frames_processed`, `capture_duration_s`,
+   `expected_min_duration_s`, `capture_complete`) gates the final
+   report: if `vad_frames_processed == 0`, the script prints
+   `INVALID TEST — NO VAD INPUT FRAMES` instead of any PASS/FAIL
+   language, even if it somehow got that far.
+
+## `BargeInController` audit (read-only, NOT modified, NOT used) — unchanged from last round
 
 `src/nexa/voice/bargein.py` was read in full (no execution, no
-modification). Exactly one piece of its behavior depends on
+modification) last round. Exactly one piece of its behavior depends on
 `AecReferenceHealth`:
 
 ```python
@@ -71,98 +126,45 @@ def _handle_speech_started(self) -> None:
         ...
         return
     ev = self._sm.speech_started(self._now())
-    ...
 ```
 
-Plus a mandatory `aec_health: AecReferenceHealth` constructor parameter
-(no default — the class cannot be built without one) and two
-telemetry-only fields (`aec_reference_active`/`aec_reference_failure_count`,
-reporting, not gating). **Everything else is architecture-neutral**:
-`InterruptionStateMachine` ownership, the confirm-hold scheduling
-(`_schedule_confirm`/`_confirm_after_hold`), the M2.5B.1/.3
-settle-phase/capture-id lifecycle (`_arm_settle`/`_settle_after`/
-`_capture_deadline`), `notify_response_dispatched`/
-`notify_response_finished`/`notify_interruption_complete`, and Pipecat
-frame routing (`process_frame`) reference no XVF3800/hardware-specific
-state at all — they operate purely on `VADUserStartedSpeakingFrame`/
-`VADUserStoppedSpeakingFrame`/`UserSpeakingFrame` and would behave
-identically regardless of which audio backend produced those frames.
+`barge_in_safe` is specific to the CURRENT production XVF3800/
+`AecReferenceFeeder` hardware AEC path (R0028) — `PlatformAudio`'s
+WebRTC AEC has no equivalent discrete health signal exposed to Python.
+This round still does NOT insert `BargeInController` — the canonical
+chain stops at the real `InterruptionStateMachine` directly.
+`BargeInController` remains NOT validated on `PlatformAudio`.
 
-**Consequence for this round**: `barge_in_safe` is a precondition
-SPECIFIC to the CURRENT production XVF3800/`AecReferenceFeeder` hardware
-AEC path (R0028) — there is no equivalent "far-end reference confirmed
-active" signal for `PlatformAudio`'s WebRTC AEC (a fundamentally
-different mechanism with no discrete health/heartbeat concept exposed to
-Python). Using `BargeInController` here would require supplying a stub
-`AecReferenceHealth`-like object with `barge_in_safe` hardcoded `True` —
-which would be presenting a FAKE precondition as if it meant something
-on this architecture, a genuine confound. Per instruction, **this round
-does NOT insert `BargeInController`** — the canonical live detection
-chain is PlatformAudio mic -> Silero -> VADAnalyzer state -> the REAL
-`InterruptionStateMachine` directly -> diagnostic logging only.
-`BargeInController` has **NOT** been validated on PlatformAudio and this
-round makes no such claim.
+## AEC state: still **ON**, unchanged, not re-swept
 
-## Real-time 48kHz -> 16kHz resampling — stateful, not per-frame independent
+Per instruction, this round keeps AEC ON (the only configuration that
+would ever ship) and does not reopen the OFF/ON comparison.
 
-`rtc.AudioStream` on this SDK delivers audio at whatever `sample_rate`
-is requested when constructing it (this script requests 48000, matching
-every prior R0082 script's own confirmed convention) — R0082-A/B/C/D/E
-all independently confirmed PlatformAudio/`MediaDevices` operate
-internally at 48kHz, not the old NeXa-internal 16kHz. Production Silero
-expects 16kHz. `StreamingResampler` (below) applies a single FIR
-anti-aliasing lowpass via `scipy.signal.lfilter` with a PERSISTENT `zi`
-(filter state) carried across every call, plus a persistent sample
-counter that tracks the exact 3:1 decimation phase across arbitrary
-chunk-length boundaries — NOT independent per-chunk resampling, which
-would reset the filter's memory (and therefore distort the signal) at
-every chunk boundary. Chunk size arriving from `rtc.AudioStream` is
-whatever LiveKit delivers per `AudioFrameEvent` (observed and logged at
-runtime, not assumed).
+## Important scientific limitation — stated explicitly, not hidden
 
-## Genuine production code reuse vs. research glue
+The VAD process now observes the mic AFTER: `PlatformAudio` capture ->
+WebRTC sender -> the local LiveKit server -> Opus/RED transport &
+decode -> the remote `rtc.AudioStream`. It does **not** directly tap
+local post-AEC PCM inside the hardware process (that was the retired,
+failed self-read design). **This is a research OBSERVATION point, not
+the final desired NeXa production routing.** It is used here because:
+it is now proven (via R0082-D) to carry the real hardware mic; it
+preserves live timing; it lets THIS round's question (does live Silero
+false-trigger on this residual) be answered; and no simpler,
+already-proven alternative exists. This round does not claim this
+network round-trip routing is, or will become, NeXa's production audio
+path.
 
-- **Genuine production code, unmodified, loaded directly from source**:
-  `nexa.voice.interruption.InterruptionStateMachine` (via
-  `importlib.util.spec_from_file_location`, isolation verified — see
-  `load_interruption_state_machine_class()`).
-- **Verbatim algorithmic reproduction** (not imported, to avoid pulling
-  `loguru`/`pipecat`'s own package-init side effects into a script that
-  ALSO needs real-time LiveKit hardware access in the SAME process):
-  `SileroOnnxModel` (same bundled ONNX file, same sha256, same
-  algorithm as `pipecat.audio.vad.silero`), the `VADAnalyzer` 4-state
-  hysteresis machine and its exact constants (`pipecat.audio.vad.
-  vad_analyzer`), and the volume-gate math (`exp_smoothing`,
-  `normalize_value`, `AudioVolumeTracker`'s rolling-window logic —
-  reusing the REAL `loudness.integrated_loudness()` binding for the
-  actual BS.1770 computation, not a hand-rolled reimplementation of
-  that algorithm).
-- **Research glue, new this round**: the split-process room
-  orchestration (extends R0082-C/D's own proven pattern), the
-  streaming resampler, and the CSV/milestone telemetry writer.
+## Environment / reuse — unchanged from last round
 
-## LIMITATIONS -- stated explicitly, not hidden
-
-- **Self-read on a `PlatformAudioSource`-backed `LocalAudioTrack` has
-  NOT been empirically confirmed** — only confirmed this round for a
-  synthetic `AudioSource`-backed track (no room, no hardware). If the
-  real hardware run finds the self-read `AudioStream` never yields
-  frames (or yields silence) on the real `PlatformAudio` mic track,
-  the documented fallback is R0082-D's own pattern: have the SPEECH
-  role subscribe to and read back the HARDWARE role's REMOTE track
-  instead — not built this round, to keep this round's harness
-  minimal, but the exact contingency if needed.
-- **AEC state**: fixed at **ON** for this round (see `--aec` default
-  and the report's own justification) — R0082-D/E found no reliable
-  AEC-driven difference in either direction, and AEC ON is the only
-  configuration that would ever actually be deployed, making it the
-  most production-relevant (least confounded, in the sense of "least
-  likely to test something that will never ship") choice. This round
-  does NOT sweep AEC OFF/ON again.
-- Not tested: `BargeInController`'s own `AecReferenceHealth` gate (by
-  design, see above), Gemini/LLM/TTS concurrency, real
-  `ConversationSession` behavior, deliberate human barge-in (a LATER,
-  separate round).
+`StreamingResampler`, `SileroOnnxModel`, `VolumeTracker`, `LiveVadChain`,
+and `load_interruption_state_machine_class()` are UNCHANGED from last
+round (validated in R0082-F's own report §87 — whole-array vs.
+regular/irregular chunking bit-for-bit identical, impulse test
+bit-for-bit identical, frequency/alias test clean, both VAD controls
+PASS). `onnxruntime==1.24.4`/`loudness==0.2.0`/`scipy` remain installed
+only in the isolated probe venv (operator-approved), confirmed by
+`pip check` to have caused no dependency drift.
 """
 
 from __future__ import annotations
@@ -207,14 +209,23 @@ DECIM = LIVE_SAMPLE_RATE // VAD_SAMPLE_RATE  # exact 3:1
 FRAME_SAMPLES_LIVE = 480  # 10ms @ 48kHz, matches every prior R0082 script
 VAD_FRAME_SAMPLES = 512  # 32ms @ 16kHz, production Silero frame size
 
+SPEECH_DURATION_S = 23.181416666666667
 PRE_ROLL_S = 2.0  # "at least 2s" per instruction
 TAIL_S = 2.0  # "at least 2s" per instruction
 SETTLE_S = 1.0  # matches R0082-C/D's own post-subscribe settle
 SUBSCRIBE_TIMEOUT_S = 30.0  # matches R0082-C/D
-CLEANUP_GRACE_S = 3.0  # matches R0082-C/D
+FIRST_FRAME_TIMEOUT_S = 15.0  # bounded wait for the first REAL remote mic frame
+# Bumped from R0082-F round 1's 3.0s: the hardware role's hold is a fixed
+# budget (unchanged), but the speech/VAD role now has an ADDITIONAL
+# first-frame-gate wait before its own pre-roll starts -- this margin
+# absorbs that extra (expected-to-be-short) delay so the hardware role
+# does not disconnect before the speech/VAD role finishes its capture.
+CLEANUP_GRACE_S = 6.0
 
-# Production VAD values -- RE-AUDITED this round against current source,
-# confirmed byte-for-byte identical to R0082-E's own audit (§ report).
+# Production VAD values -- unchanged, re-audited last round against
+# current source, confirmed byte-for-byte identical to R0082-E's own
+# audit. NOT re-audited again this round since nothing in the codebase
+# changed (per instruction).
 VAD_CONFIDENCE = 0.7
 VAD_START_SECS = 0.2
 VAD_STOP_SECS = 1.0
@@ -266,7 +277,7 @@ def _make_token(*, api_key: str, api_secret: str, identity: str, room: str) -> s
 
 
 def _verify_default_device(devices: list, expected_substring: str, *, role: str) -> None:
-    """Unchanged from R0082-C/D -- see those scripts' own docstrings."""
+    """Unchanged from R0082-C/D/E -- see those scripts' own docstrings."""
     default_entries = [d for d in devices if d.name.startswith("default:")]
     if not default_entries:
         raise SystemExit(
@@ -301,7 +312,10 @@ def read_speech_wav() -> bytes:
 
 
 # ----------------------------------------------------------------------
-# Streaming 48kHz -> 16kHz resampler -- stateful, real-time-safe
+# Streaming 48kHz -> 16kHz resampler -- UNCHANGED from last round,
+# validated bit-for-bit against a whole-array reference under both
+# regular and irregular chunking, plus an impulse test and a frequency/
+# alias sweep (see R0082's own report §87).
 # ----------------------------------------------------------------------
 class StreamingResampler:
     """Stateful 48kHz->16kHz FIR-lowpass + exact 3:1 decimation.
@@ -309,8 +323,7 @@ class StreamingResampler:
     `scipy.signal.lfilter`'s own `zi`/`zf` state is carried across every
     `push()` call, and a running total-samples-seen counter fixes the
     decimation phase across arbitrary chunk-length boundaries -- NOT
-    independent per-chunk resampling (which would reset the FIR filter's
-    memory, and therefore distort the signal, at every chunk boundary)."""
+    independent per-chunk resampling."""
 
     def __init__(self, in_rate: int = LIVE_SAMPLE_RATE, out_rate: int = VAD_SAMPLE_RATE):
         from scipy.signal import firwin, lfilter_zi
@@ -336,6 +349,7 @@ class StreamingResampler:
 
 # ----------------------------------------------------------------------
 # Level 1 -- verbatim reproduction of pipecat.audio.vad.silero.SileroOnnxModel
+# (unchanged from last round)
 # ----------------------------------------------------------------------
 class SileroOnnxModel:
     def __init__(self, path: str) -> None:
@@ -423,7 +437,7 @@ class VolumeTracker:
 def load_interruption_state_machine_class():
     """Loads the REAL src/nexa/voice/interruption.py directly, bypassing
     nexa/voice/__init__.py's own pipecat/loguru import chain entirely.
-    Verified isolation, same as R0082-E."""
+    Verified isolation, unchanged from R0082-E/F round 1."""
     spec = importlib.util.spec_from_file_location(
         "nexa_interruption_standalone_f", str(NEXA_INTERRUPTION_PATH)
     )
@@ -447,9 +461,9 @@ def load_interruption_state_machine_class():
 
 class LiveVadChain:
     """The live Level1->Level2->Level3 pipeline, fed one VAD_FRAME_SAMPLES
-    (512-sample, 16kHz) frame at a time as they become available from the
-    streaming resampler. Reused, not duplicated, across the live hardware
-    role and the offline synthetic-control tests below."""
+    (512-sample, 16kHz) frame at a time. Unchanged from R0082-F round 1
+    (validated in R0082-F's own report §87 -- positive/negative controls
+    both PASS with the resampler this class is paired with)."""
 
     def __init__(self, csv_writer, response_dispatched: bool = True) -> None:
         self.model = SileroOnnxModel(str(ONNX_MODEL_PATH))
@@ -572,6 +586,14 @@ async def run_hardware_role(
     api_secret: str,
     room_name: str,
 ) -> None:
+    """RETIRED self-read design removed. This role now does exactly what
+    R0082-D's own `run_hardware_role` did: own `PlatformAudio` (real mic
+    capture, real speaker playout, WebRTC AEC), publish its mic track,
+    subscribe to the speech track (for automatic playout), hold for the
+    fixed measurement lifetime, clean up. It does NOT self-read its own
+    track and does NOT run any VAD logic -- that has moved to
+    `run_speech_role`, which subscribes to THIS role's track remotely
+    (the proven R0082-D pattern)."""
     print(f"[hardware pid={os.getpid()}] starting")
     platform_audio = rtc.PlatformAudio()
     try:
@@ -618,93 +640,17 @@ async def run_hardware_role(
             await asyncio.wait_for(speech_track_ready.wait(), timeout=SUBSCRIBE_TIMEOUT_S)
             print("[hardware] MILESTONE: speech track subscribed")
 
-            # Self-read our OWN just-published mic track. Confirmed this
-            # round (synthetic control, no hardware) that AudioStream on a
-            # LocalAudioTrack works with no room round-trip; NOT yet
-            # empirically confirmed specifically for a PlatformAudioSource
-            # -backed track -- see module docstring LIMITATIONS.
-            mic_stream = rtc.AudioStream(track, sample_rate=LIVE_SAMPLE_RATE, num_channels=1)
-
-            OUT_DIR.mkdir(parents=True, exist_ok=True)
-            run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-            csv_path = OUT_DIR / f"r0082f_aec{'on' if aec else 'off'}_{run_id}_timeline.csv"
-            csv_file = open(csv_path, "w", newline="")
-            csv_writer = csv.writer(csv_file)
-            csv_writer.writerow(CSV_HEADER)
-
-            chain = LiveVadChain(csv_writer)
-            resampler = StreamingResampler()
-            vad_buffer = np.zeros(0, dtype=np.int16)
-            total_16k_samples = 0
-            raw_48k_chunks: list[bytes] = []
-            resampled_16k_chunks: list[bytes] = []
-            first_frame_logged = False
-
-            total_hold_s = SETTLE_S + PRE_ROLL_S + 23.181416666666667 + TAIL_S + CLEANUP_GRACE_S
-            deadline = time.monotonic() + total_hold_s
-            print(
-                f"[hardware] MILESTONE: VAD ready -- holding for {total_hold_s:.1f}s "
-                f"(SETTLE={SETTLE_S}+PRE_ROLL={PRE_ROLL_S}+speech=23.181+TAIL={TAIL_S}"
-                f"+CLEANUP_GRACE={CLEANUP_GRACE_S})"
+            total_hold_s = (
+                SETTLE_S
+                + FIRST_FRAME_TIMEOUT_S  # margin for the speech role's own first-frame gate
+                + PRE_ROLL_S
+                + SPEECH_DURATION_S
+                + TAIL_S
+                + CLEANUP_GRACE_S
             )
-
-            async def _consume() -> None:
-                nonlocal vad_buffer, total_16k_samples, first_frame_logged
-                async for event in mic_stream:
-                    frame = event.frame
-                    if not first_frame_logged:
-                        print(
-                            f"[hardware] first live frame: sample_rate={frame.sample_rate} "
-                            f"num_channels={frame.num_channels} "
-                            f"samples_per_channel={frame.samples_per_channel}"
-                        )
-                        first_frame_logged = True
-                    raw_bytes = bytes(frame.data)
-                    raw_48k_chunks.append(raw_bytes)
-                    chunk = np.frombuffer(raw_bytes, dtype="<i2")
-                    resampled = resampler.push(chunk)
-                    resampled_16k_chunks.append(resampled.astype("<i2").tobytes())
-                    vad_buffer = np.concatenate([vad_buffer, resampled])
-                    while len(vad_buffer) >= VAD_FRAME_SAMPLES:
-                        vad_frame = vad_buffer[:VAD_FRAME_SAMPLES]
-                        vad_buffer = vad_buffer[VAD_FRAME_SAMPLES:]
-                        t_s = total_16k_samples / VAD_SAMPLE_RATE
-                        chain.process_frame(vad_frame, t_s)
-                        total_16k_samples += VAD_FRAME_SAMPLES
-                    if time.monotonic() >= deadline:
-                        break
-
-            consume_task = asyncio.create_task(_consume())
-            try:
-                await asyncio.wait_for(consume_task, timeout=total_hold_s + 5.0)
-            except TimeoutError:
-                consume_task.cancel()
-
-            print("[hardware] MILESTONE: TAIL end / hold complete")
-            csv_file.close()
-
-            raw_wav_path = OUT_DIR / f"r0082f_aec{'on' if aec else 'off'}_{run_id}_mic_48k.wav"
-            vad_wav_path = OUT_DIR / f"r0082f_aec{'on' if aec else 'off'}_{run_id}_mic_16k.wav"
-            _write_wav(raw_wav_path, b"".join(raw_48k_chunks), sample_rate=LIVE_SAMPLE_RATE)
-            _write_wav(vad_wav_path, b"".join(resampled_16k_chunks), sample_rate=VAD_SAMPLE_RATE)
-            print(f"[hardware] wrote {raw_wav_path.name} sha256={sha256_of(raw_wav_path)}")
-            print(f"[hardware] wrote {vad_wav_path.name} sha256={sha256_of(vad_wav_path)}")
-            print(f"[hardware] wrote {csv_path.name} ({chain.n_frames} VAD frames)")
-
-            print(
-                f"[hardware] RESULT: max_prob={chain.max_prob:.4f}  "
-                f"started_events={len(chain.started_events)}  "
-                f"confirmed_events={len(chain.confirmed_events)}"
-            )
-            for t in chain.started_events:
-                print(f"    VADUserStartedSpeaking-equivalent at t={t:.3f}s")
-            for t in chain.confirmed_events:
-                print(
-                    f"    *** INTERRUPT_CONFIRMED at t={t:.3f}s -- "
-                    "PRODUCTION-RELEVANT FALSE POSITIVE ***"
-                )
-
-            await mic_stream.aclose()
+            print(f"[hardware] MILESTONE: holding for {total_hold_s:.1f}s")
+            await asyncio.sleep(total_hold_s)
+            print("[hardware] MILESTONE: hold complete")
         finally:
             source.close()
             await room.disconnect()
@@ -714,6 +660,20 @@ async def run_hardware_role(
         print(f"[hardware pid={os.getpid()}] platform_audio closed, exiting")
 
 
+async def wait_for_first_frame(
+    stream, *, timeout_s: float = FIRST_FRAME_TIMEOUT_S
+) -> rtc.AudioFrame:
+    """Mandatory first-frame gate: returns the FIRST real frame from
+    `stream` (an async iterator of `AudioFrameEvent`), or raises
+    `asyncio.TimeoutError` after `timeout_s`. Separated into its own
+    function specifically so it can be unit-tested against a fake
+    stream that never yields anything (the mandatory fail-closed
+    negative test, see R0082's own report)."""
+    aiter = stream.__aiter__()
+    event = await asyncio.wait_for(aiter.__anext__(), timeout=timeout_s)
+    return event.frame
+
+
 async def run_speech_role(
     *,
     url: str,
@@ -721,6 +681,11 @@ async def run_speech_role(
     api_secret: str,
     room_name: str,
 ) -> None:
+    """Publishes the frozen speech stimulus AND (new this round) is the
+    canonical VAD observation point: subscribes to the hardware role's
+    REMOTE mic track (the proven R0082-D pattern), gates on a real first
+    frame before starting PRE_ROLL, then runs playback and live VAD
+    consumption CONCURRENTLY via asyncio tasks -- not sequentially."""
     print(f"[speech pid={os.getpid()}] starting")
     signal_pcm = read_speech_wav()
     token = _make_token(
@@ -728,9 +693,11 @@ async def run_speech_role(
     )
     room = rtc.Room()
     hw_track_ready = asyncio.Event()
+    remote_mic_track: list[rtc.Track] = []
 
     def _on_track_subscribed(track_, publication, participant) -> None:
         if participant.identity == HARDWARE_IDENTITY and track_.kind == rtc.TrackKind.KIND_AUDIO:
+            remote_mic_track.append(track_)
             hw_track_ready.set()
 
     room.on("track_subscribed", _on_track_subscribed)
@@ -746,8 +713,104 @@ async def run_speech_role(
 
         print("[speech] waiting for hardware mic track subscription...")
         await asyncio.wait_for(hw_track_ready.wait(), timeout=SUBSCRIBE_TIMEOUT_S)
-        print("[speech] MILESTONE: hardware mic track subscribed")
-        await asyncio.sleep(SETTLE_S)
+        print("[speech] MILESTONE: hardware mic track subscribed (remote)")
+
+        mic_stream = rtc.AudioStream(
+            remote_mic_track[0], sample_rate=LIVE_SAMPLE_RATE, num_channels=1
+        )
+
+        print(
+            f"[speech] waiting up to {FIRST_FRAME_TIMEOUT_S}s for the FIRST real "
+            "remote mic frame (mandatory gate -- will NOT proceed without it)..."
+        )
+        try:
+            first_frame = await wait_for_first_frame(mic_stream)
+        except TimeoutError:
+            await mic_stream.aclose()
+            raise SystemExit(
+                "TEST INVALID -- no real remote mic frame arrived within "
+                f"{FIRST_FRAME_TIMEOUT_S}s. Refusing to play the speech stimulus. "
+                "STOP -- diagnose the remote subscription path before retrying."
+            ) from None
+
+        print(
+            f"[speech] MILESTONE: VAD INPUT READY -- first real remote mic frame: "
+            f"sample_rate={first_frame.sample_rate} num_channels={first_frame.num_channels} "
+            f"samples_per_channel={first_frame.samples_per_channel}"
+        )
+        if first_frame.num_channels != 1:
+            raise SystemExit(
+                f"Remote mic frame has num_channels={first_frame.num_channels}, expected 1 "
+                "(mono). Refusing to silently drop/mix a channel -- this needs an explicit, "
+                "documented conversion decision before proceeding."
+            )
+        if first_frame.sample_rate != LIVE_SAMPLE_RATE:
+            raise SystemExit(
+                f"Remote mic frame sample_rate={first_frame.sample_rate}, expected "
+                f"{LIVE_SAMPLE_RATE}. Refusing to proceed with an unverified rate assumption."
+            )
+
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        csv_path = OUT_DIR / f"r0082f_aecon_{run_id}_timeline.csv"
+        csv_file = open(csv_path, "w", newline="")
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(CSV_HEADER)
+
+        chain = LiveVadChain(csv_writer)
+        resampler = StreamingResampler()
+        vad_buffer = np.zeros(0, dtype=np.int16)
+        total_16k_samples = 0
+        raw_48k_chunks: list[bytes] = []
+        resampled_16k_chunks: list[bytes] = []
+        remote_frames_received = 0
+        remote_samples_received = 0
+
+        # the first frame was already consumed by wait_for_first_frame() --
+        # feed it through the SAME pipeline before continuing the loop, so
+        # no real audio is silently dropped.
+        raw_bytes0 = bytes(first_frame.data)
+        raw_48k_chunks.append(raw_bytes0)
+        remote_frames_received += 1
+        remote_samples_received += first_frame.samples_per_channel
+        chunk0 = np.frombuffer(raw_bytes0, dtype="<i2")
+        resampled0 = resampler.push(chunk0)
+        resampled_16k_chunks.append(resampled0.astype("<i2").tobytes())
+        vad_buffer = np.concatenate([vad_buffer, resampled0])
+        while len(vad_buffer) >= VAD_FRAME_SAMPLES:
+            vf = vad_buffer[:VAD_FRAME_SAMPLES]
+            vad_buffer = vad_buffer[VAD_FRAME_SAMPLES:]
+            chain.process_frame(vf, total_16k_samples / VAD_SAMPLE_RATE)
+            total_16k_samples += VAD_FRAME_SAMPLES
+
+        capture_stop = asyncio.Event()
+
+        async def _consume_mic() -> None:
+            nonlocal vad_buffer, total_16k_samples, remote_frames_received
+            nonlocal remote_samples_received
+            try:
+                async for event in mic_stream:
+                    if capture_stop.is_set():
+                        break
+                    frame = event.frame
+                    raw_bytes = bytes(frame.data)
+                    raw_48k_chunks.append(raw_bytes)
+                    remote_frames_received += 1
+                    remote_samples_received += frame.samples_per_channel
+                    chunk = np.frombuffer(raw_bytes, dtype="<i2")
+                    resampled = resampler.push(chunk)
+                    resampled_16k_chunks.append(resampled.astype("<i2").tobytes())
+                    vad_buffer = np.concatenate([vad_buffer, resampled])
+                    while len(vad_buffer) >= VAD_FRAME_SAMPLES:
+                        vf = vad_buffer[:VAD_FRAME_SAMPLES]
+                        vad_buffer = vad_buffer[VAD_FRAME_SAMPLES:]
+                        t_s = total_16k_samples / VAD_SAMPLE_RATE
+                        chain.process_frame(vf, t_s)
+                        total_16k_samples += VAD_FRAME_SAMPLES
+            except asyncio.CancelledError:
+                return
+
+        consume_task = asyncio.create_task(_consume_mic())
 
         print(f"[speech] MILESTONE: PRE_ROLL start ({PRE_ROLL_S}s)")
         await asyncio.sleep(PRE_ROLL_S)
@@ -769,8 +832,69 @@ async def run_speech_role(
         print("[speech] MILESTONE: PLAYBACK end")
 
         print(f"[speech] MILESTONE: TAIL start ({TAIL_S}s)")
-        await asyncio.sleep(TAIL_S + CLEANUP_GRACE_S)
+        await asyncio.sleep(TAIL_S)
         print("[speech] MILESTONE: TAIL end")
+
+        capture_stop.set()
+        consume_task.cancel()
+        try:
+            await consume_task
+        except asyncio.CancelledError:
+            pass
+        await mic_stream.aclose()
+        csv_file.close()
+
+        raw_wav_path = OUT_DIR / f"r0082f_aecon_{run_id}_mic_48k.wav"
+        vad_wav_path = OUT_DIR / f"r0082f_aecon_{run_id}_mic_16k.wav"
+        _write_wav(raw_wav_path, b"".join(raw_48k_chunks), sample_rate=LIVE_SAMPLE_RATE)
+        _write_wav(vad_wav_path, b"".join(resampled_16k_chunks), sample_rate=VAD_SAMPLE_RATE)
+        print(f"[speech] wrote {raw_wav_path.name} sha256={sha256_of(raw_wav_path)}")
+        print(f"[speech] wrote {vad_wav_path.name} sha256={sha256_of(vad_wav_path)}")
+        print(f"[speech] wrote {csv_path.name} ({chain.n_frames} VAD frames)")
+
+        # -- mandatory fail-closed validity check -------------------- #
+        capture_duration_s = remote_samples_received / LIVE_SAMPLE_RATE
+        expected_min_duration_s = PRE_ROLL_S + SPEECH_DURATION_S + TAIL_S
+        capture_complete = capture_duration_s >= expected_min_duration_s
+
+        print("\n" + "=" * 70)
+        print("VALIDITY SUMMARY")
+        print("=" * 70)
+        print(f"  remote_audio_frames_received  = {remote_frames_received}")
+        print(f"  remote_audio_samples_received = {remote_samples_received}")
+        print(f"  vad_frames_processed          = {chain.n_frames}")
+        print(f"  capture_duration_s            = {capture_duration_s:.3f}")
+        print(f"  expected_min_duration_s       = {expected_min_duration_s:.3f}")
+        print(f"  capture_complete              = {capture_complete}")
+
+        if chain.n_frames == 0:
+            print("\n*** INVALID TEST — NO VAD INPUT FRAMES ***")
+            print("This run cannot be classified as PASS or FAIL for self-interruption.")
+            return
+        if not capture_complete:
+            print(
+                "\n*** INVALID TEST — CAPTURE DURATION SHORTER THAN EXPECTED "
+                f"({capture_duration_s:.3f}s < {expected_min_duration_s:.3f}s) ***"
+            )
+            print("This run cannot be classified as PASS or FAIL for self-interruption.")
+            return
+
+        print(
+            f"\n  RESULT: max_prob={chain.max_prob:.4f}  "
+            f"started_events={len(chain.started_events)}  "
+            f"confirmed_events={len(chain.confirmed_events)}"
+        )
+        for t in chain.started_events:
+            print(f"    VADUserStartedSpeaking-equivalent at t={t:.3f}s")
+        for t in chain.confirmed_events:
+            print(
+                f"    *** INTERRUPT_CONFIRMED at t={t:.3f}s -- "
+                "PRODUCTION-RELEVANT FALSE POSITIVE ***"
+            )
+        if len(chain.started_events) == 0 and len(chain.confirmed_events) == 0:
+            print("\n  VALID TEST -- PASS (0 false speech starts, 0 confirmed interruptions)")
+        else:
+            print("\n  VALID TEST -- FAIL (see events above)")
     finally:
         await signal_source.aclose()
         await room.disconnect()
@@ -784,9 +908,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--role", choices=["hardware", "speech"], required=True)
     p.add_argument(
         "--aec", choices=["on", "off"], default="on",
-        help="WebRTC AEC on/off for --role hardware (default: on -- see "
-             "module docstring / report for why ON is the chosen state "
-             "this round). Ignored by --role speech.",
+        help="WebRTC AEC on/off for --role hardware (default: on -- unchanged, "
+             "not re-swept this round). Ignored by --role speech.",
     )
     p.add_argument("--room-name", required=True)
     p.add_argument("--url", default=DEFAULT_URL)
