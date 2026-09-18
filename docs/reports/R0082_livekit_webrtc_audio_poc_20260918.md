@@ -808,3 +808,475 @@ the run per §13. **Do not run `--aec on` yet** — that command is
 intentionally withheld until this `--aec off` run is confirmed to open
 the real devices and complete successfully. This has intentionally
 **not** been run by this session.
+
+## 20. Real R0082-B AEC OFF → ON hardware result
+
+The operator ran the `--aec off` command from §19, then `--aec on`
+immediately after, same physical conditions.
+
+### AEC OFF — run id `20260918T100821Z`
+
+```
+quiet_before_rms = 72.6
+window RMS: 113.3 135.0 129.1 142.8 202.3 180.4 151.7 465.1 517.4 422.6
+overall mean = 245.97   first-half mean = 144.50   second-half mean = 347.44
+min/max = 113.30 / 517.40   max/min = 4.57x
+```
+
+One warning during this run: `AudioMixer: stream ... timeout, ignoring`.
+The run completed all 10 windows and saved WAV evidence.
+
+### AEC ON — run id `20260918T101009Z`
+
+```
+quiet_before_rms = 39.1
+window RMS: 48.8 59.2 62.2 52.6 45.1 41.7 43.2 233.5 193.6 157.6
+overall mean = 93.75   first-half mean = 53.58   second-half mean = 133.92
+min/max = 41.70 / 233.50   max/min = 5.60x
+```
+
+No `AudioMixer` timeout in the ON run. Both runs produced the previously
+documented `FfiHandle.__del__` `AssertionError` cleanup warning after
+result/WAV output (§12f — audited, expected, harmless).
+
+## 21. Quantitative interpretation — independently verified
+
+Every figure below was recomputed independently from the raw window RMS
+values (not merely copied from the operator's report) and confirmed
+exact:
+
+```
+AEC ON vs OFF:
+  overall:     245.97 -> 93.75   -61.9%   ≈ -8.38 dB
+  first half:  144.50 -> 53.58   -62.9%   ≈ -8.62 dB
+  second half: 347.44 -> 133.92  -61.5%   ≈ -8.28 dB
+```
+
+AEC ON is lower than AEC OFF in **every one of the 10 corresponding
+windows** (verified directly, window by window).
+
+**WebRTC AEC leakage reduction: CONFIRMED.** This is described as
+observed residual/leakage reduction from raw microphone RMS, not a
+formally-derived ERLE figure (ERLE requires a controlled decomposition
+of echo vs. near-end signal this measurement does not provide).
+
+## 22. Stability result
+
+```
+AEC OFF: second/first half = 347.44/144.50 = 2.404x ≈ +7.62 dB   max/min = 4.57x
+AEC ON:  second/first half = 133.92/53.58  = 2.499x ≈ +7.96 dB   max/min = 5.60x
+```
+
+**AEC reduces absolute leakage: PASS. AEC fixes time-dependent residual
+instability: FAIL / NOT DEMONSTRATED.** The late-run deterioration
+remains in both runs (OFF: 465.1/517.4/422.6 in windows 8–10; ON:
+233.5/193.6/157.6 in windows 8–10). The two runs are not claimed to
+share an identical mechanism merely because the shape resembles each
+other — but the same broad late-run deterioration class is present with
+AEC both disabled and enabled, and the aggregate first-half→second-half
+degradation is strikingly similar (~+7.6 dB vs. ~+8.0 dB). §24 below
+adds an important new finding bearing directly on what this
+"late-run deterioration" actually is.
+
+## 23. Quiet-floor caveat
+
+```
+OFF quiet_before_rms = 72.6
+ON  quiet_before_rms = 39.1
+```
+
+The two runs do not share an identical baseline noise floor — this is
+material and is not glossed over. However: AEC ON is lower in all 10
+playback windows; first-half and second-half reductions are both
+~8 dB; and the late-run instability remains in both. The quiet-floor
+difference is an important caveat but does not erase the observed
+attenuation result. No stronger causal claim than this is made.
+
+## 24. Offline WAV sanity check
+
+All four WAV files were inspected directly (stdlib `wave`/`struct` only
+— no OCR, no transcription, no speech recognition; deterministic
+non-speech PCM) without modification.
+
+### Header properties (items 1–5)
+
+```
+r0082_aecoff_..._tones_mic.wav:    mono, 16-bit, 48000Hz, 1536480 frames, 32.010s
+r0082_aecoff_..._tones_signal.wav: mono, 16-bit, 48000Hz, 1440000 frames, 30.000s
+r0082_aecon_..._tones_mic.wav:     mono, 16-bit, 48000Hz, 1536480 frames, 32.010s
+r0082_aecon_..._tones_signal.wav:  mono, 16-bit, 48000Hz, 1440000 frames, 30.000s
+```
+
+All match expectations exactly: 48kHz mono 16-bit throughout; mic
+duration 32.010s ≈ `PRE_ROLL_S(1.0) + duration_s(30.0) + TAIL_S(1.0)`
+(item 6, confirmed present in full); signal duration exactly 30.000s.
+
+### Recomputed per-window RMS/peak from raw PCM (cross-check)
+
+Every reported window RMS value was recomputed directly from the raw
+WAV bytes using the exact same `_rms`/`_peak` primitives the PoC script
+itself uses (`r0082_audio_utils.py`), independent of the script's own
+in-process computation. **Every value matched exactly** — the reported
+numbers are genuinely sourced from the raw captured PCM, not
+miscomputed or fabricated. Peak values are all well below int16
+saturation (max observed peak 2474 of 32767) — no clipping in either
+run.
+
+### Zero-run / dropout scan (items 7–8)
+
+Scanned all four files for runs of ≥200 consecutive exact-zero samples
+(≥~4.2ms at 48kHz — a dropout/underrun indicator):
+
+```
+OFF mic:    0 runs
+ON mic:     2 runs, BOTH within the first 1.0s pre-roll (at t=0.000s,
+            7.6ms; and t=0.400s, 8.9ms) — entirely outside every
+            analysis window, a capture-startup transient with zero
+            effect on any reported statistic
+OFF signal: 0 runs
+ON signal:  0 runs
+```
+
+No dropout/zero-fill artifact correlates with the OFF run's printed
+`AudioMixer: stream ... timeout, ignoring` warning — the mic capture
+around that event (relative timing not precisely known, but the full
+OFF mic file has zero qualifying zero-runs anywhere) shows no visible
+discontinuity. Consistent with the warning being a harmless,
+already-self-described "ignored" event in the render mixer with no
+effect on the captured PCM.
+
+### NEW FINDING (item 9): the late-window rise aligns with the tone-segment transition, not simply with elapsed time
+
+`build_test_signal` (`r0082_audio_utils.py`, verbatim copy of R0081's
+algorithm) plays three sequential 10-second tones — 500Hz, 1000Hz,
+2000Hz — at **identical amplitude** (verified: both signal WAVs have
+exactly RMS=1156.5, peak=1638 in EVERY one of the three 10s segments,
+zero variation). Mapped onto the mic recording's absolute timeline
+(pre-roll ends, signal starts, at t=1.0s):
+
+```
+tone1 (500Hz):  t=1.0s-11.0s   -> windows 1-3 (+ start of 4)
+tone2 (1000Hz): t=11.0s-21.0s  -> windows 4-7
+tone3 (2000Hz): t=21.0s-31.0s  -> windows 8-10
+```
+
+A fine-grained 0.5s-resolution RMS trace across the FULL raw mic
+recording (both runs) shows the rise is **not** a smooth ramp from the
+start of the recording — it is a sharp step aligned, within one 0.5s
+sub-window, with the tone1→tone2 and especially the tone2→tone3
+transition:
+
+```
+OFF mic: t=20.5s rms=156.8 -> t=21.5s rms=178.9 -> t=22.0s rms=440.0  (step at the 2000Hz onset)
+ON  mic: t=20.5s rms= 41.1 -> t=21.0s rms= 40.2 -> t=21.5s rms= 57.2 -> t=22.0s rms=219.4  (same step)
+```
+
+This directly answers item 9: the late window-8+ rise **is** present in
+the raw waveform (not an artifact of offline windowing/indexing), but
+its onset coincides with a change in the stimulus's own frequency
+content, not simply with elapsed playback time. Because the reference
+signal itself is amplitude-uniform across all three segments (confirmed
+above), the mic-side rise cannot be explained by a louder driving
+signal — and because the **same** onset-aligned rise appears in the OFF
+run, which has no AEC/adaptive filter to "reconverge," the effect
+cannot be solely an AEC-adaptation artifact either. This points to a
+frequency-dependent acoustic/mechanical/electrical response (e.g. the
+USB speaker's own frequency response, room/enclosure resonance, or mic
+pickup frequency response at 2000Hz vs. 500/1000Hz) contributing
+substantially to what had been described as a purely
+time/stream-age-dependent effect.
+
+One additional, unexplained secondary observation: in the ON run, RMS
+within the tone3 segment partially recovers (drops back to ~37-45)
+starting at t≈29.5s, 1.5s *before* the segment itself ends at t=31.0s;
+the OFF run's tone3 segment does not show this same early drop (stays
+elevated until the tail region begins at t=31.0s). This asymmetry is
+noted but not explained — possibly AEC re-adaptation within the segment
+— and is flagged as a secondary open question, not a central finding.
+
+**This does not invalidate the AEC attenuation result** (§21 — that
+conclusion is independent of this confound: AEC ON is lower than OFF in
+every window regardless of which tone segment produced the level). It
+**does** mean the "stability"/"time-dependent instability" framing (§22)
+is confounded with stimulus frequency content, and this was not
+previously controlled for. The clear disambiguation experiment is a
+repeat run with `--stimulus mls` (already available in
+`r0082_audio_utils.py` — broadband, no discrete frequency segments): if
+the late-region rise persists, that supports genuine time/stream-age
+dependence; if it disappears or flattens, that supports the
+frequency-dependent-response hypothesis found here. This is recorded as
+an important open item for a future round, not resolved this round, and
+is not used to override the verdict table the next section records.
+
+## 25. R0082-B verdict
+
+```
+R0082-A audit                        PASS
+R0082-B device/sample-rate path      PASS after alias fix
+WebRTC AEC execution                 PASS
+WebRTC AEC residual reduction        CONFIRMED
+Time stability requirement           FAIL / NOT MET
+MediaDevices/PortAudio PoC           PARTIAL PASS
+Production migration                 NOT APPROVED
+Gemini integration                   NOT YET
+```
+
+R0082 overall is not yet a full PASS. **Caveat on "Time stability
+requirement FAIL / NOT MET":** §24's new finding means this failure may
+be partially or substantially attributable to the tones stimulus's own
+3-segment frequency structure rather than (or in addition to) genuine
+elapsed-time/stream-age drift — an MLS-stimulus run is needed to
+disambiguate before this can be attributed to one cause or the other
+with confidence. The FAIL classification itself is recorded as
+instructed and is not overturned; the mechanism behind it is now known
+to be less settled than "time-dependent instability" alone would imply.
+
+## 26. R0082-C — architecture audit (before build)
+
+Per the brief: PlatformAudio + PipeWire + a real LiveKit room is now the
+highest-priority next test, because R0082-B (`MediaDevices`/PortAudio/
+direct-ALSA) proved AEC attenuation works but did not eliminate the
+late-region rise, and the target NeXa architecture is PipeWire/WebRTC-ADM
+via `PlatformAudio`, not PortAudio/ALSA. Audited the actual installed
+`livekit` 1.1.19 source (`livekit/rtc/platform_audio.py`, 427 lines) —
+nothing below is assumed from docs or memory.
+
+**1–2. Binding/selecting the reSpeaker (recording) / UACDemoV1.0
+(playout) devices.** `PlatformAudio.set_recording_device(device_id)` /
+`set_playout_device(device_id)` both require a real, non-empty `id`
+(GUID) string per their own docstrings ("Use the ID rather than index
+for stable device selection"). R0082-A already found `AudioDeviceInfo.id`
+is **always an empty string** on this Linux/PipeWire system. This
+round tested empirically (safe — neither call opens a stream per
+source): `set_recording_device("")` raises no exception but is almost
+certainly a no-op (there is no way to distinguish "selected the empty-id
+device" from "silently ignored"); `set_recording_device(<device name>)`
+(passing the enumerated NAME instead of an id, as a probe) raises
+`PlatformAudioError: Failed to set recording device: Device not found`
+— confirming the native implementation does **not** fall back to
+name-based matching. **Conclusion: on this platform/SDK version, neither
+target device can be explicitly force-selected via this API.**
+Fortunately, `pactl info` confirms PipeWire's own CURRENT default sink
+is already `alsa_output.usb-Jieli_Technology_UACDemoV1.0_...` and
+default source is already
+`alsa_input.usb-Seeed_Studio_reSpeaker_XVF3800_...` — i.e. `PlatformAudio`
+with **no** explicit selection call already resolves to exactly the
+target devices via PipeWire's own default-device mechanism (confirmed:
+`recording_devices()`/`playout_devices()`'s own `index=0`,
+`"default: "`-prefixed entries name the reSpeaker/UACDemoV1.0
+respectively). The R0082-C PoC does not call
+`set_recording_device`/`set_playout_device` at all; instead it verifies
+(`_verify_default_device()`) that the current default still matches
+before proceeding, refusing to run otherwise.
+
+**3. `PlatformAudioOptions` → WebRTC ADM/APM mapping.**
+`PlatformAudioOptions._to_proto()` maps `echo_cancellation`,
+`noise_suppression`, `auto_gain_control`, `prefer_hardware` directly,
+1:1, unmodified, onto `proto_audio_frame.AudioSourceOptions`, sent over
+FFI to the native binding at `create_audio_source()` call time. No
+Python-side transformation. The native binding's own internal algorithm
+selection is not inspectable from Python source (compiled
+`liblivekit_ffi.so`), but the request wiring itself is unambiguous and
+direct.
+
+**4. AEC OFF/ON toggle.** Confirmed straightforward:
+`create_audio_source(PlatformAudioOptions(echo_cancellation=False))` vs.
+`(echo_cancellation=True)`, called fresh per run — same off/on pattern
+as R0082-B.
+
+**5. Does the reverse/render path require an actual published/
+subscribed room track?** **Yes, confirmed from source.** Unlike
+`MediaDevices` (which exposes a genuine local-loopback `open_output()`
+with no room needed, R0082-B §6), `PlatformAudio` has **no** equivalent
+local playout API — its own docstring's "Automatic playout" feature is
+described only in terms of "Received audio is automatically played
+through speakers," and grepping the entire installed SDK found zero
+references to `PlatformAudio` anywhere in `room.py`/`RoomOptions` — the
+wiring is native/internal, triggered by actual remote-track subscription
+inside a real `Room`. There is no way to feed `PlatformAudio`'s AEC
+far-end reference without a genuine room publish+subscribe round trip.
+This directly confirms the user's own hypothesis and the two-participant
+topology requirement.
+
+**6–7. Smallest local topology / existing server availability.**
+**No `livekit-server` binary, no Docker/Podman, no `livekit-cli`** were
+present anywhere on this machine (checked `which`, `find`, `docker info`
+— all negative). The official single static Go binary (Apache-2.0,
+`github.com/livekit/livekit`, release `v1.13.7`, `linux_arm64`) was
+downloaded into this session's own scratchpad (NOT this repo, NOT
+system-wide, NOT `sudo`) and confirmed working:
+
+```bash
+curl -sL -o livekit_1.13.7_linux_arm64.tar.gz \
+    https://github.com/livekit/livekit/releases/download/v1.13.7/livekit_1.13.7_linux_arm64.tar.gz
+tar -xzf livekit_1.13.7_linux_arm64.tar.gz
+./livekit-server --dev --bind 127.0.0.1
+```
+
+`--dev` mode auto-generates placeholder credentials (`devkey`/`secret`),
+binds to `127.0.0.1` only (no external exposure), and needs no Redis or
+config file — confirmed via a real startup log (HTTP port 7880, RTC TCP
+7881, RTC UDP 7882+) and a real end-to-end synthetic room
+connect→publish→disconnect round trip (token generated via
+`livekit.api.AccessToken`, `Room.connect()`, `publish_track()`, clean
+disconnect, zero errors) — this is the smallest viable local topology,
+requiring no external account, no cloud dependency, no Docker.
+
+**8. Cleanup/disconnect semantics.** From source docstrings:
+`PlatformAudioSource.close()` (sync) and `PlatformAudio.close()` (sync)
+must be called in that order ("Always close PlatformAudioSource
+instances before closing the parent PlatformAudio instance"). For the
+synthetic side, `rtc.AudioSource.aclose()` is **async** — a real bug was
+found and fixed this round (§28) where the first PoC draft looked for a
+`close()` method (absent on `AudioSource`) instead of `aclose()`,
+silently leaking the handle and producing `FfiHandle` `AssertionError`s
+on an otherwise-successful run; fixed and re-validated clean.
+
+**9. Sample-rate/device behavior exposed through PipeWire.** From
+source: `create_audio_source()`'s FFI request always sets
+`sample_rate=48000, num_channels=1`, but the surrounding comment states
+plainly: "For platform audio, the ADM determines the actual sample rate
+and channels. These fields are ignored." Unlike `MediaDevices`/PortAudio
+(R0082-B, which went **directly** to ALSA and hit a real 48kHz rejection
+on the raw hw device), `PlatformAudio` goes through **PipeWire**
+(R0082-A), and PipeWire — as a general-purpose audio server — is
+expected to perform its own rate/format negotiation and conversion
+transparently for any client, regardless of a physical device's native
+rate. This is a reasonable **expectation**, not yet an empirically
+confirmed fact for the reSpeaker's real 16kHz-native hardware — the
+first real hardware run (§30's command) will confirm or refute it. If
+`PlatformAudio` DOES hit an analogous rate rejection, that would be a
+significant, unexpected finding in its own right.
+
+**10. CPU/RAM observability.** Same as R0082-B: not measured by the
+script itself; operator monitors separately (`top`/`ps`). Since R0082-C
+now runs BOTH participants in one process (§27's design decision), this
+is simpler than a two-process setup — one PID to watch for the PoC
+script, plus the separate `livekit-server` process.
+
+## 27. R0082-C — local server setup and real (non-hardware) end-to-end validation
+
+Beyond static checks, this round additionally validated the **real room
+mechanics** — token generation, connect, publish, `track_subscribed`
+event delivery, remote-track `AudioStream` capture, WAV write, windowed
+RMS analysis — end to end against the real local dev server, using a
+throwaway synthetic stand-in for the "pi" role's mic track (a
+constant-tone `rtc.AudioSource`, identity `"r0082c_pi"`) in place of
+real `PlatformAudio` — this deliberately never touches physical hardware
+while still exercising the actual `_run_test_role`/`_make_token`
+functions from the real R0082-C script, unmodified. Result: connect,
+publish, subscribe, capture, and WAV/window output all worked correctly
+— byte counts and window counts matched exact expectations
+(`captured_full` = 768960 bytes = 8.01s @ 48kHz mono 16-bit for a 6s
+test duration + 1s pre-roll + 1s tail + settle overrun; `signal_pcm` =
+576000 bytes = exactly 6.0s). The throwaway harness and its output were
+deleted after use — nothing from it is part of this repo. The local
+dev server itself was stopped after validation; it is not left running
+for the operator (§30 documents the exact start command as a
+prerequisite).
+
+## 28. R0082-C — PoC script build, bug found and fixed
+
+Built `docs/research/r0082_livekit_webrtc_audio_poc/
+r0082c_platform_audio_room_aec_poc.py`: **one process, one asyncio
+loop, two `rtc.Room()` connections** (not two OS processes — both
+participant roles run concurrently via `asyncio.gather` in the same
+script, which satisfies "two participants... both join the same room"
+architecturally while keeping the operator interface to exactly one
+command, per §30). Reuses `r0082_audio_utils.py` exclusively (no
+`sounddevice` import — `PlatformAudio` does not use PortAudio, unlike
+R0082-B's `MediaDevices`).
+
+- **"pi" role** (`_run_pi_role`): real `rtc.PlatformAudio()`; enumerates
+  and prints `recording_devices()`/`playout_devices()`; calls
+  `_verify_default_device()` (§26 item 1–2) instead of explicit
+  selection; creates a `PlatformAudioSource` with the requested
+  `echo_cancellation` (via `--aec`); publishes it as a track; relies on
+  auto-subscribing (default `RoomOptions(auto_subscribe=True)`) to the
+  "test" role's stimulus track to trigger PlatformAudio's automatic
+  playout (the AEC far-end reference, per §26 item 5); cleans up in the
+  documented order (`source.close()` → `room.disconnect()` →
+  `platform_audio.close()`).
+- **"test" role** (`_run_test_role`): synthetic `rtc.AudioSource` (no
+  physical device); publishes the SAME `build_signal` stimulus as
+  R0082-B; listens for `room.on("track_subscribed")` filtered to
+  identity `"r0082c_pi"` and `TrackKind.KIND_AUDIO` (confirmed correct
+  attribute access via direct SDK introspection — `TrackKind` is a
+  protobuf `EnumTypeWrapper`, `KIND_AUDIO` resolves to `1`); once the
+  Pi's mic track is subscribed, waits 1.0s to settle, then plays
+  pre-roll + signal + tail while concurrently capturing the remote mic
+  track via `rtc.AudioStream` (the exact same reuse-of-any-track pattern
+  R0082-A/B already confirmed); computes the identical windowed
+  RMS/peak analysis and writes WAV evidence
+  (`r0082c_aec_captures/r0082c_aec{off,on}_<run_id>_<stimulus>_{signal,mic}.wav`).
+
+**Bug found (via the real dry-run validation, §27, not guessed) and
+fixed:** the first draft's `_run_test_role` cleanup used
+`getattr(signal_source, "close", None)` — but `rtc.AudioSource` exposes
+only an **async** `aclose()` (confirmed from source, §26 item 8), not a
+sync `close()`; the `getattr` silently found nothing, so the source was
+never actually released, producing `FfiHandle.__del__` `AssertionError`s
+on an otherwise fully successful run (2 occurrences observed). Fixed by
+calling `await signal_source.aclose()` directly; re-validated — **zero**
+`FfiHandle` assertion errors on the corrected re-run, with output data
+(byte counts, window computations) unchanged and correct. One harmless
+native-library warning (`Attempted to drop unknown FFI handle: ...`,
+printed by the Rust FFI layer, not a Python exception) remains and is
+analogous to R0082-B's own "ignoring" warning — noted, not chased
+further; it does not affect output correctness.
+
+## 29. R0082-C validation summary
+
+```
+isolated-venv import                 PASS
+--help                               PASS
+py_compile                           PASS
+ruff                                 PASS (0 errors)
+git diff --check                     PASS
+no nexa/pipecat/loguru/Silero/
+  Gemini-SDK modules on import       CONFIRMED (isolation check)
+real room mechanics (non-hardware)   CONFIRMED (§27 dry-run, synthetic
+                                      stand-in for the "pi" mic track,
+                                      zero FfiHandle errors after fix)
+no production src/ or apps/ changes  CONFIRMED
+```
+
+`PlatformAudio()` itself — the one call that touches real physical
+hardware — was never invoked by this session, per instruction.
+
+## 30. Decision gate and next step
+
+Per the brief's decision gate: if `PlatformAudio`/PipeWire shows
+meaningful AEC attenuation **and** a stable residual over time, R0082
+becomes a strong PASS candidate and R0083 (Pi `PlatformAudio`/WebRTC ↔
+LiveKit ↔ Pipecat `LiveKitTransport` ↔ Gemini Live) can be planned. If
+`PlatformAudio` shows the same late-run instability as R0082-B, Gemini
+integration stays deferred and the audio layer keeps being isolated.
+**Neither outcome is known yet — the first real R0082-C hardware run has
+not been executed.**
+
+### Minimal command for the first real R0082-C AEC-OFF hardware run (NOT run by this session)
+
+**Prerequisite** (start once, in a separate terminal, before the command
+below):
+
+```bash
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/livekit_server/livekit-server --dev --bind 127.0.0.1
+```
+
+**The one operator command:**
+
+```bash
+/tmp/claude-1000/-home-devdul-Projects-NeXa-IkiGai/scratchpad/r0082_livekit_probe_venv/bin/python3 \
+  docs/research/r0082_livekit_webrtc_audio_poc/r0082c_platform_audio_room_aec_poc.py \
+  --aec off --duration 30 --stimulus tones
+```
+
+This runs BOTH room participants (real `PlatformAudio` "pi" role +
+synthetic "test" role) in one process — no second terminal needed for
+the PoC itself, only for the `livekit-server` prerequisite. Operator
+should monitor CPU/RAM separately (e.g. `top`) during the run per §26
+item 10. **Do not run `--aec on` yet** — withheld until this `--aec off`
+run is confirmed to open the real reSpeaker/UACDemoV1.0 devices via
+`PlatformAudio` and complete successfully. This has intentionally
+**not** been run by this session.
