@@ -4863,3 +4863,144 @@ R0082-G remains READY for one real deliberate-barge-in hardware run**
 — same architecture, same cue, same cancellation mechanism, same
 validity rule, only the verdict-classification defect above corrected.
 This session did not execute hardware.
+
+## 100. CORRECTION #2 — FAIL-E was checked against the wrong boundary (countdown-start, not SPEAK NOW); now fixed (no hardware run)
+
+This is a **second, distinct** defect found by a subsequent operator
+review, still before any hardware execution. It does not undo or
+contradict §99 — that fix (checking `pre_cue_false_positive` in the
+verdict at all) was and remains correct. This round found that the
+*boundary* used to compute the pre/post split itself was wrong.
+
+**Defect.** The operator is explicitly instructed to remain completely
+silent through the ENTIRE countdown ("BARGE-IN IN 3" / "IN 2" / "IN 1")
+and to begin speaking only once `>>> SPEAK NOW <<<` appears. §99's fix
+split events at `cue_start_boundary_t_s` — countdown-start
+(`PRE_ROLL_S + BARGEIN_CUE_START_TIME_S` = t=6.0s in the audio-relative
+timeline) — not at `speak_now_boundary_t_s` — SPEAK NOW
+(`PRE_ROLL_S + BARGEIN_SPEAK_NOW_TIME_S` = t=9.0s). Consequently, a
+false accepted VAD start or confirmed interruption occurring DURING the
+countdown itself (e.g. while "BARGE-IN IN 2" was on screen, operator
+still silent by instruction, t somewhere in 6.0s–9.0s) was bucketed as
+"post-cue" and could still reach `VERDICT=PASS` if the genuine
+post-SPEAK-NOW barge-in also succeeded — exactly the same class of
+masking §99 was meant to close, just shifted 3 seconds later in the
+timeline.
+
+**Fix.** The canonical false-positive boundary in
+`evaluate_deliberate_bargein_result()` is now `speak_now_boundary_t_s`,
+not `cue_start_boundary_t_s`:
+
+```python
+pre_user_started   = [t for t in started_events   if t < speak_now_boundary_t_s]
+pre_user_confirmed = [t for t in confirmed_events if t < speak_now_boundary_t_s]
+post_user_started   = [t for t in started_events   if t >= speak_now_boundary_t_s]
+post_user_confirmed = [t for t in confirmed_events if t >= speak_now_boundary_t_s]
+pre_user_false_positive = bool(pre_user_started or pre_user_confirmed)
+```
+
+`cue_start_boundary_t_s` remains a parameter, used only to compute
+diagnostic sub-splits (`pre_countdown_started`/`pre_countdown_confirmed`
+= before countdown-start; `during_countdown_started`/
+`during_countdown_confirmed` = between countdown-start and SPEAK NOW)
+retained purely for telemetry — it no longer participates in the
+PASS/FAIL decision at all. `speak_now_boundary_t_s` is still derived
+explicitly as `PRE_ROLL_S + BARGEIN_SPEAK_NOW_TIME_S`, never
+hard-coded.
+
+**Naming.** Result fields were renamed to the unambiguous canonical
+form: `pre_user_false_positive`, `pre_user_started`, `pre_user_confirmed`,
+`post_user_started`, `post_user_confirmed`. The old names
+(`pre_cue_false_positive`, `pre_cue_started`, `pre_cue_confirmed`,
+`post_cue_started`, `post_cue_confirmed`) are retained in the returned
+dict strictly as backward-compatible ALIASES of the SAME
+SPEAK-NOW-bounded values — they are not recomputed against
+countdown-start, so no caller reading the old names sees stale
+countdown-boundary semantics. `run_speech_role_deliberate_bargein`'s
+printed summary and the module's own FAIL-taxonomy docstring were both
+updated to use the canonical names and to print the
+`pre_countdown_*`/`during_countdown_*` diagnostic breakdown alongside
+the pre-SPEAK-NOW false-positive warning. Per-run latency field names
+were also clarified for the same reason: `cue_to_vad_start_s` →
+`speak_now_to_vad_start_s`, `cue_to_interrupt_confirmed_s` →
+`speak_now_to_interrupt_confirmed_s` (both already measured from
+`milestones["speak_now"]`; only the name was ambiguous, not the value).
+
+**History, not rewritten:** (1) FAIL-E was first fixed at the verdict
+level (§99) — `pre_cue_false_positive` started being consulted at all.
+(2) This second review then found the boundary itself
+(countdown-start vs. SPEAK NOW) was wrong. (3) The canonical
+human/false-positive boundary is now SPEAK NOW, documented explicitly
+in the module docstring, with countdown-start preserved only as
+diagnostic telemetry.
+
+**Latency caveat, restated and expanded per instruction:**
+`speak_now_to_vad_start_s` (and `speak_now_to_interrupt_confirmed_s`)
+are measured from SPEAK NOW and therefore include human reaction
+time — they are operational latencies, not pure algorithmic ones. The
+live verdict uses SPEAK NOW as the earliest possible human-speech
+boundary; a VAD event occurring very shortly after SPEAK NOW could, in
+principle, still precede the operator's true physical acoustic onset,
+since reaction time varies between operators and even between runs by
+the same operator. **This is explicitly not addressed by changing VAD
+thresholds** (none were touched — `confidence=0.7`, `start_secs=0.2`,
+`stop_secs=1.0`, `min_volume=0.6`, `confirm_hold_secs=0.3` remain
+exactly as audited from production). The raw 48k/16k mic WAV and the
+full per-frame CSV timeline continue to be preserved specifically so
+the actual acoustic onset can be independently re-estimated offline
+after a real run — the same short-time-RMS-scan technique used to
+choose the cue timestamp in §95.3 — without altering this live
+decision.
+
+**Scope of the fix.** Pure classification logic
+(`evaluate_deliberate_bargein_result()`'s boundary computation and
+returned field names), the caller's print/latency-key text in
+`run_speech_role_deliberate_bargein`, and the module docstring's FAIL
+taxonomy section. No change to `_play_signal_cancelable()`, no change
+to the live consumer/playback wiring, no change to the cue's own
+timing (`BARGEIN_CUE_START_TIME_S`/`BARGEIN_SPEAK_NOW_TIME_S`
+unchanged), no change to VAD thresholds, no change to
+`--test-mode silent-user` (re-verified byte-for-byte identical,
+programmatic diff, `10405` characters, identical). No production files
+touched.
+
+**Offline validation performed (pure classification tests; full
+synthetic dry run NOT re-run, per instruction — this fix does not touch
+runtime wiring, only the classification function's boundary and result
+field names):**
+
+```
+py_compile                                                          PASS
+ruff                                                                 PASS
+git diff --check                                                     PASS
+CASE 1 -- false event BEFORE the countdown even starts (t=1.0s,
+  well before countdown-start at t=6.0s) + otherwise-successful
+  post-SPEAK-NOW chain => FAIL-E                                     PASS (6/6 sub-checks)
+CASE 2 (THE BUG BEING FIXED) -- false accepted VAD start DURING
+  the countdown itself (t=7.5s, squarely between countdown-start
+  6.0s and SPEAK NOW 9.0s -- e.g. while "BARGE-IN IN 2" is on
+  screen, operator still silent by instruction) + otherwise-
+  successful post-SPEAK-NOW barge-in => FAIL-E, NOT PASS (this is
+  exactly what the old countdown-start boundary got wrong)           PASS (4/4 sub-checks)
+CASE 3 -- CONFIRMED interruption DURING the countdown (operator
+  still silent) => FAIL-E regardless of later events (no
+  post-SPEAK-NOW events at all in this scenario)                     PASS (3/3 sub-checks)
+CASE 4 -- completely clean until SPEAK NOW, genuine event after,
+  INTERRUPT_CONFIRMED, playback stops, no resume => PASS              PASS
+CASE 5 -- existing FAIL-A/B/C/D/F classifications remain correct       PASS (6/6)
+CASE 6 -- silent-user mode's run_speech_role body byte-for-byte
+  unchanged (10405 chars, programmatic diff vs. last commit)          PASS
+_play_signal_cancelable() cancellation/no-resume regression            PASS (10/10, unaffected)
+LiveVadChain.process_frame() CSV backward-compatibility regression     PASS (4/4, unaffected)
+Positive/negative VAD control regression                               PASS (5/5, unaffected)
+pre_cue_*/post_cue_* aliases verified to equal the new SPEAK-NOW-
+  bounded pre_user_*/post_user_* values (not countdown-start-bounded)  PASS
+```
+
+46 checks total, all PASS.
+
+**Verdict: SPEAK-NOW-boundary fix CONFIRMED correct offline. R0082-G
+remains READY for one real deliberate-barge-in hardware run** — same
+architecture, same cue timing, same cancellation mechanism, same
+validity rule, only the classification boundary and field names
+corrected. This session did not execute hardware.

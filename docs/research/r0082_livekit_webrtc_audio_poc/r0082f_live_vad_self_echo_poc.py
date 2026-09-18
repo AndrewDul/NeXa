@@ -219,36 +219,79 @@ capture through `max(speak_now boundary, first confirmed interruption
 + 1.0s margin)` if a confirmed interruption occurred, else the full
 duration (nothing legitimately shortened it if no interruption fired).
 
-**Pre-cue false positives are tracked, reported in full detail
-(`pre_cue_started`/`pre_cue_confirmed`), AND wired into the canonical
-verdict as `FAIL-E`** -- a false accepted VAD start or confirmed
-interruption before the cue's own countdown-start boundary is the
-ORIGINAL self-echo failure mode and forces the overall run to FAIL,
-regardless of whether the later genuine post-cue barge-in also
-succeeds. **Correction (post-preparation-round fix):** the first
-implementation computed `pre_cue_false_positive` but did not consult it
-in the verdict chain, so a run could report
-`pre_cue_false_positive=True` alongside `VERDICT=PASS`. Fixed by
-checking it immediately after instrumentation validity and before any
-of the post-cue A/B/C/D checks -- see the FAIL taxonomy below and
-`evaluate_deliberate_bargein_result()`'s own exact `if/elif` chain.
+**The canonical false-positive boundary is `SPEAK NOW`
+(`speak_now_boundary_t_s = PRE_ROLL_S + BARGEIN_SPEAK_NOW_TIME_S`), NOT
+countdown-start.** The operator is instructed to remain completely
+silent through the ENTIRE countdown ("BARGE-IN IN 3" / "IN 2" / "IN 1")
+and to begin speaking only once `>>> SPEAK NOW <<<` appears. Any
+accepted VAD start or confirmed interruption at any point before
+`SPEAK NOW` -- whether before the countdown even starts, or DURING the
+countdown itself while the operator is still silent by instruction --
+is still a genuine self-echo false positive, never genuine human
+speech, and is tracked, reported in full detail
+(`pre_user_started`/`pre_user_confirmed`, with `pre_countdown_*`/
+`during_countdown_*` diagnostic sub-splits for telemetry only), AND
+wired into the canonical verdict as `FAIL-E`, regardless of whether the
+later genuine post-`SPEAK-NOW` barge-in also succeeds.
+
+**Two corrections, both found before any hardware execution, both
+preserved here as history rather than silently erased:**
+
+1. **First fix (verdict-level):** the first implementation computed
+   `pre_cue_false_positive` but did not consult it in the verdict
+   chain, so a run could report `pre_cue_false_positive=True` alongside
+   `VERDICT=PASS`. Fixed by checking it immediately after
+   instrumentation validity and before any of the post-cue A/B/C/D
+   checks.
+2. **Second fix (boundary-level, this round):** the boundary used for
+   that check was `cue_start_boundary_t_s` (countdown-start, t=4.0s
+   playback-relative) rather than `speak_now_boundary_t_s` (t=7.0s
+   playback-relative). This meant a false trigger occurring DURING the
+   countdown itself (while the operator was still silent, by
+   instruction) was wrongly bucketed as "post-cue" and could still
+   reach `PASS` if the genuine human barge-in afterward also succeeded.
+   Fixed by moving the canonical `pre_user_*`/`post_user_*` split onto
+   `speak_now_boundary_t_s`. `cue_start_boundary_t_s` remains a
+   parameter used ONLY to sub-split the diagnostic
+   `pre_countdown_*`/`during_countdown_*` fields for telemetry --
+   it no longer participates in the PASS/FAIL decision at all.
+   `pre_cue_*`/`post_cue_*` are retained in the result dict purely as
+   backward-compatible ALIASES of the SAME SPEAK-NOW-bounded values
+   (not recomputed against countdown-start) so no ambiguous terminology
+   hides the distinction.
 
 **FAIL taxonomy** (distinct classes, per instruction), checked in this
 exact order:
 F = test instrumentation invalid (first-frame gate, zero VAD frames,
 or capture too short even under the relaxed deliberate-mode rule);
 E = a false accepted VAD start or confirmed interruption occurred
-BEFORE the cue (`pre_cue_false_positive`) -- checked next, before any
-post-cue outcome is considered;
-A = operator spoke, no accepted post-cue VAD start;
-B = accepted post-cue VAD start, no post-cue `INTERRUPT_CONFIRMED`;
+BEFORE `SPEAK NOW` (`pre_user_false_positive`) -- covers both
+before-the-countdown and during-the-countdown false triggers -- checked
+next, before any post-`SPEAK-NOW` outcome is considered;
+A = operator spoke, no accepted post-`SPEAK-NOW` VAD start;
+B = accepted post-`SPEAK-NOW` VAD start, no post-`SPEAK-NOW`
+`INTERRUPT_CONFIRMED`;
 C = `INTERRUPT_CONFIRMED` occurred but playback did not verifiably stop
 early (frame submission reached natural completion);
 D = playback stopped then resumed (structurally impossible by this
 loop's design -- checked anyway).
-PASS = exactly the expected post-cue chain AND `pre_cue_false_positive
-is False`. `VERDICT=PASS` can no longer coexist with a pre-cue false
-positive.
+PASS = exactly the expected post-`SPEAK-NOW` chain AND
+`pre_user_false_positive is False`. `VERDICT=PASS` can no longer
+coexist with a false positive at any point before `SPEAK NOW`,
+countdown included.
+
+**Latency caveat, stated explicitly, not hidden:** `speak_now_to_
+vad_start_s` (and `speak_now_to_interrupt_confirmed_s`) are measured
+from `SPEAK NOW` and therefore INCLUDE human reaction time -- they are
+operational latencies, not pure algorithmic ones. The live verdict uses
+`SPEAK NOW` as the earliest possible human-speech boundary; a VAD event
+occurring very shortly after `SPEAK NOW` could still, in principle,
+precede the operator's true physical acoustic onset (reaction time
+varies). This is NOT solved by changing VAD thresholds. The raw 48k/16k
+mic WAV and the full per-frame CSV timeline are preserved specifically
+so the actual acoustic onset can be independently re-estimated offline
+after a real run (the same RMS-scan technique used to choose the cue
+timestamp), without altering this live decision.
 """
 
 from __future__ import annotations
@@ -1041,26 +1084,52 @@ def evaluate_deliberate_bargein_result(
     playback_resumed_after_stop: bool,
 ) -> dict:
     """R0082-G classification -- pure function, unit-testable without any
-    hardware/asyncio/LiveKit involvement. Returns a dict with:
-    `pre_cue_false_positive` (bool) -- a false accepted speech start or a
-    confirmed interruption BEFORE the operator's own cue is the original
-    self-echo failure mode and is now WIRED INTO the verdict as `FAIL-E`
-    (previously computed but not consulted -- fixed per correction: a
-    run could report `pre_cue_false_positive=True` alongside
-    `VERDICT=PASS` if the later genuine post-cue barge-in also
-    succeeded; that is no longer possible -- `PASS` requires
-    `pre_cue_false_positive is False`). `verdict` is one of "PASS",
-    "FAIL-A".."FAIL-F". The supporting event lists split pre/post cue
-    are still returned in full."""
-    pre_cue_started = [t for t in started_events if t < cue_start_boundary_t_s]
-    pre_cue_confirmed = [t for t in confirmed_events if t < cue_start_boundary_t_s]
-    post_cue_started = [t for t in started_events if t >= cue_start_boundary_t_s]
-    post_cue_confirmed = [t for t in confirmed_events if t >= cue_start_boundary_t_s]
-    pre_cue_false_positive = bool(pre_cue_started or pre_cue_confirmed)
+    hardware/asyncio/LiveKit involvement.
 
-    if post_cue_confirmed:
+    **Canonical false-positive boundary is `SPEAK NOW`
+    (`speak_now_boundary_t_s`), NOT countdown-start
+    (`cue_start_boundary_t_s`).** The operator is explicitly instructed
+    to remain completely silent through the entire "BARGE-IN IN 3/2/1"
+    countdown and to begin speaking only once `>>> SPEAK NOW <<<`
+    appears. Any accepted VAD start or confirmed interruption at ANY
+    point before `SPEAK NOW` -- whether before the countdown even
+    starts, or DURING "IN 3"/"IN 2"/"IN 1" while the operator is still
+    silent by instruction -- is still a genuine self-echo false
+    positive, not genuine human speech, and must classify as `FAIL-E`.
+    (Correction, second review: the first implementation used
+    `cue_start_boundary_t_s` -- countdown-start -- as this boundary,
+    which wrongly let a false trigger DURING the countdown itself slip
+    through as "post-cue" and potentially still reach `PASS`. Fixed
+    below. `cue_start_boundary_t_s` is retained as a parameter purely
+    for diagnostic sub-splitting -- see `during_countdown_started`/
+    `during_countdown_confirmed` in the returned dict -- it is no
+    longer used anywhere in the PASS/FAIL decision.)
+
+    Returns a dict with the canonical `pre_user_*`/`post_user_*` fields
+    (`pre_user_false_positive`, `pre_user_started`, `pre_user_confirmed`,
+    `post_user_started`, `post_user_confirmed`), plus `pre_cue_*`/
+    `post_cue_*` as backward-compatible ALIASES of the exact same
+    SPEAK-NOW-bounded values (kept only so any external caller/report
+    text still using the old names sees the corrected semantics rather
+    than breaking -- they are NOT computed against countdown-start).
+    `verdict` is one of "PASS", "FAIL-A".."FAIL-F"."""
+    pre_user_started = [t for t in started_events if t < speak_now_boundary_t_s]
+    pre_user_confirmed = [t for t in confirmed_events if t < speak_now_boundary_t_s]
+    post_user_started = [t for t in started_events if t >= speak_now_boundary_t_s]
+    post_user_confirmed = [t for t in confirmed_events if t >= speak_now_boundary_t_s]
+    pre_user_false_positive = bool(pre_user_started or pre_user_confirmed)
+
+    # Diagnostic-only sub-split of the pre-SPEAK-NOW events, purely for
+    # telemetry/reporting (e.g. distinguishing "before the countdown even
+    # started" from "during IN 3/IN 2/IN 1"). NOT used in the verdict.
+    pre_countdown_started = [t for t in pre_user_started if t < cue_start_boundary_t_s]
+    pre_countdown_confirmed = [t for t in pre_user_confirmed if t < cue_start_boundary_t_s]
+    during_countdown_started = [t for t in pre_user_started if t >= cue_start_boundary_t_s]
+    during_countdown_confirmed = [t for t in pre_user_confirmed if t >= cue_start_boundary_t_s]
+
+    if post_user_confirmed:
         min_required_s = max(
-            speak_now_boundary_t_s, post_cue_confirmed[0] + POST_INTERRUPT_MARGIN_S
+            speak_now_boundary_t_s, post_user_confirmed[0] + POST_INTERRUPT_MARGIN_S
         )
     else:
         min_required_s = MIN_DELIBERATE_CAPTURE_S
@@ -1068,11 +1137,11 @@ def evaluate_deliberate_bargein_result(
 
     if vad_frames_processed == 0 or not cue_emitted or not capture_ok:
         verdict = "FAIL-F"
-    elif pre_cue_false_positive:
+    elif pre_user_false_positive:
         verdict = "FAIL-E"
-    elif not post_cue_started:
+    elif not post_user_started:
         verdict = "FAIL-A"
-    elif not post_cue_confirmed:
+    elif not post_user_confirmed:
         verdict = "FAIL-B"
     elif not playback_stopped_early:
         verdict = "FAIL-C"
@@ -1082,11 +1151,24 @@ def evaluate_deliberate_bargein_result(
         verdict = "PASS"
 
     return {
-        "pre_cue_false_positive": pre_cue_false_positive,
-        "pre_cue_started": pre_cue_started,
-        "pre_cue_confirmed": pre_cue_confirmed,
-        "post_cue_started": post_cue_started,
-        "post_cue_confirmed": post_cue_confirmed,
+        "pre_user_false_positive": pre_user_false_positive,
+        "pre_user_started": pre_user_started,
+        "pre_user_confirmed": pre_user_confirmed,
+        "post_user_started": post_user_started,
+        "post_user_confirmed": post_user_confirmed,
+        "pre_countdown_started": pre_countdown_started,
+        "pre_countdown_confirmed": pre_countdown_confirmed,
+        "during_countdown_started": during_countdown_started,
+        "during_countdown_confirmed": during_countdown_confirmed,
+        # Backward-compatible aliases -- SAME SPEAK-NOW-bounded values,
+        # NOT countdown-start-bounded. Canonical names are pre_user_*/
+        # post_user_* above; these exist only so old field names still
+        # resolve to the corrected semantics.
+        "pre_cue_false_positive": pre_user_false_positive,
+        "pre_cue_started": pre_user_started,
+        "pre_cue_confirmed": pre_user_confirmed,
+        "post_cue_started": post_user_started,
+        "post_cue_confirmed": post_user_confirmed,
         "capture_ok": capture_ok,
         "min_required_capture_s": min_required_s,
         "verdict": verdict,
@@ -1371,19 +1453,30 @@ async def run_speech_role_deliberate_bargein(
             playback_resumed_after_stop=playback_resumed_after_stop,
         )
 
+        # Latencies are measured from SPEAK NOW (the canonical human-speech
+        # boundary), not countdown-start. `speak_now_to_vad_start_s`
+        # necessarily INCLUDES human reaction time (the operator must
+        # perceive the cue, then physically begin speaking, then the
+        # acoustic signal must propagate/be captured/decoded before Silero
+        # sees it) -- it is an operational latency, not a pure algorithmic
+        # one. A very early post-SPEAK-NOW event could theoretically still
+        # precede the operator's true physical acoustic onset; the raw
+        # 48k/16k WAV + per-frame CSV timestamps are preserved specifically
+        # so the actual acoustic onset can be independently re-estimated
+        # offline after a real run, without altering this live verdict.
         latencies = {}
-        if "speak_now" in milestones and result["post_cue_started"]:
-            idx = chain.started_events.index(result["post_cue_started"][0])
-            latencies["cue_to_vad_start_s"] = (
+        if "speak_now" in milestones and result["post_user_started"]:
+            idx = chain.started_events.index(result["post_user_started"][0])
+            latencies["speak_now_to_vad_start_s"] = (
                 chain.started_events_mono[idx] - milestones["speak_now"]
             )
-        if "speak_now" in milestones and result["post_cue_confirmed"]:
-            idx = chain.confirmed_events.index(result["post_cue_confirmed"][0])
-            latencies["cue_to_interrupt_confirmed_s"] = (
+        if "speak_now" in milestones and result["post_user_confirmed"]:
+            idx = chain.confirmed_events.index(result["post_user_confirmed"][0])
+            latencies["speak_now_to_interrupt_confirmed_s"] = (
                 chain.confirmed_events_mono[idx] - milestones["speak_now"]
             )
-        if "playback_cancel_requested" in milestones and result["post_cue_confirmed"]:
-            idx = chain.confirmed_events.index(result["post_cue_confirmed"][0])
+        if "playback_cancel_requested" in milestones and result["post_user_confirmed"]:
+            idx = chain.confirmed_events.index(result["post_user_confirmed"][0])
             latencies["interrupt_confirmed_to_cancel_requested_s"] = (
                 milestones["playback_cancel_requested"] - chain.confirmed_events_mono[idx]
             )
@@ -1407,16 +1500,25 @@ async def run_speech_role_deliberate_bargein(
         print(f"  min_required_capture_s        = {result['min_required_capture_s']:.3f}")
         print(f"  capture_ok                    = {result['capture_ok']}")
         print(f"  playback_stopped_early        = {stopped_early}")
-        print(f"  pre_cue_false_positive        = {result['pre_cue_false_positive']}")
-        if result["pre_cue_false_positive"]:
+        print(
+            "  pre_user_false_positive       = "
+            f"{result['pre_user_false_positive']}  "
+            "(canonical boundary = SPEAK NOW, not countdown-start)"
+        )
+        if result["pre_user_false_positive"]:
             print(
-                "  *** PRE-CUE FALSE POSITIVE(S) -- self-echo trigger BEFORE the "
-                f"cue: started={result['pre_cue_started']} confirmed={result['pre_cue_confirmed']} "
+                "  *** FALSE POSITIVE BEFORE SPEAK NOW -- self-echo trigger: "
+                f"started={result['pre_user_started']} confirmed={result['pre_user_confirmed']} "
                 "-- this is the original self-echo failure mode and forces "
-                "VERDICT=FAIL-E below, regardless of the post-cue outcome ***"
+                "VERDICT=FAIL-E below, regardless of the post-SPEAK-NOW outcome. "
+                f"(of which, DURING the countdown itself -- operator still silent "
+                f"by instruction -- started={result['during_countdown_started']} "
+                f"confirmed={result['during_countdown_confirmed']}; before the "
+                f"countdown even began: started={result['pre_countdown_started']} "
+                f"confirmed={result['pre_countdown_confirmed']}) ***"
             )
-        print(f"  post_cue_started_events       = {result['post_cue_started']}")
-        print(f"  post_cue_confirmed_events     = {result['post_cue_confirmed']}")
+        print(f"  post_user_started_events      = {result['post_user_started']}")
+        print(f"  post_user_confirmed_events    = {result['post_user_confirmed']}")
         for k, v in latencies.items():
             print(f"  {k:<40s} = {v:.3f}s")
         print(f"\n  VERDICT: {result['verdict']}")
