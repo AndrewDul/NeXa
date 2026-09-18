@@ -4761,8 +4761,105 @@ five-run replication set.
 Terminal B will refuse to play anything (`TEST INVALID`) if no real
 remote mic frame arrives within 15s. At the end it prints a
 `VALIDITY + CLASSIFICATION SUMMARY` block — only trust the verdict if
-`capture_ok = True`; check `pre_cue_false_positive` separately from the
-main verdict; a real barge-in should show `VERDICT: PASS` with exactly
-one (or occasionally a few duplicate) post-cue VAD start(s) and exactly
-one confirmed interruption. **This has intentionally NOT been run by
-this session.**
+`capture_ok = True`; a real barge-in should show `VERDICT: PASS` with
+exactly one (or occasionally a few duplicate) post-cue VAD start(s) and
+exactly one confirmed interruption, **and `pre_cue_false_positive =
+False`** — as of §99 below, `VERDICT: PASS` can no longer occur at all
+if a false accepted speech start or confirmed interruption happened
+before the operator's own cue (that case is now `VERDICT: FAIL-E`).
+**This has intentionally NOT been run by this session.**
+
+## 99. CORRECTION — FAIL-E was computed but not enforced; now fixed (no hardware run)
+
+**Defect found (by operator review, before any hardware execution):**
+`evaluate_deliberate_bargein_result()` (§95.7/§96 above) computed
+`pre_cue_false_positive` but never consulted it when choosing `verdict`.
+Concretely, a run could report:
+
+```
+pre_cue_false_positive = True
+VERDICT                = PASS
+```
+
+if the later genuine post-cue barge-in chain also happened to succeed
+(post-cue VAD start → post-cue `INTERRUPT_CONFIRMED` → playback stopped
+early → no resume). A false accepted speech start or a confirmed
+interruption **before** the operator's own deliberate cue is exactly
+the original self-echo failure mode this whole R0082 investigation
+exists to rule out — masking it behind a later genuine success is not
+acceptable for R0082-G. This was a real defect in the verdict logic,
+not merely an omission in reporting: the detailed `pre_cue_started`/
+`pre_cue_confirmed` lists were already being computed and printed
+correctly; only the top-level `verdict` failed to use them.
+
+**Fix.** `evaluate_deliberate_bargein_result()` in
+`r0082f_live_vad_self_echo_poc.py` now checks `pre_cue_false_positive`
+immediately after instrumentation validity and before any post-cue
+outcome is considered, matching the canonical ordering:
+
+```python
+if vad_frames_processed == 0 or not cue_emitted or not capture_ok:
+    verdict = "FAIL-F"
+elif pre_cue_false_positive:
+    verdict = "FAIL-E"
+elif not post_cue_started:
+    verdict = "FAIL-A"
+elif not post_cue_confirmed:
+    verdict = "FAIL-B"
+elif not playback_stopped_early:
+    verdict = "FAIL-C"
+elif playback_resumed_after_stop:
+    verdict = "FAIL-D"
+else:
+    verdict = "PASS"
+```
+
+`pre_cue_started` and `pre_cue_confirmed` remain in the returned dict in
+full detail (unchanged — the fix only changes which branch `verdict`
+takes, not what evidence is retained or reported). The module docstring
+(FAIL taxonomy section), the printed pre-cue warning in
+`run_speech_role_deliberate_bargein`'s summary block, and the operator
+procedure above (§98) were all updated to state plainly that
+`VERDICT: PASS` now requires `pre_cue_false_positive is False` as a
+hard precondition, not an independently-reported side note.
+
+**Scope of the fix.** Pure classification logic only
+(`evaluate_deliberate_bargein_result()`'s `if/elif` chain and its
+docstring) plus documentation/print-text updates. No change to
+`_play_signal_cancelable()`, no change to the live consumer/playback
+wiring, no change to cue timing, no change to VAD thresholds
+(`confidence`/`start_secs`/`stop_secs`/`min_volume`/`confirm_hold_secs`
+all untouched), no change to `--test-mode silent-user` (re-verified
+byte-for-byte identical to the pre-fix version — programmatic diff,
+`10405` characters, identical). No production files touched.
+
+**Offline validation performed (pure classification tests; the full
+synthetic LiveKit dry run was NOT re-run, per instruction, since this
+fix does not touch runtime wiring):**
+
+```
+py_compile                                                         PASS
+ruff                                                                PASS
+git diff --check                                                    PASS
+CASE 1: pre-cue accepted VAD start + otherwise-successful post-cue
+  chain (post-cue start, post-cue confirm, playback stopped early)
+  => FAIL-E (was PASS before the fix)                                PASS
+CASE 2: pre-cue CONFIRMED interruption + otherwise-successful
+  post-cue chain => FAIL-E                                           PASS
+CASE 3: clean pre-cue (no events before the cue) + successful
+  post-cue chain => PASS (confirms the fix does not over-correct
+  into always-failing)                                               PASS
+Existing FAIL-A / FAIL-B / FAIL-C / FAIL-D / FAIL-F scenarios
+  all still classify correctly (regression check)                    PASS (6/6)
+pre_cue_started / pre_cue_confirmed / post_cue_started /
+  post_cue_confirmed detail lists still populated correctly
+  under FAIL-E (evidence preserved, not erased by the fix)           PASS
+silent-user run_speech_role body byte-for-byte unchanged
+  (10405 chars, programmatic diff, identical)                        PASS
+```
+
+**Verdict: FAIL-E fix CONFIRMED correct offline.
+R0082-G remains READY for one real deliberate-barge-in hardware run**
+— same architecture, same cue, same cancellation mechanism, same
+validity rule, only the verdict-classification defect above corrected.
+This session did not execute hardware.

@@ -219,22 +219,36 @@ capture through `max(speak_now boundary, first confirmed interruption
 + 1.0s margin)` if a confirmed interruption occurred, else the full
 duration (nothing legitimately shortened it if no interruption fired).
 
-**Pre-cue false positives are tracked and reported separately** from
-the genuine post-cue interruption outcome -- any accepted VAD start or
-confirmed interruption before the cue's own countdown-start boundary
-is flagged regardless of what happens afterward.
+**Pre-cue false positives are tracked, reported in full detail
+(`pre_cue_started`/`pre_cue_confirmed`), AND wired into the canonical
+verdict as `FAIL-E`** -- a false accepted VAD start or confirmed
+interruption before the cue's own countdown-start boundary is the
+ORIGINAL self-echo failure mode and forces the overall run to FAIL,
+regardless of whether the later genuine post-cue barge-in also
+succeeds. **Correction (post-preparation-round fix):** the first
+implementation computed `pre_cue_false_positive` but did not consult it
+in the verdict chain, so a run could report
+`pre_cue_false_positive=True` alongside `VERDICT=PASS`. Fixed by
+checking it immediately after instrumentation validity and before any
+of the post-cue A/B/C/D checks -- see the FAIL taxonomy below and
+`evaluate_deliberate_bargein_result()`'s own exact `if/elif` chain.
 
-**FAIL taxonomy** (distinct classes, per instruction):
+**FAIL taxonomy** (distinct classes, per instruction), checked in this
+exact order:
+F = test instrumentation invalid (first-frame gate, zero VAD frames,
+or capture too short even under the relaxed deliberate-mode rule);
+E = a false accepted VAD start or confirmed interruption occurred
+BEFORE the cue (`pre_cue_false_positive`) -- checked next, before any
+post-cue outcome is considered;
 A = operator spoke, no accepted post-cue VAD start;
 B = accepted post-cue VAD start, no post-cue `INTERRUPT_CONFIRMED`;
 C = `INTERRUPT_CONFIRMED` occurred but playback did not verifiably stop
 early (frame submission reached natural completion);
 D = playback stopped then resumed (structurally impossible by this
-loop's design -- checked anyway);
-E = a false event (start or confirm) occurred BEFORE the cue;
-F = test instrumentation invalid (first-frame gate, zero VAD frames,
-or capture too short even under the relaxed deliberate-mode rule).
-PASS = exactly the expected chain with no pre-cue false positive.
+loop's design -- checked anyway).
+PASS = exactly the expected post-cue chain AND `pre_cue_false_positive
+is False`. `VERDICT=PASS` can no longer coexist with a pre-cue false
+positive.
 """
 
 from __future__ import annotations
@@ -1028,9 +1042,16 @@ def evaluate_deliberate_bargein_result(
 ) -> dict:
     """R0082-G classification -- pure function, unit-testable without any
     hardware/asyncio/LiveKit involvement. Returns a dict with:
-    `pre_cue_false_positive` (bool, reported independently of the rest,
-    per instruction), `verdict` (one of "PASS", "FAIL-A".."FAIL-F"), and
-    the supporting event lists split pre/post cue."""
+    `pre_cue_false_positive` (bool) -- a false accepted speech start or a
+    confirmed interruption BEFORE the operator's own cue is the original
+    self-echo failure mode and is now WIRED INTO the verdict as `FAIL-E`
+    (previously computed but not consulted -- fixed per correction: a
+    run could report `pre_cue_false_positive=True` alongside
+    `VERDICT=PASS` if the later genuine post-cue barge-in also
+    succeeded; that is no longer possible -- `PASS` requires
+    `pre_cue_false_positive is False`). `verdict` is one of "PASS",
+    "FAIL-A".."FAIL-F". The supporting event lists split pre/post cue
+    are still returned in full."""
     pre_cue_started = [t for t in started_events if t < cue_start_boundary_t_s]
     pre_cue_confirmed = [t for t in confirmed_events if t < cue_start_boundary_t_s]
     post_cue_started = [t for t in started_events if t >= cue_start_boundary_t_s]
@@ -1047,6 +1068,8 @@ def evaluate_deliberate_bargein_result(
 
     if vad_frames_processed == 0 or not cue_emitted or not capture_ok:
         verdict = "FAIL-F"
+    elif pre_cue_false_positive:
+        verdict = "FAIL-E"
     elif not post_cue_started:
         verdict = "FAIL-A"
     elif not post_cue_confirmed:
@@ -1389,7 +1412,8 @@ async def run_speech_role_deliberate_bargein(
             print(
                 "  *** PRE-CUE FALSE POSITIVE(S) -- self-echo trigger BEFORE the "
                 f"cue: started={result['pre_cue_started']} confirmed={result['pre_cue_confirmed']} "
-                "-- reported independently of the outcome below ***"
+                "-- this is the original self-echo failure mode and forces "
+                "VERDICT=FAIL-E below, regardless of the post-cue outcome ***"
             )
         print(f"  post_cue_started_events       = {result['post_cue_started']}")
         print(f"  post_cue_confirmed_events     = {result['post_cue_confirmed']}")
