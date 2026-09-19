@@ -2165,14 +2165,24 @@ async def run_speech_role_silent_series(
                             len(chain.started_events) > n_started_before
                             and test_failure is None
                         ):
+                            _start_mono = chain.started_events_mono[-1]
                             test_failure = {
                                 "false_event_detected": True,
                                 "failure_kind": "accepted_start",
                                 "failure_event_audio_t": chain.started_events[-1],
-                                "failure_event_mono": chain.started_events_mono[-1],
+                                "failure_event_mono": _start_mono,
                                 "failure_episode": episode_number,
                                 "failure_playback_active": playback_active,
                                 "detected_at_mono": time.monotonic(),
+                                # ABSOLUTE deadline, anchored to the FIRST accepted
+                                # START's own timestamp -- not re-armed later, so
+                                # the TOTAL retained evidence measured from this
+                                # start is ~SILENT_SERIES_POST_EVENT_MARGIN_S
+                                # regardless of what happens to playback in the
+                                # meantime (see _wait_for_failure_deadline()).
+                                "failure_deadline_mono": (
+                                    _start_mono + SILENT_SERIES_POST_EVENT_MARGIN_S
+                                ),
                             }
                             print(
                                 "[speech] MILESTONE: TEST_FAILURE_ACCEPTED_START "
@@ -2206,14 +2216,18 @@ async def run_speech_role_silent_series(
                             )
                             interrupt_confirmed_event.set()
                             if test_failure is None:  # defensive fallback only
+                                _confirm_mono = chain.confirmed_events_mono[-1]
                                 test_failure = {
                                     "false_event_detected": True,
                                     "failure_kind": "confirmed_interruption",
                                     "failure_event_audio_t": chain.confirmed_events[-1],
-                                    "failure_event_mono": chain.confirmed_events_mono[-1],
+                                    "failure_event_mono": _confirm_mono,
                                     "failure_episode": episode_number,
                                     "failure_playback_active": playback_active,
                                     "detected_at_mono": time.monotonic(),
+                                    "failure_deadline_mono": (
+                                        _confirm_mono + SILENT_SERIES_POST_EVENT_MARGIN_S
+                                    ),
                                 }
                                 test_failure_event.set()
             except asyncio.CancelledError:
@@ -2232,6 +2246,29 @@ async def run_speech_role_silent_series(
             except asyncio.CancelledError:
                 pass
 
+        async def _wait_for_failure_deadline() -> None:
+            """Waits until `test_failure["failure_deadline_mono"]` -- an
+            ABSOLUTE deadline anchored to the FIRST accepted START's own
+            timestamp, computed once at latch time. Correction: the
+            previous implementation re-armed a FRESH `asyncio.sleep(
+            SILENT_SERIES_POST_EVENT_MARGIN_S)` at whatever moment this
+            code happened to run, and then CANCELLED that fresh sleep the
+            instant playback ended on its own (e.g. a genuine confirmed
+            interruption resolving quickly) -- so a START->CONFIRM
+            sequence retained only ~0.32s of evidence instead of the
+            requested ~3.0s TOTAL from the start. Using an absolute
+            deadline instead means calling this after playback has
+            already ended (quickly, via a real confirmation) still waits
+            out the REMAINING time correctly, and calling it when nothing
+            has elapsed yet waits the full margin -- either way the total
+            evidence retained from the ORIGINAL start is ~
+            SILENT_SERIES_POST_EVENT_MARGIN_S, not shorter and not
+            doubled."""
+            assert test_failure is not None
+            remaining = test_failure["failure_deadline_mono"] - time.monotonic()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+
         episodes_completed = 0
         for ep in range(1, SILENT_SERIES_EPISODE_COUNT + 1):
             episode_number = ep
@@ -2241,45 +2278,44 @@ async def run_speech_role_silent_series(
 
             chain.sm.notify_response_dispatched()
             playback_active = True
+            # Own dict (not thrown away) so genuine cancellation milestones
+            # (playback_stopped, audio_source_queued_before/after_clear_s,
+            # etc.) recorded internally by the UNCHANGED
+            # _play_signal_cancelable() are preserved for this episode's
+            # own evidence record, not just printed to console.
+            ep_playback_milestones: dict[str, float] = {}
             playback_task = asyncio.create_task(_play_signal_cancelable(
                 signal_source,
                 signal_pcm,
                 cancel_event=interrupt_confirmed_event,
-                milestones={},  # per-episode scratch; session-level milestones tracked separately
+                milestones=ep_playback_milestones,
                 emit_cue=False,
             ))
             failure_wait_task = asyncio.create_task(test_failure_event.wait())
-            done, _pending = await asyncio.wait(
+            await asyncio.wait(
                 {playback_task, failure_wait_task}, return_when=asyncio.FIRST_COMPLETED
             )
-            if playback_task in done:
-                # Normal completion, OR a genuine confirmed interruption
-                # already cancelled it via _play_signal_cancelable()'s own
-                # UNCHANGED cancel_event mechanism -- nothing further to do.
-                await _cancel_and_await(failure_wait_task)
-                samples_submitted, stopped_early = playback_task.result()
-            else:
-                # A bare accepted START just latched test_failure. Retain a
-                # bounded evidence margin (measured from the detection
-                # moment, per instruction) -- if the STILL-RUNNING playback
-                # finishes on its own within that margin (e.g. a genuine
-                # INTERRUPT_CONFIRMED follows and _play_signal_cancelable()
-                # cancels itself for real), that real cancellation takes
-                # precedence and nothing further is substituted. Only if the
-                # margin elapses with playback STILL running does the
-                # research test perform its OWN, separately-labeled
-                # teardown -- never claimed as a production interruption.
-                margin_task = asyncio.create_task(
-                    asyncio.sleep(SILENT_SERIES_POST_EVENT_MARGIN_S)
-                )
-                done2, _pending2 = await asyncio.wait(
-                    {playback_task, margin_task}, return_when=asyncio.FIRST_COMPLETED
-                )
-                if playback_task in done2:
-                    await _cancel_and_await(margin_task)
-                    samples_submitted, stopped_early = playback_task.result()
-                else:
-                    print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE")
+            if test_failure_event.is_set():
+                # A bare accepted START has latched test_failure (possibly
+                # with a genuine confirmed interruption ALSO having already
+                # resolved playback via _play_signal_cancelable()'s own
+                # UNCHANGED cancel_event mechanism, real clear_queue()
+                # included -- that real cancellation is never suppressed
+                # or substituted). EITHER WAY, retain mic/VAD evidence
+                # until the ABSOLUTE deadline anchored to the ORIGINAL
+                # start (not a fresh margin re-armed from now) -- this is
+                # the fix: evidence retention is no longer cancelled just
+                # because playback happened to end quickly.
+                if not failure_wait_task.done():
+                    await _cancel_and_await(failure_wait_task)
+                await _wait_for_failure_deadline()
+                ep_record["post_event_margin_complete_mono"] = time.monotonic()
+                print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE")
+                if not playback_task.done():
+                    # Bare start, no confirmation arrived before the
+                    # deadline -- research-only teardown, cancelling the
+                    # playback Task from the OUTSIDE. NEVER logged as
+                    # INTERRUPT_CONFIRMED/PLAYBACK_CANCEL_REQUESTED.
                     print(
                         "[speech] MILESTONE: TEST_TEARDOWN_PLAYBACK_STOP (research "
                         "teardown -- NOT INTERRUPT_CONFIRMED, NOT "
@@ -2292,10 +2328,26 @@ async def run_speech_role_silent_series(
                     except Exception:
                         pass
                     samples_submitted, stopped_early = (None, True)
+                else:
+                    samples_submitted, stopped_early = playback_task.result()
+            else:
+                # Normal completion -- test_failure never latched during
+                # this episode's playback.
+                await _cancel_and_await(failure_wait_task)
+                samples_submitted, stopped_early = playback_task.result()
             playback_active = False
             ep_record["playback_end_mono"] = time.monotonic()
             ep_record["samples_submitted"] = samples_submitted
             ep_record["stopped_early"] = stopped_early
+            # Preserve _play_signal_cancelable()'s OWN recorded milestones
+            # (unchanged function, unchanged keys) for this episode -- in
+            # particular `playback_stopped`, the exact moment genuine
+            # cancellation actually stopped submission, distinct from
+            # `playback_end_mono` above (which is when THIS loop's control
+            # flow resumed, possibly after the full evidence-margin wait).
+            ep_record["playback_task_milestones"] = ep_playback_milestones
+            if "playback_stopped" in ep_playback_milestones:
+                ep_record["playback_stop_mono"] = ep_playback_milestones["playback_stopped"]
             print(f"[speech] MILESTONE: response_{ep:02d}_end")
 
             # Documented no-op if state is INTERRUPTING (a genuine confirmed
@@ -2317,17 +2369,19 @@ async def run_speech_role_silent_series(
                 ep_record["gap_start_mono"] = time.monotonic()
                 gap_task = asyncio.create_task(asyncio.sleep(SILENT_SERIES_GAP_S))
                 gap_failure_wait_task = asyncio.create_task(test_failure_event.wait())
-                done3, _pending3 = await asyncio.wait(
+                await asyncio.wait(
                     {gap_task, gap_failure_wait_task}, return_when=asyncio.FIRST_COMPLETED
                 )
-                if gap_task not in done3:
+                if test_failure_event.is_set():
                     # A bare accepted START latched DURING the gap -- cut the
                     # gap short (no playback to tear down; the ISM is IDLE
                     # during a gap so a bare start here structurally cannot
                     # escalate to INTERRUPT_CONFIRMED -- audited), then
-                    # retain the bounded evidence margin from this point.
+                    # retain evidence until the SAME ABSOLUTE deadline
+                    # (anchored to the original start, not a fresh margin).
                     await _cancel_and_await(gap_task)
-                    await asyncio.sleep(SILENT_SERIES_POST_EVENT_MARGIN_S)
+                    await _wait_for_failure_deadline()
+                    ep_record["post_event_margin_complete_mono"] = time.monotonic()
                     print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE (gap)")
                 else:
                     await _cancel_and_await(gap_failure_wait_task)

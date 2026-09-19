@@ -6630,3 +6630,177 @@ no production files touched                                             PASS
 
 **Verdict: R0082-H (corrected) READY for ONE real continuous
 silent-user hardware run.** This session did not execute hardware.
+
+## 114. R0082-H third correction — evidence margin was cancelled when confirmation arrived early
+
+Found before any hardware execution. `_play_signal_cancelable()` is
+untouched (confirmed below) — the fix is entirely in how long the
+research harness keeps recording microphone/VAD evidence AFTER the
+failure origin.
+
+### 114.1 Defect
+
+The §112.1 fix raced each episode's playback against `test_failure_
+event`, and — once a bare START latched — raced the STILL-RUNNING
+playback against a FRESH `margin_task = asyncio.create_task(asyncio.
+sleep(SILENT_SERIES_POST_EVENT_MARGIN_S))`. If a genuine
+`INTERRUPT_CONFIRMED` followed quickly (~0.32s later, as it reliably
+does per §112.3's own timing analysis) and `_play_signal_cancelable()`
+returned, the code did `await _cancel_and_await(margin_task)` —
+**cancelling the margin the instant playback happened to end early**.
+The correct production cancellation semantics were preserved, but the
+requested ~3.0s of retained microphone/VAD evidence measured from the
+FIRST accepted START was not — only the ~0.32s up to confirmation was
+actually retained.
+
+### 114.2 Fix — an absolute deadline, not a re-armable margin
+
+`test_failure` now records `failure_deadline_mono = <start/confirm's
+own mono timestamp> + SILENT_SERIES_POST_EVENT_MARGIN_S`, computed
+ONCE at latch time (both in the primary bare-start block and the
+defensive confirmed-only fallback block). A new helper:
+
+```python
+async def _wait_for_failure_deadline() -> None:
+    remaining = test_failure["failure_deadline_mono"] - time.monotonic()
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+```
+
+is now called UNCONDITIONALLY once `test_failure_event` is set — for
+both the episode-playback branch and the gap branch — REGARDLESS of
+whether the still-running playback (or gap) has already ended by the
+time it's called. Only AFTER this deadline is reached does the code
+check `playback_task.done()`: if playback already ended on its own (a
+genuine confirmation resolved it — Case A), its real result is used and
+NO teardown occurs; if playback is STILL running (a bare start with no
+confirmation ever arrived — Case B), `TEST_TEARDOWN_PLAYBACK_STOP`
+fires at that point, cancelling the Task from the outside. For a gap
+(Case C, no playback at all), the same deadline wait applies before
+ending the series. The old `_cancel_and_await(margin_task)` call — the
+exact defect — no longer exists anywhere in the function (verified
+offline, §114.4). `consume_task`/`mic_stream` are untouched by any of
+this — they were already, and remain, alive for the entire loop body,
+so mic/VAD capture continues automatically throughout the deadline
+wait without any explicit action needed to "keep them alive."
+
+### 114.3 Live dry-run evidence (START → CONFIRM, quantitative)
+
+Same scaled-down synthetic setup as §112.3 (3×15.0s episodes, burst at
+4.0s into episode 1), re-run against a real local `livekit-server`
+with the fix in place. Exact monotonic timestamps, independently pulled
+from the run's own `milestones.json` and `timeline.csv` (not merely
+the console transcript):
+
+```
+accepted_start_mono            = 310921.243513   (CSV, interrupt-start row)
+interrupt_confirmed_mono       = 310921.563619   (CSV, interrupt-confirmed row)
+playback_stop_mono             = 310921.570620   (_play_signal_cancelable()'s
+                                                    own playback_stopped milestone,
+                                                    now preserved per-episode
+                                                    instead of discarded)
+post_event_margin_complete_mono = 310924.243672  (this round's new
+                                                    ep_record milestone)
+failure_deadline_mono           = 310921.243498 + 3.0 = 310924.243498
+                                   (recorded at latch time; matches
+                                    post_event_margin_complete_mono to
+                                    within one asyncio scheduling tick)
+
+START -> CONFIRM         = 0.3201s   (matches confirm_hold_secs=0.3 + quantization)
+START -> playback stop   = 0.3271s   (cancellation fires ~7ms after confirmation)
+START -> MARGIN_COMPLETE = 3.0002s   (<< the fix -- essentially exactly 3.0s)
+CONFIRM -> playback stop = 0.0070s   (genuine, near-instant, unchanged)
+```
+
+**Total retained evidence from the FIRST accepted START is 3.0002s** —
+matching the requested ~3.0s to within 0.2ms, not the ~0.32s the
+defect would have produced. `AUDIO_SOURCE_QUEUED_BEFORE_CLEAR=1.0055s`
+→ `CLEARED` → `AFTER_CLEAR=0.0000s` fired immediately upon
+confirmation, exactly as before — genuine cancellation timing is
+completely unaffected by this fix; only the SUBSEQUENT evidence-window
+duration changed.
+
+**Gap scenario re-verified** (3×5.0s episodes, 3.0s gaps, burst during
+gap 2): `failure_deadline_mono - failure_event_mono = 3.0` exactly (by
+construction); `post_event_margin_complete_mono - failure_event_mono =
+3.00033s`. `confirmed_interruptions=0` (still structurally impossible
+during a gap — unchanged), `response 01`/`response 02` diagnostics
+still clean despite `gap 02`'s own spike sitting immediately adjacent
+(Issue 2's fix unaffected), `episodes_completed=2/3`, episode 3 never
+scheduled.
+
+**Clean 3-episode run re-verified**: `episodes_completed=3/3`, zero
+events, `response 01/02/03` and `gap 01/02` diagnostics correctly
+populated and separated (never a spurious `gap 03`) — unchanged from
+§112.3, confirming this fix did not disturb the no-failure path.
+
+### 114.4 Offline validation performed this round (41 checks, all PASS)
+
+```
+py_compile                                                          PASS
+ruff                                                                 PASS
+git diff --check                                                     PASS
+[all 37 checks from §112.4, re-run and still PASS]                   PASS (37/37)
+test_failure records failure_deadline_mono at both dict-definition
+  sites (bare-start block + defensive confirmed-only fallback)        PASS
+_wait_for_failure_deadline() helper exists, computes `remaining =
+  deadline - time.monotonic()` rather than sleeping a fresh margin     PASS
+the old defect pattern (_cancel_and_await(margin_task)) is GONE --
+  no longer present anywhere in the function                          PASS
+_wait_for_failure_deadline() is called from BOTH the playback branch
+  AND the gap branch (exactly 2 call sites)                            PASS
+_play_signal_cancelable() still byte-for-byte identical to commit
+  341f478 (untouched by this fix, as required)                        PASS
+```
+
+41 checks total, all PASS. `run_speech_role`, `run_hardware_role`,
+`run_speech_role_deliberate_bargein`, `_play_signal_cancelable`,
+`read_speech_wav`, `evaluate_deliberate_bargein_result`, and
+`run_hardware_role_silent_series` all re-confirmed byte-for-byte
+identical to commit `341f478`. Production VAD constants unchanged. No
+production files touched this round.
+
+**A small, purely additive observability improvement was made
+alongside the fix**: each episode's own `_play_signal_cancelable()`
+call previously received a throwaway `milestones={}` dict whose
+contents (`playback_stopped`, `audio_source_queued_before/after_
+clear_s`, etc.) were discarded after the call returned — visible only
+in console output, not in the persisted `milestones.json`. This round
+passes a real per-episode dict and preserves it (as `playback_task_
+milestones` and a top-level `playback_stop_mono` convenience key) in
+each episode's own record. This is a logging-only change — it does not
+alter `_play_signal_cancelable()` itself (confirmed byte-for-byte
+unchanged above) or any control-flow decision; it exists specifically
+so `playback_stop_mono` could be independently reported per this
+round's own validation requirement, and remains useful for any future
+real-hardware run's own post-hoc analysis.
+
+## 115. R0082-H — FINAL GATE (post third correction)
+
+```
+first accepted START remains the canonical failure origin               PASS
+genuine CONFIRM still stops playback immediately (0.327s from START,
+  0.007s from confirmation -- unchanged from before this fix)           PASS
+genuine CONFIRM still executes real, unmodified clear_queue()            PASS
+mic/VAD capture continues recording after a confirmed playback stop,
+  until the absolute failure_deadline_mono is reached                   PASS
+START -> POST_EVENT_MARGIN_COMPLETE measured at 3.0002s (live dry
+  run) -- matches the requested ~3.0s                                   PASS
+bare-START/no-confirmation research teardown remains distinct from
+  INTERRUPT_CONFIRMED/PLAYBACK_CANCEL_REQUESTED in logs, milestones,
+  and code                                                               PASS
+gap-triggered START retains the same ~3.0s evidence window (measured:
+  3.00033s)                                                             PASS
+clean 10-episode path unchanged (dry-run-scaled 3/3 re-verified)         PASS
+playback/gap diagnostics remain separated (re-verified)                  PASS
+existing silent-user / deliberate-bargein / _play_signal_cancelable /
+  read_speech_wav / evaluate_deliberate_bargein_result / run_hardware_
+  role / run_hardware_role_silent_series all byte-for-byte unchanged    PASS
+production VAD constants unchanged                                      PASS
+py_compile / ruff / git diff --check                                    PASS
+no production files touched                                             PASS
+```
+
+**Verdict: R0082-H (third correction applied) READY for ONE real
+continuous silent-user hardware run.** This session did not execute
+hardware.
