@@ -6321,3 +6321,312 @@ no production files touched                                             PASS
 run.** This session did not execute hardware. Per instruction, this is
 a single validation run — no further replication of R0082-H is
 scheduled until this first real run's result is reviewed.
+
+## 112. Two R0082-H research-harness corrections, found before any hardware run
+
+Both corrections are to the `--test-mode silent-series` research
+harness only. Neither touches `--test-mode silent-user`,
+`--test-mode deliberate-bargein`, `_play_signal_cancelable()`,
+`read_speech_wav()`, `evaluate_deliberate_bargein_result()`,
+`run_speech_role`, `run_hardware_role`, or
+`run_hardware_role_silent_series` — all confirmed byte-for-byte
+identical to commit `341f478` (verified below). R0082-G's 5/5 PASS
+result is unaffected.
+
+### 112.1 Issue 1 — a bare accepted VAD START is now detected LIVE, not at end-of-episode
+
+**Defect.** `_consume_mic()` already reacted immediately to
+`chain.confirmed_events` growth (setting `interrupt_confirmed_event`),
+but a bare `chain.started_events` entry with NO confirmation was only
+noticed later, at the next end-of-episode/end-of-gap
+`_check_for_failure()` checkpoint. A false accepted START near the
+START of a ~23.18s episode could leave the test running for many
+additional seconds before the series stopped.
+
+**Fix.** `_consume_mic()` now also latches a SEPARATE, session-level
+`test_failure`/`test_failure_event` the INSTANT `chain.started_events`
+grows — at the same point, inside the same frame-processing loop, where
+confirmed-growth is already observed. This is deliberately NOT the same
+signal as `interrupt_confirmed_event`: a bare START is never treated as
+`INTERRUPT_CONFIRMED`, and production's own real behavior (it would not
+cancel playback on a bare start either) is preserved exactly.
+`_play_signal_cancelable()`'s own `cancel_event` parameter remains
+wired ONLY to `interrupt_confirmed_event`, unchanged, never to
+`test_failure_event` — confirmed via source inspection (offline test).
+
+Each episode's playback now runs as an `asyncio.Task`, raced against
+`test_failure_event.wait()`:
+
+- If the playback task finishes first (natural completion, OR a genuine
+  `INTERRUPT_CONFIRMED` already cancelled it via
+  `_play_signal_cancelable()`'s own UNCHANGED mechanism), nothing
+  further happens — the real R0082-G cancellation semantics, when they
+  apply, are untouched and take precedence exactly as before.
+- If `test_failure_event` fires first (a bare START with no
+  confirmation yet), a bounded `SILENT_SERIES_POST_EVENT_MARGIN_S`
+  (3.0s) margin is raced against the SAME still-running playback task.
+  If a genuine confirmation arrives within that margin, the playback
+  task ends on its own (real cancellation, unchanged) and nothing
+  further is substituted. Only if the margin elapses with playback
+  STILL running does the research test perform its OWN, separately
+  logged `TEST_TEARDOWN_PLAYBACK_STOP` — cancelling the playback
+  `Task` from the OUTSIDE (`task.cancel()`, never by modifying
+  `_play_signal_cancelable()` itself) and clearing the publisher queue
+  as administrative cleanup only. This is NEVER logged as
+  `PLAYBACK_CANCEL_REQUESTED`/`INTERRUPT_CONFIRMED` — new, distinct
+  milestones (`TEST_FAILURE_ACCEPTED_START`, `POST_EVENT_MARGIN_
+  COMPLETE`, `TEST_TEARDOWN_PLAYBACK_STOP`) keep research teardown
+  semantically separate from production interruption semantics
+  throughout the logs, the milestones JSON, and the printed summary.
+
+The identical race-then-margin pattern applies to inter-episode gaps
+(no playback to tear down there — the gap's own sleep is simply cut
+short and the margin retained), with one structural difference
+confirmed by direct source audit: during a gap the ISM is `IDLE`
+(post `notify_response_finished()`), and `InterruptionStateMachine.
+speech_started()` while `IDLE` returns `InterruptionEvent.NONE` per its
+own source — a bare start during a gap can **structurally never**
+escalate to `INTERRUPT_CONFIRMED`, confirmed empirically in the dry run
+below (`confirmed_interruptions=0` despite `accepted_vad_starts=1`).
+
+**The canonical failure timestamp is always the FIRST accepted START's
+own timestamp** (`failure_event_audio_t`/`failure_event_mono`,
+captured at the moment `_consume_mic` first detects it), never the
+later confirmation or teardown moment — confirmed in the live dry run
+below (`audio_t=4.416s`, the START's own timestamp, even though
+confirmation followed at `4.736s` and the session ended shortly after).
+
+`_check_for_failure()` (the old end-of-episode/end-of-gap diffing
+mechanism) is retired — fully superseded, since a genuine
+`INTERRUPT_CONFIRMED` can structurally only ever follow an earlier
+accepted START (production VAD hysteresis requires a start before a
+confirm), so `test_failure_event` always fires at least as early. A
+defensive fallback remains in the (structurally unreachable) case where
+`chain.confirmed_events` somehow grows without `test_failure` already
+being set.
+
+### 112.2 Issue 2 — per-response diagnostics no longer include the following gap
+
+**Defect.** `compute_silent_series_episode_diagnostics()` grouped rows
+by `episode_number` alone. Since a response's trailing gap keeps the
+SAME `episode_number` (only `playback_active` changes to `0`), a
+response's reported `max_prob`/`max_volume`/`frames_ge_0_7`/
+`longest_streak` could actually be sourced from the FOLLOWING silent
+gap, not that response's own playback.
+
+**Fix.** Rewritten to group by `(episode_number, playback_active)`.
+Returns `{"responses": [...], "gaps": [...]}` — `responses[i]` covers
+ONLY `playback_active=1` rows for that episode number (a response's own
+playback, gap excluded); `gaps[i]` covers ONLY `playback_active=0` rows
+for that episode number, and ONLY emits an entry if such rows actually
+exist for that episode number. Episode 10 correctly has no gap entry
+(nothing scheduled after it in the clean-path loop). The canonical
+event-based PASS/FAIL verdict is completely unchanged — still decided
+live from `chain.started_events`/`chain.confirmed_events` directly, not
+from this diagnostic function's output.
+
+**A third, related fix, needed to make "episode 10 has no gap" actually
+true in practice**: `episode_number` is reset to `0` (the same
+"pre-roll, not a numbered episode" sentinel) during the `TAIL_S` window
+after a clean 10-episode finish, AND during the post-failure settle
+before writing evidence. Without this, `TAIL_S`'s own
+`playback_active=0` rows would have been mislabeled as a spurious
+"gap 10" under the new grouping (since nothing in the loop schedules a
+real gap after the last episode, but the TAIL window's rows would
+otherwise carry `episode_number=10, playback_active=0` — exactly the
+same key shape as a real gap). Verified in the live dry runs below: a
+3-episode clean run produces exactly 2 gap entries (1, 2 — never 3).
+
+**The early/middle/late trend printing is now explicit about which
+metric it uses**, per instruction — printed as two clearly separate
+blocks:
+
+```
+-- PLAYBACK ONLY trend (responses 1-3 / 4-7 / 8-10) --
+-- GAPS trend, reported separately (gaps 1-3 / 4-6 / 7-9) --
+```
+
+never combined into one value labeled ambiguously as "response max."
+
+### 112.3 Live dry-run evidence (scaled-down, synthetic, real local `livekit-server`, evidence moved to `r0082h_dryrun_synthetic_NOT_real_hardware/`)
+
+**Early-burst-during-playback run** (3×15.0s episodes, 0.5s gaps, burst
+injected 4.0s into episode 1 — proves items 1 and 2 together):
+
+```
+[speech] MILESTONE: response_01_start
+[speech] MILESTONE: TEST_FAILURE_ACCEPTED_START at t=4.416s, episode=1,
+  playback_active=True -- ... NOT yet INTERRUPT_CONFIRMED
+[speech] *** UNEXPECTED INTERRUPT_CONFIRMED ... at t=4.736s, episode=1 ***
+  -- ... _play_signal_cancelable() handles this itself, unchanged
+[speech] MILESTONE: AUDIO_SOURCE_QUEUED_BEFORE_CLEAR = 1.0065s
+[speech] MILESTONE: AUDIO_SOURCE_QUEUE_CLEARED
+[speech] MILESTONE: AUDIO_SOURCE_QUEUED_AFTER_CLEAR = 0.0000s
+[speech] MILESTONE: response_01_end
+[speech] *** FAILURE latched during episode 01 -- stopping the series early ***
+[speech] MILESTONE: post-event evidence margin already retained inline
+  at detection time -- ending the session
+  ...
+  episodes_completed            = 1 / 3
+  total_accepted_vad_starts     = 1
+  total_confirmed_interruptions = 1
+  response 01: max_prob=0.9759 ... starts=1 confirms=1
+  *** FAIL -- failure_kind=accepted_start episode=1 playback_active=True
+    audio_t=4.416s ***
+  VALID TEST -- FAIL
+```
+
+Total wall-clock elapsed for this dry run: **5.81s**, vs. ~48s a full
+3×15s-episode run (with 2 gaps + PRE_ROLL + TAIL) would have taken had
+it NOT stopped early — direct, quantitative proof that a bare START
+does not wait for the full episode, let alone the full series. The
+canonical failure timestamp (`4.416s`, the START itself) is preserved
+even though a genuine confirmation followed 0.320s later and the real
+R0082-G cancellation mechanism (`clear_queue()`) fired correctly and
+unmodified.
+
+**Gap-triggered failure run** (3×5.0s episodes, 3.0s gaps, burst
+injected during gap 2 — proves items 4, 5, 7, 8):
+
+```
+episodes_completed            = 2 / 3
+total_accepted_vad_starts     = 1
+total_confirmed_interruptions = 0        <- structurally impossible during a gap (ISM IDLE)
+
+-- PLAYBACK diagnostics (gap rows excluded) --
+response 01: max_prob=0.0255 ... starts=0 confirms=0
+response 02: max_prob=0.0261 ... starts=0 confirms=0   <- clean, despite gap 02's huge spike
+
+-- GAP diagnostics (playback rows excluded; episode 10 has no gap) --
+gap 01: max_prob=0.0032 ... starts=0 confirms=0
+gap 02: max_prob=0.9933 max_vol=0.9870 frames>=0.7=31 longest_streak=31 starts=1 confirms=0
+
+*** FAIL -- failure_kind=accepted_start episode=2 playback_active=False
+  audio_t=16.352s ***
+VALID TEST -- FAIL
+```
+
+`response 02`'s own diagnostics (`max_prob=0.0261`) are completely
+unaffected by `gap 02`'s huge spike (`max_prob=0.9933`, 31 frames≥0.7,
+occurring immediately after episode 2's own clean playback) — direct,
+quantitative proof that Issue 2's fix correctly isolates playback from
+gap diagnostics, not just in a synthetic unit test but in a live run
+where both a real response and a real gap sit immediately adjacent to
+each other in the same CSV.
+
+**Clean 3-episode run** (3×8.0s episodes, 0.5s gaps, no injected
+events): `episodes_completed=3/3`, `total_accepted_vad_starts=0`,
+`total_confirmed_interruptions=0`, exactly `response 01/02/03` and
+`gap 01/02` entries (never a spurious `gap 03`) — confirming both "no
+false event → full N episodes" and "the last episode has no gap entry"
+at this smaller scale. (Same previously-documented, dry-run-specific
+~0.98s absolute capture-duration shortfall as §110.5 — unrelated to
+this round's fixes, already explained there as an artifact of the
+synthetic fake-hardware publisher's own pacing, not the harness logic.)
+
+**Pure teardown path (`TEST_TEARDOWN_PLAYBACK_STOP` firing with NO
+confirmation ever arriving) was NOT triggered live this round** — and
+an honest account of why is given rather than a forced/contrived
+positive result: this system's own timing makes it structurally
+difficult to reach. Once a bare START is accepted, `poll()` runs on
+every subsequent VAD frame (every 32ms) as long as mic consumption
+continues (which it always does during an active episode), and
+`confirm_hold_secs=0.3s` is far shorter than both `SILENT_SERIES_
+POST_EVENT_MARGIN_S` (3.0s) and the VAD-analyzer's own `STOPPING`
+rejection hysteresis (`VAD_STOP_FRAMES=31`×32ms≈0.992s) — so a genuine
+`INTERRUPT_CONFIRMED` reliably follows within ~300–330ms whenever mic
+frames keep arriving, exactly as observed in the early-burst dry run
+above. An attempt to force pure teardown by having the fake-hardware
+publisher disconnect shortly after its burst instead exposed an
+unrelated, pre-existing characteristic shared by ALL three test modes
+(silent-user, deliberate-bargein, silent-series): `rtc.AudioStream`'s
+`async for` does not itself time out or raise if the remote participant
+disconnects mid-stream — `_consume_mic()` would hang waiting
+indefinitely for more frames, the same as it always has (the mandatory
+first-frame gate's own bounded timeout applies only to the FIRST frame,
+by design, not to an already-established stream). This is a pre-
+existing, out-of-scope characteristic, not a regression from this
+round's fixes, and was not pursued further. The `TEST_TEARDOWN_
+PLAYBACK_STOP` code path remains validated structurally (offline
+source-inspection checks confirm its presence and correct wiring —
+§112.4) as defensive handling for a genuinely anomalous mic-delivery
+stall, which real hardware jitter could in principle produce, even
+though this round's synthetic dry runs could not cleanly isolate it
+without triggering the unrelated hang.
+
+### 112.4 Offline validation performed this round (37 checks, all PASS)
+
+```
+py_compile                                                          PASS
+ruff                                                                 PASS
+git diff --check                                                     PASS
+compute_silent_series_episode_diagnostics(): responses/gaps split
+  correctly (gap-1 spike does not leak into response 1; response-2
+  peak does not leak into gap 2)                                     PASS (7/7)
+non-contiguous >=0.7 runs do not combine into one streak              PASS
+episode_number=0 rows excluded from BOTH responses and gaps
+  regardless of playback_active                                      PASS
+SILENT_SERIES_EPISODE_COUNT == 10                                    PASS
+run_speech_role_silent_series() calls the real read_speech_wav()
+  unconditionally                                                    PASS
+chain/resampler constructed exactly ONCE                             PASS (2/2)
+chain.sm.reset() never called; notify_response_dispatched()/
+  notify_response_finished() called once per episode each            PASS (3/3)
+consume_task.cancel() appears exactly once, at the very end           PASS
+_play_signal_cancelable reused via asyncio.create_task, emit_cue=False PASS
+test_failure_event is a SEPARATE Event from interrupt_confirmed_event PASS
+bare-start latching happens INSIDE _consume_mic() at frame-processing
+  time, not at an end-of-episode/end-of-gap checkpoint                PASS
+failure_kind='accepted_start' recorded distinctly                     PASS
+TEST_FAILURE_ACCEPTED_START milestone present                         PASS
+module explicitly states a bare start is NOT yet INTERRUPT_CONFIRMED  PASS
+TEST_TEARDOWN_PLAYBACK_STOP / POST_EVENT_MARGIN_COMPLETE are
+  DISTINCT milestones from INTERRUPT_CONFIRMED/
+  PLAYBACK_CANCEL_REQUESTED, explicitly labeled as such in-code        PASS (2/2)
+teardown cancels the playback Task from the OUTSIDE
+  (_play_signal_cancelable() itself untouched for this purpose)       PASS
+_play_signal_cancelable()'s cancel_event wired ONLY to
+  interrupt_confirmed_event, never to test_failure_event               PASS
+run_hardware_role_silent_series(): PlatformAudio() once; event-based
+  hold with a bounded safety net                                      PASS (3/3)
+run_speech_role/run_hardware_role/run_speech_role_deliberate_bargein/
+  _play_signal_cancelable/read_speech_wav/evaluate_deliberate_
+  bargein_result all byte-for-byte identical to commit 341f478         PASS (6/6)
+Production VAD constants unchanged                                    PASS (4/4)
+```
+
+No production files were touched this round (only read
+`src/nexa/voice/interruption.py`, already-audited, for confirmation of
+the `IDLE`-state `speech_started()` behavior cited in §112.1/§112.3).
+`--test-mode silent-user` and `--test-mode deliberate-bargein` are both
+confirmed byte-for-byte unchanged from commit `341f478`.
+
+## 113. R0082-H — FINAL GATE (post-correction)
+
+```
+production reset behavior audited from source (unchanged this round)   PASS
+one continuous PlatformAudio/AEC/VAD/resampler/ISM session preserved   PASS
+bare accepted START detected LIVE, inside _consume_mic()                PASS
+bare start stops the experiment after a bounded (~3.0s) evidence
+  margin, races correctly against a still-running episode's playback    PASS
+research teardown semantically distinct from INTERRUPT_CONFIRMED/
+  PLAYBACK_CANCEL_REQUESTED in logs, milestones JSON, and code           PASS
+genuine confirmed interruption still uses R0082-G's real, unmodified
+  clear_queue() cancellation semantics, takes precedence over teardown  PASS
+canonical failure timestamp is the FIRST accepted START, not later      PASS
+playback diagnostics exclude gap rows; gap diagnostics exclude
+  playback rows; episode 10 correctly has no gap entry                  PASS
+early/middle/late trend reported as two explicit, separate blocks
+  (playback-only, gaps-only) -- never combined                          PASS
+canonical PASS/FAIL still fully event-based, unchanged                  PASS
+exactly 10 episodes on the clean path (dry-run-scaled: 3/3 proven)      PASS
+existing silent-user / deliberate-bargein / _play_signal_cancelable /
+  read_speech_wav / evaluate_deliberate_bargein_result / run_hardware_
+  role / run_hardware_role_silent_series all byte-for-byte unchanged    PASS
+production VAD constants unchanged                                      PASS
+py_compile / ruff / git diff --check                                    PASS
+no production files touched                                             PASS
+```
+
+**Verdict: R0082-H (corrected) READY for ONE real continuous
+silent-user hardware run.** This session did not execute hardware.

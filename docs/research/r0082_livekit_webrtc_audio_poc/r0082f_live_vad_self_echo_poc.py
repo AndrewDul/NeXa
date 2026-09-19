@@ -1889,52 +1889,71 @@ async def run_speech_role_deliberate_bargein(
         print(f"[speech pid={os.getpid()}] disconnected cleanly")
 
 
-def compute_silent_series_episode_diagnostics(csv_path: Path) -> list[dict]:
+def _silent_series_row_stats(rows: list[dict]) -> dict:
+    """Shared stat computation for one group of CSV rows (either a
+    response's own playback rows, or a gap's own rows)."""
+    probs = [float(r["silero_prob"]) for r in rows]
+    vols = [float(r["smoothed_volume"]) for r in rows]
+    starts = sum(1 for r in rows if r["vad_user_started_speaking_equivalent"] == "1")
+    confirms = sum(1 for r in rows if r["interrupt_confirmed"] == "1")
+    longest_streak = 0
+    cur_streak = 0
+    for p in probs:
+        if p >= VAD_CONFIDENCE:
+            cur_streak += 1
+            longest_streak = max(longest_streak, cur_streak)
+        else:
+            cur_streak = 0
+    return {
+        "n_frames": len(rows),
+        "max_prob": max(probs) if probs else 0.0,
+        "max_smoothed_volume": max(vols) if vols else 0.0,
+        "frames_ge_0_7": sum(1 for p in probs if p >= VAD_CONFIDENCE),
+        "longest_ge_0_7_streak_frames": longest_streak,
+        "accepted_vad_starts": starts,
+        "confirmed_interruptions": confirms,
+    }
+
+
+def compute_silent_series_episode_diagnostics(csv_path: Path) -> dict:
     """Post-hoc, read-only re-scan of the just-written continuous CSV,
-    grouped by `episode_number`, computing per-response diagnostics
-    (max probability, max smoothed volume, frames>=0.7, longest
-    consecutive >=0.7 streak, accepted starts, confirmed interruptions
-    within that episode's own rows). Pure function, unit-testable
-    without any hardware/asyncio/LiveKit involvement -- takes only a
-    CSV path.  Diagnostic only; never changes the canonical event-based
-    verdict, which is decided live from `chain.started_events`/
-    `chain.confirmed_events` regardless of this function's output."""
+    grouped by `(episode_number, playback_active)` -- NOT by
+    `episode_number` alone -- so a response's own diagnostics never
+    include the silent gap that follows it (and vice versa). Returns
+    `{"responses": [...], "gaps": [...]}`: `responses[i]` covers ONLY
+    rows with `episode_number=N, playback_active=1` (that response's
+    own playback); `gaps[i]` covers ONLY rows with `episode_number=N,
+    playback_active=0` THAT ACTUALLY BELONG TO an inter-response gap
+    (episode 10 has no trailing gap in the clean-path loop, and
+    `episode_number` is reset to `0` -- the same "not a numbered
+    episode" sentinel used for pre-roll -- during the TAIL window and
+    during any post-failure evidence-margin retention, so neither of
+    those is ever mislabeled as a "gap"). `episode_number=0` rows
+    (pre-roll, TAIL, post-failure margin) are excluded from both lists.
+    Pure function, unit-testable without any hardware/asyncio/LiveKit
+    involvement -- takes only a CSV path. Diagnostic only; never
+    changes the canonical event-based verdict, which is decided live
+    from `chain.started_events`/`chain.confirmed_events` regardless of
+    this function's output."""
     import csv as _csv
 
-    rows_by_episode: dict[int, list[dict]] = {}
+    rows_by_key: dict[tuple[int, int], list[dict]] = {}
     with open(csv_path, newline="") as f:
         for row in _csv.DictReader(f):
-            ep = int(row["episode_number"])
-            rows_by_episode.setdefault(ep, []).append(row)
+            key = (int(row["episode_number"]), int(row["playback_active"]))
+            rows_by_key.setdefault(key, []).append(row)
 
-    out = []
-    for ep in sorted(rows_by_episode):
-        if ep == 0:
-            continue  # pre-roll, not a numbered episode
-        rows = rows_by_episode[ep]
-        probs = [float(r["silero_prob"]) for r in rows]
-        vols = [float(r["smoothed_volume"]) for r in rows]
-        starts = sum(1 for r in rows if r["vad_user_started_speaking_equivalent"] == "1")
-        confirms = sum(1 for r in rows if r["interrupt_confirmed"] == "1")
-        longest_streak = 0
-        cur_streak = 0
-        for p in probs:
-            if p >= VAD_CONFIDENCE:
-                cur_streak += 1
-                longest_streak = max(longest_streak, cur_streak)
-            else:
-                cur_streak = 0
-        out.append({
-            "episode_number": ep,
-            "n_frames": len(rows),
-            "max_prob": max(probs) if probs else 0.0,
-            "max_smoothed_volume": max(vols) if vols else 0.0,
-            "frames_ge_0_7": sum(1 for p in probs if p >= VAD_CONFIDENCE),
-            "longest_ge_0_7_streak_frames": longest_streak,
-            "accepted_vad_starts": starts,
-            "confirmed_interruptions": confirms,
-        })
-    return out
+    episode_numbers = sorted({ep for ep, _pa in rows_by_key if ep != 0})
+    responses = []
+    gaps = []
+    for ep in episode_numbers:
+        playback_rows = rows_by_key.get((ep, 1), [])
+        gap_rows = rows_by_key.get((ep, 0), [])
+        if playback_rows:
+            responses.append({"response_number": ep, **_silent_series_row_stats(playback_rows)})
+        if gap_rows:
+            gaps.append({"gap_number": ep, **_silent_series_row_stats(gap_rows)})
+    return {"responses": responses, "gaps": gaps}
 
 
 async def run_speech_role_silent_series(
@@ -1962,7 +1981,30 @@ async def run_speech_role_silent_series(
     end of every episode). The operator remains completely silent for
     the entire session -- PASS requires zero accepted VAD starts and
     zero `INTERRUPT_CONFIRMED` events across all 10 episodes AND all 9
-    inter-episode gaps."""
+    inter-episode gaps.
+
+    **Correction (found before any hardware execution):** a bare
+    accepted VAD start (`chain.started_events` growing, with no
+    confirmation) is detected LIVE inside `_consume_mic()` -- the same
+    place confirmed-interruption growth is already observed -- via a
+    SEPARATE, session-level `test_failure`/`test_failure_event` latch,
+    not by waiting for an end-of-episode/end-of-gap checkpoint. A bare
+    start is explicitly NOT treated as `INTERRUPT_CONFIRMED`: production
+    would not cancel playback on a bare start either, so this harness
+    does not pretend it would. Once latched, the research test retains a
+    bounded `SILENT_SERIES_POST_EVENT_MARGIN_S` evidence margin (raced
+    against the still-running episode's own `_play_signal_cancelable()`
+    task, which is completely UNCHANGED and reused as-is) and then, ONLY
+    if nothing else has ended that episode by then (i.e. no genuine
+    `INTERRUPT_CONFIRMED` arrived first, which would still take
+    precedence via `_play_signal_cancelable()`'s own real, unmodified
+    cancellation path), performs its OWN clearly-labeled
+    `TEST_TEARDOWN_PLAYBACK_STOP` -- cancelling the playback task from
+    the OUTSIDE (never modifying `_play_signal_cancelable()` itself) and
+    clearing the publisher queue as administrative cleanup only, never
+    logged as `PLAYBACK_CANCEL_REQUESTED`/`INTERRUPT_CONFIRMED`. The
+    canonical failure timestamp is always the FIRST accepted start's own
+    timestamp, never the later teardown moment."""
     print(f"[speech pid={os.getpid()}] starting (test-mode=silent-series)")
     signal_pcm = read_speech_wav()
     token = _make_token(
@@ -2041,16 +2083,30 @@ async def run_speech_role_silent_series(
         remote_frames_received = 0
         remote_samples_received = 0
 
-        episode_number = 0  # 0 = pre-roll, not yet in any numbered episode
+        episode_number = 0  # 0 = "not a numbered episode": pre-roll, TAIL, and
+        # post-failure evidence-margin retention all use this same sentinel so
+        # none of them is ever mislabeled as a response's or a gap's own rows.
         playback_active = False
         # ONE persistent event for the whole session -- never reset, matching
         # R0082-G's proven pattern. If it is EVER set (a genuine, unexpected
         # INTERRUPT_CONFIRMED while the operator is silent), the CURRENTLY
         # PLAYING episode's _play_signal_cancelable() call stops that
         # playback immediately and genuinely (real cancellation semantics,
-        # not suppressed) -- and the episode loop below treats this as the
-        # test's own failure condition, not a state to recover from.
+        # not suppressed, via _play_signal_cancelable()'s own UNCHANGED
+        # cancel_event mechanism) -- and the episode loop below treats this
+        # as the test's own failure condition, not a state to recover from.
         interrupt_confirmed_event = asyncio.Event()
+        # SEPARATE session-level latch for a bare accepted VAD START (research
+        # correction: a bare start is NOT the same thing as INTERRUPT_CONFIRMED
+        # and must never be treated as one -- production would not cancel
+        # playback on a bare start either. This event exists ONLY so the
+        # research harness can notice the failure immediately (inside
+        # _consume_mic, at the same place confirmed-growth is already
+        # observed) instead of waiting for an end-of-episode/end-of-gap
+        # checkpoint, and so it can later perform CLEARLY-LABELED research
+        # teardown -- never relabeled as a production interruption.
+        test_failure_event = asyncio.Event()
+        test_failure: dict | None = None
         milestones: dict[str, object] = {"episodes": []}
 
         def _extra_fields() -> list:
@@ -2073,11 +2129,10 @@ async def run_speech_role_silent_series(
             total_16k_samples += VAD_FRAME_SAMPLES
 
         capture_stop = asyncio.Event()
-        prev_confirmed_count_for_cancel = len(chain.confirmed_events)
 
         async def _consume_mic() -> None:
             nonlocal vad_buffer, total_16k_samples, remote_frames_received
-            nonlocal remote_samples_received, prev_confirmed_count_for_cancel
+            nonlocal remote_samples_received, test_failure
             try:
                 async for event in mic_stream:
                     if capture_stop.is_set():
@@ -2095,20 +2150,72 @@ async def run_speech_role_silent_series(
                         vf = vad_buffer[:VAD_FRAME_SAMPLES]
                         vad_buffer = vad_buffer[VAD_FRAME_SAMPLES:]
                         t_s = total_16k_samples / VAD_SAMPLE_RATE
+                        n_started_before = len(chain.started_events)
+                        n_confirmed_before = len(chain.confirmed_events)
                         chain.process_frame(vf, t_s, extra_fields=_extra_fields())
                         total_16k_samples += VAD_FRAME_SAMPLES
+
+                        # LIVE bare-accepted-START detection (research
+                        # correction) -- latched the INSTANT it happens, not
+                        # at a later end-of-episode/end-of-gap checkpoint.
+                        # This is the CANONICAL failure record: its own
+                        # timestamp is preserved even if a real confirmed
+                        # interruption follows moments later.
                         if (
-                            len(chain.confirmed_events) > prev_confirmed_count_for_cancel
+                            len(chain.started_events) > n_started_before
+                            and test_failure is None
+                        ):
+                            test_failure = {
+                                "false_event_detected": True,
+                                "failure_kind": "accepted_start",
+                                "failure_event_audio_t": chain.started_events[-1],
+                                "failure_event_mono": chain.started_events_mono[-1],
+                                "failure_episode": episode_number,
+                                "failure_playback_active": playback_active,
+                                "detected_at_mono": time.monotonic(),
+                            }
+                            print(
+                                "[speech] MILESTONE: TEST_FAILURE_ACCEPTED_START "
+                                f"at t={chain.started_events[-1]:.3f}s, "
+                                f"episode={episode_number}, "
+                                f"playback_active={playback_active} -- operator was "
+                                "silent; this is a research-test failure, NOT yet "
+                                "INTERRUPT_CONFIRMED"
+                            )
+                            test_failure_event.set()
+
+                        # Genuine INTERRUPT_CONFIRMED -- UNCHANGED from before.
+                        # Structurally this can only ever follow an accepted
+                        # start (production VAD hysteresis requires a start
+                        # before a confirm), so test_failure is already
+                        # latched with the EARLIER start's own timestamp by
+                        # the time this can fire; this block's own defensive
+                        # fallback (only reachable if that invariant were
+                        # ever violated) never overwrites an existing
+                        # test_failure record.
+                        if (
+                            len(chain.confirmed_events) > n_confirmed_before
                             and not interrupt_confirmed_event.is_set()
                         ):
-                            prev_confirmed_count_for_cancel = len(chain.confirmed_events)
                             print(
                                 "[speech] *** UNEXPECTED INTERRUPT_CONFIRMED (operator "
                                 f"was silent) at t={chain.confirmed_events[-1]:.3f}s, "
                                 f"episode={episode_number} *** -- FAIL, real cancellation "
-                                "semantics now apply (not suppressed)"
+                                "semantics now apply (not suppressed) -- "
+                                "_play_signal_cancelable() handles this itself, unchanged"
                             )
                             interrupt_confirmed_event.set()
+                            if test_failure is None:  # defensive fallback only
+                                test_failure = {
+                                    "false_event_detected": True,
+                                    "failure_kind": "confirmed_interruption",
+                                    "failure_event_audio_t": chain.confirmed_events[-1],
+                                    "failure_event_mono": chain.confirmed_events_mono[-1],
+                                    "failure_episode": episode_number,
+                                    "failure_playback_active": playback_active,
+                                    "detected_at_mono": time.monotonic(),
+                                }
+                                test_failure_event.set()
             except asyncio.CancelledError:
                 return
 
@@ -2117,25 +2224,13 @@ async def run_speech_role_silent_series(
         print(f"[speech] MILESTONE: PRE_ROLL start ({PRE_ROLL_S}s)")
         await asyncio.sleep(PRE_ROLL_S)
 
-        prev_started_count = len(chain.started_events)
-        prev_confirmed_count = len(chain.confirmed_events)
-        failure: dict | None = None
-
-        def _check_for_failure(*, phase: str) -> dict | None:
-            nonlocal prev_started_count, prev_confirmed_count
-            new_started = chain.started_events[prev_started_count:]
-            new_confirmed = chain.confirmed_events[prev_confirmed_count:]
-            prev_started_count = len(chain.started_events)
-            prev_confirmed_count = len(chain.confirmed_events)
-            if new_started or new_confirmed:
-                return {
-                    "phase": phase,
-                    "episode_number": episode_number,
-                    "new_started": new_started,
-                    "new_confirmed": new_confirmed,
-                    "detected_at_mono": time.monotonic(),
-                }
-            return None
+        async def _cancel_and_await(task: asyncio.Task) -> None:
+            if not task.done():
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
         episodes_completed = 0
         for ep in range(1, SILENT_SERIES_EPISODE_COUNT + 1):
@@ -2146,13 +2241,57 @@ async def run_speech_role_silent_series(
 
             chain.sm.notify_response_dispatched()
             playback_active = True
-            samples_submitted, stopped_early = await _play_signal_cancelable(
+            playback_task = asyncio.create_task(_play_signal_cancelable(
                 signal_source,
                 signal_pcm,
                 cancel_event=interrupt_confirmed_event,
                 milestones={},  # per-episode scratch; session-level milestones tracked separately
                 emit_cue=False,
+            ))
+            failure_wait_task = asyncio.create_task(test_failure_event.wait())
+            done, _pending = await asyncio.wait(
+                {playback_task, failure_wait_task}, return_when=asyncio.FIRST_COMPLETED
             )
+            if playback_task in done:
+                # Normal completion, OR a genuine confirmed interruption
+                # already cancelled it via _play_signal_cancelable()'s own
+                # UNCHANGED cancel_event mechanism -- nothing further to do.
+                await _cancel_and_await(failure_wait_task)
+                samples_submitted, stopped_early = playback_task.result()
+            else:
+                # A bare accepted START just latched test_failure. Retain a
+                # bounded evidence margin (measured from the detection
+                # moment, per instruction) -- if the STILL-RUNNING playback
+                # finishes on its own within that margin (e.g. a genuine
+                # INTERRUPT_CONFIRMED follows and _play_signal_cancelable()
+                # cancels itself for real), that real cancellation takes
+                # precedence and nothing further is substituted. Only if the
+                # margin elapses with playback STILL running does the
+                # research test perform its OWN, separately-labeled
+                # teardown -- never claimed as a production interruption.
+                margin_task = asyncio.create_task(
+                    asyncio.sleep(SILENT_SERIES_POST_EVENT_MARGIN_S)
+                )
+                done2, _pending2 = await asyncio.wait(
+                    {playback_task, margin_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if playback_task in done2:
+                    await _cancel_and_await(margin_task)
+                    samples_submitted, stopped_early = playback_task.result()
+                else:
+                    print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE")
+                    print(
+                        "[speech] MILESTONE: TEST_TEARDOWN_PLAYBACK_STOP (research "
+                        "teardown -- NOT INTERRUPT_CONFIRMED, NOT "
+                        "PLAYBACK_CANCEL_REQUESTED; the canonical failure timestamp "
+                        "remains the original TEST_FAILURE_ACCEPTED_START above)"
+                    )
+                    await _cancel_and_await(playback_task)
+                    try:
+                        signal_source.clear_queue()  # administrative cleanup only
+                    except Exception:
+                        pass
+                    samples_submitted, stopped_early = (None, True)
             playback_active = False
             ep_record["playback_end_mono"] = time.monotonic()
             ep_record["samples_submitted"] = samples_submitted
@@ -2164,13 +2303,11 @@ async def run_speech_role_silent_series(
             # production bridge's own pattern exactly (audited).
             chain.sm.notify_response_finished()
 
-            fail = _check_for_failure(phase=f"episode_{ep:02d}_playback")
-            if fail:
-                failure = fail
+            if test_failure is not None:
                 episodes_completed = ep  # this episode DID run, even though it failed
                 milestones["episodes"].append(ep_record)
-                print(f"[speech] *** FAILURE detected during episode {ep:02d} playback -- "
-                      "stopping the series early, retaining a post-event evidence margin ***")
+                print(f"[speech] *** FAILURE latched during episode {ep:02d} -- "
+                      "stopping the series early ***")
                 break
 
             episodes_completed = ep
@@ -2178,26 +2315,40 @@ async def run_speech_role_silent_series(
             if ep < SILENT_SERIES_EPISODE_COUNT:
                 print(f"[speech] MILESTONE: gap_{ep:02d}_start ({SILENT_SERIES_GAP_S}s)")
                 ep_record["gap_start_mono"] = time.monotonic()
-                await asyncio.sleep(SILENT_SERIES_GAP_S)
+                gap_task = asyncio.create_task(asyncio.sleep(SILENT_SERIES_GAP_S))
+                gap_failure_wait_task = asyncio.create_task(test_failure_event.wait())
+                done3, _pending3 = await asyncio.wait(
+                    {gap_task, gap_failure_wait_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if gap_task not in done3:
+                    # A bare accepted START latched DURING the gap -- cut the
+                    # gap short (no playback to tear down; the ISM is IDLE
+                    # during a gap so a bare start here structurally cannot
+                    # escalate to INTERRUPT_CONFIRMED -- audited), then
+                    # retain the bounded evidence margin from this point.
+                    await _cancel_and_await(gap_task)
+                    await asyncio.sleep(SILENT_SERIES_POST_EVENT_MARGIN_S)
+                    print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE (gap)")
+                else:
+                    await _cancel_and_await(gap_failure_wait_task)
                 ep_record["gap_end_mono"] = time.monotonic()
                 print(f"[speech] MILESTONE: gap_{ep:02d}_end")
 
-                fail = _check_for_failure(phase=f"gap_{ep:02d}")
-                if fail:
-                    failure = fail
+                if test_failure is not None:
                     milestones["episodes"].append(ep_record)
-                    print(f"[speech] *** FAILURE detected during gap {ep:02d} -- stopping "
-                          "the series early, retaining a post-event evidence margin ***")
+                    print(f"[speech] *** FAILURE latched during gap {ep:02d} -- "
+                          "stopping the series early ***")
                     break
 
             milestones["episodes"].append(ep_record)
 
+        failure = test_failure
+        episode_number = 0  # TAIL / post-failure settle rows are not a numbered episode
         if failure:
             print(
-                f"[speech] MILESTONE: retaining {SILENT_SERIES_POST_EVENT_MARGIN_S}s of "
-                "post-event evidence margin before ending the session"
+                "[speech] MILESTONE: post-event evidence margin already retained "
+                "inline at detection time -- ending the session"
             )
-            await asyncio.sleep(SILENT_SERIES_POST_EVENT_MARGIN_S)
         else:
             print(f"[speech] MILESTONE: TAIL start ({TAIL_S}s)")
             await asyncio.sleep(TAIL_S)
@@ -2259,16 +2410,26 @@ async def run_speech_role_silent_series(
         print(f"  total_confirmed_interruptions = {len(chain.confirmed_events)}")
         print(f"  global_max_prob               = {chain.max_prob:.4f}")
 
-        for d in episode_diagnostics:
+        print("\n  -- PLAYBACK diagnostics (gap rows excluded) --")
+        for d in episode_diagnostics["responses"]:
             print(
-                f"  episode {d['episode_number']:02d}: max_prob={d['max_prob']:.4f} "
+                f"  response {d['response_number']:02d}: max_prob={d['max_prob']:.4f} "
                 f"max_vol={d['max_smoothed_volume']:.4f} frames>=0.7={d['frames_ge_0_7']} "
                 f"longest_streak={d['longest_ge_0_7_streak_frames']} "
                 f"starts={d['accepted_vad_starts']} confirms={d['confirmed_interruptions']}"
             )
 
-        def _group_max(lo: int, hi: int) -> tuple[float, float]:
-            g = [d for d in episode_diagnostics if lo <= d["episode_number"] <= hi]
+        print("\n  -- GAP diagnostics (playback rows excluded; episode 10 has no gap) --")
+        for d in episode_diagnostics["gaps"]:
+            print(
+                f"  gap {d['gap_number']:02d}: max_prob={d['max_prob']:.4f} "
+                f"max_vol={d['max_smoothed_volume']:.4f} frames>=0.7={d['frames_ge_0_7']} "
+                f"longest_streak={d['longest_ge_0_7_streak_frames']} "
+                f"starts={d['accepted_vad_starts']} confirms={d['confirmed_interruptions']}"
+            )
+
+        def _group_max(items: list[dict], number_key: str, lo: int, hi: int) -> tuple[float, float]:
+            g = [d for d in items if lo <= d[number_key] <= hi]
             if not g:
                 return (0.0, 0.0)
             return (
@@ -2276,13 +2437,23 @@ async def run_speech_role_silent_series(
                 max(d["longest_ge_0_7_streak_frames"] for d in g),
             )
 
+        print("\n  -- PLAYBACK ONLY trend (responses 1-3 / 4-7 / 8-10) --")
         for lo, hi, label in [(1, 3, "1-3"), (4, 7, "4-7"), (8, 10, "8-10")]:
-            mp, streak = _group_max(lo, hi)
-            print(f"  group {label}: max_prob={mp:.4f}  longest_streak_frames={streak}")
+            mp, streak = _group_max(episode_diagnostics["responses"], "response_number", lo, hi)
+            print(f"  responses {label}: max_prob={mp:.4f}  longest_streak_frames={streak}")
+
+        print("\n  -- GAPS trend, reported separately (gaps 1-3 / 4-6 / 7-9) --")
+        for lo, hi, label in [(1, 3, "1-3"), (4, 6, "4-6"), (7, 9, "7-9")]:
+            mp, streak = _group_max(episode_diagnostics["gaps"], "gap_number", lo, hi)
+            print(f"  gaps {label}: max_prob={mp:.4f}  longest_streak_frames={streak}")
 
         if failure:
-            print(f"\n  *** FAIL -- {failure['phase']}: new_started={failure['new_started']} "
-                  f"new_confirmed={failure['new_confirmed']} ***")
+            print(
+                f"\n  *** FAIL -- failure_kind={failure['failure_kind']} "
+                f"episode={failure['failure_episode']} "
+                f"playback_active={failure['failure_playback_active']} "
+                f"audio_t={failure['failure_event_audio_t']:.3f}s ***"
+            )
             print("  VALID TEST -- FAIL (genuine false event while operator was silent)")
         elif remote_frames_received == 0 or chain.n_frames == 0:
             print("\n*** INVALID TEST -- NO VAD INPUT FRAMES ***")
