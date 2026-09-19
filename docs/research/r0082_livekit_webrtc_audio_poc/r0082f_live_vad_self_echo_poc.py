@@ -498,6 +498,19 @@ SILENT_SERIES_POST_EVENT_MARGIN_S = 3.0
 # in a healthy run; the PRIMARY hold mechanism is waiting for the
 # speech participant to disconnect, not a fixed sleep.
 SILENT_SERIES_HARDWARE_TIMEOUT_MARGIN_S = 60.0
+# The signal_source = rtc.AudioSource(LIVE_SAMPLE_RATE, 1) construction
+# (both here and in run_speech_role/run_speech_role_deliberate_bargein,
+# unchanged) uses the installed livekit==1.1.19 DEFAULT queue_size_ms
+# (audited directly from the installed
+# livekit/rtc/audio_source.py: `queue_size_ms: int = 1000`) -- named
+# here purely for documentation/traceability, not passed differently.
+# capture_frame()'s own backpressure never lets more than this much
+# audio accumulate ahead of real-time, so it is a PROVABLE upper bound
+# on how long AudioSource.wait_for_playout() can take after the last
+# frame is submitted, used only as a generous, justified safety-net
+# timeout (not a tolerance folded into any validity threshold).
+AUDIO_SOURCE_QUEUE_SIZE_MS = 1000
+SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S = 2.0 * (AUDIO_SOURCE_QUEUE_SIZE_MS / 1000.0)
 
 CSV_HEADER_SILENT_SERIES = [
     "timestamp_monotonic",
@@ -2269,6 +2282,115 @@ async def run_speech_role_silent_series(
             if remaining > 0:
                 await asyncio.sleep(remaining)
 
+        async def _submit_and_drain_episode(ep_record: dict) -> tuple[int, bool, str]:
+            """R0082-H-specific wrapper AROUND the UNCHANGED, R0082-G-proven
+            `_play_signal_cancelable()` -- never modifies it. Fixes the
+            clean-path defect where a normal response was previously
+            considered "finished" the instant all source frames were
+            SUBMITTED, not when the `rtc.AudioSource` had actually finished
+            PLAYING them out (installed `livekit==1.1.19` default
+            `queue_size_ms=1000` means up to ~1.0s of already-submitted
+            audio can still be queued at that point, audited directly from
+            the installed `AudioSource` source: `capture_frame()`'s own
+            backpressure bounds this to at most `queue_size_ms`).
+
+            Returns `(samples_submitted, was_genuinely_interrupted,
+            drain_kind)` where `drain_kind` is one of `"confirmed_during_
+            submission"` (an ordinary R0082-G cancellation, entirely
+            unchanged), `"confirmed_during_drain"` (a genuine
+            `INTERRUPT_CONFIRMED` arrived AFTER submission finished but
+            BEFORE the queue had actually drained -- this wrapper clears
+            the queue itself here, since `_play_signal_cancelable()` has
+            already returned by then and cannot), or `"natural"` (the
+            queue drained on its own, no interruption). `episode_number`/
+            `playback_active` are NOT touched by this function -- the
+            caller flips them at the exact moment this function's result
+            indicates playback genuinely ended, which may be mid-call (via
+            outer cancellation, for research teardown) rather than only
+            after it returns."""
+            ep_playback_milestones: dict[str, float] = {}
+            samples_submitted, stopped_early = await _play_signal_cancelable(
+                signal_source,
+                signal_pcm,
+                cancel_event=interrupt_confirmed_event,
+                milestones=ep_playback_milestones,
+                emit_cue=False,
+            )
+            ep_record["playback_task_milestones"] = ep_playback_milestones
+            if "last_speech_frame_submitted" in ep_playback_milestones:
+                ep_record["last_speech_frame_submitted_mono"] = ep_playback_milestones[
+                    "last_speech_frame_submitted"
+                ]
+            if stopped_early:
+                # A genuine confirmed interruption occurred WHILE
+                # _play_signal_cancelable() was still submitting frames --
+                # it already cancelled itself for real and already called
+                # clear_queue() internally (unchanged R0082-G behavior,
+                # confirmed via its own preserved milestones above). There
+                # is nothing left to drain.
+                if "playback_stopped" in ep_playback_milestones:
+                    ep_record["playback_stop_mono"] = ep_playback_milestones["playback_stopped"]
+                ep_record["source_playout_drained_mono"] = time.monotonic()
+                return samples_submitted, True, "confirmed_during_submission"
+
+            # All frames were genuinely SUBMITTED -- this does NOT yet mean
+            # the AudioSource has finished PLAYING them out. Wait for the
+            # real drain, concurrently watching for a genuine confirmed
+            # interruption (which _play_signal_cancelable() can no longer
+            # detect for us, since it has already returned).
+            ep_record["queued_duration_at_submission_complete"] = signal_source.queued_duration
+            drain_task = asyncio.create_task(signal_source.wait_for_playout())
+            confirm_wait_task = asyncio.create_task(interrupt_confirmed_event.wait())
+            try:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.wait(
+                            {drain_task, confirm_wait_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        ),
+                        timeout=SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S,
+                    )
+                except TimeoutError:
+                    # Defensive only -- should never happen, since
+                    # capture_frame()'s own backpressure bounds the queue
+                    # to AUDIO_SOURCE_QUEUE_SIZE_MS. Recorded, not
+                    # silently ignored, if it somehow does.
+                    ep_record["drain_safety_timeout"] = True
+
+                if interrupt_confirmed_event.is_set():
+                    # A genuine confirmed interruption arrived WHILE audio
+                    # was still queued/playing out (the "queued tail" case)
+                    # -- this IS a real production interruption, not
+                    # research teardown. _play_signal_cancelable() has
+                    # already returned and cannot clear the queue for us,
+                    # so this wrapper does it here, using the SAME
+                    # milestone key names _play_signal_cancelable() itself
+                    # uses internally, for direct comparability.
+                    ep_record["audio_source_queued_before_clear_s"] = (
+                        signal_source.queued_duration
+                    )
+                    signal_source.clear_queue()
+                    ep_record["audio_source_queue_cleared_mono"] = time.monotonic()
+                    ep_record["audio_source_queued_after_clear_s"] = (
+                        signal_source.queued_duration
+                    )
+                    ep_record["playback_stop_mono"] = ep_record["audio_source_queue_cleared_mono"]
+                    ep_record["source_playout_drained_mono"] = time.monotonic()
+                    return samples_submitted, True, "confirmed_during_drain"
+
+                ep_record["source_playout_drained_mono"] = time.monotonic()
+                ep_record["playback_stop_mono"] = ep_record["source_playout_drained_mono"]
+                return samples_submitted, False, "natural"
+            finally:
+                # Reached on every exit path (normal return above, OR this
+                # whole function being cancelled from the outside for
+                # research teardown while still in the drain phase) --
+                # never leaves either inner task dangling.
+                if not drain_task.done():
+                    drain_task.cancel()
+                if not confirm_wait_task.done():
+                    confirm_wait_task.cancel()
+
         episodes_completed = 0
         for ep in range(1, SILENT_SERIES_EPISODE_COUNT + 1):
             episode_number = ep
@@ -2278,51 +2400,54 @@ async def run_speech_role_silent_series(
 
             chain.sm.notify_response_dispatched()
             playback_active = True
-            # Own dict (not thrown away) so genuine cancellation milestones
-            # (playback_stopped, audio_source_queued_before/after_clear_s,
-            # etc.) recorded internally by the UNCHANGED
-            # _play_signal_cancelable() are preserved for this episode's
-            # own evidence record, not just printed to console.
-            ep_playback_milestones: dict[str, float] = {}
-            playback_task = asyncio.create_task(_play_signal_cancelable(
-                signal_source,
-                signal_pcm,
-                cancel_event=interrupt_confirmed_event,
-                milestones=ep_playback_milestones,
-                emit_cue=False,
-            ))
+            # _submit_and_drain_episode() wraps the UNCHANGED, R0082-G-proven
+            # _play_signal_cancelable() -- submit, THEN wait for the
+            # AudioSource to genuinely finish PLAYING OUT what was
+            # submitted (not merely accepting it), racing the drain
+            # against a genuine confirmed interruption arriving during
+            # that queued tail. episode_number/playback_active stay at
+            # their CURRENT values (ep/True) for the ENTIRE submit+drain
+            # lifecycle -- this response is still genuinely playing/
+            # in-flight until this task's result says otherwise.
+            lifecycle_task = asyncio.create_task(_submit_and_drain_episode(ep_record))
             failure_wait_task = asyncio.create_task(test_failure_event.wait())
             await asyncio.wait(
-                {playback_task, failure_wait_task}, return_when=asyncio.FIRST_COMPLETED
+                {lifecycle_task, failure_wait_task}, return_when=asyncio.FIRST_COMPLETED
             )
-            if test_failure_event.is_set():
+            if not test_failure_event.is_set():
+                # Fully clean so far -- no bare start during submission OR
+                # the queued tail. Let the lifecycle finish normally
+                # (submit + genuine drain); episode_number/playback_active
+                # are untouched until it does.
+                if not failure_wait_task.done():
+                    await _cancel_and_await(failure_wait_task)
+                samples_submitted, was_interrupted, drain_kind = await lifecycle_task
+                playback_active = False
+            else:
                 ep_record["failure_event_mono"] = test_failure["failure_event_mono"]
-                # A bare accepted START has latched test_failure (possibly
-                # with a genuine confirmed interruption ALSO having already
-                # resolved playback via _play_signal_cancelable()'s own
-                # UNCHANGED cancel_event mechanism, real clear_queue()
-                # included -- that real cancellation is never suppressed
-                # or substituted). Mic/VAD evidence is retained until the
-                # ABSOLUTE deadline anchored to the ORIGINAL start. But the
-                # CSV phase classification (episode_number/playback_active)
-                # must transition to the non-normal sentinel at the ACTUAL
-                # playback-stop moment, not only once the whole margin has
-                # elapsed -- otherwise post-stop evidence rows are wrongly
-                # counted as this response's own playback. Race actual
-                # playback completion against the deadline to notice
-                # whichever comes first.
+                # A bare accepted START has latched test_failure (during
+                # submission OR during the queued tail). Do NOT cancel
+                # audio just because of this -- production semantics still
+                # require confirmation (_submit_and_drain_episode() itself
+                # already keeps watching for a genuine confirmed
+                # interruption throughout, unchanged). Race the (still-
+                # running, or already-finished) submit+drain lifecycle
+                # against the ABSOLUTE deadline.
                 if not failure_wait_task.done():
                     await _cancel_and_await(failure_wait_task)
                 deadline_task = asyncio.create_task(_wait_for_failure_deadline())
                 await asyncio.wait(
-                    {playback_task, deadline_task}, return_when=asyncio.FIRST_COMPLETED
+                    {lifecycle_task, deadline_task}, return_when=asyncio.FIRST_COMPLETED
                 )
-                if playback_task.done():
-                    # Playback ended on its own (naturally, or via a
-                    # genuine confirmed interruption) BEFORE the deadline
-                    # -- the normal playback diagnostic phase for this
-                    # response ends HERE, immediately.
-                    samples_submitted, stopped_early = playback_task.result()
+                if lifecycle_task.done():
+                    # Playback genuinely ended before the deadline -- via a
+                    # real confirmed interruption (during submission or
+                    # during the queued tail), or the queue simply drained
+                    # naturally with no confirmation ever arriving (Part 4's
+                    # boundary case: the already-latched start is still a
+                    # FAIL even though the response finished on its own).
+                    # Either way the normal playback phase ends HERE.
+                    samples_submitted, was_interrupted, drain_kind = lifecycle_task.result()
                     playback_active = False
                     episode_number = 0
                     ep_record["post_failure_observation_start_mono"] = time.monotonic()
@@ -2330,11 +2455,12 @@ async def run_speech_role_silent_series(
                     ep_record["post_event_margin_complete_mono"] = time.monotonic()
                     print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE")
                 else:
-                    # Deadline reached with playback STILL running -- bare
-                    # start, no confirmation ever arrived. Research-only
-                    # teardown NOW; classification flips to the sentinel
-                    # at this same point, before any further evidence rows
-                    # can be written.
+                    # Deadline reached with playback STILL genuinely active
+                    # (still submitting, or still draining) and no
+                    # confirmation ever arrived -- research-only teardown
+                    # of whichever phase is currently active.
+                    # _submit_and_drain_episode()'s own finally block
+                    # cleans up its inner tasks cleanly on cancellation.
                     ep_record["post_event_margin_complete_mono"] = time.monotonic()
                     print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE")
                     print(
@@ -2343,7 +2469,7 @@ async def run_speech_role_silent_series(
                         "PLAYBACK_CANCEL_REQUESTED; the canonical failure timestamp "
                         "remains the original TEST_FAILURE_ACCEPTED_START above)"
                     )
-                    await _cancel_and_await(playback_task)
+                    await _cancel_and_await(lifecycle_task)
                     try:
                         signal_source.clear_queue()  # administrative cleanup only
                     except Exception:
@@ -2351,27 +2477,17 @@ async def run_speech_role_silent_series(
                     playback_active = False
                     episode_number = 0
                     ep_record["post_failure_observation_start_mono"] = time.monotonic()
-                    samples_submitted, stopped_early = (None, True)
-            else:
-                # Normal completion -- test_failure never latched during
-                # this episode's playback. episode_number/playback_active
-                # are untouched here (normal path).
-                await _cancel_and_await(failure_wait_task)
-                samples_submitted, stopped_early = playback_task.result()
-                playback_active = False
+                    samples_submitted, was_interrupted, drain_kind = (None, False, "teardown")
             ep_record["playback_end_mono"] = time.monotonic()
+            ep_record["response_end_mono"] = ep_record["playback_end_mono"]
             ep_record["samples_submitted"] = samples_submitted
-            ep_record["stopped_early"] = stopped_early
-            # Preserve _play_signal_cancelable()'s OWN recorded milestones
-            # (unchanged function, unchanged keys) for this episode -- in
-            # particular `playback_stopped`, the exact moment genuine
-            # cancellation actually stopped submission, distinct from
-            # `playback_end_mono` above (which is when THIS loop's control
-            # flow resumed, possibly after the full evidence-margin wait).
-            ep_record["playback_task_milestones"] = ep_playback_milestones
-            if "playback_stopped" in ep_playback_milestones:
-                ep_record["playback_stop_mono"] = ep_playback_milestones["playback_stopped"]
-            print(f"[speech] MILESTONE: response_{ep:02d}_end")
+            ep_record["stopped_early"] = was_interrupted
+            ep_record["drain_kind"] = drain_kind
+            print(
+                f"[speech] MILESTONE: response_{ep:02d}_end "
+                f"(drain_kind={drain_kind}, "
+                f"source_playout_drained_mono={ep_record.get('source_playout_drained_mono')})"
+            )
 
             # Documented no-op if state is INTERRUPTING (a genuine confirmed
             # interruption occurred during this episode) -- matches the real
@@ -2415,7 +2531,21 @@ async def run_speech_role_silent_series(
                 else:
                     await _cancel_and_await(gap_failure_wait_task)
                 ep_record["gap_end_mono"] = time.monotonic()
-                print(f"[speech] MILESTONE: gap_{ep:02d}_end")
+                # TRUE scheduled-gap duration: for a clean gap this IS
+                # gap_end_mono; for a failure-terminated gap the normal
+                # phase actually ended earlier, at
+                # gap_failure_normal_phase_end_mono (gap_end_mono here
+                # additionally includes the retained evidence margin, a
+                # DIFFERENT quantity, not the scheduled gap itself).
+                _gap_true_end_mono = ep_record.get(
+                    "gap_failure_normal_phase_end_mono", ep_record["gap_end_mono"]
+                )
+                _gap_measured_s = _gap_true_end_mono - ep_record["gap_start_mono"]
+                ep_record["gap_measured_duration_s"] = _gap_measured_s
+                print(
+                    f"[speech] MILESTONE: gap_{ep:02d}_end "
+                    f"(measured_duration={_gap_measured_s:.3f}s)"
+                )
 
                 if test_failure is not None:
                     milestones["episodes"].append(ep_record)
@@ -2470,6 +2600,16 @@ async def run_speech_role_silent_series(
         print(f"[speech] wrote {milestones_path.name}")
 
         capture_duration_s = remote_samples_received / LIVE_SAMPLE_RATE
+        # Deliberately NOT inflated by any drain-tail allowance: this sum
+        # of CORE required durations (episodes' own speech content + the
+        # true drained-queue gaps + fixed PRE_ROLL/TAIL) remains a
+        # mathematically valid LOWER bound on capture_duration_s even
+        # after the playout-drain fix, because AudioSource drain time can
+        # only ADD to real elapsed wall-clock capture time, never subtract
+        # from it -- the mic keeps recording throughout every phase
+        # regardless. Inflating this threshold to account for drain would
+        # make the check WEAKER (a smaller true shortfall could still
+        # pass), which is the wrong direction for a validity floor.
         expected_min_duration_s = (
             PRE_ROLL_S
             + SILENT_SERIES_EPISODE_COUNT * SPEECH_DURATION_S

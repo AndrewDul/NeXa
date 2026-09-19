@@ -7000,3 +7000,305 @@ no production files touched                                             PASS
 **Verdict: R0082-H (fourth correction applied) READY for ONE real
 continuous silent-user hardware run.** This session did not execute
 hardware.
+
+## 118. R0082-H fifth correction — normal response end means AudioSource PLAYOUT drain, not just SUBMISSION completion
+
+Found before any hardware execution. `_play_signal_cancelable()` is
+untouched (confirmed below) — the fix is implemented as a NEW wrapper
+around it, exactly as instructed.
+
+### 118.1 Part 1 — installed `livekit==1.1.19` `AudioSource` API, audited directly from source (not assumed)
+
+Read directly from
+`.../r0082_livekit_probe_venv/lib/python3.13/site-packages/livekit/rtc/audio_source.py`:
+
+```python
+@property
+def queued_duration(self) -> float:
+    return max(self._q_size - time.monotonic() + self._last_capture, 0.0)
+
+def clear_queue(self) -> None:
+    req = ...clear_audio_buffer...
+    _ = FfiClient.instance.request(req)
+    self._release_waiter()
+
+async def capture_frame(self, frame: AudioFrame) -> None:
+    ...
+    self._q_size += frame.samples_per_channel / self.sample_rate - elapsed
+    self._last_capture = now
+    if self._join_handle: self._join_handle.cancel()
+    if self._join_fut is None: self._join_fut = self._loop.create_future()
+    self._join_handle = self._loop.call_later(self._q_size, self._release_waiter)
+    ...
+
+async def wait_for_playout(self) -> None:
+    if self._join_fut is None:
+        return
+    await asyncio.shield(self._join_fut)
+
+def _release_waiter(self) -> None:
+    if self._join_fut is None: return
+    if not self._join_fut.done(): self._join_fut.set_result(None)
+    self._last_capture = 0.0
+    self._q_size = 0.0
+    self._join_fut = None
+```
+
+**Exact semantics, confirmed from this source, not memory:**
+
+- `queued_duration` is a **pure client-side estimate** (`_q_size` minus
+  elapsed wall-clock time since the last `capture_frame()` call) — NOT
+  an FFI round-trip query of the native engine's actual buffer state.
+- `capture_frame()` re-arms a `call_later(self._q_size, self.
+  _release_waiter)` timer on EVERY call — the timer that eventually
+  resolves `wait_for_playout()` naturally, roughly `_q_size` seconds
+  after the LAST captured frame.
+- `wait_for_playout()` returns immediately if nothing has ever been
+  captured (`_join_fut is None`); otherwise it `await`s (shielded) the
+  SAME future the timer above resolves.
+- **`clear_queue()` calls `_release_waiter()` after clearing the native
+  buffer — confirmed: this immediately resolves any pending
+  `wait_for_playout()` waiter**, answering the explicit question asked:
+  yes, `clear_queue()` unblocks a `wait_for_playout()` call in
+  progress.
+- The installed harness constructs `rtc.AudioSource(LIVE_SAMPLE_RATE,
+  1)` (both here and in `run_speech_role`/`run_speech_role_deliberate_
+  bargein`, unchanged) — i.e. the DEFAULT `queue_size_ms=1000`.
+  `capture_frame()`'s own backpressure (the actual FFI request blocks
+  until room is available) is what bounds how far ahead of real-time
+  submission can run — this gives a **provable, from-source upper
+  bound**: the queued tail can never exceed `queue_size_ms/1000 =
+  1.0s`, not an arbitrary guess.
+
+### 118.2 Defect (as specified) and fix
+
+`_play_signal_cancelable()` (unchanged) returns once all frames are
+SUBMITTED — on natural completion this does NOT prove the `AudioSource`
+has finished PLAYING them out. R0082-H's clean path was treating
+"`_play_signal_cancelable()` returns" as "response finished,"
+`playback_active=False`, `notify_response_finished()`, and starting the
+2.5s gap immediately — while up to ~1.0s of already-submitted NeXa
+speech could genuinely still be queued/playing.
+
+**Fix, implemented as a NEW wrapper, `_submit_and_drain_episode()`**,
+around the completely UNCHANGED `_play_signal_cancelable()` (never
+modified — confirmed byte-for-byte identical, §118.5):
+
+1. `await _play_signal_cancelable(...)` exactly as before.
+2. If it returned via genuine cancellation (`stopped_early=True`): the
+   function ALREADY cleared the queue internally (unchanged R0082-G
+   behavior) — nothing left to drain. `drain_kind="confirmed_during_
+   submission"`.
+3. If it returned via natural completion (`stopped_early=False`):
+   record `queued_duration_at_submission_complete`, then race
+   `signal_source.wait_for_playout()` against `interrupt_confirmed_
+   event.wait()` (bounded by a generous, JUSTIFIED
+   `SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S = 2×1.0s` safety net derived
+   from `AUDIO_SOURCE_QUEUE_SIZE_MS`, defensive only):
+   - If the drain wins: the queue genuinely finished playing out on its
+     own. `drain_kind="natural"`.
+   - If a genuine confirmed interruption arrives FIRST (the "queued
+     tail" case, Part 3 Case C): `_play_signal_cancelable()` has
+     already returned and cannot detect this itself, so this wrapper
+     clears the queue HERE — using the SAME milestone key names
+     `_play_signal_cancelable()` itself uses internally
+     (`audio_source_queued_before_clear_s`/`audio_source_queue_
+     cleared_mono`/`audio_source_queued_after_clear_s`) for direct
+     comparability. `drain_kind="confirmed_during_drain"`. This is
+     classified as a genuine confirmed-interruption cancellation, NEVER
+     as research teardown.
+
+The caller wraps `_submit_and_drain_episode()` in ONE `lifecycle_task`
+(replacing the old `playback_task`) and races the WHOLE submit+drain
+lifecycle against `test_failure_event`, then (if a bare start latched)
+against the absolute `_wait_for_failure_deadline()` — the SAME
+deadline-racing pattern from §116, now applied to the FULL lifecycle
+instead of just the submission phase. `episode_number`/`playback_
+active` remain at their current (in-flight) values for the ENTIRE
+submit+drain lifecycle, flipping to the non-normal sentinel only at
+the exact moment the lifecycle's result says playback genuinely ended
+— satisfying Part 2's exact requirement ("playback_active remains true
+through queued tail... ISM remains response-in-flight through queued
+tail") and Part 4's boundary case (a bare start with the queue draining
+naturally before any confirm still ends the response at the TRUE drain
+moment, `episode_number=0`, and remains a canonical FAIL — no
+artificial `INTERRUPT_CONFIRMED` is ever manufactured).
+
+### 118.3 Part 6 — capture validity re-evaluated, not weakened
+
+`expected_min_duration_s` (`PRE_ROLL_S + 10×SPEECH_DURATION_S +
+9×SILENT_SERIES_GAP_S + TAIL_S`) is **left exactly as it was** — this
+sum of core required durations remains a mathematically valid LOWER
+bound on `capture_duration_s` even after this fix, because AudioSource
+drain time can only ADD real elapsed wall-clock capture time (the mic
+keeps recording throughout every phase, regardless of internal
+bookkeeping), never subtract from it. Inflating the threshold to
+"account for" drain would make the check WEAKER, the wrong direction
+for a validity floor — so it was not touched. This is stated in-code,
+not just here (§118.5).
+
+### 118.4 Live dry-run evidence
+
+**Clean 3-episode run — the shortfall is RESOLVED, with an exact,
+measured explanation** (3×8.0s episodes, 0.5s gaps — same config as
+every prior clean-path dry run in this investigation):
+
+```
+BEFORE this fix (§116.3):  capture_duration_s=28.020  expected_min=29.000  -> INVALID (shortfall ~0.98s)
+AFTER this fix (this round): capture_duration_s=30.040  expected_min=29.000  -> VALID TEST -- PASS
+```
+
+**This is the first clean scaled dry run in the entire R0082-H
+investigation to reach a genuine `VALID TEST -- PASS`.** Per-episode
+values, pulled directly from the run's own `milestones.json`:
+
+```
+episode 1: queued_duration_at_submission_complete=1.0061s  submit-complete->drain-complete=1.0073s
+episode 2: queued_duration_at_submission_complete=1.0085s  submit-complete->drain-complete=1.0091s
+episode 3: queued_duration_at_submission_complete=1.0004s  submit-complete->drain-complete=1.0013s
+gap 1: measured_duration=0.5008s   (configured 0.5s)
+gap 2: measured_duration=0.5011s   (configured 0.5s)
+```
+
+**Explanation of the previously-observed shortfall, now precisely
+identified rather than dismissed as dry-run-publisher pacing (§110.5/
+§112.3's earlier hypothesis was incomplete):** each episode was ending
+its "response" phase ~1.0s too early (right at submission-complete,
+not at true drain-complete) — this ~1.0s/episode is EXACTLY the
+`queued_duration_at_submission_complete` measured above, consistent
+with `queue_size_ms=1000` from §118.1. The mic kept recording
+regardless (so `capture_duration_s` itself was never actually wrong),
+but the OLD phase bookkeeping meant this drain time was being
+(mis)counted as if it belonged to nothing at all in the old capture-
+duration accounting relative to the (unar changed) `expected_min_
+duration_s` formula — this fix's real effect is that the SESSION now
+correctly waits out this ~1.0s per episode as part of the RESPONSE
+phase before starting the gap, so total session wall-clock time (and
+therefore `capture_duration_s`) is correctly ~3s longer for a 3-episode
+run, resolving the shortfall with margin to spare. No remaining
+shortfall was observed; none is hidden inside an unexplained tolerance.
+
+**Gap durations are now measured precisely.** `gap_01_end
+(measured_duration=3.001s)` and `gap_02_end (measured_duration=0.491s
+[truncated by a failure])` in the two failure-scenario dry runs below,
+and `0.501s`/`0.501s` in the clean run above — all within a few
+milliseconds of their CONFIGURED value, now that the gap genuinely
+starts only after `source_playout_drained_mono`, not at submission-
+complete. Per instruction, this is reported precisely as **"2.5s
+publisher-side drained-queue gap"** (the real, full production value)
+— not as proof of exact physical-acoustic silence, which remains a
+separate, unaddressed limitation (downstream WebRTC/Opus encode,
+network transport, and the far-end device's own playout buffer are
+outside this harness's observation, as already stated in §105/§107).
+
+**Case C (`confirmed_during_drain`) — a genuine confirmation arriving
+during the queued tail** (burst timed to land near the natural end of
+submission): `drain_kind=confirmed_during_drain` (no `TEST_TEARDOWN_
+PLAYBACK_STOP` printed — correctly NOT classified as research
+teardown). Exact values from `milestones.json`:
+
+```
+failure_event_mono (canonical START)   = 313850.581204188
+last_speech_frame_submitted_mono       = 313850.647372171  (submission completed ~66ms after the START)
+queued_duration_at_submission_complete = 1.0006s
+audio_source_queued_before_clear_s     = 0.7466s  (drained naturally from 1.0006s down to this by the time of the clear)
+audio_source_queue_cleared_mono        -> START -> queue_cleared = 0.3204s  (SAME timing as every prior confirmed-cancellation, unaffected by landing in the drain phase)
+audio_source_queued_after_clear_s      = 0.0000s
+post_event_margin_complete_mono        -> START -> margin_complete = 3.0006s
+```
+
+The queue was cleared immediately upon confirmation (not waiting for
+the ~0.75s of remaining queued audio to finish naturally), at exactly
+the same ~0.32s-from-START timing as every other confirmed-cancellation
+observed in this investigation — genuine, real interruption semantics,
+correctly distinguished from research teardown.
+
+**Case `confirmed_during_submission` (unaffected, re-verified)**: burst
+early in a long episode — `TEST_FAILURE_ACCEPTED_START` →
+`AUDIO_SOURCE_QUEUED_BEFORE_CLEAR=1.0047s` → `CLEARED` → `AFTER_
+CLEAR=0.0000s` → `drain_kind=confirmed_during_submission` — identical
+in every respect to §112.3/§114.3/§116.3's own findings, confirming
+this fix did not disturb the already-proven, more common case.
+
+**Gap-triggered failure (re-verified)**: `response_01`/`response_02`
+both `drain_kind=natural`; `gap_01_end (measured_duration=3.001s)`
+(configured 3.0s); the burst during `gap_02` correctly classified as a
+gap failure (`playback_active=False`), `gap_02_end (measured_
+duration=0.491s)` (truncated by the failure, as expected);
+`episodes_completed=2/3`.
+
+### 118.5 Offline validation performed this round (53 checks, all PASS)
+
+```
+py_compile                                                          PASS
+ruff                                                                 PASS
+git diff --check                                                     PASS
+[all 44 checks from §116.4, re-run and still PASS]                   PASS (44/44)
+AUDIO_SOURCE_QUEUE_SIZE_MS documented, traces to the installed
+  AudioSource's own audited default                                  PASS
+_submit_and_drain_episode() calls signal_source.wait_for_playout()     PASS
+clear_queue() is NOT called on natural drain completion                PASS
+clear_queue() during the drain phase is gated behind
+  interrupt_confirmed_event.is_set() -- a bare start alone never
+  triggers it                                                         PASS
+confirmed-during-drain clear uses the SAME milestone key names
+  _play_signal_cancelable() itself uses, for comparability             PASS
+confirmed-during-submission (_play_signal_cancelable() already
+  cancelled) does NOT re-enter the drain-wait phase                    PASS
+_submit_and_drain_episode() has a finally block that cleans up its
+  own inner drain_task/confirm_wait_task on every exit path             PASS
+the main loop wraps _submit_and_drain_episode() in lifecycle_task
+  (not calling _play_signal_cancelable() directly)                     PASS
+episode_number/playback_active are not reset in the clean branch
+  until the WHOLE lifecycle_task completes                             PASS
+expected_min_duration_s is explicitly documented as remaining a
+  valid lower bound post-fix, not inflated                             PASS
+```
+
+53 checks total, all PASS. `run_speech_role`, `run_hardware_role`,
+`run_speech_role_deliberate_bargein`, `_play_signal_cancelable`,
+`read_speech_wav`, `evaluate_deliberate_bargein_result`, and
+`run_hardware_role_silent_series` all re-confirmed byte-for-byte
+identical to commit `5536fbd`. Production VAD constants unchanged. No
+production files touched this round (only READ the installed
+`livekit` package's own source for the Part 1 audit, never wrote to
+it).
+
+## 119. R0082-H — FINAL GATE (post fifth correction)
+
+```
+installed AudioSource.wait_for_playout() semantics confirmed from
+  source (not assumed) -- including that clear_queue() unblocks it     PASS
+normal response end now means the publisher queue has genuinely
+  drained (measured: drain adds ~1.0s/episode, matching queue_size_ms) PASS
+playback_active/episode_number remain at their in-flight values
+  through the ENTIRE queued tail, not just through submission          PASS
+ISM remains response-in-flight (RESPONDING) through the queued tail
+  -- notify_response_finished() only called at the TRUE response end   PASS
+a bare START during the queued tail is detected as a response-time
+  failure (drain continues to be watched), not silently ignored        PASS
+a genuine CONFIRM during the queued tail clears the queue
+  IMMEDIATELY (measured: same ~0.32s-from-START timing as every
+  other confirmed cancellation), never waiting for the natural tail    PASS
+clean gaps now begin only after genuine queue drain (measured:
+  0.501s/0.501s/3.001s against 0.5s/0.5s/3.0s configured)               PASS
+capture validity (expected_min_duration_s) re-evaluated and left
+  unchanged, correctly remains a valid lower bound -- NOT weakened     PASS
+the previously-observed systematic clean-path shortfall is
+  RESOLVED with a precise, measured explanation (before: INVALID,
+  28.020s vs 29.000s; after: PASS, 30.040s vs 29.000s)                 PASS
+the absolute 3.0s failure deadline remains unchanged (measured:
+  3.0006s in the new Case C scenario)                                  PASS
+post-failure sentinel behavior (episode_number=0 at the TRUE
+  response/gap end, not the deadline) remains unchanged                PASS
+existing silent-user / deliberate-bargein / _play_signal_cancelable /
+  read_speech_wav / evaluate_deliberate_bargein_result / run_hardware_
+  role / run_hardware_role_silent_series all byte-for-byte unchanged    PASS
+production VAD constants unchanged                                      PASS
+py_compile / ruff / git diff --check                                    PASS
+no production files touched                                             PASS
+```
+
+**Verdict: R0082-H (fifth correction applied) READY for ONE real
+continuous silent-user hardware run.** This session did not execute
+hardware.
