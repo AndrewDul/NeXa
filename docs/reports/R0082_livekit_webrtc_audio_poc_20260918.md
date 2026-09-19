@@ -7615,3 +7615,290 @@ all offline/static/dry-run checks pass (79/79)                          PASS
 **Verdict: R0082-H (sixth correction applied) READY for ONE real
 continuous silent-user hardware run.** This session did not execute
 hardware.
+
+## 122. R0082-H seventh correction — PRE_ROLL/TAIL must be actively observed phases; drain-timeout ISM labeling
+
+Found before any hardware execution, on review of the sixth
+correction's own Scenario 2 dry run. Four related defects, fixed
+together.
+
+### 122.0 Correction to §120.4's own Scenario 2 wording (not deleted, reinterpreted)
+
+§120.4's Scenario 2 quoted a real, correctly-captured log:
+`TEST_FAILURE_ACCEPTED_START episode=0 playback_active=False`,
+followed later by a drain timeout during episode 1. That evidence is
+NOT deleted and its measurements were accurate. However, the
+surrounding prose overstated what it proved: it did establish that "a
+pre-existing failure record can survive alongside a later drain
+timeout," but it did NOT establish that a false START occurring
+DURING that same response/drain phase coexists with the timeout --
+the START in that run actually occurred BEFORE `response_01` was ever
+dispatched (during the then-unobserved PRE_ROLL sleep), which is
+precisely DEFECT A below. §120.4's own text is left in place
+(historical, and its measurements remain correct); this section
+supersedes its causal interpretation.
+
+### 122.1 Defect A — a failure could latch during PRE_ROLL, but response_01 was still dispatched afterward
+
+The OLD `PRE_ROLL` phase was a single blind `await
+asyncio.sleep(PRE_ROLL_S)`, never raced against `test_failure_event`.
+§120.4's own Scenario 2 run demonstrated the resulting bug directly:
+an accepted START at `episode=0, playback_active=False` (i.e. during
+PRE_ROLL, before `response_01_start` had even printed) still let the
+loop proceed into `response_01` and reach its drain logic. Once a
+real accepted START has occurred while the operator is instructed to
+be silent, the experiment has already failed -- dispatching bot
+playback AFTER that would contaminate the post-event evidence with a
+stimulus that did not exist when the failure originated.
+
+**Fix**: `PRE_ROLL` is now itself an actively observed phase, raced
+exactly like every gap:
+
+```python
+pre_roll_sleep_task = asyncio.create_task(asyncio.sleep(PRE_ROLL_S))
+pre_roll_failure_wait_task = asyncio.create_task(test_failure_event.wait())
+await asyncio.wait({pre_roll_sleep_task, pre_roll_failure_wait_task}, ...)
+```
+
+If no event occurs, `PRE_ROLL` completes and the episode loop proceeds
+normally. If an accepted START occurs, `response_01` is explicitly NOT
+dispatched: the episode loop's own top-of-iteration guard (`if
+test_failure is not None: break`) runs BEFORE
+`chain.sm.notify_response_dispatched()`, and evidence is retained out
+to the same absolute `FIRST START + SILENT_SERIES_POST_EVENT_MARGIN_S`
+deadline used everywhere else. A NEW session-phase tracker,
+`session_phase` (`"pre_roll" | "response" | "gap" | "tail"`), is read
+(never mutated) by `_consume_mic()` and recorded as `failure_phase` in
+the `test_failure` record, so the final verdict can classify a
+pre-roll false positive precisely: **"silent baseline false accepted
+START during PRE_ROLL"**, explicitly NOT attributed to self-echo,
+since no NeXa playback has occurred yet at that point.
+
+### 122.2 Defect B — TAIL failure handling was not live, and the `failure` snapshot could be stale
+
+The OLD TAIL block was `if not failure: await asyncio.sleep(TAIL_S)`.
+A START occurring DURING TAIL could still be latched live by
+`_consume_mic()`, but the local `failure = test_failure` snapshot had
+ALREADY been taken (DEFECT C) BEFORE the TAIL sleep even began, so it
+could never reflect a TAIL-phase failure; the fixed 2.0s TAIL could
+also finish (or not, if literally blocking) without ever retaining the
+required ~3.0s post-event evidence margin.
+
+**Fix**: `TAIL` is now also raced against `test_failure_event`,
+identically to `PRE_ROLL` and every gap. A clean TAIL runs its full
+`TAIL_S`. A TAIL-phase failure cuts the normal TAIL phase short
+immediately (`TAIL_INTERRUPTED_BY_FAILURE`), switches CSV
+classification to the non-normal sentinel (`episode_number` is already
+`0` throughout TAIL), and retains evidence out to the SAME absolute
+deadline -- capture does NOT stop merely because the nominal 2.0s TAIL
+endpoint arrives. Per instruction, this is explicitly NOT
+over-attributed to active self-echo (NeXa playback has already ended
+by TAIL): the verdict wording is **"false accepted START during TAIL
+(NeXa playback has already ended -- residual audio / ambient sound /
+VAD false positive, NOT attributed to active self-echo)"**.
+
+### 122.3 Defect C — the `failure` snapshot was taken too early
+
+`failure = test_failure` previously ran BEFORE the TAIL block, making
+it structurally unable to observe a TAIL-phase failure at all. It is
+now taken in exactly one place, immediately AFTER the TAIL race (or
+the already-retained-inline-margin branch) has FULLY resolved -- there
+is no earlier copy anywhere in the function, so there is no path by
+which `milestones["failure"]` can persist a stale `None` while a real,
+live `test_failure` record exists.
+
+### 122.4 Defect D — a drain timeout was not explicitly distinguished from a normal completed response at the ISM level
+
+The sixth correction already correctly refused to record
+`source_playout_drained_mono`/PASS/FAIL for a `drain_timeout`, but the
+caller still reached the generic `chain.sm.notify_response_finished()`
+without first distinguishing this case in its own log output --
+research-only, but worth being explicit about, per instruction. The
+ISM itself has no separate "abort" verb, and
+`notify_response_finished()` remains the only way back to `IDLE` from
+`RESPONDING` (required so the session doesn't leave the ISM stuck for
+whatever trailing observation remains) -- so the same call is still
+made, but now ONLY after printing a dedicated milestone,
+`ISM_ADMINISTRATIVE_TEARDOWN`, explicitly stating this is administrative
+cleanup, NOT a claim of normal response completion. Additionally, the
+clean (no `test_failure`) branch now explicitly resets `episode_number`
+to the non-normal sentinel `0` on a `drain_timeout`, matching the
+existing pattern used by every other non-normal outcome -- confirmed
+directly in a live CSV: the trailing timeline rows after a pure drain
+timeout are tagged `episode_number=0, playback_active=0`, never the
+response's own episode number.
+
+### 122.5 Phase bookkeeping
+
+`test_failure["failure_phase"]` is now populated at both dict-
+construction sites (`"pre_roll" | "response" | "gap" | "tail"`),
+alongside the existing `failure_episode`, `failure_playback_active`,
+`failure_event_mono`, `failure_event_audio_t`, `failure_deadline_mono`
+fields (all unchanged). This lets the report (and any future reader of
+raw `milestones.json`) distinguish a pre-roll baseline false positive
+from an active-response false positive from an inter-response gap
+false positive from a post-response tail false positive, without
+changing the canonical event-detection threshold itself.
+
+### 122.6 Live dry-run evidence (real local `livekit-server --dev`)
+
+**Dry run 1 -- PRE_ROLL false START:**
+
+```
+TEST_FAILURE_ACCEPTED_START at t=1.376s, phase=pre_roll, episode=0, playback_active=False
+PRE_ROLL_INTERRUPTED_BY_FAILURE -- ... response_01 will NOT be dispatched
+POST_EVENT_MARGIN_COMPLETE (pre_roll)
+
+episodes_completed = 0 / 3
+milestones["episodes"] = []          <-- response_01 never dispatched, confirmed
+failure_event_mono    = 319361.798603468
+failure_deadline_mono = 319364.798603468   (exactly +3.0s)
+
+*** FAIL -- failure_kind=accepted_start failure_phase=pre_roll episode=0
+playback_active=False audio_t=1.376s ***
+VALID TEST -- FAIL (silent baseline false accepted START during PRE_ROLL
+(no NeXa playback has occurred yet))
+```
+
+Confirms every required proof item: `failure_phase=pre_roll`,
+`episode=0`, `playback_active=False`, `response_01_start` ABSENT from
+the log, `episodes_completed=0`, `START -> post_event_margin_complete`
+exactly `3.0s`, and the precise, honest `VALID TEST -- FAIL` causal
+wording.
+
+**Dry run 2 -- TAIL false START near the end** (2-episode clean
+config, burst timed ~0.2s before the nominal TAIL endpoint):
+
+```
+response_02_end (drain_kind=natural, ...)
+TAIL start (2.0s)
+TEST_FAILURE_ACCEPTED_START at t=9.376s, phase=tail, episode=0, playback_active=False
+TAIL_INTERRUPTED_BY_FAILURE -- ... NOT attributed to active self-echo ...
+POST_EVENT_MARGIN_COMPLETE (tail)
+
+episodes_completed = 2 / 2               <-- all intended episodes completed
+capture_duration_s = 12.410              <-- well past the nominal ~2.0s TAIL endpoint
+failure_event_mono    = 319497.262243486
+failure_deadline_mono = 319500.262243486   (exactly +3.0s)
+
+*** FAIL -- failure_kind=accepted_start failure_phase=tail episode=0
+playback_active=False audio_t=9.376s ***
+VALID TEST -- FAIL (false accepted START during TAIL (NeXa playback has
+already ended -- residual audio / ambient sound / VAD false positive,
+NOT attributed to active self-echo))
+```
+
+`milestones["failure"]` for this run contains the LIVE record above
+(not `None`, not stale) -- confirmed by reading the persisted
+`milestones.json` directly. All required proof items confirmed: all
+intended episodes completed, `failure_phase=tail`, the nominal TAIL
+endpoint did NOT stop capture, exact `3.0s` margin, non-stale
+persisted failure record, `VALID TEST -- FAIL`.
+
+**Dry run 3 -- clean PRE_ROLL + clean TAIL** (2-episode config, no
+burst): `PRE_ROLL end` / all 2 episodes complete / `TAIL end` all
+print normally, `failure=None`,
+`VALID TEST -- PASS (2/2 episodes, 0 accepted VAD starts, 0 confirmed
+interruptions)`, `capture_duration_s=9.550`. Confirms the clean path
+is unaffected by making PRE_ROLL/TAIL into raced (rather than blind)
+phases.
+
+**Dry run 4 -- response-time failure regression** (unchanged 3x8.0s
+config, burst mid-submission): `TEST_FAILURE_ACCEPTED_START ...
+phase=response episode=1 playback_active=True`, `drain_kind=
+confirmed_during_submission`, identical timing pattern to every prior
+round's own response-phase proof (`AUDIO_SOURCE_QUEUED_BEFORE_CLEAR=
+1.0046s`, cleared, `0.0000s` after). Regression-free.
+
+**Dry run 5 -- gap failure regression** (3x3.0s/3.0s-gap config, burst
+mid-gap): `TEST_FAILURE_ACCEPTED_START ... phase=gap episode=1
+playback_active=False`, gap cut short (`gap_01_end
+measured_duration=1.855s`, less than the configured 3.0s), identical
+mechanism to every prior round's own gap-phase proof. Regression-free.
+
+**Dry run 6 -- drain-timeout regression** (tiny `--drain-timeout-s`
+override, no burst): still `episodes_completed=1/3`,
+`ISM_ADMINISTRATIVE_TEARDOWN` now printed immediately before
+`notify_response_finished()`, still ends
+`INVALID TEST -- AUDIO SOURCE PLAYOUT DRAIN TIMEOUT`. CSV confirmed
+directly: the trailing rows after the timeout carry
+`episode_number=0, playback_active=0`, not the response's own episode
+number. Regression-free, DEFECT D fix confirmed in the actual data
+stream, not just the log text.
+
+### 122.7 Offline validation performed this round (90 checks, all PASS)
+
+A new Section 2C (12 checks) was added: `session_phase` initialized to
+`"pre_roll"` before any failure can latch; both `test_failure`
+dict-construction sites record `failure_phase` (exactly 2
+occurrences); `PRE_ROLL` is raced, not a blind sleep (zero un-raced
+`await asyncio.sleep(PRE_ROLL_S)` occurrences remain); a PRE_ROLL
+failure structurally precedes `notify_response_dispatched()`; the
+PRE_ROLL failure classification wording is present; `TAIL` is raced,
+not a blind sleep; a TAIL failure reuses the same absolute-deadline
+helper; the `failure = test_failure` snapshot is textually positioned
+after the TAIL race begins; the FAIL verdict's wording is
+phase-aware; a drain timeout is logged as administrative ISM teardown
+strictly before `notify_response_finished()`; a drain timeout resets
+`episode_number` to `0` even with no `test_failure` latched. One stale
+check from the sixth correction's own suite (matching the OLD, now
+replaced, `"VALID TEST -- FAIL (genuine false event while operator was
+silent)"` literal) was updated to match the new phase-aware wording
+logic -- not a code defect, an assertion depending on exact wording
+that this round intentionally changed.
+
+```
+py_compile                                                            PASS
+ruff                                                                  PASS
+git diff --check                                                      PASS
+[79 checks carried forward from the sixth correction, re-run]        PASS (79/79, after
+                                                                        1 wording-only
+                                                                        assertion update)
+[12 new checks for PRE_ROLL/TAIL/drain-timeout-ISM-labeling]         PASS (12/12)
+```
+
+`run_speech_role`, `run_hardware_role`, `run_speech_role_deliberate_
+bargein`, `_play_signal_cancelable`, `read_speech_wav`,
+`evaluate_deliberate_bargein_result`, and `run_hardware_role_silent_
+series` all re-confirmed byte-for-byte identical to commit `2e675d3`
+(this round's own accepted baseline). Production VAD constants
+unchanged. No production files touched this round.
+
+## 123. R0082-H — FINAL GATE (post seventh correction)
+
+```
+R0082-G historical 5/5 PASS unchanged                                   PASS
+pre-roll failure now prevents response_01 from starting (measured:
+  milestones["episodes"]==[], episodes_completed=0/3)                   PASS
+pre-roll failure retains approximately 3.0s evidence (measured:
+  failure_deadline_mono - failure_event_mono = 3.0000s exactly)         PASS
+pre-roll failure classified separately from active self-echo
+  ("silent baseline false accepted START during PRE_ROLL")              PASS
+tail failure detected live (measured: failure_phase=tail, latched at
+  the exact moment of the injected burst, not at a later checkpoint)    PASS
+tail failure extends capture past nominal TAIL end to complete 3.0s
+  evidence (measured: capture_duration_s=12.410, well past a plain
+  ~2.0s TAIL; margin exactly 3.0000s)                                   PASS
+persisted failure record cannot be stale after tail (measured:
+  milestones["failure"] contains the LIVE tail-phase record, not None) PASS
+explicit failure_phase persisted (pre_roll/response/gap/tail, all
+  four values observed live this round)                                 PASS
+response failure regression unchanged (measured: identical
+  confirmed_during_submission timing to every prior round)              PASS
+gap failure regression unchanged (measured: identical gap-cut-short
+  mechanism to every prior round)                                       PASS
+drain timeout remains fail-closed INVALID (measured: still
+  "INVALID TEST -- AUDIO SOURCE PLAYOUT DRAIN TIMEOUT")                  PASS
+drain timeout no longer (even just at the log-labeling level) treated
+  as normal response completion (measured: ISM_ADMINISTRATIVE_TEARDOWN
+  milestone now printed before notify_response_finished(); CSV rows
+  after the timeout confirmed episode_number=0)                         PASS
+clean full path unchanged (measured: PRE_ROLL end / 2/2 episodes /
+  TAIL end / PASS, capture_duration_s=9.550)                             PASS
+production files changed                                                NO
+all offline/static/dry-run checks pass (90/90)                          PASS
+```
+
+**Verdict: R0082-H (seventh correction applied) READY for ONE real
+continuous silent-user hardware run.** This session did not execute
+hardware.

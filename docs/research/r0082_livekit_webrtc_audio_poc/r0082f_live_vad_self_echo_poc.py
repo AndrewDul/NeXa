@@ -2105,6 +2105,15 @@ async def run_speech_role_silent_series(
         # post-failure evidence-margin retention all use this same sentinel so
         # none of them is ever mislabeled as a response's or a gap's own rows.
         playback_active = False
+        # Session-phase tracker (research correction), read-only via closure
+        # by _consume_mic() below -- lets a latched test_failure record
+        # WHICH observed phase it actually happened in. This matters because
+        # episode_number==0 alone cannot distinguish "pre-roll" from "tail"
+        # from "post-failure evidence retention", and because a pre-roll or
+        # tail false positive must NOT be attributed to active self-echo (no
+        # NeXa playback exists in either phase) the way a response-phase one
+        # legitimately can be.
+        session_phase = "pre_roll"  # "pre_roll" | "response" | "gap" | "tail"
         # ONE persistent event for the whole session -- never reset, matching
         # R0082-G's proven pattern. If it is EVER set (a genuine, unexpected
         # INTERRUPT_CONFIRMED while the operator is silent), the CURRENTLY
@@ -2187,6 +2196,7 @@ async def run_speech_role_silent_series(
                             test_failure = {
                                 "false_event_detected": True,
                                 "failure_kind": "accepted_start",
+                                "failure_phase": session_phase,
                                 "failure_event_audio_t": chain.started_events[-1],
                                 "failure_event_mono": _start_mono,
                                 "failure_episode": episode_number,
@@ -2205,6 +2215,7 @@ async def run_speech_role_silent_series(
                             print(
                                 "[speech] MILESTONE: TEST_FAILURE_ACCEPTED_START "
                                 f"at t={chain.started_events[-1]:.3f}s, "
+                                f"phase={session_phase}, "
                                 f"episode={episode_number}, "
                                 f"playback_active={playback_active} -- operator was "
                                 "silent; this is a research-test failure, NOT yet "
@@ -2238,6 +2249,7 @@ async def run_speech_role_silent_series(
                                 test_failure = {
                                     "false_event_detected": True,
                                     "failure_kind": "confirmed_interruption",
+                                    "failure_phase": session_phase,
                                     "failure_event_audio_t": chain.confirmed_events[-1],
                                     "failure_event_mono": _confirm_mono,
                                     "failure_episode": episode_number,
@@ -2252,9 +2264,6 @@ async def run_speech_role_silent_series(
                 return
 
         consume_task = asyncio.create_task(_consume_mic())
-
-        print(f"[speech] MILESTONE: PRE_ROLL start ({PRE_ROLL_S}s)")
-        await asyncio.sleep(PRE_ROLL_S)
 
         async def _cancel_and_await(task: asyncio.Task) -> None:
             if not task.done():
@@ -2458,10 +2467,48 @@ async def run_speech_role_silent_series(
                 if not confirm_wait_task.done():
                     confirm_wait_task.cancel()
 
+        print(f"[speech] MILESTONE: PRE_ROLL start ({PRE_ROLL_S}s)")
+        session_phase = "pre_roll"
+        pre_roll_sleep_task = asyncio.create_task(asyncio.sleep(PRE_ROLL_S))
+        pre_roll_failure_wait_task = asyncio.create_task(test_failure_event.wait())
+        await asyncio.wait(
+            {pre_roll_sleep_task, pre_roll_failure_wait_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if test_failure_event.is_set():
+            # An accepted START occurred BEFORE response_01 has ever been
+            # dispatched -- the operator was instructed to be silent from
+            # the very start of the session, so this is ALREADY a genuine
+            # research failure. response_01 must NOT be dispatched: doing
+            # so would contaminate the post-event evidence with a stimulus
+            # that did not exist when the failure originated. This is a
+            # silent BASELINE false positive, explicitly NOT attributed to
+            # active self-echo (no NeXa playback has occurred yet).
+            await _cancel_and_await(pre_roll_sleep_task)
+            print(
+                "[speech] MILESTONE: PRE_ROLL_INTERRUPTED_BY_FAILURE -- an "
+                "accepted START occurred during PRE_ROLL, before response_01 "
+                "-- this is a silent BASELINE false positive (no NeXa "
+                "playback exists yet), NOT self-echo -- response_01 will NOT "
+                "be dispatched"
+            )
+            await _wait_for_failure_deadline()
+            print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE (pre_roll)")
+        else:
+            await _cancel_and_await(pre_roll_failure_wait_task)
+            print("[speech] MILESTONE: PRE_ROLL end")
+
         episodes_completed = 0
         drain_timeout_occurred = False
         drain_timeout_episode: int | None = None
         for ep in range(1, SILENT_SERIES_EPISODE_COUNT + 1):
+            if test_failure is not None:
+                # Latched during PRE_ROLL (or, defensively, at any point
+                # before this loop could otherwise begin) -- the series
+                # ends here. response_01 (or any later episode) is never
+                # dispatched once a failure has already been retained.
+                break
+            session_phase = "response"
             episode_number = ep
             ep_record: dict = {"episode_number": ep}
             ep_record["playback_start_mono"] = time.monotonic()
@@ -2492,6 +2539,12 @@ async def run_speech_role_silent_series(
                     await _cancel_and_await(failure_wait_task)
                 samples_submitted, was_interrupted, drain_kind = await lifecycle_task
                 playback_active = False
+                if drain_kind == "drain_timeout":
+                    # No test_failure was ever latched, yet playout
+                    # completion was NEVER PROVEN -- this row is NOT a
+                    # normal completed response, so it must not carry the
+                    # normal response's own episode_number tagging either.
+                    episode_number = 0
             else:
                 ep_record["failure_event_mono"] = test_failure["failure_event_mono"]
                 # A bare accepted START has latched test_failure (during
@@ -2560,12 +2613,31 @@ async def run_speech_role_silent_series(
                 f"source_playout_end_mono={ep_record.get('source_playout_end_mono')})"
             )
 
-            # Documented no-op if state is INTERRUPTING (a genuine confirmed
-            # interruption occurred during this episode) -- matches the real
-            # production bridge's own pattern exactly (audited).
+            episode_drain_timed_out = drain_kind == "drain_timeout"
+            if episode_drain_timed_out:
+                # A drain timeout means playout completion was NEVER PROVEN
+                # -- this must not be semantically labeled a normal
+                # completed response. The ISM itself has no separate
+                # "abort" verb, and notify_response_finished() is the only
+                # way back to IDLE from RESPONDING (leaving it stuck would
+                # break every subsequent call in this already-terminating
+                # session) -- so it is still called, but explicitly logged
+                # here as administrative ISM teardown, never as a claim of
+                # normal response completion.
+                print(
+                    "[speech] MILESTONE: ISM_ADMINISTRATIVE_TEARDOWN -- "
+                    "notify_response_finished() called ONLY to return the "
+                    "ISM to IDLE after an INVALID drain timeout; NOT a claim "
+                    "of normal response completion"
+                )
+            else:
+                # Documented no-op if state is INTERRUPTING (a genuine
+                # confirmed interruption occurred during this episode) --
+                # matches the real production bridge's own pattern exactly
+                # (audited).
+                pass
             chain.sm.notify_response_finished()
 
-            episode_drain_timed_out = drain_kind == "drain_timeout"
             if episode_drain_timed_out:
                 drain_timeout_occurred = True
                 drain_timeout_episode = ep
@@ -2606,6 +2678,7 @@ async def run_speech_role_silent_series(
             episodes_completed = ep
 
             if ep < SILENT_SERIES_EPISODE_COUNT:
+                session_phase = "gap"
                 print(f"[speech] MILESTONE: gap_{ep:02d}_start ({SILENT_SERIES_GAP_S}s)")
                 ep_record["gap_start_mono"] = time.monotonic()
                 gap_task = asyncio.create_task(asyncio.sleep(SILENT_SERIES_GAP_S))
@@ -2657,17 +2730,61 @@ async def run_speech_role_silent_series(
 
             milestones["episodes"].append(ep_record)
 
-        failure = test_failure
         episode_number = 0  # TAIL / post-failure settle rows are not a numbered episode
-        if failure:
+        if test_failure is not None:
+            # A failure already latched during pre-roll/a response/a gap and
+            # its own absolute evidence margin has ALREADY been retained
+            # inline at detection time (identical mechanism as every other
+            # phase) -- nothing further to observe; TAIL never runs for
+            # this path.
             print(
                 "[speech] MILESTONE: post-event evidence margin already retained "
                 "inline at detection time -- ending the session"
             )
         else:
+            # TAIL is itself an actively OBSERVED phase (research
+            # correction) -- raced against test_failure_event, exactly like
+            # PRE_ROLL and every gap, rather than a blind, un-observed
+            # asyncio.sleep(). A false start here is NOT attributed to
+            # active self-echo (NeXa playback has already ended for this
+            # session) -- it may be residual audio, ambient sound, or a VAD
+            # false positive.
             print(f"[speech] MILESTONE: TAIL start ({TAIL_S}s)")
-            await asyncio.sleep(TAIL_S)
-            print("[speech] MILESTONE: TAIL end")
+            session_phase = "tail"
+            tail_sleep_task = asyncio.create_task(asyncio.sleep(TAIL_S))
+            tail_failure_wait_task = asyncio.create_task(test_failure_event.wait())
+            await asyncio.wait(
+                {tail_sleep_task, tail_failure_wait_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if test_failure_event.is_set():
+                # Cut the normal (nominal 2.0s) TAIL phase short HERE --
+                # do NOT stop capture merely because the original TAIL
+                # endpoint would otherwise have arrived; retain evidence
+                # out to the SAME absolute FIRST-START + 3.0s deadline used
+                # by every other phase instead.
+                await _cancel_and_await(tail_sleep_task)
+                print(
+                    "[speech] MILESTONE: TAIL_INTERRUPTED_BY_FAILURE -- an "
+                    "accepted START occurred during TAIL -- NeXa playback "
+                    "has already ended for this session, so this is NOT "
+                    "attributed to active self-echo (residual audio / "
+                    "ambient sound / VAD false positive) -- retaining "
+                    "evidence past the nominal TAIL endpoint"
+                )
+                await _wait_for_failure_deadline()
+                print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE (tail)")
+            else:
+                await _cancel_and_await(tail_failure_wait_task)
+                print("[speech] MILESTONE: TAIL end")
+
+        # Canonical, non-stale session-level failure record -- read directly
+        # from test_failure ONLY here, AFTER the final observed phase (TAIL,
+        # or the already-retained inline margin above) has FULLY resolved.
+        # No earlier snapshot exists anywhere in this function: a failure
+        # latched during TAIL is picked up correctly because this line runs
+        # strictly after the TAIL race above has already completed.
+        failure = test_failure
 
         capture_stop.set()
         consume_task.cancel()
@@ -2773,8 +2890,10 @@ async def run_speech_role_silent_series(
             print(f"  gaps {label}: max_prob={mp:.4f}  longest_streak_frames={streak}")
 
         if failure:
+            _failure_phase = failure.get("failure_phase", "unknown")
             print(
                 f"\n  *** FAIL -- failure_kind={failure['failure_kind']} "
+                f"failure_phase={_failure_phase} "
                 f"episode={failure['failure_episode']} "
                 f"playback_active={failure['failure_playback_active']} "
                 f"audio_t={failure['failure_event_audio_t']:.3f}s ***"
@@ -2791,7 +2910,27 @@ async def run_speech_role_silent_series(
                     "event is NOT reclassified as a drain timeout, and the "
                     "drain timeout is NOT reclassified as a natural drain ***"
                 )
-            print("  VALID TEST -- FAIL (genuine false event while operator was silent)")
+            # Precise, phase-honest causal classification (research
+            # correction) -- a pre-roll or TAIL false positive must NEVER
+            # be described as caused by active self-echo, since no NeXa
+            # playback exists in either phase. Only a "response"-phase
+            # failure legitimately implicates active self-echo; "gap" and
+            # "tail" are explicitly left open (residual audio / ambient
+            # sound / VAD false positive), matching the causal uncertainty
+            # already documented for a queued-tail/gap false start.
+            _phase_wording = {
+                "pre_roll": "silent baseline false accepted START during "
+                            "PRE_ROLL (no NeXa playback has occurred yet)",
+                "response": "false accepted START/interruption during active "
+                            "NeXa playback (self-echo / VAD false positive)",
+                "gap": "false accepted START during an inter-response silence "
+                       "gap (no NeXa playback active)",
+                "tail": "false accepted START during TAIL (NeXa playback has "
+                        "already ended -- residual audio / ambient sound / "
+                        "VAD false positive, NOT attributed to active "
+                        "self-echo)",
+            }.get(_failure_phase, "genuine false event while operator was silent")
+            print(f"  VALID TEST -- FAIL ({_phase_wording})")
         elif drain_timeout_occurred:
             # FAIL CLOSED, no false event ever latched: the AudioSource
             # drain safety timeout fired with no genuine confirmed
