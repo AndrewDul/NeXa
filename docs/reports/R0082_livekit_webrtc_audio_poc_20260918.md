@@ -8112,15 +8112,41 @@ constructing exactly one `rtc.PlatformAudio()` for the whole series
 speech-role-side artifacts alone (the hardware role's own console
 output was not persisted to a file this session had access to).
 
+**Correction (caught on review before archival, not by re-running
+hardware):** an earlier draft of this section mislabeled the interval
+below as "PRE_ROLL ≈3.104s." That is wrong and is corrected here. The
+`≈3.104s` quantity, measured by counting CSV rows from the very first
+persisted VAD frame (`t=0.000`, `episode_number=0`) up to the first
+`episode_number=1, playback_active=1` row, is the **pre-response
+observation interval from the first captured/persisted VAD frame to
+`response_01_start`** -- it is NOT the configured `PRE_ROLL_S`
+duration. It necessarily includes BOTH the ~1.1s of startup/setup time
+between the first captured mic frame and the formal `PRE_ROLL start`
+milestone (room/track subscription settling, the harness's own
+model/CSV/buffer initialization -- none of this session's persisted
+artifacts isolate that sub-interval on its own) AND the formal,
+configured `PRE_ROLL_S`, which **remains exactly `2.0s`, unchanged and
+uninflated** -- the code constant was not touched by this real-hardware
+run, and this CSV-based approximation does not contradict it. The
+symmetric quantity at the end of the session, `≈1.984s` (last response/
+gap activity to capture stop), does NOT carry the same caveat: it
+starts from `gap_09`'s own end (a precisely known instant from
+`milestones.json`) with no comparable unaccounted setup interval on
+that side, so it is labeled the **post-response observation interval**
+and, within one 32ms VAD-frame's quantization, is consistent with the
+configured `TAIL_S=2.0s`.
+
 A bottom-up reconciliation of `capture_duration_s` from its own
-constituent phases (PRE_ROLL from CSV row-counting ≈3.104s + sum of
-all 10 response-phase durations from `milestones.json`
-(231.909s) + sum of all 9 gap durations (22.510s) + TAIL from CSV
-row-counting ≈1.984s) totals **259.507s**, matching the reported
+constituent phases (pre-response observation interval, CSV row-count
+≈3.104s -- NOT a measured `PRE_ROLL_S` -- + sum of all 10
+response-phase durations from `milestones.json` (231.909s) + sum of
+all 9 gap durations (22.510s) + post-response observation interval,
+CSV row-count ≈1.984s) totals **259.507s**, matching the reported
 `capture_duration_s=259.550` to within 43ms (fully explained by the
-32ms VAD-frame quantization used to approximate the PRE_ROLL/TAIL
-boundaries from the CSV) -- the ENTIRE session duration is accounted
-for by its own phases, with no unexplained time.
+32ms VAD-frame quantization used to approximate the two observation-
+interval boundaries from the CSV) -- the ENTIRE session duration is
+accounted for by its own phases, with no unexplained time, under the
+corrected labeling above.
 
 As an incidental but notable confirmation of the fifth correction's
 own playout-drain fix, now validated on REAL hardware for the first

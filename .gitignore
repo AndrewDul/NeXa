@@ -46,6 +46,20 @@ docs/research/m2_6_cloud_realtime_voice/ingress_captures/
 # JSON -- never committed) ---
 docs/research/m2_6_cloud_realtime_voice/self_echo_captures/
 
+# --- R0067 offline AEC3 experiment -- derived/processed audio WAVs and
+# result JSON, reproducible from the runner + preserved raw captures
+# above -- never committed, same convention as self_echo_captures/ ---
+docs/research/m2_6_cloud_realtime_voice/r0067_aec3_offline_output/
+docs/research/m2_6_cloud_realtime_voice/r0067_validation_20260916/
+
+# --- R0082-H REAL HARDWARE evidence archive -- real mic-capture WAVs,
+# timeline CSV, and milestones JSON, never committed, same convention
+# as R0048/R0052/R0067 above; MANIFEST.sha256 + README.md in the same
+# directory ARE tracked (see that README.md for the full rationale) ---
+docs/research/r0082_livekit_webrtc_audio_poc/r0082f_live_captures/r0082h_real_hardware/*.wav
+docs/research/r0082_livekit_webrtc_audio_poc/r0082f_live_captures/r0082h_real_hardware/*.csv
+docs/research/r0082_livekit_webrtc_audio_poc/r0082f_live_captures/r0082h_real_hardware/*.json
+
 # --- Local tooling caches ---
 .cache/
 node_modules/
