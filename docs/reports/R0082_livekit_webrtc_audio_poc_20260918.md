@@ -7902,3 +7902,357 @@ all offline/static/dry-run checks pass (90/90)                          PASS
 **Verdict: R0082-H (seventh correction applied) READY for ONE real
 continuous silent-user hardware run.** This session did not execute
 hardware.
+
+## 124. R0082-H REAL HARDWARE continuous silent-user run
+
+**This section documents a REAL hardware run, not a dry run.** Every
+number below was independently re-derived from the persisted evidence
+files on disk -- none of it is taken on the console summary's word
+alone.
+
+- Room: `r0082h_silentseries_real_001`
+- Run id: `20260919T105048Z`
+- Operator silent for the entire test; ambient TV/audio disabled
+- Input: reSpeaker XVF3800 4-Mic Array (Analog Stereo, default)
+- Output: UACDemoV1.0 (Analog Stereo, default)
+- AEC: ON
+
+### 124.1 Artifact verification (persisted files, not console)
+
+All four claimed artifacts were located on disk (this session did not
+create them -- they pre-existed from the hardware run) at
+`docs/research/r0082_livekit_webrtc_audio_poc/r0082f_live_captures/`:
+
+```
+r0082h_silentseries_20260919T105048Z_mic_48k.wav
+r0082h_silentseries_20260919T105048Z_mic_16k.wav
+r0082h_silentseries_20260919T105048Z_timeline.csv
+r0082h_silentseries_20260919T105048Z_milestones.json
+```
+
+SHA256, computed directly on disk (NOT copied from the console):
+
+```
+5412325e23a908008ccd1286d574c28862dc36bd242e8bd859d1477fd84f9161  mic_48k.wav
+735af9de4c3a76f46d9082efbe46c53f3eaf7984b6d3fc899518bed8fff5e1f6  mic_16k.wav
+```
+
+Both **exactly match** the console-reported values.
+
+WAV format/duration, read directly with Python's `wave` module:
+
+```
+mic_48k.wav: mono, 16-bit, 48000 Hz, 12,458,400 frames -> 259.550s
+mic_16k.wav: mono, 16-bit, 16000 Hz,  4,152,800 frames -> 259.550s
+```
+
+`12,458,400` matches `remote_audio_samples_received`; `259.550`
+matches `capture_duration_s`; both WAVs agree on duration to the
+millisecond (expected, since the 16k stream is the resampled form of
+the same 48k capture).
+
+`timeline.csv`: `8111` lines total = 1 header + **8110 data rows**,
+exactly matching `vad_frames_processed=8110`.
+
+`milestones.json`:
+
+```
+milestones.episodes_completed = 10
+milestones.failure            = null
+len(milestones.episodes)      = 10
+```
+
+All 10 episode records: `drain_kind="natural"`,
+`source_playout_end_kind="natural_drain"`, `stopped_early=false`, no
+`drain_safety_timeout` field present on any episode -- **no drain
+timeout occurred, no research teardown occurred, no failure record
+exists.** `accepted starts=0`/`confirmed interruptions=0` are
+confirmed independently in §124.2, not merely read off `milestones`.
+
+All 9 `gap_measured_duration_s` values present (episode 10 correctly
+has none, matching "episode 10 has no gap" from every prior round) --
+**all 9 gaps are complete.**
+
+PRE_ROLL and TAIL completing normally follows both structurally and
+directly from evidence: structurally, `milestones.failure == null`
+combined with `episodes_completed == 10` is only reachable in this
+harness's code if NEITHER the PRE_ROLL race (§122.1) NOR the TAIL race
+(§122.2) ever latched `test_failure` -- any failure at any phase
+(pre-roll/response/gap/tail) unconditionally sets `test_failure` and
+is unconditionally persisted, so its absence here is conclusive, not
+assumed. Directly: the CSV's first 5 and last 5 data rows were
+inspected on disk and are `vad_state=QUIET`,
+`episode_number=0, playback_active=0` (the PRE_ROLL/TAIL sentinel,
+§122.5), silero_prob < 0.03 throughout.
+
+### 124.2 Independent recomputation from the persisted timeline CSV
+
+Computed by parsing `timeline.csv` directly with Python's `csv`
+module (no reuse of harness internals for this first pass):
+
+```
+total rows                    = 8110   (matches vad_frames_processed)
+global max silero_prob        = 0.64971 (matches global_max_prob=0.6497)
+frames with prob >= 0.7       = 0      (matches "frames>=0.7=0" for every response/gap)
+vad_user_started_speaking_equivalent==1 rows = 0   (accepted starts)
+interrupt_confirmed==1 rows   = 0      (confirmed interruptions)
+```
+
+Per-response (grouped by `episode_number`+`playback_active==1`,
+independently, matching the console EXACTLY on every value):
+
+```
+response 01: max_prob=0.6497  frames>=0.7=0  starts=0  confirms=0
+response 02: max_prob=0.5261  frames>=0.7=0  starts=0  confirms=0
+response 03: max_prob=0.4120  frames>=0.7=0  starts=0  confirms=0
+response 04: max_prob=0.4261  frames>=0.7=0  starts=0  confirms=0
+response 05: max_prob=0.2603  frames>=0.7=0  starts=0  confirms=0
+response 06: max_prob=0.2858  frames>=0.7=0  starts=0  confirms=0
+response 07: max_prob=0.2501  frames>=0.7=0  starts=0  confirms=0
+response 08: max_prob=0.2229  frames>=0.7=0  starts=0  confirms=0
+response 09: max_prob=0.2770  frames>=0.7=0  starts=0  confirms=0
+response 10: max_prob=0.4018  frames>=0.7=0  starts=0  confirms=0
+```
+
+Per-gap (grouped by `episode_number`+`playback_active==0`,
+`episode_number != 0`):
+
+```
+gap 01: max_prob=0.0032   gap 04: max_prob=0.0278   gap 07: max_prob=0.0357
+gap 02: max_prob=0.0028   gap 05: max_prob=0.0353   gap 08: max_prob=0.0025
+gap 03: max_prob=0.0028   gap 06: max_prob=0.0330   gap 09: max_prob=0.0032
+```
+
+Group trends recomputed:
+
+```
+responses 1-3:  max_prob=0.6497  (matches console)
+responses 4-7:  max_prob=0.4261  (matches console)
+responses 8-10: max_prob=0.4018  (matches console)
+gaps 1-3: max_prob=0.0032  (matches console)
+gaps 4-6: max_prob=0.0353  (matches console)
+gaps 7-9: max_prob=0.0357  (matches console)
+```
+
+**Every recomputed value matches the console output exactly. No
+discrepancy was found.** As a second, independent cross-check, the
+harness's own `compute_silent_series_episode_diagnostics()` function
+(unchanged, byte-for-byte, throughout this entire investigation) was
+also run directly against the same persisted CSV and produced
+IDENTICAL numbers to both the from-scratch manual recomputation above
+and the console output -- three independent computations (manual
+parse, harness function, console) agree exactly.
+
+Additionally (not requested by name, but directly informative):
+`vad_state == "QUIET"` for **all 8110/8110 rows** -- the VAD never
+even entered `STARTING` at any point in the entire 259.55s session, a
+stronger statement than "0 accepted starts" alone.
+`interruption_state` was `"idle"` for exactly 864 rows (PRE_ROLL +
+TAIL + all 9 gaps combined) and `"responding"` for exactly 7246 rows
+(all 10 responses combined) -- `"interrupt_candidate"` and
+`"interrupting"` never appear even once.
+
+### 124.3 Continuous-session timing verification
+
+From `milestones.json`, for every episode `N`:
+
+```
+ep1: source_playout_drained_mono -> gap_start_mono lag = 0.000139s
+ep2: ... lag = 0.000138s
+ep3: ... lag = 0.000128s
+ep4: ... lag = 0.000103s
+ep5: ... lag = 0.000142s
+ep6: ... lag = 0.000099s
+ep7: ... lag = 0.000102s
+ep8: ... lag = 0.000110s
+ep9: ... lag = 0.000111s
+```
+
+**Natural source drain precedes every gap** by ~0.1-0.14ms in every
+case (ordinary scheduling overhead, not a measurable gap) -- confirms
+`gap_N_start` never begins before the AudioSource has genuinely
+finished playing out.
+
+```
+gap_measured_duration_s: 2.5006, 2.5006, 2.5009, 2.5007, 2.5027,
+                          2.5009, 2.5009, 2.5007, 2.5020
+```
+
+All 9 gaps measure **2.5006s-2.5027s** -- within the claimed
+"2.501-2.503s" range and matching the configured
+`SILENT_SERIES_GAP_S=2.5`.
+
+```
+gap_end_mono -> response_(N+1)_start_mono lag:
+  0.000037s, 0.000042s, 0.000036s, 0.000033s, 0.000035s,
+  0.000036s, 0.000034s, 0.000034s, 0.000041s
+```
+
+**Each next response starts only ~30-42 microseconds after its
+preceding gap ends** -- essentially the next event-loop tick, i.e.
+strictly sequential with no overlap and no additional delay.
+
+`audio_relative_timestamp_s` across the FULL 8110-row CSV increments
+by **exactly 0.032000s on every single row, with zero variance**
+(min diff == max diff == 0.032s) -- a perfectly unbroken,
+continuous VAD-frame stream for the entire 259.55s session, which
+would not be possible across a resampler/VAD-chain restart. This is
+the direct evidence (in addition to the structural code-level
+guarantee, unchanged throughout this investigation and re-confirmed
+byte-for-byte at every correction: `chain = LiveVadChain(...)` and
+`resampler = StreamingResampler()` are each constructed EXACTLY ONCE
+for the whole session) that **no VAD/resampler/ISM reset occurred
+between episodes**, except the already-audited, production-equivalent
+Silero internal `MODEL_RESET_INTERVAL_S=5.0` behavior (transparent at
+the frame level, matching pipecat's own `SileroVADAnalyzer`, audited
+from source in an earlier round). `run_hardware_role_silent_series()`
+constructing exactly one `rtc.PlatformAudio()` for the whole series
+(no reset between responses) is likewise a structural, byte-for-byte
+-unchanged code guarantee, not independently re-observable from the
+speech-role-side artifacts alone (the hardware role's own console
+output was not persisted to a file this session had access to).
+
+A bottom-up reconciliation of `capture_duration_s` from its own
+constituent phases (PRE_ROLL from CSV row-counting ≈3.104s + sum of
+all 10 response-phase durations from `milestones.json`
+(231.909s) + sum of all 9 gap durations (22.510s) + TAIL from CSV
+row-counting ≈1.984s) totals **259.507s**, matching the reported
+`capture_duration_s=259.550` to within 43ms (fully explained by the
+32ms VAD-frame quantization used to approximate the PRE_ROLL/TAIL
+boundaries from the CSV) -- the ENTIRE session duration is accounted
+for by its own phases, with no unexplained time.
+
+As an incidental but notable confirmation of the fifth correction's
+own playout-drain fix, now validated on REAL hardware for the first
+time: episode 1's own measured total response-phase duration
+(`source_playout_drained_mono - playback_start_mono = 23.191s`)
+matches the real speech stimulus's own nominal duration
+(`SPEECH_DURATION_S=23.181416...s`) to within 10 milliseconds -- the
+response phase now correctly represents true audio playout time, not
+merely frame-submission time, exactly as designed.
+
+### 124.4 Precise classification
+
+```
+R0082-H REAL HARDWARE:
+VALID TEST -- PASS
+
+10/10 deterministic continuous bot-speech episodes
+0 accepted false VAD starts
+0 confirmed false interruptions
+```
+
+Trend:
+
+```
+early responses 1-3 max = 0.6497
+middle   4-7 max = 0.4261
+late     8-10 max = 0.4018
+```
+
+**No late-session deterioration was observed in this run.** This
+statement is scoped to what the evidence supports: it does NOT claim
+that late-session deterioration can never occur, only that it did not
+occur in this one 259.55s, 10-episode continuous real-hardware
+session.
+
+### 124.5 Combined with R0082-G evidence
+
+Without rewriting either investigation's history:
+
+```
+R0082-G deliberate human barge-in:
+5/5 PASS
+0/5 pre-user false positives
+
+R0082-H continuous silent-user:
+10/10 PASS
+0 accepted starts
+0 confirmed interruptions
+```
+
+Together, this is strong evidence that the candidate
+PlatformAudio/WebRTC AEC path simultaneously:
+
+- suppresses self-trigger sufficiently for the production-equivalent
+  VAD/ISM thresholds exercised in this test (R0082-H, 10/10, one
+  continuous 259.55s real-hardware session, zero false events of any
+  kind);
+- still allows deliberate human barge-in detection (R0082-G, 5/5 real
+  hardware runs, unchanged from its own prior verification).
+
+This does **NOT** yet call the whole NeXa production problem globally
+solved -- see §124.7's explicit scope boundary.
+
+### 124.6 Evidence preservation
+
+A dedicated, clearly-named REAL-hardware evidence directory was
+created, distinct from every prior synthetic dry-run directory
+(`r0082h_dryrun_synthetic_NOT_real_hardware/`):
+
+```
+docs/research/r0082_livekit_webrtc_audio_poc/r0082f_live_captures/r0082h_real_hardware/
+  r0082h_silentseries_20260919T105048Z_mic_48k.wav
+  r0082h_silentseries_20260919T105048Z_mic_16k.wav
+  r0082h_silentseries_20260919T105048Z_timeline.csv
+  r0082h_silentseries_20260919T105048Z_milestones.json
+```
+
+The four files were COPIED (not moved) into this directory --
+the ORIGINAL files remain untouched at their original location in
+`r0082f_live_captures/`. SHA256 was recomputed on every copied file
+and compared byte-for-byte against the originals:
+
+```
+mic_48k.wav:       original == copy  (5412325e23a908008ccd1286d574c28862dc36bd242e8bd859d1477fd84f9161)
+mic_16k.wav:       original == copy  (735af9de4c3a76f46d9082efbe46c53f3eaf7984b6d3fc899518bed8fff5e1f6)
+timeline.csv:      original == copy  (e7d911f200160bf6561d8341a9b67cfe7b6ed57212c4dd670ad933c7af84c108)
+milestones.json:   original == copy  (2393a11d3d03b9d85b58f2ed9b42260897b64936403e67826b328c7d764a667e)
+```
+
+All four confirmed byte-identical. No historical evidence (any prior
+R0082-F/G/H dry-run or hardware artifact) was moved, renamed, or
+overwritten by this operation.
+
+### 124.7 Known observation-point limitation (unchanged)
+
+Stated in every prior round of this investigation and unchanged by
+this real-hardware result: the VAD in this harness observes the real
+hardware mic through the **remote LiveKit subscription research
+path** -- this is NOT yet the final production **local, post-AEC
+routing** that the actual NeXa conversational stack will use. This
+result validates the PlatformAudio/WebRTC AEC self-trigger-suppression
+behavior itself, observed via this research harness's own audio path;
+it does not yet validate that exact same behavior through NeXa's own
+local production pipeline, which has not yet been built.
+
+## 125. R0082-H — next engineering gate decision
+
+The evidence in §124 is sufficient to **close the R0082-H audio/AEC/VAD
+validation question**: across one continuous, real-hardware, 259.55s,
+10-response silent-user session (self-echo suppression) and R0082-G's
+5/5 real-hardware deliberate-barge-in sessions (human-speech
+detection), the candidate PlatformAudio/LiveKit-based audio path
+demonstrates both required properties simultaneously, under the
+production-equivalent VAD/ISM thresholds this harness has consistently
+exercised throughout R0082-F/G/H.
+
+This is explicitly **separate** from, and does **not** by itself
+satisfy, the remaining full R0081 end-to-end acceptance, which still
+requires:
+
+- actual NeXa conversational responses generated through the real
+  `ConversationSession`/response pipeline (this harness plays a fixed,
+  frozen speech stimulus WAV -- it has never generated or routed a
+  real conversational reply);
+- the remaining canonical R0081 acceptance items not covered by this
+  audio/AEC/VAD-focused research track.
+
+**R0082-H audio/AEC/VAD validation: CLOSED (evidence sufficient).**
+**Full R0081 end-to-end acceptance: NOT closed -- remains open,
+requiring the conversational-integration work named above.**
+
+Per instruction, the actual integration of the selected
+PlatformAudio/LiveKit path into the NeXa conversational stack is
+**NOT implemented in this task** -- this section is a gate decision
+only. **STOP before integration.**
