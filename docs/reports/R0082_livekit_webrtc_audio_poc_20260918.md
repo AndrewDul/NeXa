@@ -5641,18 +5641,24 @@ run_id            SHA256 48k                                              SHA256
 All 8 hashes recomputed via `sha256sum` on the actual files in
 `r0082f_live_captures/` — exact matches, byte-for-byte.
 
-**WAV properties and CSV row counts, independently inspected:**
+**WAV properties and CSV row counts, independently inspected.**
+Corrected per §109.2 (the original table here conflated a
+DictReader-based data-row count with a raw physical-line count and
+subtracted 1 a second time, fabricating a nonexistent extra
+frame — a reporting error, not a harness defect; see §109.2 for the
+full root-cause investigation):
 
 ```
-run_id            48k nframes/dur      16k nframes/dur      CSV rows (incl. header)
-20260918T205742Z  750720 / 15.640s     250240 / 15.640s     488 (487 VAD frames)
-20260918T210003Z  684480 / 14.260s     228160 / 14.260s     445 (444 VAD frames)
-20260918T210125Z  720000 / 15.000s     240000 / 15.000s     468 (467 VAD frames)
-20260918T210253Z  701280 / 14.610s     233760 / 14.610s     456 (455 VAD frames)
+run_id            48k nframes/dur      16k nframes/dur      wc -l (physical)   DictReader data rows = chain.n_frames
+20260918T205742Z  750720 / 15.640s     250240 / 15.640s     489 (1 header)     488
+20260918T210003Z  684480 / 14.260s     228160 / 14.260s     446 (1 header)     445
+20260918T210125Z  720000 / 15.000s     240000 / 15.000s     469 (1 header)     468
+20260918T210253Z  701280 / 14.610s     233760 / 14.610s     457 (1 header)     456
 ```
 
 (all channels=1, sampwidth=2, framerate matches 48000/16000 as
-expected — no malformed files, no discrepancy found.)
+expected — no malformed files, no discrepancy found in the underlying
+evidence itself.)
 
 **Accepted VAD start / confirmed interruption timestamps, recomputed
 directly from each CSV** (scanning `vad_user_started_speaking_equivalent`
@@ -5885,9 +5891,12 @@ B. Publisher-side queued audio discard (runs #2-#5):
    PASS
    (4/4 runs: queued_before_clear > 0 in every case -- confirming real
    audio was genuinely queued -- and queued_after_clear == 0.0 in
-   every case -- confirming it was genuinely discarded; clear_queue()
-   invoked strictly after playback_cancel_requested, before any further
-   frame submission, in every case)
+   every case -- confirming it was genuinely discarded. Exact supported
+   sequence, corrected per §109.1: one in-flight frame may complete
+   AFTER PLAYBACK_CANCEL_REQUESTED (the loop only checks the cancel
+   event once per iteration); clear_queue() then discards the publisher
+   queue; NO frame submission occurs AFTER clear_queue(); playback
+   submission never resumes -- in every case)
 
 C. Physical/acoustic prompt stop:
    NOT PROVEN
@@ -5933,3 +5942,382 @@ No code changes were made or needed this round — all analysis was
 read-only inspection of existing evidence files plus one throwaway
 analysis script (not part of the committed harness). Report-only
 commit.
+
+## 109. Two evidence/report corrections (found by operator review, no hardware run)
+
+Both corrections below are to REPORT TEXT ONLY. **R0082-G's results are
+unchanged and not downgraded**: deliberate human barge-in detection/
+confirmation remains 5/5 PASS, pre-user false positives remain 0/5,
+publisher `AudioSource` queue discard on runs #2–#5 remains 4/4 PASS,
+and the physical/acoustic speaker-stop claim remains exactly what §105
+already said: NOT PROVEN / NOT MEASURABLE from the current mic
+evidence.
+
+### 109.1 A1 — queue-clear wording was technically inaccurate
+
+**Defect.** §107's classification B previously stated `clear_queue()
+invoked strictly after playback_cancel_requested, before any further
+frame submission`. This is imprecise: §104.1 itself already establishes
+(and this round re-confirms, §109 below) that exactly ONE in-flight
+~10ms frame completes submission AFTER `PLAYBACK_CANCEL_REQUESTED` and
+BEFORE `clear_queue()` is called, in every single run (all 5,
+including #1) — the cancel event is only checked once per loop
+iteration, and it was set by a concurrent task, so one frame already
+"in flight" through that iteration's remaining code can still complete.
+"Before any further frame submission" is therefore not the exact
+supported claim.
+
+**Fix.** §107 classification B now reads:
+
+```
+one in-flight frame may complete after PLAYBACK_CANCEL_REQUESTED
+    (the loop only checks the cancel event once per iteration);
+clear_queue() then discards the publisher queue;
+NO frame submission occurs AFTER clear_queue();
+playback submission never resumes.
+```
+
+This does not change the underlying result: `queued_before_clear > 0`
+and `queued_after_clear == 0.0` in every one of the 4 measured runs are
+unaffected, `clear_queue()` still demonstrably discards the queue, and
+classification B remains `PASS`. Only the WORDING around exactly when
+in the sequence the last frame was submitted has been corrected to
+match what the evidence actually supports.
+
+### 109.2 A2 — VAD frame-count "off-by-one" was a report transcription error, not a harness defect, and no evidence was lost
+
+**Investigation, per instruction (not normalized away).** Directly
+recomputed, this round, for **all five runs including #1**:
+
+```
+run_id            wc -l (physical lines)   csv.reader rows (incl header)   DictReader data rows (excl header)   console "N VAD frames"
+20260918T202620Z  457                      457                              456                                   456 (§102, reported correctly)
+20260918T205742Z  489                      489                              488                                   488
+20260918T210003Z  446                      446                              445                                   445
+20260918T210125Z  469                      469                              468                                   468
+20260918T210253Z  457                      457                              456                                   456
+```
+
+**Root cause, found exactly.** `LiveVadChain.process_frame()` (the
+committed harness, unchanged) increments `self.n_frames` and writes
+exactly one CSV row via `self.csv_writer.writerow(row)` in the SAME
+call, unconditionally, every time it is invoked — there is no code path
+where a frame is counted without a row being written, or a row is
+written without the counter incrementing. `chain.n_frames`
+(the figure printed to console as `"({chain.n_frames} VAD frames)"`)
+is therefore, by construction, EXACTLY equal to the number of CSV data
+rows (excluding the header) — confirmed directly above: `488==488`,
+`445==445`, `468==468`, `456==456`, with zero exceptions across all
+five runs. **There is no missing frame and no accepted-start/
+confirmed-interruption evidence omitted from persisted evidence by any
+off-by-one** — every processed VAD frame has exactly one corresponding
+CSV row, for every run.
+
+The apparent discrepancy in §104.1's ORIGINAL table (`"488 (487 VAD
+frames)"` etc.) was a **reporting/transcription error made while
+writing that table**, not a defect in the harness or a real
+inconsistency in the evidence: an earlier `csv.DictReader`-based
+verification query (from the prior round) had already printed a
+data-row count that EXCLUDES the header (e.g. `488`) — but when
+transcribing that same figure into §104.1's table, it was mistakenly
+treated as if it still included the header, and a second `-1` was
+applied on top, fabricating a nonexistent `487`. Run #1's own §102.1
+section (written in an earlier round) computed and stated the correct
+relationship at the time (`"457 lines = 1 header + 456 data rows --
+matches vad_frames_processed=456 exactly"`) — only the later §104.1
+table for runs #2–#5 introduced the error. This error was **confined to
+that one display table**; it did not propagate into any other
+computation in the report (`pre_user_false_positive`, `capture_ok`,
+`VERDICT`, the latency figures, and the queue-clear figures were all
+independently computed directly from the CSV/milestones content in
+other steps, not from this row-count figure, and are unaffected).
+
+**Classification: harmless reporting error, corrected in place
+(§104.1's table above). No evidence format change is needed or
+warranted before R0082-H** — the underlying CSV-writing logic in
+`LiveVadChain.process_frame()` was never in question and remains
+byte-for-byte unchanged (verified this round: `git status` shows no
+change to `r0082f_live_vad_self_echo_poc.py`).
+
+### 109.3 Static check
+
+```
+git diff --check                                                     PASS
+```
+
+Report-only correction. No code changed.
+
+## 110. R0082-H — continuous silent-user replication — design (no hardware run)
+
+**Goal.** R0082-F/G tested one cold-start session per run. The original
+self-echo concern also included time/stream-age instability — restarting
+`PlatformAudio`/WebRTC/AEC/VAD before every response would repeatedly
+reset exactly the state that concern is about. R0082-H tests **one
+continuous session across 10 sequential deterministic bot-speech
+episodes**, with the operator completely silent throughout, to expose
+classes of failure a cold-start-per-response design would hide: AEC
+adaptation over several minutes, clock/drift accumulation, repeated
+render start/stop transitions, residual-state carryover, false VAD
+after many responses, false triggers during silent gaps, and
+late-session deterioration.
+
+**Terminology, stated explicitly per instruction:** R0082-H is **10
+deterministic continuous bot-speech episodes** (the same frozen
+`r0082d_speech_en_pl_v1.wav` replayed 10 times) — it is **NOT** 10
+genuine Gemini/production conversational responses. It validates the
+audio/AEC/VAD layer under repeated continuous speech. The final
+end-to-end "normal bot responses" acceptance must still be executed
+separately, after the chosen `PlatformAudio`/LiveKit path is integrated
+into the actual NeXa conversation stack. These two evidence levels are
+not blurred.
+
+### 110.1 Production audit — what actually resets between ordinary responses (not assumed)
+
+Read directly from `src/nexa/voice/interruption.py` (production,
+unmodified, read-only) before designing anything:
+
+- **`InterruptionStateMachine.reset()`** (line 247): docstring reads
+  *"Pipeline stop / error — never leave a latched state."* — **NOT**
+  called anywhere in the normal per-response flow.
+- **Normal per-response lifecycle** is `notify_response_dispatched()`
+  (`IDLE`/`INTERRUPTING` → `RESPONDING`, allocates a new monotonic
+  response id) at the start of a reply, and `notify_response_finished()`
+  (`RESPONDING`/`INTERRUPT_CANDIDATE` → `IDLE`) at normal completion.
+  `notify_response_finished()`'s own docstring: *"Not from
+  `INTERRUPTING`: ... it must be a no-op then so capture is not cut
+  short"* — i.e. it is safe to call unconditionally at the end of every
+  episode, interrupted or not, exactly matching the real bridge's own
+  documented pattern.
+- **Silero model reset IS production behavior, but is time-based, not
+  turn-based**: `pipecat`'s own `SileroVADAnalyzer.voice_confidence()`
+  (`.venv/lib/python3.13/site-packages/pipecat/audio/vad/silero.py:214-220`)
+  resets the ONNX model's internal state every `_MODEL_RESET_STATES_TIME
+  = 5.0` (`silero.py:23`) seconds of wall-clock time
+  (`time.time()`-based), **regardless of response/turn boundaries** —
+  confirmed to match this harness's own existing `MODEL_RESET_INTERVAL_S
+  = 5.0` in `LiveVadChain.process_frame()` (unchanged this round; the
+  harness uses audio-sample-derived time rather than `time.time()`, a
+  pre-existing, previously-audited simplification, not altered here).
+  This reset needs no special per-episode handling — it is already
+  continuous and will keep firing correctly across the whole R0082-H
+  session exactly as it already does in every other mode.
+
+**Design conclusion, evidence-based:** `InterruptionStateMachine` is
+constructed ONCE and never `.reset()` between episodes; each episode
+calls `notify_response_dispatched()`/`notify_response_finished()` —
+the SAME two calls production itself uses between ordinary turns.
+`StreamingResampler` has no production analogue (production captures
+native 16kHz, no resampling) — it is a harness-only bridging layer, so
+"no reset" here means the SAME instance persists across the whole
+session (never recreated), which is the correct research-harness
+analogue of "don't hide the continuity we're trying to test."
+
+### 110.2 Implementation — additive `--test-mode silent-series`
+
+Added to `r0082f_live_vad_self_echo_poc.py`, purely additively:
+
+- **New constants**: `SILENT_SERIES_EPISODE_COUNT = 10`,
+  `SILENT_SERIES_GAP_S = 2.5` (natural inter-response silence),
+  `SILENT_SERIES_POST_EVENT_MARGIN_S = 3.0` (evidence retained after an
+  early-stop failure), `SILENT_SERIES_HARDWARE_TIMEOUT_MARGIN_S = 60.0`
+  (safety-net only).
+- **New CSV header** `CSV_HEADER_SILENT_SERIES` (12 base columns +
+  `episode_number`, `playback_active`) — separate from `CSV_HEADER`
+  (silent-user, unchanged) and `CSV_HEADER_BARGEIN` (deliberate-bargein,
+  unchanged).
+- **New function `run_hardware_role_silent_series()`** — identical
+  `PlatformAudio` setup to `run_hardware_role` (ONE instance, AEC on
+  continuously, held open for the whole series), but with an
+  **event-based hold**: waits on `room.on("participant_disconnected",
+  ...)` for the speech participant to disconnect (confirmed present in
+  the installed `livekit` API, audited via `inspect`), bounded by a
+  generous safety-net `asyncio.wait_for` timeout that should never
+  actually fire in a healthy run — not an unsafe fixed sleep.
+  `run_hardware_role` itself (used by silent-user/deliberate-bargein) is
+  completely untouched; `main()`'s dispatch routes to the new function
+  only for `--role hardware --test-mode silent-series`.
+- **New function `run_speech_role_silent_series()`** — same connect/
+  subscribe/first-frame-gate preamble as the other two speech roles,
+  then: constructs ONE `LiveVadChain(csv_writer, response_dispatched=
+  False)` and ONE `StreamingResampler()` BEFORE the episode loop, starts
+  the continuous `_consume_mic()` task once (cancelled only at the very
+  end — mic/VAD observation never pauses, covering every episode AND
+  every gap), then loops over 10 episodes: `chain.sm.
+  notify_response_dispatched()` → `_play_signal_cancelable()` (REUSED
+  unchanged from R0082-G, `emit_cue=False` — real, unsuppressed
+  cancellation semantics and the proven `AudioSource.clear_queue()` fix
+  apply identically if a genuine confirmed interruption ever fires) →
+  `chain.sm.notify_response_finished()` → failure check → (if none) a
+  `SILENT_SERIES_GAP_S` sleep → failure check again. A SINGLE persistent
+  `interrupt_confirmed_event` (never reset) is shared across all 10
+  episodes, matching R0082-G's own proven pattern.
+- **New pure function `compute_silent_series_episode_diagnostics(csv_path)`**
+  — post-hoc, read-only re-scan of the just-written CSV grouped by
+  `episode_number`, computing per-episode max probability, max smoothed
+  volume, frames≥0.7, longest consecutive ≥0.7 streak, accepted starts,
+  confirmed interruptions. Diagnostic only — never feeds back into the
+  canonical event-based verdict, which is decided live from `chain.
+  started_events`/`chain.confirmed_events` directly.
+- **CLI**: `--test-mode` gains a third choice, `"silent-series"`.
+  `silent-user` remains the default; `deliberate-bargein`'s own choice
+  and behavior are untouched.
+
+### 110.3 Failure handling — exactly as specified
+
+If `chain.started_events` or `chain.confirmed_events` grows at any
+checkpoint (end of an episode's playback, or end of a gap), the run
+records the exact new event(s), which phase they occurred in
+(`episode_NN_playback` or `gap_NN`), stops scheduling further episodes
+immediately, retains `SILENT_SERIES_POST_EVENT_MARGIN_S` (3.0s) of
+further observation (not zero, not the full remaining series), then
+writes evidence and exits with `VALID TEST -- FAIL` (not `INVALID` —
+a genuine detected failure is a valid result, distinct from
+instrumentation invalidity). A genuine `INTERRUPT_CONFIRMED` is never
+suppressed: the SAME shared `interrupt_confirmed_event` that
+`_consume_mic()` sets is the SAME one passed to that episode's
+`_play_signal_cancelable()` call, so playback genuinely, immediately
+stops and the publisher queue is genuinely cleared — realistic
+cancellation semantics, not faked-through.
+
+### 110.4 Validity criteria — separate from PASS/FAIL, checked in order
+
+```
+if failure occurred:                                    VALID TEST -- FAIL
+elif remote_frames_received == 0 or vad_frames == 0:     INVALID -- no VAD input frames
+elif episodes_completed < 10 (no genuine failure):       INVALID -- incomplete without cause
+elif capture_duration_s < expected_min_duration_s:       INVALID -- capture truncated
+elif accepted_starts == 0 and confirmed == 0:            VALID TEST -- PASS
+else:                                                     VALID TEST -- FAIL
+```
+
+`expected_min_duration_s = PRE_ROLL_S + 10×SPEECH_DURATION_S +
+9×SILENT_SERIES_GAP_S + TAIL_S` (≈258.3s for the real frozen stimulus)
+— the SAME time-accounting pattern already used and validated by
+R0082-F/G's own real hardware runs (where actual capture met or
+exceeded this kind of expectation, not fell short — see §110.5's dry-
+run caveat below).
+
+### 110.5 Offline validation performed this round (all before any hardware)
+
+**Live, scaled-down, end-to-end dry runs** (synthetic fake-hardware
+publisher, real local `livekit-server`, the REAL unmodified
+`run_speech_role_silent_series()`, `SILENT_SERIES_EPISODE_COUNT`/
+`SILENT_SERIES_GAP_S`/`SPEECH_DURATION_S`/`read_speech_wav()`
+monkey-patched to a short synthetic clip FOR DRY-RUN SPEED ONLY, clearly
+not a real-run claim; evidence moved to
+`r0082f_live_captures/r0082h_dryrun_synthetic_NOT_real_hardware/`):
+
+```
+Clean run (3 episodes x 2.0s, 0.5s gaps): 3/3 episodes completed, 0
+  accepted starts, 0 confirmed interruptions, per-episode diagnostics
+  all populated and clean, capture_duration_s=10.030 vs
+  expected_min=11.000 -> correctly reported INVALID (short by ~0.97s)
+
+Clean run (3 episodes x 8.0s, 0.5s gaps): 3/3 episodes completed, 0
+  events, capture_duration_s=28.050 vs expected_min=29.000 ->
+  correctly reported INVALID (short by ~0.95s -- an ABSOLUTE, not
+  proportional, gap, confirmed by comparing both configs)
+
+Episode-playback failure (burst injected during episode 2): accepted
+  VAD start at t=13.376s -> INTERRUPT_CONFIRMED at t=13.696s ->
+  AUDIO_SOURCE_QUEUED_BEFORE_CLEAR=1.0014s -> AUDIO_SOURCE_QUEUE_CLEARED
+  -> AUDIO_SOURCE_QUEUED_AFTER_CLEAR=0.0000s (the SAME R0082-G
+  clear_queue() mechanism, reused unmodified, fired correctly) ->
+  episode 3 NEVER scheduled -> episodes_completed=2/3 -> 3.0s evidence
+  margin retained -> VALID TEST -- FAIL, phase=episode_02_playback
+
+Gap failure (burst injected during gap 2): accepted VAD start at
+  t=16.48s, NO confirmed interruption (the ISM is IDLE during a gap --
+  speech_started() while IDLE returns NONE per the audited production
+  source, so it structurally cannot reach INTERRUPT_CANDIDATE/CONFIRMED
+  outside an active episode -- expected, not a defect) -> still
+  correctly detected and classified -> episodes_completed=2/3 -> VALID
+  TEST -- FAIL, phase=gap_02
+```
+
+**Dry-run timing caveat, stated honestly, not glossed over:** both
+"clean" dry runs showed `capture_duration_s` falling short of
+`expected_min_duration_s` by a roughly constant ~0.95–1.0s (absolute,
+not proportional to episode length — confirmed by comparing the 2.0s-
+and 8.0s-episode configs). This did NOT happen in R0082-F's own real
+hardware run (`capture_duration_s=27.270` EXCEEDED
+`expected_min_duration_s=27.181`, a positive margin) using the exact
+same accounting pattern. The likely explanation: this dry run's
+synthetic fake-hardware publisher's own `capture_frame()` submission
+loop is not governed by a real hardware sample clock the way genuine
+`PlatformAudio` capture is, and may not pace as strictly to true real
+time. **The validity-check LOGIC itself is confirmed correct** (it
+correctly and conservatively reported INVALID rather than a false
+PASS in both cases) — but the exact real-world margin for the full
+258s, 10-episode series can only be confirmed by an actual hardware
+run, consistent with this whole investigation's practice of not
+over-claiming what a synthetic dry run can prove.
+
+**Pure-function and structural/regression checks** (29 checks, all
+PASS):
+
+```
+py_compile                                                          PASS
+ruff                                                                 PASS
+git diff --check                                                     PASS
+compute_silent_series_episode_diagnostics(): per-episode max_prob/
+  max_volume/frames>=0.7/accepted starts/confirmed interruptions        PASS (7/7)
+compute_silent_series_episode_diagnostics(): non-contiguous >=0.7
+  runs do NOT combine into one streak (streak correctly resets)         PASS
+compute_silent_series_episode_diagnostics(): episode_number=0
+  (pre-roll) rows excluded from per-episode diagnostics                 PASS
+SILENT_SERIES_EPISODE_COUNT == 10                                       PASS
+run_speech_role_silent_series() calls the real read_speech_wav()
+  unconditionally (frozen-WAV SHA256 verified before every real run)    PASS
+chain/resampler constructed exactly ONCE (continuity, not reset
+  per episode)                                                          PASS (2/2)
+chain.sm.reset() never called; notify_response_dispatched()/
+  notify_response_finished() called once per episode each               PASS (3/3)
+consume_task.cancel() appears exactly once, at the very end
+  (gaps stay observed, never paused)                                    PASS
+interrupt_confirmed_event constructed exactly once for the whole
+  session; _play_signal_cancelable() reused unchanged, emit_cue=False   PASS (2/2)
+run_hardware_role_silent_series(): PlatformAudio() constructed
+  exactly once; event-based hold with a bounded safety net              PASS (3/3)
+run_speech_role/run_hardware_role/run_speech_role_deliberate_bargein/
+  _play_signal_cancelable/read_speech_wav/evaluate_deliberate_
+  bargein_result all byte-for-byte identical to the last commit         PASS (6/6)
+Production VAD constants (CONFIDENCE/START_SECS/STOP_SECS/
+  MIN_VOLUME) unchanged                                                 PASS (4/4)
+```
+
+No production files were touched (`src/`, `apps/`, Gemini,
+`ConversationSession`, NeXa Core, `BargeInController` production code,
+`AecReferenceFeeder`, XVF3800 DSP, PipeWire/ALSA/mixer config all
+untouched — this round only READ `src/nexa/voice/interruption.py` and
+the installed `pipecat` package for the audit in §110.1, never wrote to
+either). `--test-mode silent-user` and `--test-mode deliberate-bargein`
+are both confirmed byte-for-byte unchanged.
+
+## 111. R0082-H — FINAL GATE
+
+```
+production reset behavior audited from source, not assumed             PASS
+one continuous PlatformAudio/AEC session (hardware role)                PASS
+one continuous LiveKit room/session                                     PASS
+VAD/resampler/InterruptionStateMachine state continuous across
+  all 10 episodes (constructed once, no per-episode reset)              PASS
+gaps observed by the SAME continuous mic/VAD consumer task              PASS
+exactly 10 deterministic episodes scheduled by default                  PASS
+per-episode failure detection (playback AND gap) proven live            PASS
+real, unsuppressed cancellation on a genuine confirmed interruption
+  (reuses R0082-G's proven AudioSource.clear_queue() mechanism)         PASS
+early-stop retains a bounded post-event evidence margin, does not
+  blindly continue all 10 episodes after a genuine failure               PASS
+event-based hardware hold (not an unsafe fixed sleep)                    PASS
+existing silent-user / deliberate-bargein modes byte-for-byte
+  unchanged                                                              PASS
+production VAD constants unchanged                                      PASS
+py_compile / ruff / git diff --check                                    PASS
+no production files touched                                             PASS
+```
+
+**Verdict: R0082-H READY for ONE real continuous silent-user hardware
+run.** This session did not execute hardware. Per instruction, this is
+a single validation run — no further replication of R0082-H is
+scheduled until this first real run's result is reviewed.

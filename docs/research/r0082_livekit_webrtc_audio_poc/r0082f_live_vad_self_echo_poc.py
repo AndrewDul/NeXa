@@ -482,6 +482,40 @@ CSV_HEADER_BARGEIN = [
     "playback_cancel_requested",
 ]
 
+# ----------------------------------------------------------------------
+# R0082-H -- continuous silent-user replication mode constants
+# (additive; do not affect --test-mode silent-user or
+# --test-mode deliberate-bargein, both unchanged).
+# ----------------------------------------------------------------------
+SILENT_SERIES_EPISODE_COUNT = 10
+SILENT_SERIES_GAP_S = 2.5  # natural inter-response silence, "2-3s" per instruction
+# Evidence retained after a genuine false-event-triggered early stop --
+# long enough to show the event's own context and that nothing further
+# resumed, short enough not to blindly continue the whole series.
+SILENT_SERIES_POST_EVENT_MARGIN_S = 3.0
+# Safety-net-only upper bound on the hardware role's event-based hold
+# (see run_hardware_role_silent_series) -- should never actually fire
+# in a healthy run; the PRIMARY hold mechanism is waiting for the
+# speech participant to disconnect, not a fixed sleep.
+SILENT_SERIES_HARDWARE_TIMEOUT_MARGIN_S = 60.0
+
+CSV_HEADER_SILENT_SERIES = [
+    "timestamp_monotonic",
+    "audio_relative_timestamp_s",
+    "silero_prob",
+    "confidence_threshold",
+    "smoothed_volume",
+    "volume_threshold",
+    "vad_state",
+    "candidate_start",
+    "vad_user_started_speaking_equivalent",
+    "vad_user_stopped_speaking_equivalent",
+    "interruption_state",
+    "interrupt_confirmed",
+    "episode_number",
+    "playback_active",
+]
+
 EXPECTED_INPUT_NAME_SUBSTRING = "reSpeaker"
 EXPECTED_OUTPUT_NAME_SUBSTRING = "UACDemoV1.0"
 
@@ -908,6 +942,108 @@ async def run_hardware_role(
             print(f"[hardware] MILESTONE: holding for {total_hold_s:.1f}s")
             await asyncio.sleep(total_hold_s)
             print("[hardware] MILESTONE: hold complete")
+        finally:
+            source.close()
+            await room.disconnect()
+            print(f"[hardware pid={os.getpid()}] disconnected cleanly")
+    finally:
+        platform_audio.close()
+        print(f"[hardware pid={os.getpid()}] platform_audio closed, exiting")
+
+
+async def run_hardware_role_silent_series(
+    *,
+    aec: bool,
+    url: str,
+    api_key: str,
+    api_secret: str,
+    room_name: str,
+) -> None:
+    """R0082-H hardware role. Identical `PlatformAudio` setup to
+    `run_hardware_role` (real mic capture, real speaker playout, WebRTC
+    AEC) -- ONE instance, held open for the entire continuous series,
+    never recreated or reset between episodes. The ONLY difference from
+    `run_hardware_role` is the hold mechanism: instead of a fixed sleep
+    sized for one playback, this role waits for an EVENT -- the speech
+    participant disconnecting, which happens only after all 10 episodes
+    (or a genuine early-stop failure) have completed and evidence has
+    been written -- bounded by a generous safety-net timeout that should
+    never actually fire in a healthy run. `run_hardware_role` itself is
+    UNCHANGED by this addition (verified offline, byte-for-byte)."""
+    print(f"[hardware pid={os.getpid()}] starting (test-mode=silent-series)")
+    platform_audio = rtc.PlatformAudio()
+    try:
+        recs = platform_audio.recording_devices()
+        plays = platform_audio.playout_devices()
+        print("[hardware] recording_devices():")
+        for d in recs:
+            print(f"    index={d.index} name={d.name!r}")
+        print("[hardware] playout_devices():")
+        for d in plays:
+            print(f"    index={d.index} name={d.name!r}")
+        _verify_default_device(recs, EXPECTED_INPUT_NAME_SUBSTRING, role="input")
+        _verify_default_device(plays, EXPECTED_OUTPUT_NAME_SUBSTRING, role="output")
+
+        options = rtc.PlatformAudioOptions(
+            echo_cancellation=aec, noise_suppression=False, auto_gain_control=False
+        )
+        source = platform_audio.create_audio_source(options)
+        track = rtc.LocalAudioTrack.create_audio_track("r0082h_hardware_mic", source)
+
+        token = _make_token(
+            api_key=api_key, api_secret=api_secret, identity=HARDWARE_IDENTITY, room=room_name
+        )
+        room = rtc.Room()
+        speech_track_ready = asyncio.Event()
+        speech_disconnected = asyncio.Event()
+
+        def _on_track_subscribed(track_, publication, participant) -> None:
+            if (
+                participant.identity == SPEECH_IDENTITY
+                and track_.kind == rtc.TrackKind.KIND_AUDIO
+            ):
+                speech_track_ready.set()
+
+        def _on_participant_disconnected(participant) -> None:
+            if participant.identity == SPEECH_IDENTITY:
+                speech_disconnected.set()
+
+        room.on("track_subscribed", _on_track_subscribed)
+        room.on("participant_disconnected", _on_participant_disconnected)
+
+        try:
+            print(f"[hardware pid={os.getpid()}] connecting to room {room_name!r}...")
+            await room.connect(url, token)
+            print("[hardware] MILESTONE: hardware connected")
+            await room.local_participant.publish_track(track)
+            print("[hardware] MILESTONE: mic published")
+
+            print("[hardware] waiting for speech participant's track subscription...")
+            await asyncio.wait_for(speech_track_ready.wait(), timeout=SUBSCRIBE_TIMEOUT_S)
+            print("[hardware] MILESTONE: speech track subscribed")
+
+            safety_net_s = (
+                SETTLE_S
+                + FIRST_FRAME_TIMEOUT_S
+                + PRE_ROLL_S
+                + SILENT_SERIES_EPISODE_COUNT * (SPEECH_DURATION_S + SILENT_SERIES_GAP_S)
+                + TAIL_S
+                + CLEANUP_GRACE_S
+                + SILENT_SERIES_HARDWARE_TIMEOUT_MARGIN_S
+            )
+            print(
+                "[hardware] MILESTONE: waiting for speech participant to disconnect "
+                f"(event-based hold; safety-net upper bound {safety_net_s:.1f}s -- "
+                "should not be needed in a healthy run)"
+            )
+            try:
+                await asyncio.wait_for(speech_disconnected.wait(), timeout=safety_net_s)
+                print("[hardware] MILESTONE: speech participant disconnected -- hold ended")
+            except TimeoutError:
+                print(
+                    "[hardware] WARNING: safety-net timeout reached without observing "
+                    "the speech participant disconnect -- ending hold anyway"
+                )
         finally:
             source.close()
             await room.disconnect()
@@ -1753,6 +1889,426 @@ async def run_speech_role_deliberate_bargein(
         print(f"[speech pid={os.getpid()}] disconnected cleanly")
 
 
+def compute_silent_series_episode_diagnostics(csv_path: Path) -> list[dict]:
+    """Post-hoc, read-only re-scan of the just-written continuous CSV,
+    grouped by `episode_number`, computing per-response diagnostics
+    (max probability, max smoothed volume, frames>=0.7, longest
+    consecutive >=0.7 streak, accepted starts, confirmed interruptions
+    within that episode's own rows). Pure function, unit-testable
+    without any hardware/asyncio/LiveKit involvement -- takes only a
+    CSV path.  Diagnostic only; never changes the canonical event-based
+    verdict, which is decided live from `chain.started_events`/
+    `chain.confirmed_events` regardless of this function's output."""
+    import csv as _csv
+
+    rows_by_episode: dict[int, list[dict]] = {}
+    with open(csv_path, newline="") as f:
+        for row in _csv.DictReader(f):
+            ep = int(row["episode_number"])
+            rows_by_episode.setdefault(ep, []).append(row)
+
+    out = []
+    for ep in sorted(rows_by_episode):
+        if ep == 0:
+            continue  # pre-roll, not a numbered episode
+        rows = rows_by_episode[ep]
+        probs = [float(r["silero_prob"]) for r in rows]
+        vols = [float(r["smoothed_volume"]) for r in rows]
+        starts = sum(1 for r in rows if r["vad_user_started_speaking_equivalent"] == "1")
+        confirms = sum(1 for r in rows if r["interrupt_confirmed"] == "1")
+        longest_streak = 0
+        cur_streak = 0
+        for p in probs:
+            if p >= VAD_CONFIDENCE:
+                cur_streak += 1
+                longest_streak = max(longest_streak, cur_streak)
+            else:
+                cur_streak = 0
+        out.append({
+            "episode_number": ep,
+            "n_frames": len(rows),
+            "max_prob": max(probs) if probs else 0.0,
+            "max_smoothed_volume": max(vols) if vols else 0.0,
+            "frames_ge_0_7": sum(1 for p in probs if p >= VAD_CONFIDENCE),
+            "longest_ge_0_7_streak_frames": longest_streak,
+            "accepted_vad_starts": starts,
+            "confirmed_interruptions": confirms,
+        })
+    return out
+
+
+async def run_speech_role_silent_series(
+    *,
+    url: str,
+    api_key: str,
+    api_secret: str,
+    room_name: str,
+) -> None:
+    """R0082-H. Identical connection/subscription/first-frame-gate
+    preamble to `run_speech_role`/`run_speech_role_deliberate_bargein`,
+    then diverges: ONE continuous session runs `SILENT_SERIES_EPISODE_
+    COUNT` (10) deterministic playback episodes of the SAME frozen
+    stimulus, separated by `SILENT_SERIES_GAP_S` silent gaps, all
+    against a SINGLE `StreamingResampler`/`LiveVadChain` (Silero model +
+    REAL `InterruptionStateMachine`) instance that is never recreated or
+    reset between episodes or gaps. Per-episode ISM lifecycle uses the
+    SAME `notify_response_dispatched()`/`notify_response_finished()`
+    calls production itself uses between ordinary turns (audited
+    directly from `src/nexa/voice/interruption.py`: `reset()` is
+    reserved for pipeline stop/error and is never called here for a
+    normal episode boundary; `notify_response_finished()` is a
+    documented no-op if the state is `INTERRUPTING`, matching the real
+    bridge's own pattern, so it is safe to call unconditionally at the
+    end of every episode). The operator remains completely silent for
+    the entire session -- PASS requires zero accepted VAD starts and
+    zero `INTERRUPT_CONFIRMED` events across all 10 episodes AND all 9
+    inter-episode gaps."""
+    print(f"[speech pid={os.getpid()}] starting (test-mode=silent-series)")
+    signal_pcm = read_speech_wav()
+    token = _make_token(
+        api_key=api_key, api_secret=api_secret, identity=SPEECH_IDENTITY, room=room_name
+    )
+    room = rtc.Room()
+    hw_track_ready = asyncio.Event()
+    remote_mic_track: list[rtc.Track] = []
+
+    def _on_track_subscribed(track_, publication, participant) -> None:
+        if participant.identity == HARDWARE_IDENTITY and track_.kind == rtc.TrackKind.KIND_AUDIO:
+            remote_mic_track.append(track_)
+            hw_track_ready.set()
+
+    room.on("track_subscribed", _on_track_subscribed)
+
+    signal_source = rtc.AudioSource(LIVE_SAMPLE_RATE, 1)
+    signal_track = rtc.LocalAudioTrack.create_audio_track("r0082h_speech_signal", signal_source)
+
+    try:
+        print(f"[speech pid={os.getpid()}] connecting to room {room_name!r}...")
+        await room.connect(url, token)
+        await room.local_participant.publish_track(signal_track)
+        print("[speech] MILESTONE: speech track published")
+
+        print("[speech] waiting for hardware mic track subscription...")
+        await asyncio.wait_for(hw_track_ready.wait(), timeout=SUBSCRIBE_TIMEOUT_S)
+        print("[speech] MILESTONE: hardware mic track subscribed (remote)")
+
+        mic_stream = rtc.AudioStream(
+            remote_mic_track[0], sample_rate=LIVE_SAMPLE_RATE, num_channels=1
+        )
+
+        print(
+            f"[speech] waiting up to {FIRST_FRAME_TIMEOUT_S}s for the FIRST real "
+            "remote mic frame (mandatory gate -- will NOT proceed without it)..."
+        )
+        try:
+            first_frame = await wait_for_first_frame(mic_stream)
+        except TimeoutError:
+            await mic_stream.aclose()
+            raise SystemExit(
+                "TEST INVALID -- no real remote mic frame arrived within "
+                f"{FIRST_FRAME_TIMEOUT_S}s. Refusing to play the speech stimulus. "
+                "STOP -- diagnose the remote subscription path before retrying."
+            ) from None
+
+        print(
+            f"[speech] MILESTONE: VAD INPUT READY -- first real remote mic frame: "
+            f"sample_rate={first_frame.sample_rate} num_channels={first_frame.num_channels} "
+            f"samples_per_channel={first_frame.samples_per_channel}"
+        )
+        if first_frame.num_channels != 1 or first_frame.sample_rate != LIVE_SAMPLE_RATE:
+            raise SystemExit(
+                f"Remote mic frame mismatch: num_channels={first_frame.num_channels}, "
+                f"sample_rate={first_frame.sample_rate}. Refusing to proceed."
+            )
+
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        csv_path = OUT_DIR / f"r0082h_silentseries_{run_id}_timeline.csv"
+        csv_file = open(csv_path, "w", newline="")
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(CSV_HEADER_SILENT_SERIES)
+
+        # response_dispatched=False -- the FIRST notify_response_dispatched()
+        # happens explicitly at the start of episode 1 below, identically to
+        # every subsequent episode, so all 10 episodes go through the exact
+        # same normal-turn lifecycle call (no special-cased first episode).
+        chain = LiveVadChain(csv_writer, response_dispatched=False)
+        resampler = StreamingResampler()
+        vad_buffer = np.zeros(0, dtype=np.int16)
+        total_16k_samples = 0
+        raw_48k_chunks: list[bytes] = []
+        resampled_16k_chunks: list[bytes] = []
+        remote_frames_received = 0
+        remote_samples_received = 0
+
+        episode_number = 0  # 0 = pre-roll, not yet in any numbered episode
+        playback_active = False
+        # ONE persistent event for the whole session -- never reset, matching
+        # R0082-G's proven pattern. If it is EVER set (a genuine, unexpected
+        # INTERRUPT_CONFIRMED while the operator is silent), the CURRENTLY
+        # PLAYING episode's _play_signal_cancelable() call stops that
+        # playback immediately and genuinely (real cancellation semantics,
+        # not suppressed) -- and the episode loop below treats this as the
+        # test's own failure condition, not a state to recover from.
+        interrupt_confirmed_event = asyncio.Event()
+        milestones: dict[str, object] = {"episodes": []}
+
+        def _extra_fields() -> list:
+            return [episode_number, int(playback_active)]
+
+        raw_bytes0 = bytes(first_frame.data)
+        raw_48k_chunks.append(raw_bytes0)
+        remote_frames_received += 1
+        remote_samples_received += first_frame.samples_per_channel
+        chunk0 = np.frombuffer(raw_bytes0, dtype="<i2")
+        resampled0 = resampler.push(chunk0)
+        resampled_16k_chunks.append(resampled0.astype("<i2").tobytes())
+        vad_buffer = np.concatenate([vad_buffer, resampled0])
+        while len(vad_buffer) >= VAD_FRAME_SAMPLES:
+            vf = vad_buffer[:VAD_FRAME_SAMPLES]
+            vad_buffer = vad_buffer[VAD_FRAME_SAMPLES:]
+            chain.process_frame(
+                vf, total_16k_samples / VAD_SAMPLE_RATE, extra_fields=_extra_fields()
+            )
+            total_16k_samples += VAD_FRAME_SAMPLES
+
+        capture_stop = asyncio.Event()
+        prev_confirmed_count_for_cancel = len(chain.confirmed_events)
+
+        async def _consume_mic() -> None:
+            nonlocal vad_buffer, total_16k_samples, remote_frames_received
+            nonlocal remote_samples_received, prev_confirmed_count_for_cancel
+            try:
+                async for event in mic_stream:
+                    if capture_stop.is_set():
+                        break
+                    frame = event.frame
+                    raw_bytes = bytes(frame.data)
+                    raw_48k_chunks.append(raw_bytes)
+                    remote_frames_received += 1
+                    remote_samples_received += frame.samples_per_channel
+                    chunk = np.frombuffer(raw_bytes, dtype="<i2")
+                    resampled = resampler.push(chunk)
+                    resampled_16k_chunks.append(resampled.astype("<i2").tobytes())
+                    vad_buffer = np.concatenate([vad_buffer, resampled])
+                    while len(vad_buffer) >= VAD_FRAME_SAMPLES:
+                        vf = vad_buffer[:VAD_FRAME_SAMPLES]
+                        vad_buffer = vad_buffer[VAD_FRAME_SAMPLES:]
+                        t_s = total_16k_samples / VAD_SAMPLE_RATE
+                        chain.process_frame(vf, t_s, extra_fields=_extra_fields())
+                        total_16k_samples += VAD_FRAME_SAMPLES
+                        if (
+                            len(chain.confirmed_events) > prev_confirmed_count_for_cancel
+                            and not interrupt_confirmed_event.is_set()
+                        ):
+                            prev_confirmed_count_for_cancel = len(chain.confirmed_events)
+                            print(
+                                "[speech] *** UNEXPECTED INTERRUPT_CONFIRMED (operator "
+                                f"was silent) at t={chain.confirmed_events[-1]:.3f}s, "
+                                f"episode={episode_number} *** -- FAIL, real cancellation "
+                                "semantics now apply (not suppressed)"
+                            )
+                            interrupt_confirmed_event.set()
+            except asyncio.CancelledError:
+                return
+
+        consume_task = asyncio.create_task(_consume_mic())
+
+        print(f"[speech] MILESTONE: PRE_ROLL start ({PRE_ROLL_S}s)")
+        await asyncio.sleep(PRE_ROLL_S)
+
+        prev_started_count = len(chain.started_events)
+        prev_confirmed_count = len(chain.confirmed_events)
+        failure: dict | None = None
+
+        def _check_for_failure(*, phase: str) -> dict | None:
+            nonlocal prev_started_count, prev_confirmed_count
+            new_started = chain.started_events[prev_started_count:]
+            new_confirmed = chain.confirmed_events[prev_confirmed_count:]
+            prev_started_count = len(chain.started_events)
+            prev_confirmed_count = len(chain.confirmed_events)
+            if new_started or new_confirmed:
+                return {
+                    "phase": phase,
+                    "episode_number": episode_number,
+                    "new_started": new_started,
+                    "new_confirmed": new_confirmed,
+                    "detected_at_mono": time.monotonic(),
+                }
+            return None
+
+        episodes_completed = 0
+        for ep in range(1, SILENT_SERIES_EPISODE_COUNT + 1):
+            episode_number = ep
+            ep_record: dict = {"episode_number": ep}
+            ep_record["playback_start_mono"] = time.monotonic()
+            print(f"[speech] MILESTONE: response_{ep:02d}_start")
+
+            chain.sm.notify_response_dispatched()
+            playback_active = True
+            samples_submitted, stopped_early = await _play_signal_cancelable(
+                signal_source,
+                signal_pcm,
+                cancel_event=interrupt_confirmed_event,
+                milestones={},  # per-episode scratch; session-level milestones tracked separately
+                emit_cue=False,
+            )
+            playback_active = False
+            ep_record["playback_end_mono"] = time.monotonic()
+            ep_record["samples_submitted"] = samples_submitted
+            ep_record["stopped_early"] = stopped_early
+            print(f"[speech] MILESTONE: response_{ep:02d}_end")
+
+            # Documented no-op if state is INTERRUPTING (a genuine confirmed
+            # interruption occurred during this episode) -- matches the real
+            # production bridge's own pattern exactly (audited).
+            chain.sm.notify_response_finished()
+
+            fail = _check_for_failure(phase=f"episode_{ep:02d}_playback")
+            if fail:
+                failure = fail
+                episodes_completed = ep  # this episode DID run, even though it failed
+                milestones["episodes"].append(ep_record)
+                print(f"[speech] *** FAILURE detected during episode {ep:02d} playback -- "
+                      "stopping the series early, retaining a post-event evidence margin ***")
+                break
+
+            episodes_completed = ep
+
+            if ep < SILENT_SERIES_EPISODE_COUNT:
+                print(f"[speech] MILESTONE: gap_{ep:02d}_start ({SILENT_SERIES_GAP_S}s)")
+                ep_record["gap_start_mono"] = time.monotonic()
+                await asyncio.sleep(SILENT_SERIES_GAP_S)
+                ep_record["gap_end_mono"] = time.monotonic()
+                print(f"[speech] MILESTONE: gap_{ep:02d}_end")
+
+                fail = _check_for_failure(phase=f"gap_{ep:02d}")
+                if fail:
+                    failure = fail
+                    milestones["episodes"].append(ep_record)
+                    print(f"[speech] *** FAILURE detected during gap {ep:02d} -- stopping "
+                          "the series early, retaining a post-event evidence margin ***")
+                    break
+
+            milestones["episodes"].append(ep_record)
+
+        if failure:
+            print(
+                f"[speech] MILESTONE: retaining {SILENT_SERIES_POST_EVENT_MARGIN_S}s of "
+                "post-event evidence margin before ending the session"
+            )
+            await asyncio.sleep(SILENT_SERIES_POST_EVENT_MARGIN_S)
+        else:
+            print(f"[speech] MILESTONE: TAIL start ({TAIL_S}s)")
+            await asyncio.sleep(TAIL_S)
+            print("[speech] MILESTONE: TAIL end")
+
+        capture_stop.set()
+        consume_task.cancel()
+        try:
+            await consume_task
+        except asyncio.CancelledError:
+            pass
+        await mic_stream.aclose()
+        csv_file.close()
+
+        raw_wav_path = OUT_DIR / f"r0082h_silentseries_{run_id}_mic_48k.wav"
+        vad_wav_path = OUT_DIR / f"r0082h_silentseries_{run_id}_mic_16k.wav"
+        _write_wav(raw_wav_path, b"".join(raw_48k_chunks), sample_rate=LIVE_SAMPLE_RATE)
+        _write_wav(vad_wav_path, b"".join(resampled_16k_chunks), sample_rate=VAD_SAMPLE_RATE)
+        print(f"[speech] wrote {raw_wav_path.name} sha256={sha256_of(raw_wav_path)}")
+        print(f"[speech] wrote {vad_wav_path.name} sha256={sha256_of(vad_wav_path)}")
+        print(f"[speech] wrote {csv_path.name} ({chain.n_frames} VAD frames)")
+
+        episode_diagnostics = compute_silent_series_episode_diagnostics(csv_path)
+        milestones["failure"] = failure
+        milestones["episodes_completed"] = episodes_completed
+
+        import json
+
+        milestones_path = OUT_DIR / f"r0082h_silentseries_{run_id}_milestones.json"
+        milestones_path.write_text(
+            json.dumps(
+                {"milestones": milestones, "episode_diagnostics": episode_diagnostics},
+                indent=2, default=str,
+            )
+        )
+        print(f"[speech] wrote {milestones_path.name}")
+
+        capture_duration_s = remote_samples_received / LIVE_SAMPLE_RATE
+        expected_min_duration_s = (
+            PRE_ROLL_S
+            + SILENT_SERIES_EPISODE_COUNT * SPEECH_DURATION_S
+            + (SILENT_SERIES_EPISODE_COUNT - 1) * SILENT_SERIES_GAP_S
+            + TAIL_S
+        )
+        capture_complete_for_full_pass = capture_duration_s >= expected_min_duration_s
+
+        print("\n" + "=" * 70)
+        print("R0082-H VALIDITY + RESULT SUMMARY")
+        print("=" * 70)
+        print(f"  remote_audio_frames_received  = {remote_frames_received}")
+        print(f"  remote_audio_samples_received = {remote_samples_received}")
+        print(f"  vad_frames_processed          = {chain.n_frames}")
+        print(f"  capture_duration_s            = {capture_duration_s:.3f}")
+        print(
+            f"  episodes_completed            = {episodes_completed} / "
+            f"{SILENT_SERIES_EPISODE_COUNT}"
+        )
+        print(f"  total_accepted_vad_starts     = {len(chain.started_events)}")
+        print(f"  total_confirmed_interruptions = {len(chain.confirmed_events)}")
+        print(f"  global_max_prob               = {chain.max_prob:.4f}")
+
+        for d in episode_diagnostics:
+            print(
+                f"  episode {d['episode_number']:02d}: max_prob={d['max_prob']:.4f} "
+                f"max_vol={d['max_smoothed_volume']:.4f} frames>=0.7={d['frames_ge_0_7']} "
+                f"longest_streak={d['longest_ge_0_7_streak_frames']} "
+                f"starts={d['accepted_vad_starts']} confirms={d['confirmed_interruptions']}"
+            )
+
+        def _group_max(lo: int, hi: int) -> tuple[float, float]:
+            g = [d for d in episode_diagnostics if lo <= d["episode_number"] <= hi]
+            if not g:
+                return (0.0, 0.0)
+            return (
+                max(d["max_prob"] for d in g),
+                max(d["longest_ge_0_7_streak_frames"] for d in g),
+            )
+
+        for lo, hi, label in [(1, 3, "1-3"), (4, 7, "4-7"), (8, 10, "8-10")]:
+            mp, streak = _group_max(lo, hi)
+            print(f"  group {label}: max_prob={mp:.4f}  longest_streak_frames={streak}")
+
+        if failure:
+            print(f"\n  *** FAIL -- {failure['phase']}: new_started={failure['new_started']} "
+                  f"new_confirmed={failure['new_confirmed']} ***")
+            print("  VALID TEST -- FAIL (genuine false event while operator was silent)")
+        elif remote_frames_received == 0 or chain.n_frames == 0:
+            print("\n*** INVALID TEST -- NO VAD INPUT FRAMES ***")
+        elif episodes_completed < SILENT_SERIES_EPISODE_COUNT:
+            print(
+                f"\n*** INVALID TEST -- only {episodes_completed}/{SILENT_SERIES_EPISODE_COUNT} "
+                "episodes completed, without a genuine failure causing the early stop ***"
+            )
+        elif not capture_complete_for_full_pass:
+            print(
+                f"\n*** INVALID TEST -- capture_duration_s={capture_duration_s:.3f} < "
+                f"expected_min_duration_s={expected_min_duration_s:.3f} ***"
+            )
+        elif len(chain.started_events) == 0 and len(chain.confirmed_events) == 0:
+            print(
+                f"\n  VALID TEST -- PASS ({episodes_completed}/{SILENT_SERIES_EPISODE_COUNT} "
+                "episodes, 0 accepted VAD starts, 0 confirmed interruptions)"
+            )
+        else:
+            print("\n  VALID TEST -- FAIL (see events above)")
+    finally:
+        await signal_source.aclose()
+        await room.disconnect()
+        print(f"[speech pid={os.getpid()}] disconnected cleanly")
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -1768,10 +2324,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--api-key", default=DEFAULT_API_KEY)
     p.add_argument("--api-secret", default=DEFAULT_API_SECRET)
     p.add_argument(
-        "--test-mode", choices=["silent-user", "deliberate-bargein"], default="silent-user",
-        help="R0082-F silent-user (default, unchanged) or R0082-G deliberate-bargein "
-             "(operator speaks once, on cue). Only affects --role speech; ignored by "
-             "--role hardware, which behaves identically either way.",
+        "--test-mode",
+        choices=["silent-user", "deliberate-bargein", "silent-series"],
+        default="silent-user",
+        help="R0082-F silent-user (default, unchanged), R0082-G deliberate-bargein "
+             "(operator speaks once, on cue), or R0082-H silent-series (10 continuous "
+             "silent-user episodes in one session, no PlatformAudio/AEC/VAD/ISM reset "
+             "between them). Affects both --role speech and --role hardware (silent-series "
+             "uses an event-based hardware hold instead of a fixed sleep); silent-user and "
+             "deliberate-bargein's own hardware-role behavior is unchanged either way.",
     )
     return p.parse_args()
 
@@ -1779,12 +2340,23 @@ def parse_args() -> argparse.Namespace:
 async def main() -> int:
     args = parse_args()
     if args.role == "hardware":
-        await run_hardware_role(
-            aec=(args.aec == "on"), url=args.url, api_key=args.api_key,
-            api_secret=args.api_secret, room_name=args.room_name,
-        )
+        if args.test_mode == "silent-series":
+            await run_hardware_role_silent_series(
+                aec=(args.aec == "on"), url=args.url, api_key=args.api_key,
+                api_secret=args.api_secret, room_name=args.room_name,
+            )
+        else:
+            await run_hardware_role(
+                aec=(args.aec == "on"), url=args.url, api_key=args.api_key,
+                api_secret=args.api_secret, room_name=args.room_name,
+            )
     elif args.test_mode == "deliberate-bargein":
         await run_speech_role_deliberate_bargein(
+            url=args.url, api_key=args.api_key, api_secret=args.api_secret,
+            room_name=args.room_name,
+        )
+    elif args.test_mode == "silent-series":
+        await run_speech_role_silent_series(
             url=args.url, api_key=args.api_key, api_secret=args.api_secret,
             room_name=args.room_name,
         )
