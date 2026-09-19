@@ -504,11 +504,16 @@ SILENT_SERIES_HARDWARE_TIMEOUT_MARGIN_S = 60.0
 # (audited directly from the installed
 # livekit/rtc/audio_source.py: `queue_size_ms: int = 1000`) -- named
 # here purely for documentation/traceability, not passed differently.
-# capture_frame()'s own backpressure never lets more than this much
-# audio accumulate ahead of real-time, so it is a PROVABLE upper bound
-# on how long AudioSource.wait_for_playout() can take after the last
-# frame is submitted, used only as a generous, justified safety-net
-# timeout (not a tolerance folded into any validity threshold).
+# The nominal AUDIO_SOURCE_QUEUE_SIZE_MS is 1000ms; observed client-side
+# queued_duration in live dry runs was approximately 1.0s and measured
+# slightly ABOVE 1.0000s in every sample taken (e.g. 1.0061s, 1.0085s,
+# 1.0004s) due to ordinary timing/scheduler accounting -- this is NOT
+# claimed to be a hard mathematical ceiling of exactly <=1.0000s.
+# SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S (2x the nominal queue size) is a
+# deliberately generous DEFENSIVE bound, not proof that a normal drain
+# must always finish within exactly 1.0s -- if it is ever exceeded, the
+# drain is treated as UNPROVEN (drain_kind="drain_timeout"), never as a
+# natural completion (see _submit_and_drain_episode below).
 AUDIO_SOURCE_QUEUE_SIZE_MS = 1000
 SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S = 2.0 * (AUDIO_SOURCE_QUEUE_SIZE_MS / 1000.0)
 
@@ -2301,13 +2306,30 @@ async def run_speech_role_silent_series(
             `INTERRUPT_CONFIRMED` arrived AFTER submission finished but
             BEFORE the queue had actually drained -- this wrapper clears
             the queue itself here, since `_play_signal_cancelable()` has
-            already returned by then and cannot), or `"natural"` (the
-            queue drained on its own, no interruption). `episode_number`/
-            `playback_active` are NOT touched by this function -- the
-            caller flips them at the exact moment this function's result
-            indicates playback genuinely ended, which may be mid-call (via
-            outer cancellation, for research teardown) rather than only
-            after it returns."""
+            already returned by then and cannot), `"natural"` (the queue
+            drained on its own, no interruption), or `"drain_timeout"`
+            (the FAIL-CLOSED case: the defensive
+            `SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S` fired with no genuine
+            confirmed interruption ever arriving -- `wait_for_playout()`
+            never proved the queue actually drained, so this is NEVER
+            reported as a natural drain; the caller terminates the series
+            and the final verdict becomes INVALID, never PASS/FAIL).
+            `episode_number`/`playback_active` are NOT touched by this
+            function -- the caller flips them at the exact moment this
+            function's result indicates playback genuinely ended (or, for
+            `"drain_timeout"`, could not be proven to have ended), which
+            may be mid-call (via outer cancellation, for research
+            teardown) rather than only after it returns.
+
+            Evidence-field semantics (SECOND CORRECTION): the neutral
+            `source_playout_end_mono` / `source_playout_end_kind` pair is
+            set for every outcome that has a genuine, provable end
+            (`"natural_drain"`, `"confirmed_clear"`) -- NEVER for
+            `"drain_timeout"`, since no valid end was proven.
+            `source_playout_drained_mono` specifically is set ONLY for a
+            true natural `wait_for_playout()` completion -- it must never
+            be used for a forced clear (confirmed interruption) or a
+            timeout, both of which are NOT a natural drain."""
             ep_playback_milestones: dict[str, float] = {}
             samples_submitted, stopped_early = await _play_signal_cancelable(
                 signal_source,
@@ -2330,7 +2352,12 @@ async def run_speech_role_silent_series(
                 # is nothing left to drain.
                 if "playback_stopped" in ep_playback_milestones:
                     ep_record["playback_stop_mono"] = ep_playback_milestones["playback_stopped"]
-                ep_record["source_playout_drained_mono"] = time.monotonic()
+                # NOT source_playout_drained_mono -- that field is reserved
+                # for a TRUE natural wait_for_playout() completion only.
+                # This was a forced clear (inside _play_signal_cancelable(),
+                # unchanged) triggered by a genuine confirmed interruption.
+                ep_record["source_playout_end_mono"] = time.monotonic()
+                ep_record["source_playout_end_kind"] = "confirmed_clear"
                 return samples_submitted, True, "confirmed_during_submission"
 
             # All frames were genuinely SUBMITTED -- this does NOT yet mean
@@ -2342,6 +2369,7 @@ async def run_speech_role_silent_series(
             drain_task = asyncio.create_task(signal_source.wait_for_playout())
             confirm_wait_task = asyncio.create_task(interrupt_confirmed_event.wait())
             try:
+                drain_timed_out = False
                 try:
                     await asyncio.wait_for(
                         asyncio.wait(
@@ -2351,21 +2379,29 @@ async def run_speech_role_silent_series(
                         timeout=SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S,
                     )
                 except TimeoutError:
-                    # Defensive only -- should never happen, since
-                    # capture_frame()'s own backpressure bounds the queue
-                    # to AUDIO_SOURCE_QUEUE_SIZE_MS. Recorded, not
-                    # silently ignored, if it somehow does.
+                    # Defensive-only bound -- should never fire, since
+                    # capture_frame()'s own backpressure keeps the queue
+                    # near AUDIO_SOURCE_QUEUE_SIZE_MS. If it DOES fire,
+                    # wait_for_playout() has NOT proven the queue drained.
+                    # This is a FAIL-CLOSED condition, handled below --
+                    # it must NEVER be allowed to fall through and be
+                    # reported as a natural drain.
+                    drain_timed_out = True
                     ep_record["drain_safety_timeout"] = True
+                    ep_record["drain_timeout_mono"] = time.monotonic()
 
                 if interrupt_confirmed_event.is_set():
                     # A genuine confirmed interruption arrived WHILE audio
                     # was still queued/playing out (the "queued tail" case)
                     # -- this IS a real production interruption, not
-                    # research teardown. _play_signal_cancelable() has
-                    # already returned and cannot clear the queue for us,
-                    # so this wrapper does it here, using the SAME
-                    # milestone key names _play_signal_cancelable() itself
-                    # uses internally, for direct comparability.
+                    # research teardown. Confirmation is real production
+                    # evidence and takes precedence even if it happened to
+                    # land right at/after the defensive safety-timeout
+                    # boundary. _play_signal_cancelable() has already
+                    # returned and cannot clear the queue for us, so this
+                    # wrapper does it here, using the SAME milestone key
+                    # names _play_signal_cancelable() itself uses
+                    # internally, for direct comparability.
                     ep_record["audio_source_queued_before_clear_s"] = (
                         signal_source.queued_duration
                     )
@@ -2375,10 +2411,41 @@ async def run_speech_role_silent_series(
                         signal_source.queued_duration
                     )
                     ep_record["playback_stop_mono"] = ep_record["audio_source_queue_cleared_mono"]
-                    ep_record["source_playout_drained_mono"] = time.monotonic()
+                    # NOT source_playout_drained_mono -- this was a FORCED
+                    # clear after a genuine confirmation, not a natural
+                    # wait_for_playout() completion.
+                    ep_record["source_playout_end_mono"] = ep_record["playback_stop_mono"]
+                    ep_record["source_playout_end_kind"] = "confirmed_clear"
                     return samples_submitted, True, "confirmed_during_drain"
 
+                if drain_timed_out:
+                    # FAIL CLOSED (the defect this correction fixes): the
+                    # safety timeout fired and no genuine confirmed
+                    # interruption ever arrived -- PLAYOUT DRAIN NOT
+                    # PROVEN. Deliberately do NOT set
+                    # source_playout_drained_mono or source_playout_end_
+                    # mono here -- there is no valid "drain complete"
+                    # timestamp to record, and this must never be labeled
+                    # a natural drain, a confirmed interruption, or a
+                    # successfully completed response. The caller
+                    # terminates the series; the final verdict becomes
+                    # INVALID, never PASS or self-echo FAIL.
+                    ep_record["source_playout_end_kind"] = "drain_timeout"
+                    print(
+                        "[speech] MILESTONE: DRAIN_SAFETY_TIMEOUT -- "
+                        "administrative cleanup after INVALID drain timeout "
+                        "(NOT INTERRUPT_CONFIRMED, NOT "
+                        "PLAYBACK_CANCEL_REQUESTED, NOT natural drain)"
+                    )
+                    try:
+                        signal_source.clear_queue()
+                    except Exception:
+                        pass
+                    return samples_submitted, False, "drain_timeout"
+
                 ep_record["source_playout_drained_mono"] = time.monotonic()
+                ep_record["source_playout_end_mono"] = ep_record["source_playout_drained_mono"]
+                ep_record["source_playout_end_kind"] = "natural_drain"
                 ep_record["playback_stop_mono"] = ep_record["source_playout_drained_mono"]
                 return samples_submitted, False, "natural"
             finally:
@@ -2392,6 +2459,8 @@ async def run_speech_role_silent_series(
                     confirm_wait_task.cancel()
 
         episodes_completed = 0
+        drain_timeout_occurred = False
+        drain_timeout_episode: int | None = None
         for ep in range(1, SILENT_SERIES_EPISODE_COUNT + 1):
             episode_number = ep
             ep_record: dict = {"episode_number": ep}
@@ -2477,6 +2546,7 @@ async def run_speech_role_silent_series(
                     playback_active = False
                     episode_number = 0
                     ep_record["post_failure_observation_start_mono"] = time.monotonic()
+                    ep_record["source_playout_end_kind"] = "research_teardown"
                     samples_submitted, was_interrupted, drain_kind = (None, False, "teardown")
             ep_record["playback_end_mono"] = time.monotonic()
             ep_record["response_end_mono"] = ep_record["playback_end_mono"]
@@ -2486,7 +2556,8 @@ async def run_speech_role_silent_series(
             print(
                 f"[speech] MILESTONE: response_{ep:02d}_end "
                 f"(drain_kind={drain_kind}, "
-                f"source_playout_drained_mono={ep_record.get('source_playout_drained_mono')})"
+                f"source_playout_end_kind={ep_record.get('source_playout_end_kind')}, "
+                f"source_playout_end_mono={ep_record.get('source_playout_end_mono')})"
             )
 
             # Documented no-op if state is INTERRUPTING (a genuine confirmed
@@ -2494,11 +2565,42 @@ async def run_speech_role_silent_series(
             # production bridge's own pattern exactly (audited).
             chain.sm.notify_response_finished()
 
-            if test_failure is not None:
+            episode_drain_timed_out = drain_kind == "drain_timeout"
+            if episode_drain_timed_out:
+                drain_timeout_occurred = True
+                drain_timeout_episode = ep
+
+            if test_failure is not None or episode_drain_timed_out:
                 episodes_completed = ep  # this episode DID run, even though it failed
                 milestones["episodes"].append(ep_record)
-                print(f"[speech] *** FAILURE latched during episode {ep:02d} -- "
-                      "stopping the series early ***")
+                if test_failure is not None and episode_drain_timed_out:
+                    # Both facts are real and neither is erased or
+                    # reclassified as the other: a genuine false accepted
+                    # START occurred (evidence already retained above via
+                    # the absolute FIRST-START + 3.0s deadline, unchanged),
+                    # AND the drain-safety infrastructure separately timed
+                    # out while retaining/observing that evidence.
+                    print(
+                        f"[speech] *** FAILURE latched during episode {ep:02d} "
+                        "AND AudioSource drain safety timeout occurred -- BOTH "
+                        "facts persisted (the false accepted START is NOT "
+                        "erased or reclassified as a drain timeout, and the "
+                        "drain timeout is NOT reclassified as a natural "
+                        "drain) -- stopping the series ***"
+                    )
+                elif episode_drain_timed_out:
+                    print(
+                        f"[speech] *** AUDIO SOURCE PLAYOUT DRAIN TIMEOUT during "
+                        f"episode {ep:02d} -- wait_for_playout() did not prove "
+                        f"drain completion within "
+                        f"{SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S:.1f}s and no "
+                        "genuine confirmed interruption ever arrived -- this is "
+                        "a research-infrastructure failure, NOT a self-echo/VAD "
+                        "event -- stopping the series ***"
+                    )
+                else:
+                    print(f"[speech] *** FAILURE latched during episode {ep:02d} -- "
+                          "stopping the series early ***")
                 break
 
             episodes_completed = ep
@@ -2677,7 +2779,35 @@ async def run_speech_role_silent_series(
                 f"playback_active={failure['failure_playback_active']} "
                 f"audio_t={failure['failure_event_audio_t']:.3f}s ***"
             )
+            if drain_timeout_occurred:
+                # Both facts are real; neither is erased or converted into
+                # the other. The verdict below still stands on the genuine
+                # false-event evidence above, which the later infrastructure
+                # timeout does not invalidate or reclassify.
+                print(
+                    f"  *** NOTE: AudioSource drain safety timeout ALSO "
+                    f"occurred (episode {drain_timeout_episode}) -- persisted "
+                    "alongside the genuine false event above; the false "
+                    "event is NOT reclassified as a drain timeout, and the "
+                    "drain timeout is NOT reclassified as a natural drain ***"
+                )
             print("  VALID TEST -- FAIL (genuine false event while operator was silent)")
+        elif drain_timeout_occurred:
+            # FAIL CLOSED, no false event ever latched: the AudioSource
+            # drain safety timeout fired with no genuine confirmed
+            # interruption to explain it. wait_for_playout() never proved
+            # the queue actually drained, so this can NEVER be reported as
+            # a clean PASS or as a self-echo FAIL -- it is its own distinct,
+            # unequivocal INVALID outcome.
+            print(
+                f"\n*** INVALID TEST -- AUDIO SOURCE PLAYOUT DRAIN TIMEOUT "
+                f"(episode {drain_timeout_episode}) -- wait_for_playout() did "
+                f"not prove drain completion within "
+                f"{SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S:.1f}s and no genuine "
+                "confirmed interruption ever arrived; this is a research-"
+                "infrastructure failure, NOT a natural drain, NOT a confirmed "
+                "interruption, and NOT a self-echo/VAD result ***"
+            )
         elif remote_frames_received == 0 or chain.n_frames == 0:
             print("\n*** INVALID TEST -- NO VAD INPUT FRAMES ***")
         elif episodes_completed < SILENT_SERIES_EPISODE_COUNT:

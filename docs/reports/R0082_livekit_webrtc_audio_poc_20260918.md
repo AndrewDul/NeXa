@@ -7302,3 +7302,316 @@ no production files touched                                             PASS
 **Verdict: R0082-H (fifth correction applied) READY for ONE real
 continuous silent-user hardware run.** This session did not execute
 hardware.
+
+## 120. R0082-H sixth correction — drain-safety-timeout must fail closed, not fall through to "natural"
+
+Found before any hardware execution, on review of the fifth correction.
+Two related defects in `_submit_and_drain_episode()`, fixed together.
+
+### 120.1 Defect A (the primary one) — a drain-safety timeout could be silently reported as a natural drain
+
+The fifth correction's `SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S` wrapped
+the `wait_for_playout()`/confirm race in `asyncio.wait_for(...,
+timeout=...)`. On `TimeoutError`, the code recorded
+`ep_record["drain_safety_timeout"] = True` -- but then fell through
+unconditionally into the SAME code path used for a genuine natural
+drain: `ep_record["source_playout_drained_mono"] = time.monotonic()`,
+`drain_kind="natural"`. A timeout is the ABSENCE of proof that the
+queue drained, not proof that it did -- reporting it as `"natural"`
+would have silently converted an unproven infrastructure condition
+into a false claim of a clean response, exactly the kind of failure
+this whole research harness exists to prevent.
+
+**Fix**: the timeout is now its own terminal `drain_kind`,
+`"drain_timeout"`. On this path:
+
+* `ep_record["drain_timeout_mono"]` is recorded (a NEW field, distinct
+  from any "drain complete" timestamp);
+* `source_playout_drained_mono` / `source_playout_end_mono` are
+  deliberately left UNSET -- there is no valid "drain complete" or
+  "playout ended" timestamp to record when drain was never proven;
+* `signal_source.clear_queue()` is still called, but ONLY as
+  administrative cleanup, with its own dedicated milestone print
+  (`DRAIN_SAFETY_TIMEOUT -- administrative cleanup after INVALID
+  drain timeout (NOT INTERRUPT_CONFIRMED, NOT
+  PLAYBACK_CANCEL_REQUESTED, NOT natural drain)`) so it can never be
+  mistaken for a real production event in the logs;
+* the confirmation check (`if interrupt_confirmed_event.is_set():`)
+  is evaluated BEFORE the timeout branch, so a genuine confirmation
+  that happens to land at/after the same boundary always takes
+  precedence -- confirmation is real production evidence, an
+  infrastructure timeout is not.
+
+The caller (`run_speech_role_silent_series()`'s episode loop) now
+detects `drain_kind == "drain_timeout"` via a new
+`episode_drain_timed_out` flag and treats it as its own terminal
+condition:
+
+* the episode's row is still appended to `milestones["episodes"]`
+  (the attempt DID happen and its evidence is real);
+* the loop `break`s -- the next gap/episode is never scheduled;
+* session-level `drain_timeout_occurred` / `drain_timeout_episode` are
+  set so the final verdict can reference them;
+* the final verdict becomes the new, unequivocal
+  `INVALID TEST -- AUDIO SOURCE PLAYOUT DRAIN TIMEOUT` -- never PASS,
+  never a self-echo FAIL, when no genuine VAD event ever latched.
+
+**Failure precedence preserved**: if a genuine accepted START had
+ALREADY latched `test_failure` before the timeout occurred, BOTH facts
+are persisted, neither erased nor reclassified as the other -- the
+false-event evidence (with its own absolute FIRST-START + 3.0s
+deadline, unchanged) still drives the FAIL verdict, with an additional
+`NOTE` line naming the drain timeout that also occurred. The false
+event is never demoted to "just an infrastructure timeout," and the
+timeout is never promoted to "a natural drain" just because a FAIL
+verdict was already going to be printed anyway.
+
+### 120.2 Defect B — a forced clear was mislabeled with a "drained" name
+
+`confirmed_during_submission` and `confirmed_during_drain` were both
+writing `ep_record["source_playout_drained_mono"]` even though neither
+is a natural `wait_for_playout()` completion -- both are a FORCED
+clear triggered by a genuine confirmed interruption. Overloading the
+"drained" name for a forced clear made the evidence itself misleading
+independent of the timeout defect above.
+
+**Fix**: `source_playout_drained_mono` is now assigned in exactly ONE
+place in the whole function -- the true natural-drain branch -- and
+nowhere else (confirmed via `.count(...) == 1` on the assignment
+site, §120.4). A new neutral pair replaces it for the other outcomes:
+
+* `source_playout_end_mono` -- a timestamp, set for every outcome that
+  has a genuine, provable end (`natural_drain`, `confirmed_clear`);
+  deliberately UNSET for `drain_timeout` (no valid end was proven);
+* `source_playout_end_kind` -- one of `"natural_drain"` |
+  `"confirmed_clear"` | `"research_teardown"` | `"drain_timeout"`.
+
+`source_playout_drained_mono` itself is now reserved exclusively for
+`drain_kind="natural"`, matching its name precisely.
+
+### 120.3 Wording correction — the "provable upper bound" claim
+
+The fifth correction's own report and code comments described
+`AUDIO_SOURCE_QUEUE_SIZE_MS` as giving a "PROVABLE upper bound" on
+drain time, yet the SAME round's own dry-run measurements showed
+`queued_duration_at_submission_complete` values of `1.0061s`,
+`1.0085s`, `1.0004s` -- all slightly ABOVE the nominal 1.0000s. Per
+instruction, this wording is corrected. The constant's code comment
+now reads (in substance): the nominal `AUDIO_SOURCE_QUEUE_SIZE_MS` is
+1000ms; observed client-side `queued_duration` is approximately 1.0s
+and may exceed the nominal value slightly due to ordinary
+timing/scheduler accounting; `SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S`
+(2x nominal) is a deliberately generous DEFENSIVE bound, not proof
+that a normal drain must always finish within exactly 1.0s -- and if
+it IS ever exceeded, Defect A's fix above means the drain is treated
+as UNPROVEN, never as a natural completion. The timeout value itself
+(2.0s) is unchanged -- only the claim about what it proves.
+
+### 120.4 Live dry-run evidence (real local `livekit-server --dev`, tiny `--drain-timeout-s` override to force the fail-closed path deterministically -- see §120.5 for why this is honest, not an evasion)
+
+**Scenario 1 -- pure drain-safety timeout, no VAD event ever latched**
+(`SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S` overridden to `0.05s`, no
+burst injected -- the real natural queue drain takes ~1.0s, so the
+tiny override deterministically forces the timeout to fire before the
+queue drains, without needing to hang or monkeypatch
+`wait_for_playout()` itself):
+
+```
+drain_kind                     = drain_timeout
+drain_safety_timeout           = True
+drain_timeout_mono             = 316408.696275033
+source_playout_drained_mono    = ABSENT (never set)
+source_playout_end_mono        = ABSENT (never set)
+source_playout_end_kind        = drain_timeout
+failure (test_failure)         = None
+episodes_completed             = 1 / 3   (loop broke after episode 1 -- next episode NOT scheduled)
+
+*** INVALID TEST -- AUDIO SOURCE PLAYOUT DRAIN TIMEOUT (episode 1) --
+wait_for_playout() did not prove drain completion within 0.1s and no
+genuine confirmed interruption ever arrived; this is a research-
+infrastructure failure, NOT a natural drain, NOT a confirmed
+interruption, and NOT a self-echo/VAD result ***
+```
+
+Confirms proof items: `drain_safety_timeout=True`,
+`drain_kind="drain_timeout"`, no `source_playout_drained_mono`, next
+episode not scheduled, final verdict is exactly the required literal
+`INVALID TEST -- AUDIO SOURCE PLAYOUT DRAIN TIMEOUT` wording.
+
+**Scenario 2 -- an already-latched false START, THEN a drain-safety
+timeout, no confirmation ever arrives** (same `0.05s` override, a
+short burst injected via the dry-run fake-hardware role):
+
+```
+TEST_FAILURE_ACCEPTED_START at t=2.976s, episode=0, playback_active=False
+...
+DRAIN_SAFETY_TIMEOUT -- administrative cleanup after INVALID drain timeout
+  (NOT INTERRUPT_CONFIRMED, NOT PLAYBACK_CANCEL_REQUESTED, NOT natural drain)
+response_01_end (drain_kind=drain_timeout, source_playout_end_kind=drain_timeout,
+  source_playout_end_mono=None)
+
+*** FAILURE latched during episode 01 AND AudioSource drain safety
+timeout occurred -- BOTH facts persisted (the false accepted START is
+NOT erased or reclassified as a drain timeout, and the drain timeout
+is NOT reclassified as a natural drain) -- stopping the series ***
+...
+  *** FAIL -- failure_kind=accepted_start episode=0 playback_active=False audio_t=2.976s ***
+  *** NOTE: AudioSource drain safety timeout ALSO occurred (episode 1)
+  -- persisted alongside the genuine false event above; the false
+  event is NOT reclassified as a drain timeout, and the drain timeout
+  is NOT reclassified as a natural drain ***
+  VALID TEST -- FAIL (genuine false event while operator was silent)
+```
+
+Exact milestone values: `failure_event_mono=316432.946675`,
+`drain_timeout_mono=316435.023709` (2.077s after the START -- well
+inside the absolute 3.0s deadline), `post_event_margin_complete_mono
+=316435.947802` (exactly `316432.946674444 + 3.0s` to five decimal
+places, `failure_deadline_mono` from the record) -- **the absolute
+FIRST-START + 3.0s evidence deadline (fourth correction) is fully
+intact and unaffected by the drain-safety-timeout mechanism landing
+inside it.** `source_playout_drained_mono`/`source_playout_end_mono`
+remain ABSENT; the verdict correctly stays the genuine-FAIL verdict
+(the false event is real production evidence and is not weakened by
+the co-occurring infrastructure timeout), with the required
+persisted-both-facts `NOTE` line present.
+
+**Scenario 3 -- natural drain regression check** (real, UN-overridden
+`SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S=2.0s`, clean 3x8.0s/0.5s-gap
+run, identical config to §118.4's proven clean run): `capture_
+duration_s=29.280` vs `expected_min_duration_s=29.000` -->
+**`VALID TEST -- PASS (3/3 episodes, 0 accepted VAD starts, 0
+confirmed interruptions)`** -- all three episodes `drain_kind=
+natural`, `source_playout_drained_mono` set and equal to
+`source_playout_end_mono`, `source_playout_end_kind=natural_drain` in
+every episode. Confirms Defect B's fix does not disturb the clean
+path, and the fifth correction's PASS result is not regressed by this
+round's changes.
+
+**Scenario 4 -- confirmed-during-drain regression check** (real
+`2.0s` timeout, burst timed into the queued tail): `drain_kind=
+confirmed_during_drain`, and -- the specific SECOND CORRECTION proof
+item -- `source_playout_drained_mono` is now confirmed **ABSENT**
+(previously it was incorrectly set here), `source_playout_end_mono
+=316577.119052`, `source_playout_end_kind=confirmed_clear`,
+`audio_source_queued_before_clear_s=0.3434s`,
+`audio_source_queue_cleared_mono=316577.119052`,
+`audio_source_queued_after_clear_s=0.0` -- the clear-queue mechanics
+themselves are byte-for-byte the same behavior as the fifth
+correction's own proven Case C, only the EVIDENCE LABELING changed.
+
+### 120.5 Why a tiny `--drain-timeout-s` override, not a hang or a monkeypatch of `wait_for_playout()`
+
+`capture_frame()`'s own backpressure genuinely bounds the real queue
+to ~1.0s ahead of real time (audited from source, §118.1) -- there is
+no way to make a REAL local `AudioSource` queue drain take 2.0+
+real-world seconds without either (a) monkeypatching the installed
+library itself (touches code this investigation does not own) or (b)
+literally waiting out a real multi-second hang per run. Instead, the
+THROWAWAY dry-run driver script (not part of the committed harness)
+was given an optional `--drain-timeout-s` argument that overrides the
+harness's own `SILENT_SERIES_DRAIN_SAFETY_TIMEOUT_S` module constant
+before calling the REAL, UNMODIFIED `run_speech_role_silent_series()`
+-- exactly the same monkeypatch-a-constant-before-calling-the-real-
+function technique already used and accepted for
+`SILENT_SERIES_EPISODE_COUNT`/`SILENT_SERIES_GAP_S`/`SPEECH_
+DURATION_S` in every prior R0082-H dry run in this investigation. This
+exercises the REAL fail-closed code path (the same `asyncio.wait_for`
+call, the same `TimeoutError` handling, the same `drain_kind`
+branching) under a deterministic, fast-to-run timing condition,
+without touching the installed `livekit` package or the harness's own
+default value (which remains `2.0s`, unchanged, for any real
+hardware run).
+
+### 120.6 Offline validation performed this round (79 checks, all PASS)
+
+New checks added for this correction (Section 2B, 17 checks): a
+drain-safety timeout with no confirmation is its own distinct
+`drain_kind`, never falls through to `"natural"`;
+`source_playout_drained_mono` is assigned in exactly one place in the
+whole function; the `drain_timeout` branch sets neither
+`source_playout_drained_mono` nor `source_playout_end_mono`;
+`confirmed_during_submission` and `confirmed_during_drain` both avoid
+`source_playout_drained_mono` and use `source_playout_end_kind=
+"confirmed_clear"` instead; confirmation is checked before the
+timeout branch (precedence); the outer loop detects `drain_timeout`
+as its own terminal condition and breaks the loop (next episode not
+scheduled); both facts are persisted when a false start and a drain
+timeout co-occur; the final verdict prints the exact required literal
+wording for the pure-timeout case; a co-occurring timeout does not
+override the FAIL verdict on a genuine false event; the "PROVABLE
+upper bound" wording is gone, replaced with the required "approximately
+1.0s" / "deliberately generous DEFENSIVE bound" phrasing. Three
+assertion-authoring mistakes were caught and fixed during this
+round's OWN validation-script development (not code defects): a raw
+substring count that didn't distinguish an assignment site from later
+read-back references of the same field name; a fragile ad hoc string
+slice for isolating the `confirmed_during_submission` block, replaced
+with a precise `index()`-bounded slice; and two required-phrase
+checks (`"BOTH facts persisted"`, `"NOT erased or reclassified as a
+drain timeout"`) that failed because the phrase is only contiguous in
+the RUNTIME-evaluated f-string, not in the wrapped multi-line SOURCE
+text -- the same category of mistake documented in §118's corrections
+history, fixed the same way (splitting the check across the actual
+literal boundaries). All 79 checks pass, including every check
+carried forward from the fifth correction's 53.
+
+```
+py_compile                                                            PASS
+ruff                                                                  PASS
+git diff --check                                                      PASS
+[53 checks from the fifth correction, re-run]                        PASS (53/53)
+[17 new checks for this round's fail-closed fix]                     PASS (17/17)
+[9 checks unaffected/carried forward from earlier rounds]            PASS (9/9)
+```
+
+`run_speech_role`, `run_hardware_role`, `run_speech_role_deliberate_
+bargein`, `_play_signal_cancelable`, `read_speech_wav`,
+`evaluate_deliberate_bargein_result`, and `run_hardware_role_silent_
+series` all re-confirmed byte-for-byte identical to commit `9ea9b7d`
+(this round's own accepted baseline). Production VAD constants
+unchanged. No production files touched this round.
+
+## 121. R0082-H — FINAL GATE (post sixth correction)
+
+```
+R0082-G historical 5/5 PASS unchanged                                   PASS
+natural wait_for_playout() completion still works (measured:
+  capture_duration_s=29.280 vs expected_min=29.000, PASS, 3/3
+  episodes all drain_kind=natural)                                      PASS
+drain timeout now fails closed as its own distinct INVALID verdict,
+  never PASS and never a self-echo FAIL                                 PASS
+drain timeout can no longer become drain_kind="natural" (measured:
+  source_playout_drained_mono/source_playout_end_mono both remain
+  ABSENT on drain_timeout, in every scenario tested)                    PASS
+a drain timeout prevents the next episode from being scheduled
+  (measured: episodes_completed=1/3, loop broke both times)             PASS
+source_playout_drained_mono is used ONLY for a true natural drain
+  (assigned in exactly one place in the whole function; confirmed_
+  during_submission/confirmed_during_drain now use the neutral
+  source_playout_end_mono/source_playout_end_kind pair instead)         PASS
+a confirmed queued-tail clear has distinct evidence semantics
+  (source_playout_end_kind="confirmed_clear", never "natural_drain")    PASS
+an already-latched false START is preserved, unerased and
+  unreclassified, if a drain timeout later occurs in the same
+  episode (measured: FAIL verdict stands, with an additional
+  persisted NOTE naming the co-occurring timeout)                       PASS
+the absolute 3.0s failure evidence deadline is unchanged and remains
+  intact even when a drain-safety timeout lands inside it (measured:
+  post_event_margin_complete_mono - failure_event_mono = 3.0000s to
+  five decimal places in the combined scenario)                        PASS
+clean scaled run still PASS (capture_duration_s=29.280 >=
+  expected_min_duration_s=29.000)                                       PASS
+true publisher-side drained-queue gap semantics unchanged (gap-
+  scheduling code was not touched by this round's diff; regression
+  run's own gap diagnostics remain consistent with the fifth
+  correction's proven values)                                          PASS
+existing silent-user (run_speech_role/run_hardware_role) unchanged      PASS
+existing deliberate-bargein unchanged                                   PASS
+production files changed                                                NO
+all offline/static/dry-run checks pass (79/79)                          PASS
+```
+
+**Verdict: R0082-H (sixth correction applied) READY for ONE real
+continuous silent-user hardware run.** This session did not execute
+hardware.
