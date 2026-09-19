@@ -2296,26 +2296,47 @@ async def run_speech_role_silent_series(
                 {playback_task, failure_wait_task}, return_when=asyncio.FIRST_COMPLETED
             )
             if test_failure_event.is_set():
+                ep_record["failure_event_mono"] = test_failure["failure_event_mono"]
                 # A bare accepted START has latched test_failure (possibly
                 # with a genuine confirmed interruption ALSO having already
                 # resolved playback via _play_signal_cancelable()'s own
                 # UNCHANGED cancel_event mechanism, real clear_queue()
                 # included -- that real cancellation is never suppressed
-                # or substituted). EITHER WAY, retain mic/VAD evidence
-                # until the ABSOLUTE deadline anchored to the ORIGINAL
-                # start (not a fresh margin re-armed from now) -- this is
-                # the fix: evidence retention is no longer cancelled just
-                # because playback happened to end quickly.
+                # or substituted). Mic/VAD evidence is retained until the
+                # ABSOLUTE deadline anchored to the ORIGINAL start. But the
+                # CSV phase classification (episode_number/playback_active)
+                # must transition to the non-normal sentinel at the ACTUAL
+                # playback-stop moment, not only once the whole margin has
+                # elapsed -- otherwise post-stop evidence rows are wrongly
+                # counted as this response's own playback. Race actual
+                # playback completion against the deadline to notice
+                # whichever comes first.
                 if not failure_wait_task.done():
                     await _cancel_and_await(failure_wait_task)
-                await _wait_for_failure_deadline()
-                ep_record["post_event_margin_complete_mono"] = time.monotonic()
-                print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE")
-                if not playback_task.done():
-                    # Bare start, no confirmation arrived before the
-                    # deadline -- research-only teardown, cancelling the
-                    # playback Task from the OUTSIDE. NEVER logged as
-                    # INTERRUPT_CONFIRMED/PLAYBACK_CANCEL_REQUESTED.
+                deadline_task = asyncio.create_task(_wait_for_failure_deadline())
+                await asyncio.wait(
+                    {playback_task, deadline_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if playback_task.done():
+                    # Playback ended on its own (naturally, or via a
+                    # genuine confirmed interruption) BEFORE the deadline
+                    # -- the normal playback diagnostic phase for this
+                    # response ends HERE, immediately.
+                    samples_submitted, stopped_early = playback_task.result()
+                    playback_active = False
+                    episode_number = 0
+                    ep_record["post_failure_observation_start_mono"] = time.monotonic()
+                    await deadline_task  # wait out whatever margin remains
+                    ep_record["post_event_margin_complete_mono"] = time.monotonic()
+                    print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE")
+                else:
+                    # Deadline reached with playback STILL running -- bare
+                    # start, no confirmation ever arrived. Research-only
+                    # teardown NOW; classification flips to the sentinel
+                    # at this same point, before any further evidence rows
+                    # can be written.
+                    ep_record["post_event_margin_complete_mono"] = time.monotonic()
+                    print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE")
                     print(
                         "[speech] MILESTONE: TEST_TEARDOWN_PLAYBACK_STOP (research "
                         "teardown -- NOT INTERRUPT_CONFIRMED, NOT "
@@ -2327,15 +2348,17 @@ async def run_speech_role_silent_series(
                         signal_source.clear_queue()  # administrative cleanup only
                     except Exception:
                         pass
+                    playback_active = False
+                    episode_number = 0
+                    ep_record["post_failure_observation_start_mono"] = time.monotonic()
                     samples_submitted, stopped_early = (None, True)
-                else:
-                    samples_submitted, stopped_early = playback_task.result()
             else:
                 # Normal completion -- test_failure never latched during
-                # this episode's playback.
+                # this episode's playback. episode_number/playback_active
+                # are untouched here (normal path).
                 await _cancel_and_await(failure_wait_task)
                 samples_submitted, stopped_early = playback_task.result()
-            playback_active = False
+                playback_active = False
             ep_record["playback_end_mono"] = time.monotonic()
             ep_record["samples_submitted"] = samples_submitted
             ep_record["stopped_early"] = stopped_early
@@ -2373,13 +2396,19 @@ async def run_speech_role_silent_series(
                     {gap_task, gap_failure_wait_task}, return_when=asyncio.FIRST_COMPLETED
                 )
                 if test_failure_event.is_set():
+                    ep_record["failure_event_mono"] = test_failure["failure_event_mono"]
                     # A bare accepted START latched DURING the gap -- cut the
                     # gap short (no playback to tear down; the ISM is IDLE
                     # during a gap so a bare start here structurally cannot
-                    # escalate to INTERRUPT_CONFIRMED -- audited), then
-                    # retain evidence until the SAME ABSOLUTE deadline
-                    # (anchored to the original start, not a fresh margin).
+                    # escalate to INTERRUPT_CONFIRMED -- audited). The
+                    # normal scheduled gap ends HERE, immediately -- switch
+                    # to the non-normal sentinel BEFORE retaining the
+                    # remaining evidence, so those rows are never counted
+                    # as gap_N.
                     await _cancel_and_await(gap_task)
+                    ep_record["gap_failure_normal_phase_end_mono"] = time.monotonic()
+                    episode_number = 0
+                    ep_record["post_failure_observation_start_mono"] = time.monotonic()
                     await _wait_for_failure_deadline()
                     ep_record["post_event_margin_complete_mono"] = time.monotonic()
                     print("[speech] MILESTONE: POST_EVENT_MARGIN_COMPLETE (gap)")

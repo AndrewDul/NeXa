@@ -6804,3 +6804,199 @@ no production files touched                                             PASS
 **Verdict: R0082-H (third correction applied) READY for ONE real
 continuous silent-user hardware run.** This session did not execute
 hardware.
+
+## 116. R0082-H fourth correction — post-failure evidence was still labeled as normal playback/gap
+
+Found before any hardware execution. `_play_signal_cancelable()` is
+untouched (confirmed below) — this fix is entirely about WHEN the CSV
+phase-classification fields (`episode_number`/`playback_active`)
+transition, not about cancellation timing or the 3.0s evidence-margin
+duration itself (both already correct per §114).
+
+### 116.1 Defect
+
+§114's fix correctly kept `consume_task`/mic capture running until the
+absolute `failure_deadline_mono`, but `playback_active = False` (and,
+implicitly, `episode_number` staying at the failed episode's number)
+was only assigned AFTER `_wait_for_failure_deadline()` returned. So for
+the ~2.67s between the ACTUAL playback stop (via genuine confirmation)
+and the deadline, retained evidence rows were still written with
+`episode_number=<current>, playback_active=True` — contaminating that
+response's own `max_prob`/`max_smoothed_volume`/`frames_ge_0_7`/
+`longest_ge_0_7_streak` with post-stop frames that were never part of
+its actual playback. Symmetrically, during a gap-triggered failure, the
+retained evidence rows kept `episode_number=<current>, playback_active
+=False` — the SAME key shape as an ordinary gap — inflating that gap's
+own diagnostics with post-failure evidence that was never part of the
+ordinary scheduled gap.
+
+### 116.2 Fix — race playback against the deadline, transition at the actual moment
+
+**Playback branch.** Once `test_failure_event` is set, the still-running
+`playback_task` is now raced against a `deadline_task = asyncio.
+create_task(_wait_for_failure_deadline())` via `asyncio.wait(...,
+return_when=FIRST_COMPLETED)`:
+
+- If `playback_task` finishes first (natural completion, or — the
+  common case per §114.3's own timing — a genuine confirmed
+  interruption resolving it ~0.32s after the start): its real result is
+  recorded, then `playback_active=False`/`episode_number=0` are set
+  **immediately**, `post_failure_observation_start_mono` is stamped,
+  and ONLY THEN does the code `await deadline_task` for whatever margin
+  remains — so the normal-phase/post-failure boundary in the CSV lands
+  at the true stop instant, not 2.67s later.
+- If `deadline_task` finishes first with playback STILL running (a bare
+  start, no confirmation ever arrived): `TEST_TEARDOWN_PLAYBACK_STOP`
+  fires (unchanged from §112/§114), and `playback_active=False`/
+  `episode_number=0` are set at that same teardown instant, before any
+  further evidence rows can be written.
+
+**Gap branch.** When `test_failure_event` fires during a scheduled gap,
+the gap's own `gap_task` is cancelled and `episode_number=0` is set
+**immediately** (`gap_failure_normal_phase_end_mono` stamped) — before
+`_wait_for_failure_deadline()` is awaited. There is no playback to race
+against during a gap, so a direct `await` is correct and sufficient
+here (confirmed in the live dry run below: `gap_failure_normal_phase_
+end_mono` lands within 0.16ms of `failure_event_mono` itself — the cut
+is effectively instantaneous).
+
+`_play_signal_cancelable()` was not touched by this fix (byte-for-byte
+identical, confirmed §116.4) — the change is entirely in how the
+CALLER classifies rows it was already going to write, not in when or
+how cancellation happens.
+
+### 116.3 Live dry-run evidence — precise, row-level proof
+
+**Case A (START → CONFIRM during playback)**, same scaled setup as
+§114.3, exact values pulled directly from the run's own CSV and
+`milestones.json`:
+
+```
+failure_event_mono                  = 311533.364708989
+playback_stop_mono                  = 311533.691367022
+post_failure_observation_start_mono = 311533.691411411   <- within 44us of playback_stop_mono
+post_event_margin_complete_mono     = 311536.365277474
+```
+
+CSV row-level inspection:
+
+```
+last  (episode=1, playback_active=1) row: t_mono=311533.684829  <- BEFORE playback_stop_mono
+first (episode=0, playback_active=0) row: t_mono=311533.714753  <- AFTER  playback_stop_mono
+total (episode=1, playback_active=1) rows: 54
+total (episode=0) rows: 187 (pre-roll + all post-failure evidence)
+```
+
+The transition lands within ONE VAD frame period (~32ms) of the actual
+playback stop, not 2.67s later. Direct consequence for diagnostics:
+`response 01` now reports `frames_ge_0_7=18, longest_ge_0_7_streak=17`
+— down from the PRE-fix figures of `frames_ge_0_7=41,
+longest_ge_0_7_streak=25` for materially the same scenario (§112.3) —
+confirming the ~2.67s of post-stop, non-playback evidence is no longer
+counted into this response's own playback statistics.
+
+**Case C (START during a gap)**, same scaled setup as §114.3:
+
+```
+failure_event_mono                  = 311611.748764048
+gap_failure_normal_phase_end_mono   = 311611.748921418   <- 0.157ms after failure_event_mono
+post_failure_observation_start_mono = 311611.748922085
+post_event_margin_complete_mono     = 311614.749453405
+```
+
+CSV row-level inspection:
+
+```
+last  (episode=2, playback_active=0, i.e. gap 2) row: t_mono=311611.748778 (silero_prob=0.981)
+first (episode=0) row:                                t_mono=311611.778694 (silero_prob=0.955)
+total (episode=2, playback_active=0) rows: 74
+total (episode=0) rows: 187
+```
+
+`gap 02` now reports `max_prob=0.9816, frames_ge_0_7=9, longest_
+streak=9` — down from the PRE-fix figures of `max_prob=0.9924,
+frames_ge_0_7=30, longest_streak=30` for materially the same scenario
+(§112.3) — confirming the retained post-failure evidence is no longer
+counted into the ordinary gap's own diagnostics either.
+
+**Case B (bare START, no confirmation)** was not re-triggered live this
+round, for the same reason documented in §112.3 (this system's own
+timing makes a confirmation-free outcome hard to force live without
+triggering the unrelated remote-stream-disconnect hang) — validated
+structurally instead (offline checks confirm the teardown branch sets
+`playback_active=False`/`episode_number=0` at the same point it cancels
+the playback task, §116.4).
+
+**Clean 3-episode run re-verified**: `episodes_completed=3/3`, zero
+events, `response 01/02/03` and `gap 01/02` diagnostics correctly
+populated (never a spurious `gap 03`), unaffected by this fix (same
+known dry-run-specific ~0.95–0.97s capture-duration-shortfall artifact
+already documented in §110.5/§112.3, unrelated to this round).
+
+### 116.4 Offline validation performed this round (44 checks, all PASS)
+
+```
+py_compile                                                          PASS
+ruff                                                                 PASS
+git diff --check                                                     PASS
+[all 41 checks from §114.4, re-run and still PASS]                   PASS (41/41)
+the gap branch directly awaits _wait_for_failure_deadline() (no
+  playback to race against during a gap)                             PASS
+the playback branch races playback_task against a deadline_task
+  (asyncio.create_task(_wait_for_failure_deadline())) so it can
+  notice ACTUAL playback completion while evidence is still being
+  retained, rather than blocking on the deadline first                PASS
+when playback ends before the deadline, playback_active/episode_
+  number are reset to the non-normal sentinel IMMEDIATELY (right
+  after playback_task.result(), before the remaining deadline wait)   PASS
+gap failure also switches to the non-normal sentinel IMMEDIATELY
+  when the scheduled gap is cut short, before the remaining evidence
+  margin is retained                                                  PASS
+failure_event_mono cross-referenced into the episode record for
+  both the playback and gap failure paths                             PASS
+post_failure_observation_start_mono recorded at exactly 3 sites
+  (playback-ends-before-deadline, teardown-at-deadline, gap path)      PASS
+```
+
+44 checks total, all PASS. `run_speech_role`, `run_hardware_role`,
+`run_speech_role_deliberate_bargein`, `_play_signal_cancelable`,
+`read_speech_wav`, `evaluate_deliberate_bargein_result`, and
+`run_hardware_role_silent_series` all re-confirmed byte-for-byte
+identical to commit `4caf86d`. Production VAD constants unchanged. No
+production files touched this round.
+
+## 117. R0082-H — FINAL GATE (post fourth correction)
+
+```
+first accepted START remains the canonical failure origin               PASS
+genuine CONFIRM still stops playback immediately (unchanged timing)     PASS
+genuine CONFIRM still executes real, unmodified clear_queue()            PASS
+mic/VAD capture continues until the absolute failure_deadline_mono
+  (unchanged from §114)                                                 PASS
+actual playback stop now ends the playback diagnostic phase
+  IMMEDIATELY (measured: within 44us of playback_stop_mono)             PASS
+post-playback failure evidence uses the non-normal sentinel
+  (episode_number=0) -- confirmed row-by-row in the live dry run        PASS
+post-failure evidence excluded from response diagnostics (measured:
+  response 01's own frames_ge_0_7/longest_streak dropped from the
+  contaminated pre-fix values to the correct, playback-only values)     PASS
+failure now ends the normal gap diagnostic phase IMMEDIATELY
+  (measured: within 0.157ms of failure_event_mono)                      PASS
+post-failure evidence excluded from gap diagnostics (measured: gap
+  02's own frames_ge_0_7/longest_streak dropped to the correct,
+  gap-only values)                                                      PASS
+START -> margin-complete still ~3.0s (unchanged mechanism)               PASS
+bare-START/no-confirmation research teardown remains distinct from
+  INTERRUPT_CONFIRMED/PLAYBACK_CANCEL_REQUESTED                          PASS
+clean 10-episode path unchanged (dry-run-scaled 3/3 re-verified)         PASS
+existing silent-user / deliberate-bargein / _play_signal_cancelable /
+  read_speech_wav / evaluate_deliberate_bargein_result / run_hardware_
+  role / run_hardware_role_silent_series all byte-for-byte unchanged    PASS
+production VAD constants unchanged                                      PASS
+py_compile / ruff / git diff --check                                    PASS
+no production files touched                                             PASS
+```
+
+**Verdict: R0082-H (fourth correction applied) READY for ONE real
+continuous silent-user hardware run.** This session did not execute
+hardware.
